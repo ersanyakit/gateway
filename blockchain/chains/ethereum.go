@@ -22,7 +22,24 @@ func NewEthereumChain() *EthereumChain {
 			ChainName:   "ethereum",
 			ExplorerURL: "https://etherscan.io",
 			RPCHttp:     []string{"https://ethereum-rpc.publicnode.com", "https://1rpc.io/eth", "https://1rpc.io/eth"},
+			WebSockets:  []string{"wss://ethereum-rpc.publicnode.com", "wss://1rpc.io/eth", "wss://1rpc.io/eth"},
 		}}
+}
+
+func (e *EthereumChain) Name() string {
+	return e.ChainName
+}
+
+func (e *EthereumChain) RPCs() []string {
+	return e.RPCHttp
+}
+
+func (e *EthereumChain) Explorer() string {
+	return e.ExplorerURL
+}
+
+func (e *EthereumChain) WSS() []string {
+	return e.WebSockets
 }
 
 func (e *EthereumChain) NewAddress(prvHex string) (string, error) {

@@ -68,3 +68,23 @@ func (f *ChainFactory) CreateWallets(ctx context.Context) (map[string]*WalletDet
 	}
 	return wallets, errorsMap
 }
+
+func (f *ChainFactory) StartAllWorkers(ctx context.Context) map[string]error {
+	f.mu.RLock()
+	chains := make(map[string]Chain, len(f.chains))
+	for k, v := range f.chains {
+		chains[k] = v
+	}
+	f.mu.RUnlock()
+	errMap := make(map[string]error)
+	for name, chain := range chains {
+		if starter, ok := chain.(interface {
+			StartWorkers(context.Context) error
+		}); ok {
+			if err := starter.StartWorkers(ctx); err != nil {
+				errMap[name] = err
+			}
+		}
+	}
+	return errMap
+}

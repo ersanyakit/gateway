@@ -30,6 +30,7 @@ type Worker interface {
 
 type Chain interface {
 	Name() string
+	WSS() []string
 	Create(ctx context.Context) (*WalletDetails, error)
 	Deposit(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
 	Withdraw(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
@@ -38,19 +39,37 @@ type Chain interface {
 
 	AddWorker(listener Worker) error
 	RemoveWorker(listener Worker) error
+
+	StartWorkers(ctx context.Context) error
+	StopWorkers() error
 }
 
 type BaseChain struct {
 	ChainName   string
 	ExplorerURL string
 	RPCHttp     []string
-	RPCSocket   []string
+	WebSockets  []string
 
 	Workers []Worker
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (b *BaseChain) Name() string {
 	return b.ChainName
+}
+
+func (b *BaseChain) RPCs() []string {
+	return b.RPCHttp
+}
+
+func (b *BaseChain) Explorer() string {
+	return b.ExplorerURL
+}
+
+func (b *BaseChain) WSS() []string {
+	return b.WebSockets
 }
 
 func (b *BaseChain) Create(ctx context.Context) (*WalletDetails, error) {
@@ -115,26 +134,49 @@ func (b *BaseChain) RemoveWorker(listener Worker) error {
 	return errors.New("listener not found")
 }
 
-func (b *BaseChain) StartWorkers() error {
+func (b *BaseChain) StartWorkers(ctx context.Context) error {
+
+	b.ctx, b.cancel = context.WithCancel(ctx)
+
 	for _, listener := range b.Workers {
+
 		if err := listener.Start(); err != nil {
 			return err
 		}
 
-		go func(l Worker) {
-			for event := range l.Events() {
-				fmt.Printf("[%s] Event: %v\n", b.ChainName, event)
-			}
-		}(listener)
+		go b.Work(listener)
 	}
+
 	return nil
 }
 
+func (b *BaseChain) Work(l Worker) {
+
+	for {
+		select {
+
+		case <-b.ctx.Done():
+			return
+
+		case event, ok := <-l.Events():
+			if !ok {
+				return
+			}
+
+			fmt.Printf("[%s] Event: %v\n", b.ChainName, event)
+		}
+	}
+}
+
 func (b *BaseChain) StopWorkers() error {
+	if b.cancel != nil {
+		b.cancel()
+	}
 	for _, listener := range b.Workers {
 		if err := listener.Stop(); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
