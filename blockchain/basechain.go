@@ -101,8 +101,8 @@ func (f *BaseChain) GenerateMnemonic() (string, error) {
 	return mnemonic, err
 }
 
-func (f *BaseChain) GetDerivedPath(purpose, coinType, account, change, index int) string {
-	return fmt.Sprintf("m/%d'/%d'/%d'/%d/%d", purpose, coinType, account, change, index)
+func (f *BaseChain) GetDerivedPath(purpose, coin, account, change, index int) string {
+	return fmt.Sprintf("m/%d'/%d'/%d'/%d/%d", purpose, coin, account, change, index)
 }
 
 func (f *BaseChain) GetDerivedPrivateKey(mnemonic string, hdPath string) (string, error) {

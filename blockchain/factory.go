@@ -88,3 +88,23 @@ func (f *ChainFactory) StartAllWorkers(ctx context.Context) map[string]error {
 	}
 	return errMap
 }
+
+func (f *ChainFactory) StopAllWorkers(ctx context.Context) map[string]error {
+	f.mu.RLock()
+	chains := make(map[string]Chain, len(f.chains))
+	for k, v := range f.chains {
+		chains[k] = v
+	}
+	f.mu.RUnlock()
+	errMap := make(map[string]error)
+	for name, chain := range chains {
+		if starter, ok := chain.(interface {
+			StopWorkers(context.Context) error
+		}); ok {
+			if err := starter.StopWorkers(ctx); err != nil {
+				errMap[name] = err
+			}
+		}
+	}
+	return errMap
+}

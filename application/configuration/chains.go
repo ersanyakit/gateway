@@ -1,11 +1,11 @@
-package global
+package application
 
 import (
 	"core/blockchain"
 	"core/blockchain/chains"
 )
 
-func newChainFactory() *blockchain.ChainFactory {
+func NewChainFactory() *blockchain.ChainFactory {
 	factory := blockchain.NewChainFactory()
 
 	factory.RegisterChain("solana", chains.NewSolanaChain())

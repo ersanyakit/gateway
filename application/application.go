@@ -1,7 +1,7 @@
 package application
 
 import (
-	blockchain "core/blockchain"
+	"core/api/routes"
 
 	socketio "github.com/vchitai/go-socket.io/v4"
 	gorm "gorm.io/gorm"
@@ -9,6 +9,10 @@ import (
 
 type App struct {
 	DB           *gorm.DB
+	Router       *routes.Router
 	SocketServer *socketio.Server
-	Blockchains  *blockchain.ChainFactory
 }
+
+var (
+	CORE *App
+)

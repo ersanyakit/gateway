@@ -1,11 +1,11 @@
-package global
+package application
 
 import (
 	"core/asset"
 	"core/constants"
 )
 
-func newAssetRegistry() *asset.Registry {
+func NewAssetRegistry() *asset.Registry {
 	registry := asset.NewRegistry()
 
 	// Ethereum

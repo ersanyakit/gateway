@@ -2,27 +2,91 @@ package main
 
 import (
 	"context"
-	"core/global"
+	"core/api/routes"
 	"core/workers/dispatcher"
+	ethereumWorker "core/workers/listeners/ethereum"
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	ethereumWorker "core/workers/listeners/ethereum"
-	"fmt"
+	coreApplication "core/application"
+	coreDB "core/services/database"
+
+	"github.com/joho/godotenv"
 )
+
+func NewApp() (*coreApplication.App, error) {
+	if coreApplication.CORE == nil {
+
+		err := coreDB.InitDB()
+		if err != nil {
+			return nil, err
+		}
+
+		coreApplication.CORE = &coreApplication.App{
+			DB:     coreDB.DB,
+			Router: routes.NewRouter(coreDB.DB),
+		}
+
+		migrateFlag := flag.Bool("migrate", false, "Run DB migrations")
+		seedFlag := flag.Bool("seed", false, "Run DB seed")
+		installFlag := flag.Bool("install", false, "Run DB migrate & seed")
+
+		flag.Parse()
+
+		if *installFlag {
+			*seedFlag = true
+			*migrateFlag = true
+		}
+
+		if *migrateFlag {
+			fmt.Println("Migration:BEGIN")
+			err = coreDB.Migrate(coreApplication.CORE)
+			if err != nil {
+				fmt.Println(err)
+			}
+
+			fmt.Println("Migration:END")
+		}
+
+		if *seedFlag {
+			err = coreDB.Seed(coreApplication.CORE)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+	}
+
+	return coreApplication.CORE, nil
+}
+
+func GetApp() (*coreApplication.App, error) {
+	return NewApp()
+}
 
 func main() {
 	mainCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	solanaChain, _ := global.Get().Factory.GetChain("solana")
-	ethereumChain, _ := global.Get().Factory.GetChain("ethereum")
-	tronChain, _ := global.Get().Factory.GetChain("tron")
-	bitcoinChain, _ := global.Get().Factory.GetChain("bitcoin")
-	avalancheChain, _ := global.Get().Factory.GetChain("avalanche")
-	binanceChain, _ := global.Get().Factory.GetChain("binance")
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
+	coreApplication.CORE, err = NewApp()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	solanaChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("solana")
+	ethereumChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("ethereum")
+	tronChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("tron")
+	bitcoinChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("bitcoin")
+	avalancheChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("avalanche")
+	binanceChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("binance")
 
 	solanaWallet, _ := solanaChain.Create(mainCtx)
 	fmt.Printf("%s %s %s %s\n", solanaChain.Name(), solanaWallet.Address, solanaWallet.PrivateKey, solanaWallet.MnemonicPhrase)
@@ -42,9 +106,9 @@ func main() {
 	binanceWallet, _ := binanceChain.Create(mainCtx)
 	fmt.Printf("%s %s %s %s\n", binanceChain.Name(), binanceWallet.Address, binanceWallet.PrivateKey, binanceWallet.MnemonicPhrase)
 
-	fmt.Println(global.Get().Factory.ListChains())
+	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
-	wallets, errs := global.Get().Factory.CreateWallets(mainCtx)
+	wallets, errs := coreApplication.CORE.Router.Blockchains().CreateWallets(mainCtx)
 	for chainName, wallet := range wallets {
 		fmt.Printf("Wallet created on %s: %s\n", chainName, wallet.Address)
 	}
@@ -60,7 +124,7 @@ func main() {
 
 	//ethereumChain.StartWorkers(mainCtx)
 
-	global.Get().Factory.StartAllWorkers(mainCtx)
+	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	go func() {
 		for event := range ethChan {
@@ -68,10 +132,13 @@ func main() {
 		}
 	}()
 
+	fiberApp := coreApplication.CORE.Router.GetFiber()
+	log.Println("App running on", os.Getenv("PORT"))
+	log.Fatal(fiberApp.Listen(os.Getenv("PORT")))
+
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	<-c
 	log.Println("Shutting down...")
-	ethereumWorker.Stop()
 	bus.Shutdown()
 }
