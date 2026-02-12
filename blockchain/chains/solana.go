@@ -58,7 +58,7 @@ func (s *SolanaChain) ValidateAddress(address string) bool {
 	return solanaSDK.ValidateAddress(address)
 }
 
-func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
+func (s *SolanaChain) CreateEx(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 	account := solanaGO.NewWallet()
 
@@ -77,7 +77,7 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 	}, nil
 }
 
-func (s *SolanaChain) CreateEx(ctx context.Context) (*blockchain.WalletDetails, error) {
+func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 
 	mnemonic, err := s.BaseChain.GenerateMnemonic()
