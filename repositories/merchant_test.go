@@ -16,7 +16,7 @@ func Test_Merchant(t *testing.T) {
 		Email: &merchantEmail,
 	}
 
-	merchantRepo := NewMerchantRepo(nil)
+	merchantRepo := NewMerchantRepo(nil, nil)
 	merchant, err := merchantRepo.Create(merchantCreateParams)
 	if err != nil {
 	}
