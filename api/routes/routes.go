@@ -24,12 +24,18 @@ import (
 // swag init ile üretilen dosyalar
 
 type Router struct {
-	fiber           *fiber.App
-	action          *router.ActionRouter
-	db              *gorm.DB
-	blockchains     *blockchain.ChainFactory
-	assetRegistry   *asset.Registry
+	fiber         *fiber.App
+	action        *router.ActionRouter
+	db            *gorm.DB
+	blockchains   *blockchain.ChainFactory
+	assetRegistry *asset.Registry
+
+	MerchantRepo    *repositories.MerchantRepo
+	DomainRepo      *repositories.DomainRepo
+	WalletRepo      *repositories.WalletRepo
 	MerchantService *services.MerchantService
+	WalletService   *services.WalletService
+	DomainService   *services.DomainService
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -51,10 +57,17 @@ func NewRouter(db *gorm.DB) *Router {
 		AllowHeaders:     "Accept,Authorization,authorization,Content-Type,Content-Length,X-CSRF-Token,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With",
 	}))
 
-	merchantRepo := repositories.NewMerchantRepo(r.db)
-	r.MerchantService = services.NewMerchantService(merchantRepo)
+	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
+	r.MerchantService = services.NewMerchantService(r.MerchantRepo)
+
+	r.DomainRepo = repositories.NewDomainRepo(r.MerchantRepo)
+	r.DomainService = services.NewDomainService(r.DomainRepo)
+
+	r.WalletRepo = repositories.NewWalletRepo(r.MerchantRepo)
+	r.WalletService = services.NewWalletService(r.WalletRepo)
 
 	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
+	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleWalletCreate(r.WalletService))
 
 	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes

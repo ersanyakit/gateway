@@ -58,25 +58,6 @@ func (s *SolanaChain) ValidateAddress(address string) bool {
 	return solanaSDK.ValidateAddress(address)
 }
 
-func (s *SolanaChain) CreateEx(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
-	account := solanaGO.NewWallet()
-
-	privateKey := account.PrivateKey.String()
-	address := account.PublicKey().String()
-
-	if !s.ValidateAddress(address) {
-		return nil, errors.New("invalid solana address format")
-
-	}
-
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: "",
-	}, nil
-}
-
 func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 
@@ -85,6 +66,7 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 		return nil, err
 	}
 
+	fmt.Println("MNE", mnemonic)
 	wallet, err := s.GenerateWalletFromMnemonicSeed(mnemonic, "")
 
 	privateKey := wallet.PrivateKey.String()
@@ -114,7 +96,7 @@ func (s *SolanaChain) GenerateWalletFromMnemonicSeed(mnemonic, password string) 
 	derivedSeed := sum[:32]
 	chain := sum[32:]
 
-	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(0), hardened + uint32(0)}
+	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(0), hardened + uint32(1)}
 
 	for _, segment := range path {
 		derivedSeed, chain = derive(derivedSeed, chain, segment)

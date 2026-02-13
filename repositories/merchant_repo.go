@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"core/blockchain"
 	helpers "core/helper"
 	"core/models"
 	"core/types"
@@ -13,15 +14,20 @@ import (
 )
 
 type MerchantRepo struct {
-	db *gorm.DB
+	db          *gorm.DB
+	blockchains *blockchain.ChainFactory
 }
 
 func (r *MerchantRepo) DB() *gorm.DB {
 	return r.db
 }
 
-func NewMerchantRepo(db *gorm.DB) *MerchantRepo {
-	return &MerchantRepo{db: db}
+func (r *MerchantRepo) Blockchains() *blockchain.ChainFactory {
+	return r.blockchains
+}
+
+func NewMerchantRepo(db *gorm.DB, blockchains *blockchain.ChainFactory) *MerchantRepo {
+	return &MerchantRepo{db: db, blockchains: blockchains}
 }
 
 func (r *MerchantRepo) Create(params types.MerchantParams) (*models.Merchant, error) {
@@ -72,7 +78,7 @@ func (r *MerchantRepo) CreateDomain() (*models.Domain, error) {
 	domain := &models.Domain{
 		ID:         uuid.Must(uuid.NewV7()),
 		MerchantID: merchantID,
-		Site:       domainURL,
+		DomainURL:  domainURL,
 
 		KeyID:     keyID,
 		APIKey:    apiKeyHash,

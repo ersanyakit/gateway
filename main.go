@@ -4,7 +4,6 @@ import (
 	"context"
 	"core/api/routes"
 	"core/workers/dispatcher"
-	ethereumWorker "core/workers/listeners/ethereum"
 	"flag"
 	"fmt"
 	"log"
@@ -81,31 +80,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	solanaChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("solana")
-	ethereumChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("ethereum")
-	tronChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("tron")
-	bitcoinChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("bitcoin")
-	avalancheChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("avalanche")
-	binanceChain, _ := coreApplication.CORE.Router.Blockchains().GetChain("binance")
-
-	solanaWallet, _ := solanaChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", solanaChain.Name(), solanaWallet.Address, solanaWallet.PrivateKey, solanaWallet.MnemonicPhrase)
-
-	ethereumWallet, _ := ethereumChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", ethereumChain.Name(), ethereumWallet.Address, ethereumWallet.PrivateKey, ethereumWallet.MnemonicPhrase)
-
-	tronWallet, _ := tronChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", tronChain.Name(), tronWallet.Address, tronWallet.PrivateKey, tronWallet.MnemonicPhrase)
-
-	bitcoinWallet, _ := bitcoinChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", bitcoinChain.Name(), bitcoinWallet.Address, bitcoinWallet.PrivateKey, bitcoinWallet.MnemonicPhrase)
-
-	avalancheWallet, _ := avalancheChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", avalancheChain.Name(), avalancheWallet.Address, avalancheWallet.PrivateKey, avalancheWallet.MnemonicPhrase)
-
-	binanceWallet, _ := binanceChain.Create(mainCtx)
-	fmt.Printf("%s %s %s %s\n", binanceChain.Name(), binanceWallet.Address, binanceWallet.PrivateKey, binanceWallet.MnemonicPhrase)
-
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
 	wallets, errs := coreApplication.CORE.Router.Blockchains().CreateWallets(mainCtx)
@@ -119,8 +93,8 @@ func main() {
 	bus := dispatcher.NewDispatcher()
 	ethChan := bus.Subscribe("ETH", 100)
 
-	ethereumWorker := ethereumWorker.NewRpcListener(ethereumChain.WSS()[0])
-	ethereumChain.AddWorker(ethereumWorker)
+	//	ethereumWorker := ethereumWorker.NewRpcListener(ethereumChain.WSS()[0])
+	//	ethereumChain.AddWorker(ethereumWorker)
 
 	//ethereumChain.StartWorkers(mainCtx)
 

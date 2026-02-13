@@ -12,7 +12,7 @@ type Domain struct {
 	MerchantID uuid.UUID `gorm:"type:uuid;not null;index"`
 	Merchant   Merchant  `gorm:"constraint:OnDelete:CASCADE;"`
 
-	Site string `gorm:"size:255;not null"`
+	DomainURL string `gorm:"size:255;not null"`
 
 	KeyID     string `gorm:"size:32;index"`
 	APIKey    string `gorm:"size:128;uniqueIndex;not null"`

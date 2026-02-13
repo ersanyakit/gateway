@@ -54,7 +54,7 @@ func (s *TronChain) Create(ctx context.Context) (*blockchain.WalletDetails, erro
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, 0, 1)
+	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, 0, 0)
 	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
