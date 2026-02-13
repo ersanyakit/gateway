@@ -2,6 +2,7 @@ package router
 
 import (
 	middleware "core/api/middleware"
+	"core/constants"
 
 	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
@@ -13,20 +14,20 @@ type Route struct {
 }
 
 type ActionRouter struct {
-	routes       map[string]Route
+	routes       map[constants.CommandType]Route
 	defaultRoute fiber.Handler
 	db           *gorm.DB
 }
 
 func NewActionRouter(db *gorm.DB) *ActionRouter {
 	return &ActionRouter{
-		routes: make(map[string]Route),
+		routes: make(map[constants.CommandType]Route),
 		db:     db,
 	}
 }
 
 // Register
-func (ar *ActionRouter) Register(action string, handler fiber.Handler, mws ...middleware.Middleware) {
+func (ar *ActionRouter) Register(action constants.CommandType, handler fiber.Handler, mws ...middleware.Middleware) {
 	ar.routes[action] = Route{
 		Handler:     handler,
 		Middlewares: mws,
@@ -40,7 +41,7 @@ func (ar *ActionRouter) Resolve(c *fiber.Ctx) error {
 		action = c.Query("action")
 	}
 
-	route, ok := ar.routes[action]
+	route, ok := ar.routes[constants.CommandType(action)]
 	if !ok {
 		if ar.defaultRoute != nil {
 			return ar.defaultRoute(c)
@@ -57,6 +58,10 @@ func (ar *ActionRouter) Resolve(c *fiber.Ctx) error {
 	return handler(c)
 }
 func (ar *ActionRouter) GetHandler(action string) (Route, bool) {
-	route, ok := ar.routes[action]
+	route, ok := ar.routes[constants.CommandType(action)]
 	return route, ok
+}
+
+func (ar *ActionRouter) RoutesMap() map[constants.CommandType]Route {
+	return ar.routes
 }

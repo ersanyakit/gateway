@@ -90,7 +90,7 @@ func CreateSquence(db *gorm.DB) error {
 
 	if err := db.Exec(`
 		CREATE SEQUENCE IF NOT EXISTS wallet_hd_address_seq
-		START 0
+		START 1
 		MAXVALUE 2147483647;
 	`).Error; err != nil {
 		return err

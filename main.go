@@ -124,7 +124,7 @@ func main() {
 
 	//ethereumChain.StartWorkers(mainCtx)
 
-	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
+	//	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	go func() {
 		for event := range ethChan {

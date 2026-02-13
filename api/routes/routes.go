@@ -15,8 +15,13 @@ import (
 
 	fiber "github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	swagger "github.com/gofiber/swagger" // fiber için swagger handler
 	"gorm.io/gorm"
+
+	_ "core/docs"
 )
+
+// swag init ile üretilen dosyalar
 
 type Router struct {
 	fiber           *fiber.App
@@ -49,12 +54,10 @@ func NewRouter(db *gorm.DB) *Router {
 	merchantRepo := repositories.NewMerchantRepo(r.db)
 	r.MerchantService = services.NewMerchantService(merchantRepo)
 
-	r.action.Register(constants.CMD_MERCHANT_CREATE, handlers.HandleMerchantCreate(r.MerchantService))
+	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
 
-	r.fiber.All("/", r.handlePacket)
-	r.fiber.All("/test", r.handlePacket)
-	r.fiber.All("/packet", r.handlePacket)
-
+	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
+	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
 }
 

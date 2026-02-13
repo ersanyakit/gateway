@@ -16,30 +16,58 @@ func NewMerchantHandler(service *services.MerchantService) *MerchantHandler {
 	return &MerchantHandler{service: service}
 }
 
+// HandleMerchantCreate godoc
+// @Summary Create a merchant
+// @Description Create a new merchant with name, email, password
+// @Tags Merchant
+// @Accept  json
+// @Produce  json
+// @Param merchant body types.MerchantParams true "Merchant Params"
+// @Success 201 {object} models.Merchant
+// @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /merchant [post]
+
 func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
 
-		name := strings.ToLower(c.Params("name"))
-		email := strings.ToLower(c.Params("email"))
-		emailRepeat := strings.ToLower(c.Params("email_repeat"))
-		password := strings.ToLower(c.Params("password"))
-		passwordRepeat := strings.ToLower(c.Params("password_repeat"))
+		params.Context = c.Context()
 
-		params := types.MerchantParams{
-			Context:        c.Context(),
-			Name:           &name,
-			Email:          &email,
-			EmailRepeat:    &emailRepeat,
-			Password:       &password,
-			PasswordRepeat: &passwordRepeat,
+		if params.Name != nil {
+			name := strings.ToLower(*params.Name)
+			params.Name = &name
+		}
+		if params.Email != nil {
+			email := strings.ToLower(*params.Email)
+			params.Email = &email
+		}
+		if params.EmailRepeat != nil {
+			emailRepeat := strings.ToLower(*params.EmailRepeat)
+			params.EmailRepeat = &emailRepeat
+		}
+		if params.Password != nil {
+			password := strings.ToLower(*params.Password)
+			params.Password = &password
+		}
+		if params.PasswordRepeat != nil {
+			passwordRepeat := strings.ToLower(*params.PasswordRepeat)
+			params.PasswordRepeat = &passwordRepeat
 		}
 
 		if err := params.Validate(); err != nil {
-			return c.Status(400).JSON(fiber.Map{
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"errors":  err,
 			})
 		}
+
 		merchant, err := s.Create(params)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
