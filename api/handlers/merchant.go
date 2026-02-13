@@ -16,18 +16,6 @@ func NewMerchantHandler(service *services.MerchantService) *MerchantHandler {
 	return &MerchantHandler{service: service}
 }
 
-// HandleMerchantCreate godoc
-// @Summary Create a merchant
-// @Description Create a new merchant with name, email, password
-// @Tags Merchant
-// @Accept  json
-// @Produce  json
-// @Param merchant body types.MerchantParams true "Merchant Params"
-// @Success 201 {object} models.Merchant
-// @Failure 400 {object} map[string]interface{}
-// @Failure 500 {object} map[string]interface{}
-// @Router /merchant [post]
-
 func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var params types.MerchantParams
@@ -76,5 +64,152 @@ func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
 		}
 
 		return c.Status(fiber.StatusCreated).JSON(merchant)
+	}
+}
+
+func HandleMerchantFindById(s *services.MerchantService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
+
+		params.Context = c.Context()
+		if err := params.ValidateID(); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"errors":  err,
+			})
+		}
+
+		merchant, err := s.FindByID(params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to find merchant by id: " + err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(merchant)
+	}
+}
+
+func HandleMerchantFindByEmail(s *services.MerchantService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
+
+		params.Context = c.Context()
+		if err := params.ValidateEmail(); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"errors":  err,
+			})
+		}
+
+		merchant, err := s.FindByID(params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to find merchant by id: " + err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(merchant)
+	}
+}
+
+func HandleMerchantDeleteById(s *services.MerchantService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
+
+		params.Context = c.Context()
+		if err := params.ValidateID(); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"errors":  err,
+			})
+		}
+
+		err := s.DeleteByID(params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to delete merchant by id: " + err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"success": true,
+		})
+	}
+}
+
+func HandleMerchantDeleteByEmail(s *services.MerchantService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
+
+		params.Context = c.Context()
+		if err := params.ValidateEmail(); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"errors":  err,
+			})
+		}
+
+		err := s.DeleteByEmail(params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to delete merchant by email: " + err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"success": true,
+		})
+	}
+}
+
+func HandleMerchantFetch(s *services.MerchantService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var params types.MerchantParams
+		if err := c.BodyParser(&params); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid JSON body: " + err.Error(),
+			})
+		}
+
+		params.Context = c.Context()
+
+		merchants, cursor, err := s.Fetch(params)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to fetch merchants: " + err.Error(),
+			})
+		}
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"success":   false,
+			"merchants": merchants,
+			"cursor":    cursor,
+		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type Merchant struct {
@@ -13,6 +14,7 @@ type Merchant struct {
 	Password string    `json:"-"`
 	Domains  []Domain  `gorm:"foreignKey:MerchantID" json:"domains,omitempty"`
 
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"core/api/routes"
+	"core/helpers"
+	"core/types"
 	"core/workers/dispatcher"
 	"flag"
 	"fmt"
@@ -80,6 +82,32 @@ func main() {
 		log.Fatal(err)
 	}
 
+	testMerchantParams := types.MerchantParams{
+		Context:        mainCtx,
+		Name:           helpers.StrPtr("ersan"),
+		Email:          helpers.StrPtr("ersanyakit@gmail.com"),
+		EmailRepeat:    helpers.StrPtr("ersanyakit@gmail.com"),
+		Password:       helpers.StrPtr("passinput1"),
+		PasswordRepeat: helpers.StrPtr("passinput1"),
+	}
+	merchantReg, err := coreApplication.CORE.Router.MerchantService.Create(testMerchantParams)
+	if err != nil {
+		fmt.Println("Error", err, merchantReg)
+	}
+
+	merchantFindByEmail, err := coreApplication.CORE.Router.MerchantService.FindByEmail(testMerchantParams)
+	if err != nil {
+		fmt.Println("Error", err, merchantReg)
+	}
+
+	testMerchantParams.ID = &merchantFindByEmail.ID
+	merchantFindByID, err := coreApplication.CORE.Router.MerchantService.FindByID(testMerchantParams)
+	if err != nil {
+		fmt.Println("Error", err, merchantFindByID)
+	}
+	fmt.Println("MerchantInfo ", merchantFindByID.ID, merchantFindByEmail.ID)
+
+	return
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
 	wallets, errs := coreApplication.CORE.Router.Blockchains().CreateWallets(mainCtx)

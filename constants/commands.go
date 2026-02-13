@@ -20,8 +20,13 @@ type CommandEnvelope struct {
 type CommandType string
 
 const (
-	CMD_MERCHANT_CREATE        CommandType = "merchant.create"
-	CMD_MERCHANT_FETCH         CommandType = "merchant.fetch"
+	CMD_MERCHANT_CREATE          CommandType = "merchant.create"
+	CMD_MERCHANT_FETCH           CommandType = "merchant.fetch"
+	CMD_MERCHANT_FETCH_BY_ID     CommandType = "merchant.fetch.by_id"
+	CMD_MERCHANT_FETCH_BY_EMAIL  CommandType = "merchant.fetch.by_email"
+	CMD_MERCHANT_DELETE_BY_ID    CommandType = "merchant.delete.by_id"
+	CMD_MERCHANT_DELETE_BY_EMAIL CommandType = "merchant.delete.by_email"
+
 	CMD_MERCHANT_DOMAIN_CREATE CommandType = "merchant.domain.create"
 	CMD_MERCHANT_DOMAIN_FETCH  CommandType = "merchant.domain.fetch"
 	CMD_MERCHANT_WALLET_CREATE CommandType = "merchant.wallet.create"
@@ -35,6 +40,8 @@ const (
 var AllCommands = []CommandType{
 	CMD_MERCHANT_CREATE,
 	CMD_MERCHANT_FETCH,
+	CMD_MERCHANT_FETCH_BY_ID,
+	CMD_MERCHANT_FETCH_BY_EMAIL,
 	CMD_MERCHANT_DOMAIN_CREATE,
 	CMD_MERCHANT_DOMAIN_FETCH,
 	CMD_DEPOSIT,
