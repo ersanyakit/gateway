@@ -80,6 +80,8 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_MERCHANT_DELETE_BY_ID.String(), handlers.HandleMerchantDeleteById(r.MerchantService))
 	r.fiber.Post(constants.CMD_MERCHANT_DELETE_BY_EMAIL.String(), handlers.HandleMerchantDeleteByEmail(r.MerchantService))
 
+	r.fiber.Post(constants.CMD_MERCHANT_WALLET_CREATE.String(), handlers.HandleWalletCreate(r.WalletService))
+
 	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
