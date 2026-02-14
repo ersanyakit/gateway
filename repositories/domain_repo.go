@@ -20,6 +20,10 @@ func (r *DomainRepo) DB() *gorm.DB {
 	return r.merchantRepo.DB()
 }
 
+func (r *DomainRepo) MerchantRepo() *MerchantRepo {
+	return r.merchantRepo
+}
+
 func NewDomainRepo(merchantRepo *MerchantRepo) *DomainRepo {
 	return &DomainRepo{merchantRepo: merchantRepo}
 }
@@ -68,6 +72,16 @@ func (r *DomainRepo) FindByAPISecret(params types.DomainParams) (*models.Domain,
 	err = r.merchantRepo.DB().WithContext(params.Context).
 		Where("api_secret = ?", encryptedSecret).
 		First(&domain).Error
+	if err != nil {
+		return nil, err
+	}
+	return &domain, nil
+}
+
+func (r *DomainRepo) FindByURL(params types.DomainParams) (*models.Domain, error) {
+	var domain models.Domain
+	err := r.merchantRepo.DB().WithContext(params.Context).
+		First(&domain, "domain_url = ?", params.DomainURL).Error
 	if err != nil {
 		return nil, err
 	}

@@ -83,6 +83,30 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 	}, nil
 }
 
+func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+	fmt.Printf("[%s]: Creating wallet\n", s.Name())
+
+	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	if err != nil {
+		return nil, err
+	}
+
+	wallet, err := s.GenerateHDWalletFromMnemonicSeed(mnemonic, "", hdAccountId, hdWalletId)
+
+	privateKey := wallet.PrivateKey.String()
+	address := wallet.PublicKey().String()
+
+	if !s.ValidateAddress(address) {
+		return nil, errors.New("invalid solana address format")
+	}
+
+	return &blockchain.WalletDetails{
+		Address:        address,
+		PrivateKey:     privateKey,
+		MnemonicPhrase: mnemonic,
+	}, nil
+}
+
 func (s *SolanaChain) GenerateWalletFromMnemonicSeed(mnemonic, password string) (*solana.Wallet, error) {
 	pass := []byte("mnemonic")
 	if password != "" {
@@ -97,6 +121,35 @@ func (s *SolanaChain) GenerateWalletFromMnemonicSeed(mnemonic, password string) 
 	chain := sum[32:]
 
 	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(0), hardened + uint32(1)}
+
+	for _, segment := range path {
+		derivedSeed, chain = derive(derivedSeed, chain, segment)
+	}
+
+	key := ed25519.NewKeyFromSeed(derivedSeed)
+
+	wallet, err := solanaGO.WalletFromPrivateKeyBase58(base58.Encode(key))
+	if err != nil {
+		return nil, err
+	}
+
+	return wallet, nil
+}
+
+func (s *SolanaChain) GenerateHDWalletFromMnemonicSeed(mnemonic, password string, hdAccountId, hdWalletId int) (*solana.Wallet, error) {
+	pass := []byte("mnemonic")
+	if password != "" {
+		pass = []byte(password)
+	}
+	seed := pbkdf2.Key([]byte(mnemonic), pass, 2048, 64, sha512.New)
+	h := hmac.New(sha512.New, []byte("ed25519 seed"))
+	h.Write(seed)
+	sum := h.Sum(nil)
+
+	derivedSeed := sum[:32]
+	chain := sum[32:]
+
+	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(hdAccountId), hardened + uint32(hdWalletId)}
 
 	for _, segment := range path {
 		derivedSeed, chain = derive(derivedSeed, chain, segment)

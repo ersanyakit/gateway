@@ -130,6 +130,37 @@ func (b *BitcoinChain) Create(ctx context.Context) (*blockchain.WalletDetails, e
 	}, nil
 }
 
+func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+	fmt.Printf("[%s]: Creating wallet\n", b.Name())
+
+	mnemonic, err := b.BaseChain.GenerateMnemonic()
+	if err != nil {
+		return nil, err
+	}
+
+	hdPath := b.BaseChain.GetDerivedPath(int(Taproot), 0, 0, hdAccountId, hdWalletId)
+	privateKeyHex, err := b.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	if err != nil {
+		return nil, err
+	}
+
+	address, err := b.NewAddress(privateKeyHex)
+	if err != nil {
+		log.Printf("[%s] NewAddress error: %s\n", b.Name(), err.Error())
+		return nil, err
+	}
+
+	if !b.ValidateAddress(address) {
+		return nil, errors.New("invalid bitcoin address format")
+	}
+
+	return &blockchain.WalletDetails{
+		Address:        address,
+		PrivateKey:     privateKeyHex,
+		MnemonicPhrase: mnemonic,
+	}, nil
+}
+
 func (b *BitcoinChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
 	fmt.Printf("[%s]: Depositing %f BTC to %s\n", b.Name(), amount, toAddress)
 	return &blockchain.TransactionResult{

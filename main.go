@@ -124,6 +124,24 @@ func main() {
 		fmt.Println("DomainInfo ", domainReg.ID, domainReg.MerchantID, domainReg.HDAccountID)
 	}
 
+	domainFind, err := coreApplication.CORE.Router.DomainService.FindByURL(createDomainParams)
+	if err != nil {
+		fmt.Println("Error", err)
+	}
+
+	walletParams := types.WalletParams{
+		Context:    mainCtx,
+		MerchantId: helpers.StrPtr(domainFind.MerchantID.String()), // MerchantID Domain üzerinden
+		DomainId:   helpers.StrPtr(domainFind.ID.String()),
+	}
+	walletReg, err := coreApplication.CORE.Router.WalletService.Create(walletParams)
+	if err != nil {
+		fmt.Println("Error", err)
+	}
+
+	if walletReg != nil {
+		fmt.Println("Wallet", walletReg.HDAddressId)
+	}
 	return
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 

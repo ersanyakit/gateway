@@ -59,6 +59,36 @@ func (s *BinanceChain) ValidateAddress(address string) bool {
 	return ethSDK.ValidateAddress(address)
 }
 
+func (s *BinanceChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+	fmt.Printf("[%s]: Creating wallet\n", s.Name())
+
+	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	if err != nil {
+		return nil, err
+	}
+
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, 0, hdAccountId, hdWalletId)
+	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	if err != nil {
+		return nil, err
+	}
+	address, err := s.NewAddress(privateKey)
+	if err != nil {
+		log.Printf("[%s] NewAddress error:%s \n", s.BaseChain.Name(), err.Error())
+	}
+
+	if !s.ValidateAddress(address) {
+		return nil, errors.New("invalid ethereum address format")
+
+	}
+
+	return &blockchain.WalletDetails{
+		Address:        address,
+		PrivateKey:     privateKey,
+		MnemonicPhrase: mnemonic,
+	}, nil
+}
+
 func (s *BinanceChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 

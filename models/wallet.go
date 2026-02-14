@@ -7,8 +7,10 @@ import (
 )
 
 type Wallet struct {
-	ID          uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
-	HDAddressId uint32    `gorm:"not null;uniqueIndex" json:"hd_address_id"`
+	ID uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+
+	HDAccountID uint32 `gorm:"not null" json:"hd_account_id"`
+	HDAddressId uint32 `gorm:"not null" json:"hd_address_id"`
 
 	MerchantID uuid.UUID `gorm:"type:uuid;not null;index" json:"merchant_id"`
 	Merchant   Merchant  `gorm:"constraint:OnDelete:CASCADE;" json:"-"`

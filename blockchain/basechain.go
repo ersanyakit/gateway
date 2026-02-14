@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/okx/go-wallet-sdk/crypto/go-bip32"
 	"github.com/okx/go-wallet-sdk/crypto/go-bip39"
@@ -32,6 +33,8 @@ type Chain interface {
 	Name() string
 	WSS() []string
 	Create(ctx context.Context) (*WalletDetails, error)
+	CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*WalletDetails, error)
+
 	Deposit(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
 	Withdraw(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
 	Sweep(ctx context.Context, wallet WalletDetails) (*TransactionResult, error)
@@ -72,6 +75,10 @@ func (b *BaseChain) WSS() []string {
 	return b.WebSockets
 }
 
+func (b *BaseChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId uint32) (*WalletDetails, error) {
+	return nil, errors.New("not implemented")
+}
+
 func (b *BaseChain) Create(ctx context.Context) (*WalletDetails, error) {
 	return nil, errors.New("not implemented")
 }
@@ -88,19 +95,24 @@ func (b *BaseChain) Sweep(ctx context.Context, wallet WalletDetails) (*Transacti
 	return nil, errors.New("not implemented")
 }
 
-func (f *BaseChain) GenerateMnemonic() (string, error) {
+func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
 	entropy, err := bip39.NewEntropy(256)
 	if err != nil {
 		return "", err
 	}
 	mnemonic, err := bip39.NewMnemonic(entropy)
-
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")
 	}
-
-	mnemonic = "confirm bleak useless tail chalk destroy horn step bulb genuine attract split"
 	return mnemonic, err
+}
+
+func (f *BaseChain) GenerateMnemonic() (string, error) {
+	mnemonic := os.Getenv("MNEMONIC_PHRASE")
+	if !bip39.IsMnemonicValid(mnemonic) {
+		return "", errors.New("Invalid Mnemonic")
+	}
+	return mnemonic, nil
 }
 
 func (f *BaseChain) GetDerivedPath(purpose, coin, account, change, index int) string {

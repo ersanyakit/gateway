@@ -69,6 +69,24 @@ func (f *ChainFactory) CreateWallets(ctx context.Context) (map[string]*WalletDet
 	return wallets, errorsMap
 }
 
+func (f *ChainFactory) CreateHDWallets(ctx context.Context, hdAccountId, hdWalletId int) (map[string]*WalletDetails, map[string]error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	wallets := make(map[string]*WalletDetails)
+	errorsMap := make(map[string]error)
+
+	for name, chain := range f.chains {
+		wallet, err := chain.CreateHDWallet(ctx, hdAccountId, hdWalletId)
+		if err != nil {
+			errorsMap[name] = err
+			continue
+		}
+		wallets[name] = wallet
+	}
+	return wallets, errorsMap
+}
+
 func (f *ChainFactory) StartAllWorkers(ctx context.Context) map[string]error {
 	f.mu.RLock()
 	chains := make(map[string]Chain, len(f.chains))

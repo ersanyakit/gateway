@@ -63,7 +63,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.DomainRepo = repositories.NewDomainRepo(r.MerchantRepo)
 	r.DomainService = services.NewDomainService(r.DomainRepo)
 
-	r.WalletRepo = repositories.NewWalletRepo(r.MerchantRepo)
+	r.WalletRepo = repositories.NewWalletRepo(r.DomainRepo)
 	r.WalletService = services.NewWalletService(r.WalletRepo)
 
 	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
