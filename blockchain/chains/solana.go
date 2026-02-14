@@ -66,7 +66,6 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 		return nil, err
 	}
 
-	fmt.Println("MNE", mnemonic)
 	wallet, err := s.GenerateWalletFromMnemonicSeed(mnemonic, "")
 
 	privateKey := wallet.PrivateKey.String()

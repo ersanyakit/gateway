@@ -2,18 +2,9 @@ package constants
 
 import "encoding/json"
 
-// @swagger:model CommandEnvelope
 type CommandEnvelope struct {
-	// Versiyon numarası
-	// example: 1.0
-	Version string `json:"version"`
-
-	// Komut tipi
-	// enum: merchant.create,merchant.fetch,merchant.domain.create,merchant.domain.fetch,system.create,system.deposit,system.withdraw,system.sweep,system.scan
-	// example: merchant.create
-	Code CommandType `json:"code"`
-
-	// Payload JSON objesi
+	Version string          `json:"version"`
+	Code    CommandType     `json:"code"`
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -26,16 +17,13 @@ const (
 	CMD_MERCHANT_FETCH_BY_EMAIL  CommandType = "merchant.fetch.by_email"
 	CMD_MERCHANT_DELETE_BY_ID    CommandType = "merchant.delete.by_id"
 	CMD_MERCHANT_DELETE_BY_EMAIL CommandType = "merchant.delete.by_email"
-
-	CMD_MERCHANT_DOMAIN_CREATE CommandType = "merchant.domain.create"
-	CMD_MERCHANT_DOMAIN_FETCH  CommandType = "merchant.domain.fetch"
-
-	CMD_MERCHANT_WALLET_CREATE CommandType = "merchant.wallet.create"
-
-	CMD_DEPOSIT  CommandType = "system.deposit"
-	CMD_WITHDRAW CommandType = "system.withdraw"
-	CMD_SWEEP    CommandType = "system.sweep"
-	CMD_SCAN     CommandType = "system.scan"
+	CMD_MERCHANT_DOMAIN_CREATE   CommandType = "merchant.domain.create"
+	CMD_MERCHANT_DOMAIN_FETCH    CommandType = "merchant.domain.fetch"
+	CMD_MERCHANT_WALLET_CREATE   CommandType = "merchant.wallet.create"
+	CMD_DEPOSIT                  CommandType = "system.deposit"
+	CMD_WITHDRAW                 CommandType = "system.withdraw"
+	CMD_SWEEP                    CommandType = "system.sweep"
+	CMD_SCAN                     CommandType = "system.scan"
 )
 
 var AllCommands = []CommandType{
@@ -45,6 +33,7 @@ var AllCommands = []CommandType{
 	CMD_MERCHANT_FETCH_BY_EMAIL,
 	CMD_MERCHANT_DOMAIN_CREATE,
 	CMD_MERCHANT_DOMAIN_FETCH,
+	CMD_MERCHANT_WALLET_CREATE,
 	CMD_DEPOSIT,
 	CMD_WITHDRAW,
 	CMD_SWEEP,

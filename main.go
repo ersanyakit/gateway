@@ -15,6 +15,7 @@ import (
 
 	coreApplication "core/application"
 	coreDB "core/services/database"
+	ethereumWorker "core/workers/listeners/ethereum"
 
 	"github.com/joho/godotenv"
 )
@@ -142,7 +143,6 @@ func main() {
 	if walletReg != nil {
 		fmt.Println("Wallet", walletReg.HDAddressId)
 	}
-	return
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
 	wallets, errs := coreApplication.CORE.Router.Blockchains().CreateWallets(mainCtx)
@@ -156,12 +156,14 @@ func main() {
 	bus := dispatcher.NewDispatcher()
 	ethChan := bus.Subscribe("ETH", 100)
 
-	//	ethereumWorker := ethereumWorker.NewRpcListener(ethereumChain.WSS()[0])
-	//	ethereumChain.AddWorker(ethereumWorker)
+	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
 
-	//ethereumChain.StartWorkers(mainCtx)
+	ethWorker := ethereumWorker.NewRpcListener(ethChain.WSS()[0])
+	ethChain.AddWorker(ethWorker)
 
-	//	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
+	ethChain.StartWorkers(mainCtx)
+
+	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	go func() {
 		for event := range ethChan {
