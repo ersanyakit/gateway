@@ -81,7 +81,7 @@ func InitDB() error {
 func CreateSquence(db *gorm.DB) error {
 
 	if err := db.Exec(`
-		CREATE SEQUENCE IF NOT EXISTS merchant_hd_account_seq
+		CREATE SEQUENCE IF NOT EXISTS domain_hd_account_seq
 		START 1
 		MAXVALUE 2147483647;
 	`).Error; err != nil {

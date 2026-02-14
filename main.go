@@ -82,7 +82,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	testMerchantParams := types.MerchantParams{
+	createMerchantParams := types.MerchantParams{
 		Context:        mainCtx,
 		Name:           helpers.StrPtr("ersan"),
 		Email:          helpers.StrPtr("ersanyakit@gmail.com"),
@@ -90,22 +90,39 @@ func main() {
 		Password:       helpers.StrPtr("passinput1"),
 		PasswordRepeat: helpers.StrPtr("passinput1"),
 	}
-	merchantReg, err := coreApplication.CORE.Router.MerchantService.Create(testMerchantParams)
+	merchantReg, err := coreApplication.CORE.Router.MerchantService.Create(createMerchantParams)
 	if err != nil {
 		fmt.Println("Error", err, merchantReg)
 	}
 
-	merchantFindByEmail, err := coreApplication.CORE.Router.MerchantService.FindByEmail(testMerchantParams)
+	merchantFindByEmail, err := coreApplication.CORE.Router.MerchantService.FindByEmail(createMerchantParams)
 	if err != nil {
 		fmt.Println("Error", err, merchantReg)
 	}
 
-	testMerchantParams.ID = &merchantFindByEmail.ID
-	merchantFindByID, err := coreApplication.CORE.Router.MerchantService.FindByID(testMerchantParams)
+	createMerchantParams.ID = &merchantFindByEmail.ID
+	merchantFindByID, err := coreApplication.CORE.Router.MerchantService.FindByID(createMerchantParams)
 	if err != nil {
 		fmt.Println("Error", err, merchantFindByID)
 	}
 	fmt.Println("MerchantInfo ", merchantFindByID.ID, merchantFindByEmail.ID)
+
+	createDomainParams := types.DomainParams{
+		Context:       mainCtx,
+		MerchantID:    helpers.StrPtr(merchantFindByID.ID.String()),
+		DomainURL:     helpers.StrPtr("coolvibes.io"),
+		WebhookURL:    helpers.StrPtr("https://coolvibes.io/webhook"),
+		WebhookSecret: helpers.StrPtr("randompassword"),
+	}
+
+	domainReg, err := coreApplication.CORE.Router.DomainService.Create(createDomainParams)
+	if err != nil {
+		fmt.Println("Error", err)
+	}
+
+	if domainReg != nil {
+		fmt.Println("DomainInfo ", domainReg.ID, domainReg.MerchantID, domainReg.HDAccountID)
+	}
 
 	return
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())

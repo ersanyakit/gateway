@@ -18,7 +18,7 @@ type Domain struct {
 	APIKey    string `gorm:"size:128;uniqueIndex;not null"`
 	APISecret string `gorm:"size:256;not null" json:"-"`
 
-	HDAccountID uint32 `gorm:"not null;uniqueIndex;default:nextval('merchant_hd_account_seq')"`
+	HDAccountID uint32 `gorm:"not null;uniqueIndex"`
 
 	WebhookURL    string `gorm:"size:500"`
 	WebhookSecret string `gorm:"size:256" json:"-"`

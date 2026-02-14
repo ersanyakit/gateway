@@ -114,13 +114,13 @@ func ExtractKeyID(apiKey string) (string, error) {
 }
 
 func EncryptSecret(secret string) (string, error) {
-
 	masterKey := os.Getenv("MASTER_KEY")
 	if masterKey == "" {
 		return "", errors.New("MASTER_KEY not set")
 	}
 
-	key := []byte(masterKey)
+	hash := sha256.Sum256([]byte(masterKey))
+	key := hash[:]
 
 	block, err := aes.NewCipher(key)
 	if err != nil {

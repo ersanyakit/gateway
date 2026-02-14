@@ -29,6 +29,7 @@ const (
 
 	CMD_MERCHANT_DOMAIN_CREATE CommandType = "merchant.domain.create"
 	CMD_MERCHANT_DOMAIN_FETCH  CommandType = "merchant.domain.fetch"
+
 	CMD_MERCHANT_WALLET_CREATE CommandType = "merchant.wallet.create"
 
 	CMD_DEPOSIT  CommandType = "system.deposit"

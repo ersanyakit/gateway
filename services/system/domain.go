@@ -21,3 +21,15 @@ func (s *DomainService) ServiceName() string {
 func (s *DomainService) Create(params types.DomainParams) (*models.Domain, error) {
 	return s.domainRepo.Create(params)
 }
+
+func (s *DomainService) FindByID(params types.DomainParams) (*models.Domain, error) {
+	return s.domainRepo.FindByID(params)
+}
+
+func (s *DomainService) FindByAPIKey(params types.DomainParams) (*models.Domain, error) {
+	return s.domainRepo.FindByAPIKey(params)
+}
+
+func (s *DomainService) FindBySecret(params types.DomainParams) (*models.Domain, error) {
+	return s.domainRepo.FindByAPIKey(params)
+}

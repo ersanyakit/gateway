@@ -1,10 +1,13 @@
 package repositories
 
 import (
+	"context"
 	"core/models"
 	"core/types"
+	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -24,18 +27,32 @@ func NewWalletRepo(merchantRepo *MerchantRepo) *WalletRepo {
 	return &WalletRepo{merchantRepo: merchantRepo}
 }
 
-func (r *WalletRepo) GetNextWalletHDIndex() (uint32, error) {
-	var nextVal int64
-	err := r.DB().Raw("SELECT nextval('wallet_hd_address_seq')").Scan(&nextVal).Error
+func (r *WalletRepo) GetNextHDIndex(ctx context.Context, merchantID, domainID uuid.UUID) (uint32, error) {
+	var maxIndex uint32
+	err := r.DB().WithContext(ctx).
+		Model(&models.Wallet{}).
+		Where("merchant_id = ? AND domain_id = ?", merchantID, domainID).
+		Select("COALESCE(MAX(hd_address_index), 0)").
+		Scan(&maxIndex).Error
 	if err != nil {
 		return 0, err
 	}
-	return uint32(nextVal), nil
+	return maxIndex + 1, nil
 }
 
 func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 
-	nextIndex, err := r.GetNextWalletHDIndex()
+	domainId, err := uuid.Parse(*params.DomainId)
+	if err != nil {
+		return nil, errors.New("invalid domain id")
+	}
+
+	merchantId, err := uuid.Parse(*params.MerchantId)
+	if err != nil {
+		return nil, errors.New("invalid merchant id")
+	}
+
+	nextIndex, err := r.GetNextHDIndex(params.Context, merchantId, domainId)
 	if err != nil {
 		return nil, err
 	}
