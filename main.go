@@ -4,6 +4,7 @@ import (
 	"context"
 	"core/api/routes"
 	"core/helpers"
+	"core/models"
 	"core/types"
 	"core/workers/dispatcher"
 	"flag"
@@ -15,7 +16,7 @@ import (
 
 	coreApplication "core/application"
 	coreDB "core/services/database"
-	ethereumWorker "core/workers/listeners/ethereum"
+	"core/workers/listeners/ethereum"
 
 	"github.com/joho/godotenv"
 )
@@ -154,13 +155,22 @@ func main() {
 	}
 
 	bus := dispatcher.NewDispatcher()
-	ethChan := bus.Subscribe("ETH", 100)
 
 	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
 
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 
-	ethWorker := ethereumWorker.NewRpcListener(ethChain, assetRegistry)
+	state, _ := coreApplication.CORE.Router.ChainStateRepo.Get(context.Background(), ethChain.ChainID())
+
+	ethWorker := ethereum.NewRpcListener(
+		ethChain,
+		assetRegistry,
+		state,
+		func(s *models.ChainState) error {
+			return coreApplication.CORE.Router.ChainStateRepo.Update(context.Background(), s)
+		},
+	)
+
 	ethChain.AddWorker(ethWorker)
 
 	ethChain.StartWorkers(mainCtx)
@@ -168,8 +178,8 @@ func main() {
 	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	go func() {
-		for event := range ethChan {
-			fmt.Println("CODE OR DIE", event.Type, event.Chain)
+		for event := range ethWorker.Events() {
+			fmt.Println("CODE OR DIE", event)
 		}
 	}()
 

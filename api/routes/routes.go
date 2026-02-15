@@ -33,6 +33,8 @@ type Router struct {
 	MerchantRepo    *repositories.MerchantRepo
 	DomainRepo      *repositories.DomainRepo
 	WalletRepo      *repositories.WalletRepo
+	ChainStateRepo  *repositories.ChainStateRepo
+	TransactionRepo *repositories.TransactionRepo
 	MerchantService *services.MerchantService
 	WalletService   *services.WalletService
 	DomainService   *services.DomainService
@@ -57,6 +59,8 @@ func NewRouter(db *gorm.DB) *Router {
 		AllowHeaders:     "Accept,Authorization,authorization,Content-Type,Content-Length,X-CSRF-Token,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With",
 	}))
 
+	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
+	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
 	r.MerchantService = services.NewMerchantService(r.MerchantRepo)
 

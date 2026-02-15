@@ -34,6 +34,7 @@ type Chain interface {
 	ChainID() constants.ChainID
 	Name() string
 	WSS() []string
+	RPCs() []string
 	Create(ctx context.Context) (*WalletDetails, error)
 	CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*WalletDetails, error)
 

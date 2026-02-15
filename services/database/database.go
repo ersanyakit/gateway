@@ -78,26 +78,6 @@ func InitDB() error {
 	return nil
 }
 
-func CreateSquence(db *gorm.DB) error {
-
-	if err := db.Exec(`
-		CREATE SEQUENCE IF NOT EXISTS domain_hd_account_seq
-		START 1
-		MAXVALUE 2147483647;
-	`).Error; err != nil {
-		return err
-	}
-
-	if err := db.Exec(`
-		CREATE SEQUENCE IF NOT EXISTS wallet_hd_address_seq
-		START 1
-		MAXVALUE 2147483647;
-	`).Error; err != nil {
-		return err
-	}
-	return nil
-}
-
 func Migrate(app *application.App) error {
 
 	fmt.Println("EnableExtensions:Begin")
@@ -111,17 +91,11 @@ func Migrate(app *application.App) error {
 	}
 	fmt.Println("EnableExtensions:End")
 
-	fmt.Println("CreateSquence:Begin")
-
-	if err := CreateSquence(app.DB); err != nil {
-		return err
-	}
-	fmt.Println("CreateSquence:End")
-
 	fmt.Println("Migration:Begin")
 
 	err := app.DB.AutoMigrate(
 
+		&models.ChainState{},
 		&models.Domain{},
 		&models.Merchant{},
 		&models.Transaction{},

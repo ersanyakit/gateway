@@ -23,8 +23,8 @@ func NewEthereumChain() *EthereumChain {
 			ID:          constants.Ethereum,
 			ChainName:   "ethereum",
 			ExplorerURL: "https://etherscan.io",
-			RPCHttp:     []string{"https://ethereum-rpc.publicnode.com", "https://1rpc.io/eth", "https://1rpc.io/eth"},
-			WebSockets:  []string{"wss://ethereum-rpc.publicnode.com", "wss://1rpc.io/eth", "wss://1rpc.io/eth"},
+			RPCHttp:     []string{"https://mainnet.infura.io/v3/ac1242cf6a134cc3a77530953a7b65d5", "https://ethereum-rpc.publicnode.com", "https://1rpc.io/eth", "https://1rpc.io/eth"},
+			WebSockets:  []string{"wss://mainnet.infura.io/ws/v3/ac1242cf6a134cc3a77530953a7b65d5", "wss://ethereum-rpc.publicnode.com"},
 		}}
 }
 
