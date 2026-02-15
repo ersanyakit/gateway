@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,11 +21,20 @@ type TronChain struct {
 func NewTronChain() *TronChain {
 	return &TronChain{
 		blockchain.BaseChain{
+			ID:          constants.TRON,
 			ChainName:   "tron",
 			ExplorerURL: "https://tronscan.org/",
 			RPCHttp:     []string{"https://api.trongrid.io/jsonrpc", "https://rpc.ankr.com/tron_jsonrpc"},
 		},
 	}
+}
+
+func (e *TronChain) Name() string {
+	return e.ChainName
+}
+
+func (e *TronChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (t *TronChain) NewAddress(privateKeyHex string) (string, error) {

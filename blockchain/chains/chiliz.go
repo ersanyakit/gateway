@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ type ChilizChain struct {
 func NewChilizChain() *ChilizChain {
 	return &ChilizChain{
 		blockchain.BaseChain{
+			ID:          constants.Chiliz,
 			ChainName:   "chiliz",
 			ExplorerURL: "https://chiliscan.io",
 			RPCHttp:     []string{"https://rpc.chiliz.com"},
@@ -28,6 +30,10 @@ func NewChilizChain() *ChilizChain {
 
 func (e *ChilizChain) Name() string {
 	return e.ChainName
+}
+
+func (e *ChilizChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (e *ChilizChain) RPCs() []string {

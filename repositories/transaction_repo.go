@@ -1,6 +1,10 @@
 package repositories
 
-import "gorm.io/gorm"
+import (
+	"core/types"
+
+	"gorm.io/gorm"
+)
 
 type TransactionRepo struct {
 	db *gorm.DB
@@ -14,6 +18,6 @@ func NewTransactionRepo(db *gorm.DB) *TransactionRepo {
 	return &TransactionRepo{db: db}
 }
 
-func (r *TransactionRepo) Create() error {
+func (r *TransactionRepo) Create(params types.TransactionParam) error {
 	return nil
 }

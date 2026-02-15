@@ -2,6 +2,7 @@ package blockchain
 
 import (
 	"context"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ type Worker interface {
 }
 
 type Chain interface {
+	ChainID() constants.ChainID
 	Name() string
 	WSS() []string
 	Create(ctx context.Context) (*WalletDetails, error)
@@ -48,6 +50,7 @@ type Chain interface {
 }
 
 type BaseChain struct {
+	ID          constants.ChainID
 	ChainName   string
 	ExplorerURL string
 	RPCHttp     []string
@@ -61,6 +64,10 @@ type BaseChain struct {
 
 func (b *BaseChain) Name() string {
 	return b.ChainName
+}
+
+func (b *BaseChain) ChainID() constants.ChainID {
+	return b.ID
 }
 
 func (b *BaseChain) RPCs() []string {

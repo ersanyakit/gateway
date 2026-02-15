@@ -158,7 +158,9 @@ func main() {
 
 	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
 
-	ethWorker := ethereumWorker.NewRpcListener(ethChain.WSS()[0])
+	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
+
+	ethWorker := ethereumWorker.NewRpcListener(ethChain, assetRegistry)
 	ethChain.AddWorker(ethWorker)
 
 	ethChain.StartWorkers(mainCtx)

@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha512"
@@ -39,8 +40,21 @@ type SolanaChain struct {
 
 func NewSolanaChain() *SolanaChain {
 	return &SolanaChain{
-		blockchain.BaseChain{ChainName: "solana"},
+
+		blockchain.BaseChain{
+			ID:          constants.Solana,
+			ChainName:   "solana",
+			ExplorerURL: "https://explorer.solana.com/",
+		},
 	}
+}
+
+func (e *SolanaChain) Name() string {
+	return e.ChainName
+}
+
+func (e *SolanaChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (s *SolanaChain) NewAddress(privateKeyHex string) (string, error) {

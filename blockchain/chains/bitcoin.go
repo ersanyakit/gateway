@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -30,11 +31,20 @@ type BitcoinChain struct {
 func NewBitcoinChain() *BitcoinChain {
 	return &BitcoinChain{
 		BaseChain: blockchain.BaseChain{
+			ID:          constants.Bitcoin,
 			ChainName:   "bitcoin",
 			ExplorerURL: "https://www.blockchain.com/explorer",
 		},
 		Params: &chaincfg.MainNetParams,
 	}
+}
+
+func (e *BitcoinChain) Name() string {
+	return e.ChainName
+}
+
+func (e *BitcoinChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (b *BitcoinChain) NewAddressLegacy(prvHex string) (string, error) {

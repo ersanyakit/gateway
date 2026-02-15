@@ -1,26 +1,41 @@
 package ethereum
 
 import (
+	"core/asset"
+	"core/blockchain"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gorilla/websocket"
 )
 
+// ERC20 Transfer Event Topic (keccak256("Transfer(address,address,uint256)"))
+
+var TransferEventHash = crypto.Keccak256Hash(
+	[]byte("Transfer(address,address,uint256)"),
+).Hex()
+
 type RpcListener struct {
-	wsURL   string
+	chain    blockchain.Chain
+	registry *asset.Registry
+
 	conn    *websocket.Conn
 	events  chan interface{}
 	quit    chan struct{}
 	running bool
 }
 
-func NewRpcListener(wsURL string) *RpcListener {
+func NewRpcListener(chain blockchain.Chain, registry *asset.Registry) *RpcListener {
 	return &RpcListener{
-		wsURL:  wsURL,
-		events: make(chan interface{}, 100),
-		quit:   make(chan struct{}),
+		chain:    chain,
+		registry: registry,
+		events:   make(chan interface{}, 100),
+		quit:     make(chan struct{}),
 	}
 }
 
@@ -29,7 +44,7 @@ func (r *RpcListener) Start() error {
 		return fmt.Errorf("listener already running")
 	}
 
-	c, _, err := websocket.DefaultDialer.Dial(r.wsURL, nil)
+	c, _, err := websocket.DefaultDialer.Dial(r.chain.WSS()[0], nil)
 	if err != nil {
 		return err
 	}
@@ -37,13 +52,22 @@ func (r *RpcListener) Start() error {
 	r.conn = c
 	r.running = true
 
-	subscribeMsg := `{
+	subscribeHeads := `{
 		"id": 1,
 		"method": "eth_subscribe",
 		"params": ["newHeads"]
 	}`
+	if err := r.conn.WriteMessage(websocket.TextMessage, []byte(subscribeHeads)); err != nil {
+		return err
+	}
 
-	if err := r.conn.WriteMessage(websocket.TextMessage, []byte(subscribeMsg)); err != nil {
+	subscribeLogs := fmt.Sprintf(`{
+	"id": 2,
+	"method": "eth_subscribe",
+	"params": ["logs", {"topics": ["%s"]}]
+}`, TransferEventHash)
+
+	if err := r.conn.WriteMessage(websocket.TextMessage, []byte(subscribeLogs)); err != nil {
 		return err
 	}
 
@@ -52,23 +76,34 @@ func (r *RpcListener) Start() error {
 	return nil
 }
 
-type SubscriptionResponse struct {
-	Method string `json:"method"`
+type JsonRpcMessage struct {
+	ID     int             `json:"id"`
+	Method string          `json:"method"`
+	Result json.RawMessage `json:"result"` // Doğrudan çağrı cevabı (örn: eth_getBlockByHash)
 	Params struct {
-		Result struct {
-			Hash   string `json:"hash"`
-			Number string `json:"number"`
-		} `json:"result"`
+		Result json.RawMessage `json:"result"` // Abonelik bildirimi (örn: eth_subscription)
 	} `json:"params"`
 }
 
-type BlockResponse struct {
-	ID     int `json:"id"`
-	Result struct {
-		Number       string        `json:"number"`
-		Hash         string        `json:"hash"`
-		Transactions []Transaction `json:"transactions"`
-	} `json:"result"`
+// eth_subscribe("newHeads") Gelen Veri
+type NewHeadResult struct {
+	Hash   string `json:"hash"`
+	Number string `json:"number"`
+}
+
+type LogResult struct {
+	Address         string   `json:"address"`
+	Topics          []string `json:"topics"`
+	Data            string   `json:"data"`
+	TransactionHash string   `json:"transactionHash"`
+	BlockNumber     string   `json:"blockNumber"`
+	Removed         bool     `json:"removed"`
+}
+
+type BlockResult struct {
+	Number       string        `json:"number"`
+	Hash         string        `json:"hash"`
+	Transactions []Transaction `json:"transactions"`
 }
 
 type Transaction struct {
@@ -79,7 +114,11 @@ type Transaction struct {
 	Input string `json:"input"`
 }
 
+// --- Logic ---
+
 func (r *RpcListener) readLoop() {
+	defer r.Stop()
+
 	for {
 		select {
 		case <-r.quit:
@@ -88,106 +127,132 @@ func (r *RpcListener) readLoop() {
 			_, msg, err := r.conn.ReadMessage()
 			if err != nil {
 				log.Println("read error:", err)
-				r.Stop()
 				return
 			}
 
-			var subResp SubscriptionResponse
-			if err := json.Unmarshal(msg, &subResp); err == nil && subResp.Method == "eth_subscription" {
-				blockHash := subResp.Params.Result.Hash
-
-				getBlockMsg := fmt.Sprintf(`{
-					"id": 2,
-					"method": "eth_getBlockByHash",
-					"params": ["%s", true]
-				}`, blockHash)
-
-				r.conn.WriteMessage(websocket.TextMessage, []byte(getBlockMsg))
+			var rpcMsg JsonRpcMessage
+			if err := json.Unmarshal(msg, &rpcMsg); err != nil {
 				continue
 			}
 
-			var blockResp BlockResponse
-			if err := json.Unmarshal(msg, &blockResp); err == nil && blockResp.Result.Hash != "" {
+			// A) Abonelik Bildirimleri (Notification)
+			if rpcMsg.Method == "eth_subscription" {
 
-				fmt.Println("New Block:", blockResp.Result.Number)
-
-				for _, tx := range blockResp.Result.Transactions {
-
-					// ETH transfer kontrol
-					if tx.Value != "0x0" && tx.To != "" {
-						fmt.Println("ETH Transfer")
-						fmt.Println("From:", tx.From)
-						fmt.Println("To:", tx.To)
-						fmt.Println("Value:", tx.Value)
-						fmt.Println("Hash:", tx.Hash)
-					}
-
-					// ERC20 transfer kontrol (input method id)
-					if len(tx.Input) >= 10 && tx.Input[:10] == "0xa9059cbb" {
-						fmt.Println("ERC20 Transfer detected")
-						fmt.Println("Contract:", tx.To)
-						fmt.Println("TxHash:", tx.Hash)
-
-					}
-				}
-
-				continue
-			}
-
-			// Diğer mesajlar
-			r.events <- string(msg)
-		}
-	}
-}
-
-func (r *RpcListener) readLoopWe() {
-	for {
-		select {
-		case <-r.quit:
-			return
-		default:
-			_, msg, err := r.conn.ReadMessage()
-			if err != nil {
-				log.Println("read error:", err)
-				r.Stop()
-				return
-			}
-
-			var subResp SubscriptionResponse
-			if err := json.Unmarshal(msg, &subResp); err == nil && subResp.Method == "eth_subscription" {
-				blockHash := subResp.Params.Result.Hash
-
-				getBlockMsg := fmt.Sprintf(`{
-					"id": 2,
-					"method": "eth_getBlockByHash",
-					"params": ["%s", true]
-				}`, blockHash)
-
-				if err := r.conn.WriteMessage(websocket.TextMessage, []byte(getBlockMsg)); err != nil {
-					log.Println("block request error:", err)
+				// İçeriğin ne olduğunu anlamak için önce Log mu diye bakıyoruz (Topic var mı?)
+				var logCheck LogResult
+				if err := json.Unmarshal(rpcMsg.Params.Result, &logCheck); err == nil && len(logCheck.Topics) > 0 {
+					// >>> ERC20 TRANSFER LOG <<<
+					r.handleERC20Log(logCheck)
 					continue
 				}
-				continue
+
+				// Log değilse Blok Başlığı mı diye bakıyoruz
+				var headCheck NewHeadResult
+				if err := json.Unmarshal(rpcMsg.Params.Result, &headCheck); err == nil && headCheck.Number != "" {
+					// >>> NEW BLOCK HEADER <<<
+					// ETH transactionları için bloğun tamamını istiyoruz
+					r.fetchBlock(headCheck.Hash)
+					continue
+				}
 			}
 
-			r.events <- string(msg)
+			// B) İsteğe Bağlı Cevaplar (Response)
+			// fetchBlock fonksiyonunda ID olarak 100 veriyoruz
+			if rpcMsg.ID == 100 {
+				var blockResp BlockResult
+				if err := json.Unmarshal(rpcMsg.Result, &blockResp); err == nil {
+					r.processBlockTransactions(blockResp)
+				}
+			}
+
+			// Ham mesajı da kanala iletiyoruz (isteğe bağlı)
+			// r.events <- string(msg)
 		}
 	}
 }
 
-func (r *RpcListener) readLoopEx() {
-	for {
-		select {
-		case <-r.quit:
-			return
-		default:
-			_, msg, err := r.conn.ReadMessage()
-			if err != nil {
-				log.Println("read error:", err)
-				r.Stop()
-				return
+// ETH Transferlerini analiz etmek için bloğu çeker
+func (r *RpcListener) fetchBlock(blockHash string) {
+	// full tx objelerini almak için ikinci parametre true olmalı
+	req := fmt.Sprintf(`{
+		"id": 100,
+		"method": "eth_getBlockByHash",
+		"params": ["%s", true]
+	}`, blockHash)
+
+	r.conn.WriteMessage(websocket.TextMessage, []byte(req))
+}
+
+// ERC20 Transferlerini İşler (Internal Dahil)
+func (r *RpcListener) handleERC20Log(l LogResult) {
+	// Transfer eventi imzası kontrolü
+
+	fmt.Println("CODER,ERC20:handleERC20Log", l.TransactionHash)
+	if len(l.Topics) < 3 || l.Topics[0] != TransferEventHash {
+		fmt.Println("RETURNED RETURNED RETURN")
+		return
+	}
+
+	tokenContract := common.HexToAddress(l.Address)
+	fromAddress := common.HexToAddress(l.Topics[1])
+	toAddress := common.HexToAddress(l.Topics[2])
+
+	data := common.FromHex(l.Data)
+	if len(data) != 32 {
+		fmt.Println("INVALID DATA LENGTH:", len(data))
+		return
+	}
+
+	//testUSDT, usdtFound := assetRegistry.Get(ethChain.ChainID(), "0xdAC17F958D2ee523a2206206994597C13D831ec7")
+	//if usdtFound {
+	//		fmt.Println("ERSAN", testUSDT.GetName(), testUSDT.GetSymbol())
+	//}
+
+	value := new(big.Int).SetBytes(data)
+
+	fmt.Printf("🔵 [ERC20] %s -> %s | Amount: %s | Token: %s | Tx: %s\n",
+		fromAddress.Hex(),
+		toAddress.Hex(),
+		value.String(),
+		tokenContract.Hex(),
+		l.TransactionHash,
+	)
+}
+
+// Native ETH Transferlerini İşler
+func (r *RpcListener) processBlockTransactions(block BlockResult) {
+	// Block Number Decode
+	blockNum, _ := hexutil.DecodeBig(block.Number)
+
+	fmt.Printf("Processing Block #%s (%d txs)\n", blockNum.String(), len(block.Transactions))
+
+	for _, tx := range block.Transactions {
+		// Value Decode
+		valBig, err := hexutil.DecodeBig(tx.Value)
+		if err != nil {
+			continue
+		}
+
+		// 0 ETH üzerindeki işlemleri kontrol et
+		if valBig.Sign() > 0 {
+
+			// From ve To adreslerini temizle (Lower case çevir veya checksum yap)
+			from := common.HexToAddress(tx.From)
+			to := common.HexToAddress(tx.To)
+
+			// Basit bir loglama
+			fmt.Printf("🟢 [ETH]   %s -> %s | Amount: %s Wei | Tx: %s\n",
+				from.Hex(),
+				to.Hex(),
+				valBig.String(),
+				tx.Hash,
+			)
+
+			// Eğer input data doluysa (örneğin bir smart contract fonksiyonuna ETH gönderildiyse)
+			if len(tx.Input) > 2 {
+				// Burada method ID kontrolü yapılabilir.
+				// fmt.Println("   -> (Contract Call with ETH Value)")
 			}
-			r.events <- string(msg)
 		}
 	}
 }

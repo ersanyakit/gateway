@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ type EthereumChain struct {
 func NewEthereumChain() *EthereumChain {
 	return &EthereumChain{
 		blockchain.BaseChain{
+			ID:          constants.Ethereum,
 			ChainName:   "ethereum",
 			ExplorerURL: "https://etherscan.io",
 			RPCHttp:     []string{"https://ethereum-rpc.publicnode.com", "https://1rpc.io/eth", "https://1rpc.io/eth"},
@@ -28,6 +30,10 @@ func NewEthereumChain() *EthereumChain {
 
 func (e *EthereumChain) Name() string {
 	return e.ChainName
+}
+
+func (e *EthereumChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (e *EthereumChain) RPCs() []string {

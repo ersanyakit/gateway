@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ type BinanceChain struct {
 func NewBinanceChain() *BinanceChain {
 	return &BinanceChain{
 		blockchain.BaseChain{
+			ID:          constants.Binance,
 			ChainName:   "binance",
 			ExplorerURL: "https://bscscan.com/",
 			RPCHttp:     []string{"https://bsc-dataseed.bnbchain.org", "https://bsc-dataseed1.bnbchain.org", "https://bsc-dataseed2.bnbchain.org", "https://bsc-dataseed3.bnbchain.org", "https://bsc-dataseed4.bnbchain.org"},
@@ -28,6 +30,10 @@ func NewBinanceChain() *BinanceChain {
 
 func (e *BinanceChain) Name() string {
 	return e.ChainName
+}
+
+func (e *BinanceChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (e *BinanceChain) RPCs() []string {

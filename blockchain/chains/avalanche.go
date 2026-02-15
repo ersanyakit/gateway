@@ -3,6 +3,7 @@ package chains
 import (
 	"context"
 	blockchain "core/blockchain"
+	"core/constants"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ type AvalancheChain struct {
 func NewAvalancheChain() *AvalancheChain {
 	return &AvalancheChain{
 		blockchain.BaseChain{
+			ID:          constants.Avalanche,
 			ChainName:   "avalanche",
 			ExplorerURL: "https://snowscan.xyz/",
 			RPCHttp:     []string{"https://api.avax.network/ext/bc/C/rpc"},
@@ -28,6 +30,10 @@ func NewAvalancheChain() *AvalancheChain {
 
 func (e *AvalancheChain) Name() string {
 	return e.ChainName
+}
+
+func (e *AvalancheChain) ChainID() constants.ChainID {
+	return e.ID
 }
 
 func (e *AvalancheChain) RPCs() []string {
