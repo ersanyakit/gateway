@@ -115,7 +115,7 @@ func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
 	return mnemonic, err
 }
 
-func (f *BaseChain) GenerateMnemonic() (string, error) {
+func (f *BaseChain) GetMnemonic() (string, error) {
 	mnemonic := os.Getenv("MNEMONIC_PHRASE")
 	if !bip39.IsMnemonicValid(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")

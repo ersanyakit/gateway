@@ -65,15 +65,15 @@ func (s *BinanceChain) ValidateAddress(address string) bool {
 	return ethSDK.ValidateAddress(address)
 }
 
-func (s *BinanceChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+func (s *BinanceChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 60, 0, hdAccountId, hdWalletId)
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, 0, 0, 1)
 	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -95,15 +95,15 @@ func (s *BinanceChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWallet
 	}, nil
 }
 
-func (s *BinanceChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
+func (s *BinanceChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 60, 0, 0, 1)
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, int(s.ChainID()), hdAccountId, hdWalletId)
 	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -117,6 +117,7 @@ func (s *BinanceChain) Create(ctx context.Context) (*blockchain.WalletDetails, e
 		return nil, errors.New("invalid ethereum address format")
 
 	}
+	fmt.Printf("WALLET:%s --- %s \n", s.BaseChain.Name(), address)
 
 	return &blockchain.WalletDetails{
 		Address:        address,

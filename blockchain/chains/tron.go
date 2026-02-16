@@ -59,7 +59,7 @@ func (s *TronChain) ValidateAddress(address string) bool {
 func (s *TronChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
 	}
@@ -87,9 +87,9 @@ func (s *TronChain) Create(ctx context.Context) (*blockchain.WalletDetails, erro
 }
 
 func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
+	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
 	}

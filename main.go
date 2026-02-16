@@ -146,36 +146,28 @@ func main() {
 	}
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
-	wallets, errs := coreApplication.CORE.Router.Blockchains().CreateWallets(mainCtx)
-	for chainName, wallet := range wallets {
-		fmt.Printf("Wallet created on %s: %s\n", chainName, wallet.Address)
-	}
-	for chainName, err := range errs {
-		fmt.Printf("Failed to create wallet on %s: %v\n", chainName, err)
-	}
-
 	bus := dispatcher.NewDispatcher()
 
 	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
 
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 
-	state, _ := coreApplication.CORE.Router.ChainStateRepo.Get(context.Background(), ethChain.ChainID())
+	state, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
 
 	ethWorker := ethereum.NewRpcListener(
 		ethChain,
 		assetRegistry,
 		state,
 		func(s *models.ChainState) error {
-			return coreApplication.CORE.Router.ChainStateRepo.Update(context.Background(), s)
+			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
 		},
 	)
 
 	ethChain.AddWorker(ethWorker)
 
-	ethChain.StartWorkers(mainCtx)
+	//ethChain.StartWorkers(mainCtx)
 
-	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
+	//coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	go func() {
 		for event := range ethWorker.Events() {

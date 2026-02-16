@@ -75,7 +75,7 @@ func (s *SolanaChain) ValidateAddress(address string) bool {
 func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +97,9 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 }
 
 func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
+	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
 
-	mnemonic, err := s.BaseChain.GenerateMnemonic()
+	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
 	}

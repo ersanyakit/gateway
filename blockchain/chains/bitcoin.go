@@ -112,7 +112,7 @@ func (b *BitcoinChain) ValidateAddress(address string) bool {
 func (b *BitcoinChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", b.Name())
 
-	mnemonic, err := b.BaseChain.GenerateMnemonic()
+	mnemonic, err := b.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (b *BitcoinChain) Create(ctx context.Context) (*blockchain.WalletDetails, e
 func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
 	fmt.Printf("[%s]: Creating wallet\n", b.Name())
 
-	mnemonic, err := b.BaseChain.GenerateMnemonic()
+	mnemonic, err := b.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
 	}
