@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"core/api/routes"
+	"core/constants"
 	"core/helpers"
 	"core/models"
 	"core/types"
@@ -147,10 +148,9 @@ func main() {
 	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
 	bus := dispatcher.NewDispatcher()
+	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 
 	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
-
-	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 
 	state, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
 
@@ -158,6 +158,7 @@ func main() {
 		ethChain,
 		assetRegistry,
 		state,
+		bus,
 		func(s *models.ChainState) error {
 			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
 		},
@@ -167,11 +168,24 @@ func main() {
 
 	//ethChain.StartWorkers(mainCtx)
 
-	//coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
+	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
+
+	ethChan := bus.Subscribe(constants.Ethereum, 100)
 
 	go func() {
-		for event := range ethWorker.Events() {
-			fmt.Println("CODE OR DIE", event)
+		for event := range ethChan {
+			fmt.Println("EVENT GELDI:", event.Type)
+
+			switch event.Type {
+
+			case "transfer":
+				transaction := event.Transaction
+				err := coreApplication.CORE.Router.TransactionRepo.Create(*transaction)
+				if err != nil {
+					fmt.Println("Error", err)
+				}
+
+			}
 		}
 	}()
 

@@ -1,9 +1,13 @@
 package ethereum
 
 import (
+	"context"
 	"core/asset"
 	"core/blockchain"
+	"core/helpers"
 	"core/models"
+	"core/types"
+	"core/workers/dispatcher"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -26,6 +30,8 @@ type RpcListener struct {
 	chainState  *models.ChainState
 	stateWriter func(*models.ChainState) error
 
+	bus *dispatcher.Dispatcher
+
 	conn      *websocket.Conn
 	mu        sync.Mutex
 	callbacks map[int]func(json.RawMessage)
@@ -35,11 +41,16 @@ type RpcListener struct {
 	events    chan interface{}
 }
 
-func NewRpcListener(chain blockchain.Chain, registry *asset.Registry, state *models.ChainState, stateWriter func(*models.ChainState) error) *RpcListener {
+func NewRpcListener(chain blockchain.Chain,
+	registry *asset.Registry,
+	state *models.ChainState,
+	bus *dispatcher.Dispatcher,
+	stateWriter func(*models.ChainState) error) *RpcListener {
 	return &RpcListener{
 		chain:       chain,
 		registry:    registry,
 		chainState:  state,
+		bus:         bus,
 		stateWriter: stateWriter,
 		callbacks:   make(map[int]func(json.RawMessage)),
 		quit:        make(chan struct{}),
@@ -130,7 +141,6 @@ func (r *RpcListener) readLoop() {
 				if err := json.Unmarshal(rpcMsg.Params.Result, &logEntry); err == nil {
 					r.handleERC20Log(logEntry)
 				}
-				fmt.Println("logEntry", logEntry.TransactionIndex, logEntry.LogIndex)
 			}
 
 			r.mu.Lock()
@@ -159,24 +169,50 @@ func (r *RpcListener) handleERC20Log(l ERC20Log) {
 		}
 	}
 
+	blockNumber := l.BlockNumber
+	if strings.HasPrefix(l.BlockNumber, "0x") {
+		n, ok := new(big.Int).SetString(l.BlockNumber[2:], 16)
+		if ok {
+			blockNumber = n.String()
+		}
+	}
+
+	logIndex := l.LogIndex
+	if strings.HasPrefix(l.LogIndex, "0x") {
+		n, ok := new(big.Int).SetString(l.LogIndex[2:], 16)
+		if ok {
+			logIndex = n.String()
+		}
+	}
 	isRegistered := false
+	var assetInfo asset.Asset
 	if r.registry != nil {
-		_, isRegistered = r.registry.Get(r.chain.ChainID(), strings.ToLower(token.Hex()))
+		assetInfo, isRegistered = r.registry.Get(r.chain.ChainID(), strings.ToLower(token.Hex()))
 	}
 
-	r.events <- map[string]interface{}{
-		"chain": r.chain.ChainID(),
-		"type":  "erc20",
-		"from":  from.Hex(),
-		"to":    to.Hex(),
-		"token": token.Hex(),
-		"value": value.String(),
-		"tx":    l.TransactionHash,
-		"block": l.BlockNumber,
-	}
+	if isRegistered {
 
-	fmt.Printf("🔵 [ERC20] %s -> %s | Amount: %s | Token: %s | Registered: %v | Tx: %s | Block: %s\n",
-		from.Hex(), to.Hex(), value.String(), token.Hex(), isRegistered, l.TransactionHash, l.BlockNumber)
+		txParam := &types.TransactionParam{
+			Context:  context.Background(),
+			ChainID:  r.chain.ChainID(),
+			Symbol:   helpers.StrPtr(assetInfo.GetSymbol()),
+			Hash:     &l.TransactionHash,
+			Block:    helpers.StrPtr(blockNumber),
+			Token:    helpers.StrPtr(token.Hex()),
+			From:     helpers.StrPtr(from.Hex()),
+			To:       helpers.StrPtr(to.Hex()),
+			Amount:   helpers.StrPtr(value.String()),
+			LogIndex: helpers.StrPtr(logIndex),
+			Status:   helpers.StrPtr("pending"),
+		}
+
+		r.bus.Dispatch(dispatcher.Event{
+			Chain:       r.chain.ChainID(),
+			Type:        "transfer",
+			Transaction: txParam,
+		})
+
+	}
 }
 
 func (r *RpcListener) Events() <-chan interface{} {

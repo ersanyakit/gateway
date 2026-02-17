@@ -2,17 +2,19 @@ package dispatcher
 
 import (
 	"context"
+	"core/constants"
+	"core/types"
 	"sync"
 )
 
 type Event struct {
-	Chain   string
-	Type    string
-	Payload interface{}
+	Chain       constants.ChainID
+	Type        string
+	Transaction *types.TransactionParam
 }
 
 type Dispatcher struct {
-	subscribers map[string][]chan Event
+	subscribers map[constants.ChainID][]chan Event
 	mu          sync.RWMutex
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -23,13 +25,13 @@ func NewDispatcher() *Dispatcher {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Dispatcher{
-		subscribers: make(map[string][]chan Event),
+		subscribers: make(map[constants.ChainID][]chan Event),
 		ctx:         ctx,
 		cancel:      cancel,
 	}
 }
 
-func (d *Dispatcher) Subscribe(chain string, buffer int) <-chan Event {
+func (d *Dispatcher) Subscribe(chain constants.ChainID, buffer int) <-chan Event {
 	ch := make(chan Event, buffer)
 
 	d.mu.Lock()
@@ -39,7 +41,7 @@ func (d *Dispatcher) Subscribe(chain string, buffer int) <-chan Event {
 	return ch
 }
 
-func (d *Dispatcher) Unsubscribe(chain string, subChan <-chan Event) {
+func (d *Dispatcher) Unsubscribe(chain constants.ChainID, subChan <-chan Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
