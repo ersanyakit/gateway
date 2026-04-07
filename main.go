@@ -18,6 +18,7 @@ import (
 	coreApplication "core/application"
 	coreDB "core/services/database"
 	"core/workers/listeners/ethereum"
+	"core/workers/listeners/tron"
 
 	"github.com/joho/godotenv"
 )
@@ -151,13 +152,56 @@ func main() {
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 
 	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
+	tronChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("tron")
+	chilizChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("chiliz")
+	binanceChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("binance")
+	avaxChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("avalanche")
 
-	state, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
+	ctx := context.Background()
+	/*
+			addresses, err := helpers.LoadAddressesFromDir("/Users/ersanyakit/Downloads/clo")
+			if err != nil {
+				panic(err)
+			}
+
+
+		addresses, err := helpers.LoadAddressesFromJSON("/Users/ersanyakit/Documents/gateway/dummy.json")
+		if err != nil {
+			panic(err)
+		}
+	*/
+	addresses, err := helpers.LoadAddressesFromPrivateKeyList("/Users/ersanyakit/Documents/gateway/dummy_pkey.json")
+	if err != nil {
+		panic(err)
+	}
+	results := ethChain.BatchBalances(ctx, addresses, 10)
+
+	for _, r := range results {
+		fmt.Println("Balances", r.Address, r.Balance, r.Error)
+	}
+
+	return
+
+	bscState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, binanceChain.ChainID())
+	fmt.Println("bsc", bscState.ChainID, avaxChain.ChainID())
+	ethState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chilizChain.ChainID())
+	tronState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, tronChain.ChainID())
+	coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
 
 	ethWorker := ethereum.NewRpcListener(
 		ethChain,
 		assetRegistry,
-		state,
+		ethState,
+		bus,
+		func(s *models.ChainState) error {
+			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+		},
+	)
+
+	tronWorker := tron.NewRpcListener(
+		ethChain,
+		assetRegistry,
+		tronState,
 		bus,
 		func(s *models.ChainState) error {
 			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
@@ -165,21 +209,37 @@ func main() {
 	)
 
 	ethChain.AddWorker(ethWorker)
-
+	tronChain.AddWorker(tronWorker)
 	//ethChain.StartWorkers(mainCtx)
 
 	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
 
 	ethChan := bus.Subscribe(constants.Ethereum, 100)
+	tronChan := bus.Subscribe(constants.TRON, 100)
 
 	go func() {
-		for event := range ethChan {
-			fmt.Println("EVENT GELDI:", event.Type)
-
+		for event := range tronChan {
 			switch event.Type {
 
 			case "transfer":
 				transaction := event.Transaction
+				fmt.Printf("[TX] : %d \t %s \n", event.Transaction.ChainID, *event.Transaction.Hash)
+
+				err := coreApplication.CORE.Router.TransactionRepo.Create(*transaction)
+				if err != nil {
+					fmt.Println("Error", err)
+				}
+
+			}
+		}
+
+		for event := range ethChan {
+			switch event.Type {
+
+			case "transfer":
+				transaction := event.Transaction
+				//fmt.Printf("[TX] : %d \t %s \n", event.Transaction.ChainID, *event.Transaction.Hash)
+
 				err := coreApplication.CORE.Router.TransactionRepo.Create(*transaction)
 				if err != nil {
 					fmt.Println("Error", err)

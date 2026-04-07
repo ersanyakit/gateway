@@ -17,8 +17,9 @@ type Transaction struct {
 	BlockNumber string  `gorm:"not null;index" json:"block_number"`
 	BlockHash   string  `gorm:"type:varchar(66);index" json:"block_hash"`
 
-	Token  *string `gorm:"type:varchar(42);index" json:"asset_address,omitempty"`
-	Symbol string  `gorm:"type:varchar(20);not null" json:"symbol"`
+	Token    *string `gorm:"type:varchar(42);index" json:"asset_address,omitempty"`
+	Symbol   string  `gorm:"type:varchar(20);not null" json:"symbol"`
+	Decimals uint8   `json:"decimals,omitempty"`
 
 	FromAddress string `gorm:"type:varchar(42);not null;index" json:"from_address"`
 	ToAddress   string `gorm:"type:varchar(42);not null;index" json:"to_address"`

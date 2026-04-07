@@ -29,11 +29,12 @@ type RpcListener struct {
 	registry    *asset.Registry
 	chainState  *models.ChainState
 	stateWriter func(*models.ChainState) error
+	bus         *dispatcher.Dispatcher
 
-	bus *dispatcher.Dispatcher
+	conn *websocket.Conn
 
-	conn      *websocket.Conn
 	mu        sync.Mutex
+	writeMu   sync.Mutex
 	callbacks map[int]func(json.RawMessage)
 	nextID    int
 	quit      chan struct{}
@@ -41,11 +42,13 @@ type RpcListener struct {
 	events    chan interface{}
 }
 
-func NewRpcListener(chain blockchain.Chain,
+func NewRpcListener(
+	chain blockchain.Chain,
 	registry *asset.Registry,
 	state *models.ChainState,
 	bus *dispatcher.Dispatcher,
-	stateWriter func(*models.ChainState) error) *RpcListener {
+	stateWriter func(*models.ChainState) error,
+) *RpcListener {
 	return &RpcListener{
 		chain:       chain,
 		registry:    registry,
@@ -68,9 +71,28 @@ func (r *RpcListener) Start() error {
 	}
 
 	r.running = true
+
 	go r.readLoop()
 	go r.subscribeTransfers()
+	go r.subscribeNewHeads()
 
+	return nil
+}
+
+func (r *RpcListener) Stop() error {
+	if !r.running {
+		return fmt.Errorf("listener not running")
+	}
+
+	close(r.quit)
+	r.running = false
+
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+
+	if r.conn != nil {
+		return r.conn.Close()
+	}
 	return nil
 }
 
@@ -83,6 +105,22 @@ func (r *RpcListener) connect() error {
 	return nil
 }
 
+func (r *RpcListener) writeJSON(v interface{}) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+
+	if r.conn == nil {
+		return fmt.Errorf("ws not connected")
+	}
+
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	return r.conn.WriteMessage(websocket.TextMessage, b)
+}
+
 type JsonRpcMessage struct {
 	ID     int             `json:"id"`
 	Method string          `json:"method"`
@@ -93,13 +131,29 @@ type JsonRpcMessage struct {
 }
 
 type ERC20Log struct {
-	Address          string   `json:"address"`
-	Topics           []string `json:"topics"`
-	Data             string   `json:"data"`
-	TransactionHash  string   `json:"transactionHash"`
-	BlockNumber      string   `json:"blockNumber"`
-	LogIndex         string   `json:"logIndex"`         // yeni
-	TransactionIndex string   `json:"transactionIndex"` // isteğe bağlı
+	Address         string   `json:"address"`
+	Topics          []string `json:"topics"`
+	Data            string   `json:"data"`
+	TransactionHash string   `json:"transactionHash"`
+	BlockNumber     string   `json:"blockNumber"`
+	LogIndex        string   `json:"logIndex"`
+}
+
+type BlockHeader struct {
+	Number string `json:"number"`
+}
+
+type Block struct {
+	Number       string  `json:"number"`
+	Hash         string  `json:"hash"`
+	Transactions []RawTx `json:"transactions"`
+}
+
+type RawTx struct {
+	Hash  string `json:"hash"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Value string `json:"value"`
 }
 
 func (r *RpcListener) subscribeTransfers() {
@@ -114,8 +168,41 @@ func (r *RpcListener) subscribeTransfers() {
 		"method":  "eth_subscribe",
 		"params":  []interface{}{"logs", map[string]interface{}{"topics": []string{TransferEventHash}}},
 	}
-	b, _ := json.Marshal(req)
-	_ = r.conn.WriteMessage(websocket.TextMessage, b)
+
+	_ = r.writeJSON(req)
+}
+
+func (r *RpcListener) subscribeNewHeads() {
+	r.mu.Lock()
+	id := r.nextID
+	r.nextID++
+	r.mu.Unlock()
+
+	req := map[string]interface{}{
+		"id":      id,
+		"jsonrpc": "2.0",
+		"method":  "eth_subscribe",
+		"params":  []interface{}{"newHeads"},
+	}
+
+	_ = r.writeJSON(req)
+}
+
+func (r *RpcListener) rpcCall(method string, params []interface{}) int {
+	r.mu.Lock()
+	id := r.nextID
+	r.nextID++
+	r.mu.Unlock()
+
+	req := map[string]interface{}{
+		"id":      id,
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	}
+
+	_ = r.writeJSON(req)
+	return id
 }
 
 func (r *RpcListener) readLoop() {
@@ -126,7 +213,7 @@ func (r *RpcListener) readLoop() {
 		default:
 			_, msg, err := r.conn.ReadMessage()
 			if err != nil {
-				log.Println("Read error, reconnecting:", err)
+				log.Println("read error, reconnecting:", err)
 				r.reconnect()
 				continue
 			}
@@ -137,9 +224,20 @@ func (r *RpcListener) readLoop() {
 			}
 
 			if rpcMsg.Method == "eth_subscription" {
+				if len(rpcMsg.Params.Result) == 0 {
+					continue
+				}
+
 				var logEntry ERC20Log
-				if err := json.Unmarshal(rpcMsg.Params.Result, &logEntry); err == nil {
+				if err := json.Unmarshal(rpcMsg.Params.Result, &logEntry); err == nil && logEntry.Address != "" {
 					r.handleERC20Log(logEntry)
+					continue
+				}
+
+				var header BlockHeader
+				if err := json.Unmarshal(rpcMsg.Params.Result, &header); err == nil && header.Number != "" {
+					go r.handleNewBlock(header.Number)
+					continue
 				}
 			}
 
@@ -151,6 +249,61 @@ func (r *RpcListener) readLoop() {
 			r.mu.Unlock()
 		}
 	}
+}
+
+func (r *RpcListener) handleNewBlock(blockHex string) {
+	reqID := r.rpcCall("eth_getBlockByNumber", []interface{}{blockHex, true})
+
+	r.mu.Lock()
+	r.callbacks[reqID] = func(result json.RawMessage) {
+		var block Block
+		if err := json.Unmarshal(result, &block); err != nil {
+			return
+		}
+
+		blockNumber := hexToDec(block.Number)
+
+		nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
+		if !ok {
+			return
+		}
+
+		for idx, tx := range block.Transactions {
+			if tx.Value == "" || tx.Value == "0x0" || tx.To == "" {
+				continue
+			}
+
+			value := big.NewInt(0)
+			if b, err := hexutil.Decode(tx.Value); err == nil {
+				value.SetBytes(b)
+			}
+			if value.Sign() == 0 {
+				continue
+			}
+
+			txParam := &types.TransactionParam{
+				Context:  context.Background(),
+				ChainID:  r.chain.ChainID(),
+				Symbol:   helpers.StrPtr(nativeAsset.GetSymbol()),
+				Decimals: nativeAsset.GetDecimals(),
+				Hash:     helpers.StrPtr(tx.Hash),
+				Block:    helpers.StrPtr(blockNumber),
+				Token:    nil,
+				From:     helpers.StrPtr(strings.ToLower(tx.From)),
+				To:       helpers.StrPtr(strings.ToLower(tx.To)),
+				Amount:   helpers.StrPtr(value.String()),
+				LogIndex: helpers.StrPtr(fmt.Sprintf("%d", idx)),
+				Status:   helpers.StrPtr("pending"),
+			}
+
+			r.bus.Dispatch(dispatcher.Event{
+				Chain:       r.chain.ChainID(),
+				Type:        "transfer",
+				Transaction: txParam,
+			})
+		}
+	}
+	r.mu.Unlock()
 }
 
 func (r *RpcListener) handleERC20Log(l ERC20Log) {
@@ -169,86 +322,75 @@ func (r *RpcListener) handleERC20Log(l ERC20Log) {
 		}
 	}
 
-	blockNumber := l.BlockNumber
-	if strings.HasPrefix(l.BlockNumber, "0x") {
-		n, ok := new(big.Int).SetString(l.BlockNumber[2:], 16)
-		if ok {
-			blockNumber = n.String()
-		}
-	}
+	blockNumber := hexToDec(l.BlockNumber)
+	logIndex := hexToDec(l.LogIndex)
 
-	logIndex := l.LogIndex
-	if strings.HasPrefix(l.LogIndex, "0x") {
-		n, ok := new(big.Int).SetString(l.LogIndex[2:], 16)
-		if ok {
-			logIndex = n.String()
-		}
-	}
 	isRegistered := false
 	var assetInfo asset.Asset
 	if r.registry != nil {
 		assetInfo, isRegistered = r.registry.Get(r.chain.ChainID(), strings.ToLower(token.Hex()))
 	}
 
-	if isRegistered {
-
-		txParam := &types.TransactionParam{
-			Context:  context.Background(),
-			ChainID:  r.chain.ChainID(),
-			Symbol:   helpers.StrPtr(assetInfo.GetSymbol()),
-			Hash:     &l.TransactionHash,
-			Block:    helpers.StrPtr(blockNumber),
-			Token:    helpers.StrPtr(token.Hex()),
-			From:     helpers.StrPtr(from.Hex()),
-			To:       helpers.StrPtr(to.Hex()),
-			Amount:   helpers.StrPtr(value.String()),
-			LogIndex: helpers.StrPtr(logIndex),
-			Status:   helpers.StrPtr("pending"),
-		}
-
-		r.bus.Dispatch(dispatcher.Event{
-			Chain:       r.chain.ChainID(),
-			Type:        "transfer",
-			Transaction: txParam,
-		})
-
+	if !isRegistered {
+		return
 	}
-}
 
-func (r *RpcListener) Events() <-chan interface{} {
-	return r.events
-}
+	txParam := &types.TransactionParam{
+		Context:  context.Background(),
+		ChainID:  r.chain.ChainID(),
+		Symbol:   helpers.StrPtr(assetInfo.GetSymbol()),
+		Decimals: assetInfo.GetDecimals(),
+		Hash:     helpers.StrPtr(l.TransactionHash),
+		Block:    helpers.StrPtr(blockNumber),
+		Token:    helpers.StrPtr(strings.ToLower(token.Hex())),
+		From:     helpers.StrPtr(strings.ToLower(from.Hex())),
+		To:       helpers.StrPtr(strings.ToLower(to.Hex())),
+		Amount:   helpers.StrPtr(value.String()),
+		LogIndex: helpers.StrPtr(logIndex),
+		Status:   helpers.StrPtr("pending"),
+	}
 
-func (r *RpcListener) Stop() error {
-	if !r.running {
-		return fmt.Errorf("listener not running")
-	}
-	close(r.quit)
-	r.running = false
-	if r.conn != nil {
-		return r.conn.Close()
-	}
-	return nil
+	r.bus.Dispatch(dispatcher.Event{
+		Chain:       r.chain.ChainID(),
+		Type:        "transfer",
+		Transaction: txParam,
+	})
 }
 
 func (r *RpcListener) reconnect() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.writeMu.Lock()
 	if r.conn != nil {
 		_ = r.conn.Close()
 	}
+	r.writeMu.Unlock()
+
 	for {
 		select {
 		case <-r.quit:
 			return
 		default:
 			if err := r.connect(); err == nil {
-				log.Println("Reconnected successfully")
+				log.Println("reconnected successfully")
 				go r.subscribeTransfers()
+				go r.subscribeNewHeads()
 				return
 			}
-			log.Println("Reconnect failed, retrying in 3s")
+			log.Println("reconnect failed, retrying in 3s")
 			time.Sleep(3 * time.Second)
 		}
 	}
+}
+
+func hexToDec(hexStr string) string {
+	if strings.HasPrefix(hexStr, "0x") {
+		n, ok := new(big.Int).SetString(hexStr[2:], 16)
+		if ok {
+			return n.String()
+		}
+	}
+	return hexStr
+}
+
+func (r *RpcListener) Events() <-chan interface{} {
+	return r.events
 }

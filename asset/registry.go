@@ -7,13 +7,15 @@ import (
 )
 
 type Registry struct {
-	mu     sync.RWMutex
-	assets map[constants.ChainID]map[string]Asset // chainID -> identifier -> asset
+	mu      sync.RWMutex
+	assets  map[constants.ChainID]map[string]Asset // chainID -> identifier -> asset
+	natives map[constants.ChainID]Asset
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		assets: make(map[constants.ChainID]map[string]Asset),
+		assets:  make(map[constants.ChainID]map[string]Asset),
+		natives: make(map[constants.ChainID]Asset),
 	}
 }
 
@@ -33,6 +35,18 @@ func (r *Registry) Register(a Asset) {
 	}
 
 	r.assets[chainID][identifier] = a
+
+	if a.IsNative() {
+		r.natives[chainID] = a
+	}
+}
+
+func (r *Registry) GetNative(chainID constants.ChainID) (Asset, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	a, ok := r.natives[chainID]
+	return a, ok
 }
 
 func (r *Registry) Get(chainID constants.ChainID, identifier string) (Asset, bool) {

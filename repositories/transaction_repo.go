@@ -55,6 +55,7 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 			LogIndex:    params.LogIndex,
 			BlockNumber: *params.Block,
 			Symbol:      *params.Symbol,
+			Decimals:    params.Decimals,
 			BlockHash:   "",
 			Token:       params.Token,
 			FromAddress: *params.From,

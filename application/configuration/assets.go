@@ -28,6 +28,7 @@ func NewAssetRegistry() *asset.Registry {
 	// Solana Mainnet
 	registry.Register(asset.NewSOL(constants.Solana))
 	registry.Register(asset.NewSPL(constants.Solana, "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", "USDT", "Tether USD", 6))
+	registry.Register(asset.NewSPL(constants.Solana, "9qpnNkj8wqecEhnrKwzhNAtzSknizFqDEzxPd1Ajpump", "LGBT", "COOLVIBES", 6))
 
 	// Tron Mainnet
 	registry.Register(asset.NewTRX(constants.TRON))

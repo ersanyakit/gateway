@@ -16,8 +16,9 @@ type TransactionParam struct {
 	Hash       *string           `json:"hash,omitempty"`
 	Block      *string           `json:"block,omitempty"`
 
-	Token  *string `json:"token,omitempty"`
-	Symbol *string `json:"symbol,omitempty"`
+	Token    *string `json:"token,omitempty"`
+	Symbol   *string `json:"symbol,omitempty"`
+	Decimals uint8   `json:"decimals,omitempty"`
 
 	From   *string `json:"from,omitempty"`
 	To     *string `json:"to,omitempty"`

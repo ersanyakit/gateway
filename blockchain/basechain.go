@@ -3,6 +3,7 @@ package blockchain
 import (
 	"context"
 	"core/constants"
+	"core/models"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -45,7 +46,7 @@ type Chain interface {
 
 	AddWorker(listener Worker) error
 	RemoveWorker(listener Worker) error
-
+	BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult
 	StartWorkers(ctx context.Context) error
 	StopWorkers() error
 }
