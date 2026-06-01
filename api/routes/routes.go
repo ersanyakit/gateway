@@ -73,10 +73,8 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
 	r.fiber.Post(constants.CMD_MERCHANT_FETCH.String(), handlers.HandleMerchantFetch(r.MerchantService))
 
-	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleWalletCreate(r.WalletService))
-
-	r.fiber.Post(constants.CMD_MERCHANT_FETCH_BY_ID.String(), handlers.HandleMerchantFindById(r.MerchantService))
-	r.fiber.Post(constants.CMD_MERCHANT_FETCH_BY_EMAIL.String(), handlers.HandleMerchantFindByEmail(r.MerchantService))
+	r.fiber.Post(constants.CMD_MERCHANT_DOMAIN_CREATE.String(), handlers.HandleDomainCreate(r.DomainService))
+	r.fiber.Post(constants.CMD_DOMAIN_DEPOSIT_SUMMARY.String(), handlers.HandleDomainDepositSummary(r.TransactionRepo))
 
 	r.fiber.Post(constants.CMD_MERCHANT_FETCH_BY_ID.String(), handlers.HandleMerchantFindById(r.MerchantService))
 	r.fiber.Post(constants.CMD_MERCHANT_FETCH_BY_EMAIL.String(), handlers.HandleMerchantFindByEmail(r.MerchantService))
@@ -85,6 +83,8 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_MERCHANT_DELETE_BY_EMAIL.String(), handlers.HandleMerchantDeleteByEmail(r.MerchantService))
 
 	r.fiber.Post(constants.CMD_MERCHANT_WALLET_CREATE.String(), handlers.HandleWalletCreate(r.WalletService))
+	r.fiber.Post(constants.CMD_WITHDRAW.String(), handlers.HandleWithdraw(r.WalletRepo, r.blockchains))
+	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
 	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes

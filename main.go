@@ -3,26 +3,142 @@ package main
 import (
 	"context"
 	"core/api/routes"
+	"core/blockchain"
 	"core/constants"
-	"core/helpers"
 	"core/models"
+	webhooksvc "core/services/webhook"
 	"core/types"
 	"core/workers/dispatcher"
+	btcListener "core/workers/listeners/bitcoin"
+	evmListener "core/workers/listeners/evm"
+	solListener "core/workers/listeners/solana"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	coreApplication "core/application"
 	coreDB "core/services/database"
-	"core/workers/listeners/chiliz"
-	"core/workers/listeners/ethereum"
-	"core/workers/listeners/tron"
 
 	"github.com/joho/godotenv"
+	"gorm.io/gorm"
 )
+
+func ptrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func isPositiveAmount(value string) bool {
+	amount, ok := new(big.Int).SetString(value, 10)
+	return ok && amount.Sign() > 0
+}
+
+func webhookRetryInterval() time.Duration {
+	raw := os.Getenv("WEBHOOK_RETRY_INTERVAL")
+	if raw == "" {
+		return 30 * time.Second
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 30 * time.Second
+	}
+	return interval
+}
+
+func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, eventType string, txParam types.TransactionParam) error {
+	if txParam.To == nil || txParam.Amount == nil || !isPositiveAmount(*txParam.Amount) {
+		return nil
+	}
+
+	wallet, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, txParam.ChainID, *txParam.To)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
+	if err != nil {
+		return err
+	}
+
+	txModel, err := coreApplication.CORE.Router.TransactionRepo.BindWallet(ctx, uniqueHash, eventType, wallet)
+	if err != nil {
+		return err
+	}
+	if txModel.WebhookSentAt != nil {
+		return nil
+	}
+
+	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	err = notifier.Deliver(deliveryCtx, wallet.Domain, *txModel)
+	if err != nil {
+		fmt.Println("Webhook delivery error:", err)
+		return coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, false, err)
+	}
+
+	return coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, true, nil)
+}
+
+func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
+	transactions, err := coreApplication.CORE.Router.TransactionRepo.ListPendingWebhooks(ctx, 100)
+	if err != nil {
+		log.Println("Pending webhook query error:", err)
+		return
+	}
+
+	for _, txModel := range transactions {
+		if txModel.WalletID == nil || txModel.WebhookSentAt != nil {
+			continue
+		}
+
+		wallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
+		if err != nil {
+			log.Println("Webhook wallet lookup error:", err)
+			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, false, err)
+			continue
+		}
+
+		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		err = notifier.Deliver(deliveryCtx, wallet.Domain, txModel)
+		cancel()
+
+		if err != nil {
+			log.Println("Webhook retry error:", err)
+			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, false, err)
+			continue
+		}
+
+		if err := coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, true, nil); err != nil {
+			log.Println("Webhook mark delivered error:", err)
+		}
+	}
+}
+
+func startWebhookRetryWorker(ctx context.Context, notifier *webhooksvc.Notifier) {
+	ticker := time.NewTicker(webhookRetryInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			retryPendingWebhooks(ctx, notifier)
+		}
+	}
+}
 
 func NewApp() (*coreApplication.App, error) {
 	if coreApplication.CORE == nil {
@@ -77,200 +193,170 @@ func main() {
 	mainCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+	_ = godotenv.Load()
 
+	var err error
 	coreApplication.CORE, err = NewApp()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	createMerchantParams := types.MerchantParams{
-		Context:        mainCtx,
-		Name:           helpers.StrPtr("ersan"),
-		Email:          helpers.StrPtr("ersanyakit@gmail.com"),
-		EmailRepeat:    helpers.StrPtr("ersanyakit@gmail.com"),
-		Password:       helpers.StrPtr("passinput1"),
-		PasswordRepeat: helpers.StrPtr("passinput1"),
-	}
-	merchantReg, err := coreApplication.CORE.Router.MerchantService.Create(createMerchantParams)
+	log.Println("Registered chains:", coreApplication.CORE.Router.Blockchains().ListChains())
+	deletedChainStates, err := coreApplication.CORE.Router.ChainStateRepo.DeleteUnsupported(
+		mainCtx,
+		coreApplication.CORE.Router.Blockchains().ListChainIDs(),
+	)
 	if err != nil {
-		fmt.Println("Error", err, merchantReg)
+		log.Fatal(err)
 	}
-
-	merchantFindByEmail, err := coreApplication.CORE.Router.MerchantService.FindByEmail(createMerchantParams)
-	if err != nil {
-		fmt.Println("Error", err, merchantReg)
+	if deletedChainStates > 0 {
+		log.Printf("Deleted %d unsupported chain state rows\n", deletedChainStates)
 	}
-
-	createMerchantParams.ID = &merchantFindByEmail.ID
-	merchantFindByID, err := coreApplication.CORE.Router.MerchantService.FindByID(createMerchantParams)
-	if err != nil {
-		fmt.Println("Error", err, merchantFindByID)
-	}
-	fmt.Println("MerchantInfo ", merchantFindByID.ID, merchantFindByEmail.ID)
-
-	createDomainParams := types.DomainParams{
-		Context:       mainCtx,
-		MerchantID:    helpers.StrPtr(merchantFindByID.ID.String()),
-		DomainURL:     helpers.StrPtr("coolvibes.io"),
-		WebhookURL:    helpers.StrPtr("https://coolvibes.io/webhook"),
-		WebhookSecret: helpers.StrPtr("randompassword"),
-	}
-
-	domainReg, err := coreApplication.CORE.Router.DomainService.Create(createDomainParams)
-	if err != nil {
-		fmt.Println("Error", err)
-	}
-
-	if domainReg != nil {
-		fmt.Println("DomainInfo ", domainReg.ID, domainReg.MerchantID, domainReg.HDAccountID)
-	}
-
-	domainFind, err := coreApplication.CORE.Router.DomainService.FindByURL(createDomainParams)
-	if err != nil {
-		fmt.Println("Error", err)
-	}
-
-	walletParams := types.WalletParams{
-		Context:    mainCtx,
-		MerchantId: helpers.StrPtr(domainFind.MerchantID.String()), // MerchantID Domain üzerinden
-		DomainId:   helpers.StrPtr(domainFind.ID.String()),
-	}
-	walletReg, err := coreApplication.CORE.Router.WalletService.Create(walletParams)
-	if err != nil {
-		fmt.Println("Error", err)
-	}
-
-	if walletReg != nil {
-		fmt.Println("Wallet", walletReg.HDAddressId)
-	}
-	fmt.Println(coreApplication.CORE.Router.Blockchains().ListChains())
 
 	bus := dispatcher.NewDispatcher()
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
+	webhookNotifier := webhooksvc.NewNotifier()
+	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 
-	ethChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("ethereum")
-	tronChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("tron")
-	chilizChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("chiliz")
-	binanceChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("binance")
-	avaxChain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain("avalanche")
+	chainNames := []string{
+		"bitcoin",
+		"ethereum",
+		"chiliz",
+		"solana",
+		"tron",
+		"base",
+		"unichain",
+		"avalanche",
+		"bnbchain",
+	}
 
-	/*
-
-		baalance query
-			ctx := context.Background()
-					addresses, err := helpers.LoadAddressesFromDir("/dummy")
-					if err != nil {
-						panic(err)
+	subscribeBus := func(chain blockchain.Chain) {
+		events := bus.Subscribe(chain.ChainID(), 1000)
+		go func() {
+			for {
+				select {
+				case <-mainCtx.Done():
+					return
+				case event, ok := <-events:
+					if !ok {
+						return
+					}
+					if event.Transaction == nil {
+						if event.Ack != nil {
+							event.Ack <- nil
+						}
+						continue
 					}
 
+					tx := event.Transaction
+					fmt.Printf(
+						"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
+						chain.Name(),
+						tx.ChainID,
+						event.Type,
+						ptrValue(tx.Hash),
+						ptrValue(tx.Block),
+						ptrValue(tx.From),
+						ptrValue(tx.To),
+						ptrValue(tx.Amount),
+						ptrValue(tx.Symbol),
+						ptrValue(tx.LogIndex),
+					)
 
-				addresses, err := helpers.LoadAddressesFromJSON("/json/dummy.json")
-				if err != nil {
-					panic(err)
+					err := coreApplication.CORE.Router.TransactionRepo.Create(*tx)
+					if err != nil {
+						fmt.Println("Transaction save error:", err)
+					} else if webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx); webhookErr != nil {
+						err = webhookErr
+						fmt.Println("Deposit processing error:", webhookErr)
+					}
+					if event.Ack != nil {
+						event.Ack <- err
+					}
 				}
-
-				addresses, err := helpers.LoadAddressesFromPrivateKeyList("/keys/dummy.json")
-				if err != nil {
-					panic(err)
-				}
-
-			results := ethChain.BatchBalances(ctx, addresses, 10)
-			for _, r := range results {
-				fmt.Println("Balances", r.Address, r.Balance, r.Error)
 			}
-	*/
+		}()
+	}
 
-	bscState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, binanceChain.ChainID())
-	fmt.Println("bsc", bscState.ChainID, avaxChain.ChainID())
-	ethState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
-	tronState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, tronChain.ChainID())
-	chilizState, _ := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chilizChain.ChainID())
-
-	coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, ethChain.ChainID())
-
-	ethWorker := ethereum.NewRpcListener(
-		ethChain,
-		assetRegistry,
-		ethState,
-		bus,
-		func(s *models.ChainState) error {
-			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-		},
-	)
-
-	chzWorker := chiliz.NewRpcListener(
-		ethChain,
-		assetRegistry,
-		chilizState,
-		bus,
-		func(s *models.ChainState) error {
-			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-		},
-	)
-
-	tronWorker := tron.NewRpcListener(
-		ethChain,
-		assetRegistry,
-		tronState,
-		bus,
-		func(s *models.ChainState) error {
-			return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-		},
-	)
-
-	ethChain.AddWorker(ethWorker)
-	tronChain.AddWorker(tronWorker)
-	chilizChain.AddWorker(chzWorker)
-	//ethChain.StartWorkers(mainCtx)
-
-	coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx)
-
-	ethChan := bus.Subscribe(constants.Ethereum, 100)
-	tronChan := bus.Subscribe(constants.TRON, 100)
-
-	go func() {
-		for event := range tronChan {
-			switch event.Type {
-
-			case "transfer":
-				transaction := event.Transaction
-				fmt.Printf("[TX] : %d \t %s \n", event.Transaction.ChainID, *event.Transaction.Hash)
-
-				err := coreApplication.CORE.Router.TransactionRepo.Create(*transaction)
-				if err != nil {
-					fmt.Println("Error", err)
-				}
-
-			}
+	for _, chainName := range chainNames {
+		chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
+		if err != nil {
+			log.Printf("[%s] chain not found: %v\n", chainName, err)
+			continue
 		}
 
-		for event := range ethChan {
-			switch event.Type {
-
-			case "transfer":
-				transaction := event.Transaction
-				//fmt.Printf("[TX] : %d \t %s \n", event.Transaction.ChainID, *event.Transaction.Hash)
-
-				err := coreApplication.CORE.Router.TransactionRepo.Create(*transaction)
-				if err != nil {
-					fmt.Println("Error", err)
-				}
-
-			}
+		state, err := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chain.ChainID())
+		if err != nil {
+			log.Printf("[%s] chain state error: %v\n", chainName, err)
+			continue
 		}
-	}()
+
+		var worker blockchain.Worker
+		switch chain.ChainID() {
+		case constants.Bitcoin:
+			worker = btcListener.NewRpcListener(
+				chain,
+				assetRegistry,
+				state,
+				bus,
+				func(s *models.ChainState) error {
+					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+				},
+			)
+		case constants.Solana:
+			worker = solListener.NewRpcListener(
+				chain,
+				assetRegistry,
+				state,
+				bus,
+				func(s *models.ChainState) error {
+					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+				},
+			)
+		default:
+			worker = evmListener.NewRpcListener(
+				chain,
+				assetRegistry,
+				state,
+				bus,
+				func(s *models.ChainState) error {
+					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+				},
+			)
+		}
+
+		if err := chain.AddWorker(worker); err != nil {
+			log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
+			continue
+		}
+		subscribeBus(chain)
+	}
+
+	for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx) {
+		log.Printf("[%s] worker start error: %v\n", chainName, startErr)
+	}
 
 	fiberApp := coreApplication.CORE.Router.GetFiber()
-	log.Println("App running on", os.Getenv("PORT"))
-	log.Fatal(fiberApp.Listen(os.Getenv("PORT")))
+	port := os.Getenv("PORT")
+	log.Println("App running on", port)
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- fiberApp.Listen(port)
+	}()
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
-	<-c
-	log.Println("Shutting down...")
+	select {
+	case sig := <-c:
+		log.Println("Shutting down...", sig)
+	case err := <-serverErr:
+		log.Fatal(err)
+	}
+
+	coreApplication.CORE.Router.Blockchains().StopAllWorkers(context.Background())
+	cancel()
 	bus.Shutdown()
+	if err := fiberApp.Shutdown(); err != nil {
+		log.Println("Fiber shutdown error:", err)
+	}
 }

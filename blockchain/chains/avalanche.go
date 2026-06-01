@@ -31,7 +31,7 @@ func NewAvalancheChain() *AvalancheChain {
 			ID:          constants.Avalanche,
 			ChainName:   "avalanche",
 			ExplorerURL: "https://snowscan.xyz/",
-			RPCHttp:     []string{"https://api.avax.network/ext/bc/C/rpc"},
+			RPCHttp:     []string{"https://api.avax.network/ext/bc/C/rpc", "https://avalanche-c-chain-rpc.publicnode.com", "https://avalanche.drpc.org", "https://1rpc.io/avax/c"},
 			WebSockets:  []string{"wss://avalanche.drpc.org"},
 		}}
 }
@@ -45,7 +45,7 @@ func (e *AvalancheChain) ChainID() constants.ChainID {
 }
 
 func (e *AvalancheChain) RPCs() []string {
-	return e.RPCHttp
+	return e.BaseChain.RPCs()
 }
 
 func (e *AvalancheChain) Explorer() string {
@@ -135,19 +135,16 @@ func (s *AvalancheChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWall
 	}, nil
 }
 
-func (s *AvalancheChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Depositing %f to %s\n", s.Name(), amount, toAddress)
-	return &blockchain.TransactionResult{TxHash: "DepositTxHash", Success: true}, nil
+func (s *AvalancheChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmDepositNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
-func (s *AvalancheChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Withdrawing %f from %s\n", s.Name(), amount, wallet.Address)
-	return &blockchain.TransactionResult{TxHash: "WithdrawTxHash", Success: true}, nil
+func (s *AvalancheChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmWithdrawNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
 func (s *AvalancheChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Sweeping wallet", s.Name())
-	return &blockchain.TransactionResult{TxHash: "SweepTxHash", Success: true}, nil
+	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
 }
 
 const AVALANCHE_SYMBOL = "AVAX"

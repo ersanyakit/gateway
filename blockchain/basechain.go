@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/okx/go-wallet-sdk/crypto/go-bip32"
 	"github.com/okx/go-wallet-sdk/crypto/go-bip39"
@@ -39,8 +41,8 @@ type Chain interface {
 	Create(ctx context.Context) (*WalletDetails, error)
 	CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*WalletDetails, error)
 
-	Deposit(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
-	Withdraw(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error)
+	Deposit(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
+	Withdraw(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
 	Sweep(ctx context.Context, wallet WalletDetails) (*TransactionResult, error)
 	ValidateAddress(address string) bool
 
@@ -73,7 +75,30 @@ func (b *BaseChain) ChainID() constants.ChainID {
 }
 
 func (b *BaseChain) RPCs() []string {
-	return b.RPCHttp
+	rpcs := make([]string, 0, len(b.RPCHttp)+4)
+	seen := make(map[string]struct{}, len(b.RPCHttp)+4)
+
+	add := func(values []string) {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			rpcs = append(rpcs, value)
+		}
+	}
+
+	for _, envName := range b.rpcEnvNames() {
+		add(splitRPCEnv(os.Getenv(envName)))
+	}
+	add(splitRPCEnv(os.Getenv("CHAIN_" + strconv.FormatInt(int64(b.ID), 10) + "_RPC_URLS")))
+	add(b.RPCHttp)
+
+	return rpcs
 }
 
 func (b *BaseChain) Explorer() string {
@@ -84,6 +109,27 @@ func (b *BaseChain) WSS() []string {
 	return b.WebSockets
 }
 
+func splitRPCEnv(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
+func (b *BaseChain) rpcEnvNames() []string {
+	name := strings.ToUpper(strings.NewReplacer("-", "_").Replace(b.ChainName))
+	names := []string{name + "_RPC_URLS"}
+
+	switch b.ChainName {
+	case "bnbchain":
+		names = append(names, "BSC_RPC_URLS", "BINANCE_RPC_URLS")
+	case "tron":
+		names = append(names, "TRON_JSONRPC_URLS")
+	}
+
+	return names
+}
+
 func (b *BaseChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId uint32) (*WalletDetails, error) {
 	return nil, errors.New("not implemented")
 }
@@ -92,11 +138,11 @@ func (b *BaseChain) Create(ctx context.Context) (*WalletDetails, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (b *BaseChain) Deposit(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error) {
+func (b *BaseChain) Deposit(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (b *BaseChain) Withdraw(ctx context.Context, wallet WalletDetails, amount float64, toAddress string) (*TransactionResult, error) {
+func (b *BaseChain) Withdraw(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error) {
 	return nil, errors.New("not implemented")
 }
 

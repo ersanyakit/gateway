@@ -15,6 +15,7 @@ type TransactionParam struct {
 	ChainID    constants.ChainID `json:"chain_id,omitempty"`
 	Hash       *string           `json:"hash,omitempty"`
 	Block      *string           `json:"block,omitempty"`
+	BlockHash  *string           `json:"block_hash,omitempty"`
 
 	Token    *string `json:"token,omitempty"`
 	Symbol   *string `json:"symbol,omitempty"`

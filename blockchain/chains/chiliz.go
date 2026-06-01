@@ -31,8 +31,8 @@ func NewChilizChain() *ChilizChain {
 			ID:          constants.Chiliz,
 			ChainName:   "chiliz",
 			ExplorerURL: "https://chiliscan.io",
-			RPCHttp:     []string{"https://rpc.chiliz.com"},
-			WebSockets:  []string{"https://rpc.chiliz.com"},
+			RPCHttp:     []string{"https://rpc.chiliz.com", "https://chiliz.publicnode.com"},
+			WebSockets:  []string{"wss://chiliz.publicnode.com"},
 		}}
 }
 
@@ -45,7 +45,7 @@ func (e *ChilizChain) ChainID() constants.ChainID {
 }
 
 func (e *ChilizChain) RPCs() []string {
-	return e.RPCHttp
+	return e.BaseChain.RPCs()
 }
 
 func (e *ChilizChain) Explorer() string {
@@ -134,19 +134,16 @@ func (s *ChilizChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletI
 	}, nil
 }
 
-func (s *ChilizChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Depositing %f to %s\n", s.Name(), amount, toAddress)
-	return &blockchain.TransactionResult{TxHash: "DepositTxHash", Success: true}, nil
+func (s *ChilizChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmDepositNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
-func (s *ChilizChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Withdrawing %f from %s\n", s.Name(), amount, wallet.Address)
-	return &blockchain.TransactionResult{TxHash: "WithdrawTxHash", Success: true}, nil
+func (s *ChilizChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmWithdrawNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
 func (s *ChilizChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Sweeping wallet", s.Name())
-	return &blockchain.TransactionResult{TxHash: "SweepTxHash", Success: true}, nil
+	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
 }
 
 const CHILIZ_SYMBOL = "CHZ"

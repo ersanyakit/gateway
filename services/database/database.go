@@ -40,15 +40,11 @@ func EnableExtensions(ctx context.Context, db *gorm.DB, extensions map[string]st
 }
 
 func InitDB() error {
-	err := godotenv.Load()
-
-	if err != nil {
-		log.Fatal("Error loading .env file", err)
-	}
+	_ = godotenv.Load()
 
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		panic("DATABASE_URL is required")
+		return fmt.Errorf("DATABASE_URL is required")
 	}
 
 	errorOnlyLogger := logger.New(
@@ -62,12 +58,12 @@ func InitDB() error {
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: errorOnlyLogger})
 	if err != nil {
-		panic("failed to connect database")
+		return fmt.Errorf("failed to connect database: %w", err)
 	}
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		// Hata işleme
+		return fmt.Errorf("failed to get sql db: %w", err)
 	}
 
 	sqlDB.SetMaxIdleConns(10)           // Boşta bekleyen bağlantıların maksimum sayısı

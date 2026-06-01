@@ -31,7 +31,7 @@ func (s *DomainService) FindByAPIKey(params types.DomainParams) (*models.Domain,
 }
 
 func (s *DomainService) FindBySecret(params types.DomainParams) (*models.Domain, error) {
-	return s.domainRepo.FindByAPIKey(params)
+	return s.domainRepo.FindByAPISecret(params)
 }
 
 func (s *DomainService) FindByURL(params types.DomainParams) (*models.Domain, error) {

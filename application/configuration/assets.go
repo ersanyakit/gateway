@@ -22,6 +22,15 @@ func NewAssetRegistry() *asset.Registry {
 	registry.Register(asset.NewEVMNative(constants.Binance, "BNB", "Binance Coin", 18))
 	registry.Register(asset.NewERC20(constants.Binance, "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c", "WBTC", "Wrapped BTC", 8))
 
+	// Base
+	registry.Register(asset.NewEVMNative(constants.Base, "ETH", "Base Ether", 18))
+	registry.Register(asset.NewERC20(constants.Base, "0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18))
+	registry.Register(asset.NewERC20(constants.Base, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", "USDC", 6))
+
+	// Unichain
+	registry.Register(asset.NewEVMNative(constants.Unichain, "ETH", "Unichain Ether", 18))
+	registry.Register(asset.NewERC20(constants.Unichain, "0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18))
+
 	// Bitcoin Mainnet
 	registry.Register(asset.NewBTC())
 

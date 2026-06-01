@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"core/constants"
 	"core/models"
 	"core/types"
 	"errors"
@@ -30,8 +31,12 @@ func NewWalletRepo(domainRepo *DomainRepo) *WalletRepo {
 }
 
 func (r *WalletRepo) GetNextHDIndex(ctx context.Context, merchantID, domainID uuid.UUID) (uint32, error) {
+	return r.getNextHDIndex(ctx, r.DB(), merchantID, domainID)
+}
+
+func (r *WalletRepo) getNextHDIndex(ctx context.Context, db *gorm.DB, merchantID, domainID uuid.UUID) (uint32, error) {
 	var maxIndex uint32
-	err := r.DB().WithContext(ctx).
+	err := db.WithContext(ctx).
 		Model(&models.Wallet{}).
 		Where("merchant_id = ? AND domain_id = ?", merchantID, domainID).
 		Select("COALESCE(MAX(hd_address_id), 0)").
@@ -43,28 +48,14 @@ func (r *WalletRepo) GetNextHDIndex(ctx context.Context, merchantID, domainID uu
 }
 
 func (r *WalletRepo) CreateEx(params types.WalletParams) (*models.Wallet, error) {
-
-	domainId, err := uuid.Parse(*params.DomainId)
-	if err != nil {
-		return nil, errors.New("invalid domain id")
-	}
-
-	merchantId, err := uuid.Parse(*params.MerchantId)
-	if err != nil {
-		return nil, errors.New("invalid merchant id")
-	}
-
-	nextIndex, err := r.GetNextHDIndex(params.Context, merchantId, domainId)
-	if err != nil {
-		return nil, err
-	}
-
-	fmt.Println("CODER", nextIndex)
-
-	return nil, nil
+	return nil, errors.New("CreateEx is not implemented")
 }
 
 func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
+	if err := params.Validate(); err != nil {
+		return nil, err
+	}
+
 	tx := r.DB().WithContext(params.Context).Begin()
 	if tx.Error != nil {
 		return nil, tx.Error
@@ -95,11 +86,43 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 
 	domain, err := r.domainRepo.FindByID(domainParams)
 	if err != nil {
+		tx.Rollback()
 		fmt.Println("Domain bulunamadı:", err)
 		return nil, err
 	}
+	if domain.MerchantID != merchantUUID {
+		tx.Rollback()
+		return nil, errors.New("domain does not belong to merchant")
+	}
 
-	hdAccountId, err := r.GetNextHDIndex(params.Context, merchantUUID, domainUUID)
+	lockKey := fmt.Sprintf("wallet-hd-index:%s:%s", merchantUUID.String(), domainUUID.String())
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	var existing models.Wallet
+	err = tx.
+		Where(
+			"merchant_id = ? AND domain_id = ? AND product_id = ? AND user_id = ?",
+			merchantUUID,
+			domainUUID,
+			*params.ProductId,
+			*params.UserId,
+		).
+		First(&existing).Error
+	if err == nil {
+		if commitErr := tx.Commit().Error; commitErr != nil {
+			return nil, commitErr
+		}
+		return &existing, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		tx.Rollback()
+		return nil, err
+	}
+
+	hdAccountId, err := r.getNextHDIndex(params.Context, tx, merchantUUID, domainUUID)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -114,6 +137,13 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		}
 		return nil, fmt.Errorf("failed to create wallets: %s", strings.Join(errStrings, "; "))
 	}
+	requiredChains := []string{"bitcoin", "ethereum", "avalanche", "bnbchain", "base", "unichain", "tron", "solana", "chiliz"}
+	for _, chainName := range requiredChains {
+		if walletsMap[chainName] == nil {
+			tx.Rollback()
+			return nil, fmt.Errorf("missing wallet for chain %s", chainName)
+		}
+	}
 
 	wallet := &models.Wallet{
 		ID:               uuid.New(),
@@ -121,9 +151,14 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		HDAccountID:      domain.HDAccountID,
 		MerchantID:       merchantUUID,
 		DomainID:         domainUUID,
+		ProductID:        *params.ProductId,
+		UserID:           *params.UserId,
 		BitcoinAddress:   walletsMap["bitcoin"].Address,
 		EthereumAddress:  walletsMap["ethereum"].Address,
 		AvalancheAddress: walletsMap["avalanche"].Address,
+		BinanceAddress:   walletsMap["bnbchain"].Address,
+		BaseAddress:      walletsMap["base"].Address,
+		UnichainAddress:  walletsMap["unichain"].Address,
 		TronAddress:      walletsMap["tron"].Address,
 		SolanaAddress:    walletsMap["solana"].Address,
 		ChilizAddress:    walletsMap["chiliz"].Address,
@@ -141,4 +176,54 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 	}
 
 	return wallet, nil
+}
+
+func (r *WalletRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Wallet, error) {
+	var wallet models.Wallet
+	err := r.DB().WithContext(ctx).
+		Preload("Domain").
+		First(&wallet, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &wallet, nil
+}
+
+func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.ChainID, address string) (*models.Wallet, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	db := r.DB().WithContext(ctx).Preload("Domain")
+	var wallet models.Wallet
+	var err error
+
+	switch chainID {
+	case constants.Bitcoin:
+		err = db.First(&wallet, "bitcoin_address = ?", address).Error
+	case constants.Ethereum:
+		err = db.First(&wallet, "LOWER(ethereum_address) = LOWER(?)", address).Error
+	case constants.Avalanche:
+		err = db.First(&wallet, "LOWER(avalanche_address) = LOWER(?)", address).Error
+	case constants.Binance:
+		err = db.First(&wallet, "LOWER(binance_address) = LOWER(?)", address).Error
+	case constants.Base:
+		err = db.First(&wallet, "LOWER(base_address) = LOWER(?)", address).Error
+	case constants.Unichain:
+		err = db.First(&wallet, "LOWER(unichain_address) = LOWER(?)", address).Error
+	case constants.TRON:
+		err = db.First(&wallet, "tron_address = ?", address).Error
+	case constants.Solana:
+		err = db.First(&wallet, "solana_address = ?", address).Error
+	case constants.Chiliz:
+		err = db.First(&wallet, "LOWER(chiliz_address) = LOWER(?)", address).Error
+	default:
+		return nil, fmt.Errorf("unsupported chain id %d", chainID)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return &wallet, nil
 }

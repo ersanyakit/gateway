@@ -2,20 +2,24 @@ package blockchain
 
 import (
 	"context"
+	"core/constants"
 	"errors"
+	"sort"
 	"sync"
 )
 
 var ErrChainNotFound = errors.New("chain not found")
 
 type ChainFactory struct {
-	mu     sync.RWMutex
-	chains map[string]Chain
+	mu      sync.RWMutex
+	chains  map[string]Chain
+	aliases map[string]string
 }
 
 func NewChainFactory() *ChainFactory {
 	return &ChainFactory{
-		chains: make(map[string]Chain),
+		chains:  make(map[string]Chain),
+		aliases: make(map[string]string),
 	}
 }
 
@@ -25,9 +29,18 @@ func (f *ChainFactory) RegisterChain(name string, chain Chain) {
 	f.chains[name] = chain
 }
 
+func (f *ChainFactory) RegisterAlias(alias string, chainName string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.aliases[alias] = chainName
+}
+
 func (f *ChainFactory) GetChain(name string) (Chain, error) {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	if canonicalName, ok := f.aliases[name]; ok {
+		name = canonicalName
+	}
 	chain, ok := f.chains[name]
 	if !ok {
 		return nil, ErrChainNotFound
@@ -48,7 +61,22 @@ func (f *ChainFactory) ListChains() []string {
 	for name := range f.chains {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
+}
+
+func (f *ChainFactory) ListChainIDs() []constants.ChainID {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+
+	ids := make([]constants.ChainID, 0, len(f.chains))
+	for _, chain := range f.chains {
+		ids = append(ids, chain.ChainID())
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+	return ids
 }
 
 func (f *ChainFactory) CreateWallets(ctx context.Context) (map[string]*WalletDetails, map[string]error) {
@@ -117,9 +145,9 @@ func (f *ChainFactory) StopAllWorkers(ctx context.Context) map[string]error {
 	errMap := make(map[string]error)
 	for name, chain := range chains {
 		if starter, ok := chain.(interface {
-			StopWorkers(context.Context) error
+			StopWorkers() error
 		}); ok {
-			if err := starter.StopWorkers(ctx); err != nil {
+			if err := starter.StopWorkers(); err != nil {
 				errMap[name] = err
 			}
 		}

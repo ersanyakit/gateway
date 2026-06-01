@@ -4,13 +4,17 @@ import (
 	"context"
 	"core/constants"
 	"core/types"
+	"errors"
 	"sync"
 )
+
+var ErrNoSubscribers = errors.New("no subscribers for chain")
 
 type Event struct {
 	Chain       constants.ChainID
 	Type        string
 	Transaction *types.TransactionParam
+	Ack         chan error
 }
 
 type Dispatcher struct {
@@ -57,31 +61,57 @@ func (d *Dispatcher) Unsubscribe(chain constants.ChainID, subChan <-chan Event) 
 
 func (d *Dispatcher) Dispatch(event Event) {
 	d.mu.RLock()
-	subs := d.subscribers[event.Chain]
+	subs := append([]chan Event(nil), d.subscribers[event.Chain]...)
 	d.mu.RUnlock()
 
 	for _, ch := range subs {
 		select {
 		case ch <- event:
-		default:
-			// Backpressure protection:
-			// Eğer subscriber doluysa bloklamıyoruz
-			// İstersen burada log atabilirsin
+		case <-d.ctx.Done():
+			return
 		}
 	}
 }
 
-func (d *Dispatcher) Shutdown() {
-	d.cancel()
+func (d *Dispatcher) DispatchAndWait(ctx context.Context, event Event) error {
+	d.mu.RLock()
+	subs := append([]chan Event(nil), d.subscribers[event.Chain]...)
+	d.mu.RUnlock()
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	if len(subs) == 0 {
+		return ErrNoSubscribers
+	}
 
-	for _, subs := range d.subscribers {
-		for _, ch := range subs {
-			close(ch)
+	event.Ack = make(chan error, len(subs))
+	for _, ch := range subs {
+		select {
+		case ch <- event:
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-d.ctx.Done():
+			return d.ctx.Err()
 		}
 	}
+
+	var errs []error
+	for range subs {
+		select {
+		case err := <-event.Ack:
+			if err != nil {
+				errs = append(errs, err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-d.ctx.Done():
+			return d.ctx.Err()
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (d *Dispatcher) Shutdown() {
+	d.cancel()
 
 	d.wg.Wait()
 }

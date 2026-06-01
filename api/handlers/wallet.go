@@ -37,7 +37,7 @@ func HandleWalletCreate(s *services.WalletService) fiber.Handler {
 		wallet, err := s.Create(params)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to create merchant: " + err.Error(),
+				"error": "Failed to create wallet: " + err.Error(),
 			})
 		}
 

@@ -1,7 +1,6 @@
 package chains
 
 import (
-	"bytes"
 	"context"
 	blockchain "core/blockchain"
 	"core/constants"
@@ -10,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ func NewBitcoinChain() *BitcoinChain {
 			ID:          constants.Bitcoin,
 			ChainName:   "bitcoin",
 			ExplorerURL: "https://www.blockchain.com/explorer",
+			RPCHttp:     []string{"https://blockstream.info/api", "https://mempool.space/api"},
 		},
 		Params: &chaincfg.MainNetParams,
 	}
@@ -177,28 +179,16 @@ func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWallet
 	}, nil
 }
 
-func (b *BitcoinChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Depositing %f BTC to %s\n", b.Name(), amount, toAddress)
-	return &blockchain.TransactionResult{
-		TxHash:  "DepositTxHash",
-		Success: true,
-	}, nil
+func (b *BitcoinChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return unsupportedTransfer(b.Name())
 }
 
-func (b *BitcoinChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Withdrawing %f BTC from %s\n", b.Name(), amount, wallet.Address)
-	return &blockchain.TransactionResult{
-		TxHash:  "WithdrawTxHash",
-		Success: true,
-	}, nil
+func (b *BitcoinChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return unsupportedTransfer(b.Name())
 }
 
 func (b *BitcoinChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Sweeping wallet\n", b.Name())
-	return &blockchain.TransactionResult{
-		TxHash:  "SweepTxHash",
-		Success: true,
-	}, nil
+	return unsupportedTransfer(b.Name())
 }
 
 func (e *BitcoinChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {
@@ -244,37 +234,52 @@ func (e *BitcoinChain) BatchBalances(ctx context.Context, addresses []string, wo
 }
 
 func (e *BitcoinChain) getBalance(client *http.Client, address string) (string, error) {
-	// en iyi RPC seçimi (round-robin basit)
-	rpc := e.RPCHttp[0]
+	var lastErr error
+	for _, rpc := range e.RPCHttp {
+		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(rpc, "/")+"/address/"+address, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
 
-	reqBody := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "eth_getBalance",
-		"params":  []interface{}{address, "latest"},
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("bitcoin API returned HTTP %d: %s", resp.StatusCode, string(body))
+			continue
+		}
+
+		var res struct {
+			ChainStats struct {
+				Funded int64 `json:"funded_txo_sum"`
+				Spent  int64 `json:"spent_txo_sum"`
+			} `json:"chain_stats"`
+			MempoolStats struct {
+				Funded int64 `json:"funded_txo_sum"`
+				Spent  int64 `json:"spent_txo_sum"`
+			} `json:"mempool_stats"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			lastErr = err
+			continue
+		}
+
+		balance := (res.ChainStats.Funded - res.ChainStats.Spent) + (res.MempoolStats.Funded - res.MempoolStats.Spent)
+		return fmt.Sprintf("%d", balance), nil
 	}
 
-	data, _ := json.Marshal(reqBody)
-
-	req, _ := http.NewRequest("POST", rpc, bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no bitcoin API endpoint configured")
 	}
-	defer resp.Body.Close()
-
-	var res struct {
-		Result string          `json:"result"`
-		Error  json.RawMessage `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", err
-	}
-	if res.Error != nil {
-		return "", fmt.Errorf("rpc error")
-	}
-
-	return res.Result, nil
+	return "", lastErr
 }

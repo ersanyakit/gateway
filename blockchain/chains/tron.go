@@ -30,7 +30,7 @@ func NewTronChain() *TronChain {
 			ID:          constants.TRON,
 			ChainName:   "tron",
 			ExplorerURL: "https://tronscan.org/",
-			RPCHttp:     []string{"https://api.trongrid.io/jsonrpc", "https://rpc.ankr.com/tron_jsonrpc"},
+			RPCHttp:     []string{"https://api.trongrid.io/jsonrpc", "https://tron-rpc.publicnode.com/jsonrpc", "https://tron.drpc.org"},
 		},
 	}
 }
@@ -122,19 +122,16 @@ func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId 
 	}, nil
 }
 
-func (s *TronChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Depositing %f to %s\n", s.Name(), amount, toAddress)
-	return &blockchain.TransactionResult{TxHash: "DepositTxHash", Success: true}, nil
+func (s *TronChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return unsupportedTransfer(s.Name())
 }
 
-func (s *TronChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Withdrawing %f from %s\n", s.Name(), amount, wallet.Address)
-	return &blockchain.TransactionResult{TxHash: "WithdrawTxHash", Success: true}, nil
+func (s *TronChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return unsupportedTransfer(s.Name())
 }
 
 func (s *TronChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Sweeping wallet", s.Name())
-	return &blockchain.TransactionResult{TxHash: "SweepTxHash", Success: true}, nil
+	return unsupportedTransfer(s.Name())
 }
 
 func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {

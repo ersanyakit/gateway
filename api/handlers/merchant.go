@@ -85,10 +85,10 @@ func HandleMerchantFindById(s *services.MerchantService) fiber.Handler {
 			})
 		}
 
-		merchant, err := s.FindByID(params)
+		merchant, err := s.FindByEmail(params)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to find merchant by id: " + err.Error(),
+				"error": "Failed to find merchant by email: " + err.Error(),
 			})
 		}
 

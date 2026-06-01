@@ -20,6 +20,7 @@ const (
 	CMD_MERCHANT_DOMAIN_CREATE   CommandType = "merchant.domain.create"
 	CMD_MERCHANT_DOMAIN_FETCH    CommandType = "merchant.domain.fetch"
 	CMD_MERCHANT_WALLET_CREATE   CommandType = "merchant.wallet.create"
+	CMD_DOMAIN_DEPOSIT_SUMMARY   CommandType = "merchant.domain.deposit.summary"
 	CMD_DEPOSIT                  CommandType = "system.deposit"
 	CMD_WITHDRAW                 CommandType = "system.withdraw"
 	CMD_SWEEP                    CommandType = "system.sweep"
@@ -34,6 +35,7 @@ var AllCommands = []CommandType{
 	CMD_MERCHANT_DOMAIN_CREATE,
 	CMD_MERCHANT_DOMAIN_FETCH,
 	CMD_MERCHANT_WALLET_CREATE,
+	CMD_DOMAIN_DEPOSIT_SUMMARY,
 	CMD_DEPOSIT,
 	CMD_WITHDRAW,
 	CMD_SWEEP,

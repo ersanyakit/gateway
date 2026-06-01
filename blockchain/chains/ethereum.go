@@ -31,7 +31,7 @@ func NewEthereumChain() *EthereumChain {
 			ID:          constants.Ethereum,
 			ChainName:   "ethereum",
 			ExplorerURL: "https://etherscan.io",
-			RPCHttp:     []string{"https://eth.drpc.org", "https://mainnet.infura.io/v3/ac1242cf6a134cc3a77530953a7b65d5", "https://ethereum-rpc.publicnode.com", "https://1rpc.io/eth", "https://1rpc.io/eth"},
+			RPCHttp:     []string{"https://ethereum-rpc.publicnode.com", "https://eth.drpc.org", "https://1rpc.io/eth"},
 			WebSockets:  []string{"wss://mainnet.infura.io/ws/v3/ac1242cf6a134cc3a77530953a7b65d5", "wss://ethereum-rpc.publicnode.com"},
 		}}
 }
@@ -45,7 +45,7 @@ func (e *EthereumChain) ChainID() constants.ChainID {
 }
 
 func (e *EthereumChain) RPCs() []string {
-	return e.RPCHttp
+	return e.BaseChain.RPCs()
 }
 
 func (e *EthereumChain) Explorer() string {
@@ -134,19 +134,16 @@ func (s *EthereumChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalle
 	}, nil
 }
 
-func (s *EthereumChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Depositing %f to %s\n", s.Name(), amount, toAddress)
-	return &blockchain.TransactionResult{TxHash: "DepositTxHash", Success: true}, nil
+func (s *EthereumChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmDepositNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
-func (s *EthereumChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amount float64, toAddress string) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Withdrawing %f from %s\n", s.Name(), amount, wallet.Address)
-	return &blockchain.TransactionResult{TxHash: "WithdrawTxHash", Success: true}, nil
+func (s *EthereumChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmWithdrawNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
 func (s *EthereumChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	fmt.Printf("[%s]: Sweeping wallet", s.Name())
-	return &blockchain.TransactionResult{TxHash: "SweepTxHash", Success: true}, nil
+	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
 }
 
 const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11"
