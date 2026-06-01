@@ -9,9 +9,9 @@ require (
 	github.com/bytedance/sonic v1.15.1
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/gagliardetto/solana-go v1.12.0
-	github.com/gofiber/fiber/v2 v2.52.11
-	github.com/gofiber/swagger v1.1.1
-	github.com/gofiber/template/html/v2 v2.1.3
+	github.com/gofiber/contrib/v3/swaggo v1.0.6
+	github.com/gofiber/fiber/v3 v3.3.0
+	github.com/gofiber/template/html/v3 v3.0.4
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.0
 	github.com/joho/godotenv v1.5.1
@@ -67,13 +67,8 @@ require (
 	github.com/go-openapi/swag/stringutils v0.26.0 // indirect
 	github.com/go-openapi/swag/typeutils v0.26.0 // indirect
 	github.com/go-openapi/swag/yamlutils v0.26.0 // indirect
-	github.com/gofiber/contrib/v3/swaggo v1.0.6 // indirect
-	github.com/gofiber/fiber/v3 v3.3.0 // indirect
 	github.com/gofiber/schema v1.7.1 // indirect
-	github.com/gofiber/template v1.8.3 // indirect
-	github.com/gofiber/template/html/v3 v3.0.4 // indirect
 	github.com/gofiber/template/v2 v2.1.0 // indirect
-	github.com/gofiber/utils v1.1.0 // indirect
 	github.com/gofiber/utils/v2 v2.0.6 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect

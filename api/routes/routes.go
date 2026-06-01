@@ -16,7 +16,6 @@ import (
 	"github.com/bytedance/sonic"
 	fiber "github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
-	swagger "github.com/gofiber/swagger" // fiber için swagger handler
 	"github.com/gofiber/template/html/v3"
 	"gorm.io/gorm"
 
@@ -121,7 +120,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
 	r.fiber.Get("/swagger/*", swaggo.New())
-	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
+	r.fiber.Get("/docs/*", swaggo.New())
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
 }
