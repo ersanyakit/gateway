@@ -11,14 +11,14 @@ import (
 	"core/repositories"
 	requesttypes "core/types"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 )
 
 func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params requesttypes.TransferParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
@@ -49,9 +49,9 @@ func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.Chai
 }
 
 func HandleSweep(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params requesttypes.TransferParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),

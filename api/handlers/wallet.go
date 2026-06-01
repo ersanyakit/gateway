@@ -4,7 +4,7 @@ import (
 	services "core/services/system"
 	"core/types"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 type WalletHandler struct {
@@ -16,9 +16,9 @@ func NewWalletHandler(service *services.WalletService) *WalletHandler {
 }
 
 func HandleWalletCreate(s *services.WalletService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.WalletParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),

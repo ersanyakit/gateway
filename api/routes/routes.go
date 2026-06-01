@@ -13,12 +13,16 @@ import (
 	"fmt"
 	"strings"
 
-	fiber "github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/bytedance/sonic"
+	fiber "github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	swagger "github.com/gofiber/swagger" // fiber için swagger handler
+	"github.com/gofiber/template/html/v3"
 	"gorm.io/gorm"
 
 	_ "core/docs"
+
+	"github.com/gofiber/contrib/v3/swaggo"
 )
 
 // swag init ile üretilen dosyalar
@@ -41,22 +45,52 @@ type Router struct {
 }
 
 func NewRouter(db *gorm.DB) *Router {
+
+	var sonicAPI = sonic.Config{
+		EscapeHTML: false,
+	}.Froze()
+	engine := html.New("./views/gateway", ".html")
+	engine.Reload(false)
+	engine.Debug(false)
+
 	r := &Router{
 		action: router.NewActionRouter(db),
 		db:     db,
 		fiber: fiber.New(fiber.Config{
+			JSONEncoder:     sonicAPI.Marshal,   // use sonic for JSON encoding
+			JSONDecoder:     sonicAPI.Unmarshal, // use sonic for JSON decoding
+			ServerHeader:    constants.PRODUCT_NAME,
+			AppName:         constants.PRODUCT_NAME + " " + constants.PRODUCT_VERSION,
+			Views:           engine,
 			ReadBufferSize:  8192,
 			WriteBufferSize: 8192,
+			CaseSensitive:   true,
+			StrictRouting:   true,
+			Immutable:       true,
+			BodyLimit:       4 * 1024 * 1024, // 10MB
 		}),
 		assetRegistry: configurations.NewAssetRegistry(),
 		blockchains:   configurations.NewChainFactory(),
 	}
 
 	r.fiber.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
-		AllowCredentials: false,
-		AllowMethods:     "POST,GET,OPTIONS,PUT,DELETE",
-		AllowHeaders:     "Accept,Authorization,authorization,Content-Type,Content-Length,X-CSRF-Token,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With",
+		AllowOriginsFunc: func(origin string) bool {
+			return true
+		},
+		AllowMethods: []string{"POST", "GET", "OPTIONS", "PUT", "DELETE"},
+		AllowHeaders: []string{
+			"Accept", "Authorization", "Content-Type", "Content-Length",
+			"X-CSRF-Token", "Token", "session", "Origin", "Host", "Connection",
+			"Accept-Encoding", "Accept-Language", "X-Requested-With",
+			"AMP-Redirect-To", "__amp_source_origin", "Access-Control-Allow-Origin",
+		},
+		ExposeHeaders: []string{
+			"AMP-Redirect-To",
+			"Access-Control-Allow-Origin",
+			"AMP-Access-Control-Allow-Source-Origin",
+			"Access-Control-Allow-Source-Origin",
+		},
+		AllowCredentials: true,
 	}))
 
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
@@ -86,19 +120,18 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_WITHDRAW.String(), handlers.HandleWithdraw(r.WalletRepo, r.blockchains))
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
+	r.fiber.Get("/swagger/*", swaggo.New())
 	r.fiber.All("/docs/*", swagger.HandlerDefault)     // http://localhost:3000/docs/index.html
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
 }
 
-func (r *Router) handlePacket(c *fiber.Ctx) error {
+func (r *Router) handlePacket(c fiber.Ctx) error {
 	var action string
 	c.Set("Access-Control-Allow-Origin", "*")
 	c.Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 	c.Set("Access-Control-Allow-Headers", "Accept,Authorization,Content-Type,X-CSRF-Token,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With")
-	if c.Method() == fiber.MethodOptions {
-		return c.SendStatus(fiber.StatusNoContent)
-	}
+
 	if c.Method() == fiber.MethodOptions {
 		return c.SendStatus(fiber.StatusNoContent)
 	}
@@ -107,13 +140,17 @@ func (r *Router) handlePacket(c *fiber.Ctx) error {
 	case fiber.MethodGet:
 		action = c.Query("action")
 
+	case fiber.MethodOptions:
+		return c.SendStatus(fiber.StatusNoContent)
+
 	case fiber.MethodPost:
 		contentType := c.Get("Content-Type")
 		if strings.Contains(contentType, "application/json") {
 			var packet struct {
 				Action string `json:"action"`
 			}
-			if err := c.BodyParser(&packet); err != nil {
+
+			if err := c.Bind().JSON(&packet); err != nil {
 				return c.Status(fiber.StatusBadRequest).SendString("invalid JSON body")
 			}
 			action = packet.Action
@@ -126,7 +163,8 @@ func (r *Router) handlePacket(c *fiber.Ctx) error {
 	}
 
 	if action == "" {
-		return c.SendString(fmt.Sprintf("%s DEFAULT HANDLER EXECUTED", constants.APPLICATION_NAME))
+		fmt.Println("Default handler executed")
+		return c.SendString("Default handler executed")
 	}
 
 	route, ok := r.action.GetHandler(action)
@@ -134,7 +172,6 @@ func (r *Router) handlePacket(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).SendString("Unknown action")
 	}
 
-	// Middleware zincirini uygula (Fiber middleware olduğu varsayımıyla)
 	handler := route.Handler
 	for i := len(route.Middlewares) - 1; i >= 0; i-- {
 		handler = route.Middlewares[i](handler)

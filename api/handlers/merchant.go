@@ -5,7 +5,7 @@ import (
 	"core/types"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 type MerchantHandler struct {
@@ -17,15 +17,14 @@ func NewMerchantHandler(service *services.MerchantService) *MerchantHandler {
 }
 
 func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
 			})
 		}
-
 		params.Context = c.Context()
 
 		if params.Name != nil {
@@ -68,9 +67,9 @@ func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
 }
 
 func HandleMerchantFindById(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
@@ -97,9 +96,9 @@ func HandleMerchantFindById(s *services.MerchantService) fiber.Handler {
 }
 
 func HandleMerchantFindByEmail(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
@@ -126,9 +125,9 @@ func HandleMerchantFindByEmail(s *services.MerchantService) fiber.Handler {
 }
 
 func HandleMerchantDeleteById(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
@@ -157,9 +156,9 @@ func HandleMerchantDeleteById(s *services.MerchantService) fiber.Handler {
 }
 
 func HandleMerchantDeleteByEmail(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
@@ -188,9 +187,9 @@ func HandleMerchantDeleteByEmail(s *services.MerchantService) fiber.Handler {
 }
 
 func HandleMerchantFetch(s *services.MerchantService) fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		var params types.MerchantParams
-		if err := c.BodyParser(&params); err != nil {
+		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"error":   "Invalid JSON body: " + err.Error(),
