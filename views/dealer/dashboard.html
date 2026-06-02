@@ -7,7 +7,7 @@
         <p class="m-0 mt-2 max-w-3xl text-sm leading-6 text-muted">Dashboard sadece merchant'ın biriken varlıklarını gösterir: hangi network, hangi asset, ne kadar bakiye.</p>
       </div>
       <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-        <a class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="#domains">Domain ekle</a>
+        <a class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.DomainsPanelURL}}">Domain ekle</a>
         <a class="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="/swagger/index.html">API Docs</a>
       </div>
     </div>
@@ -33,19 +33,28 @@
         <strong class="mt-2 block truncate text-base font-black text-ink">{{.MerchantName}}</strong>
         <span class="mt-1 block truncate text-xs font-semibold text-muted">{{.MerchantEmail}}</span>
       </div>
+      <div class="rounded-3xl border border-line bg-wash p-4 xl:col-span-4">
+        <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div class="min-w-0">
+            <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Bayi ID</span>
+            <code class="mt-2 block truncate rounded-2xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink" id="merchantIdValue">{{.MerchantID}}</code>
+          </div>
+          <button class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="merchantIdValue">Kopyala</button>
+        </div>
+      </div>
     </div>
   </header>
 
   <div class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/85 p-2 shadow-sm backdrop-blur">
     <div class="flex gap-2 overflow-x-auto">
-      <button class="dash-tab" type="button" data-dashboard-tab="treasury" aria-selected="true">Treasury</button>
-      <button class="dash-tab" type="button" data-dashboard-tab="activity" aria-selected="false">Activity</button>
-      <button class="dash-tab" type="button" data-dashboard-tab="withdrawals" aria-selected="false">Withdrawals</button>
-      <button class="dash-tab" type="button" data-dashboard-tab="domains" aria-selected="false">Domains</button>
+      <a class="dash-tab" href="{{.TreasuryURL}}" aria-selected="{{if eq .ActivePanel "treasury"}}true{{else}}false{{end}}">Treasury</a>
+      <a class="dash-tab" href="{{.ActivityURL}}" aria-selected="{{if eq .ActivePanel "activity"}}true{{else}}false{{end}}">Activity</a>
+      <a class="dash-tab" href="{{.WithdrawalsURL}}" aria-selected="{{if eq .ActivePanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals</a>
+      <a class="dash-tab" href="{{.DomainsPanelURL}}" aria-selected="{{if eq .ActivePanel "domains"}}true{{else}}false{{end}}">Domains</a>
     </div>
   </div>
 
-  <section class="grid gap-4" data-dashboard-panel="treasury">
+  <section class="grid{{if ne .ActivePanel "treasury"}} hidden{{end}} gap-4">
     <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
       <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
         <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -56,32 +65,25 @@
           <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.AssetCount}} asset</span>
         </div>
 
-        {{if .Balances}}
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {{range .Balances}}
-              <article class="min-h-[184px] rounded-3xl border border-line bg-wash p-4 shadow-sm">
-                <div class="flex items-start justify-between gap-3">
-                  <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-ink text-sm font-black text-white">{{.Symbol}}</div>
-                  <span class="rounded-full border border-line bg-white px-3 py-1 text-xs font-extrabold text-muted">{{.Chain}}</span>
-                </div>
-                <div class="mt-5">
-                  <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
-                  <strong class="mt-2 block min-w-0 break-words text-3xl font-black leading-tight text-ink">{{.AmountDisplay}}</strong>
-                </div>
-                <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold text-muted">
-                  <span class="rounded-full border border-line bg-white px-3 py-1">{{.Deposits}} deposit</span>
-                  <span class="rounded-full border border-line bg-white px-3 py-1">{{.Users}} user</span>
-                  {{if .Token}}<span class="max-w-full truncate rounded-full border border-line bg-white px-3 py-1">contract {{.DisplayToken}}</span>{{end}}
-                </div>
-              </article>
-            {{end}}
-          </div>
-        {{else}}
-          <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-12 text-center">
-            <strong class="block text-base font-black text-ink">Henüz confirmed deposit yok.</strong>
-            <span class="mt-2 block text-sm font-semibold text-muted">İlk ödeme geldiğinde kasa burada network ve asset bazında oluşur.</span>
-          </div>
-        {{end}}
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {{range .Balances}}
+            <article class="min-h-[184px] rounded-3xl border border-line bg-wash p-4 shadow-sm">
+              <div class="flex items-start justify-between gap-3">
+                <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-ink text-sm font-black text-white">{{.Symbol}}</div>
+                <span class="rounded-full border border-line bg-white px-3 py-1 text-xs font-extrabold text-muted">{{.Chain}}</span>
+              </div>
+              <div class="mt-5">
+                <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
+                <strong class="mt-2 block min-w-0 break-words text-3xl font-black leading-tight text-ink">{{.AmountDisplay}}</strong>
+              </div>
+              <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold text-muted">
+                <span class="rounded-full border border-line bg-white px-3 py-1">{{.Deposits}} deposit</span>
+                <span class="rounded-full border border-line bg-white px-3 py-1">{{.Users}} user</span>
+                {{if .Token}}<span class="max-w-full truncate rounded-full border border-line bg-white px-3 py-1">contract {{.DisplayToken}}</span>{{end}}
+              </div>
+            </article>
+          {{end}}
+        </div>
       </section>
 
       <aside class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft xl:self-start">
@@ -102,7 +104,7 @@
     </div>
   </section>
 
-  <section class="grid hidden gap-4" data-dashboard-panel="activity" aria-hidden="true">
+  <section class="grid{{if ne .ActivePanel "activity"}} hidden{{end}} gap-4">
     <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
       <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
@@ -170,7 +172,7 @@
     </section>
   </section>
 
-  <section class="grid hidden gap-4" data-dashboard-panel="withdrawals" aria-hidden="true">
+  <section class="grid{{if ne .ActivePanel "withdrawals"}} hidden{{end}} gap-4">
     <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
       <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
@@ -203,7 +205,7 @@
     </section>
   </section>
 
-  <section class="grid hidden gap-4 xl:grid-cols-[minmax(0,420px)_1fr]" data-dashboard-panel="domains" aria-hidden="true">
+  <section class="grid{{if ne .ActivePanel "domains"}} hidden{{end}} gap-4 xl:grid-cols-[minmax(0,420px)_1fr]">
     <section id="domain-create" class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
       <h2 class="m-0 text-lg font-black text-ink">Domain ekle</h2>
       <p class="m-0 mt-1 text-sm leading-6 text-muted">Checkout ve webhook çağrıları domain bazlı API key ile çalışır.</p>
@@ -217,6 +219,7 @@
         <label class="grid gap-2 text-sm font-bold text-muted" for="webhook_secret">Webhook secret
           <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="webhook_secret" name="webhook_secret" type="text" autocomplete="off" required>
         </label>
+        <button class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-generate-secret="webhook_secret">Webhook secret üret</button>
         <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Domain oluştur</button>
       </form>
     </section>

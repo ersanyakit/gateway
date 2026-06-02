@@ -9,6 +9,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/repositories"
+	"core/services/pricing"
 	services "core/services/system"
 	webhooksvc "core/services/webhook"
 	"fmt"
@@ -152,10 +153,12 @@ func NewRouter(db *gorm.DB) *Router {
 		WithdrawalRepo:  r.WithdrawalRepo,
 		TransactionRepo: r.TransactionRepo,
 		ActivityLogRepo: r.ActivityLogRepo,
+		AssetRegistry:   r.assetRegistry,
 		Blockchains:     r.blockchains,
 	}
 	r.fiber.Get("/dealer", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/dashboard", handlers.HandleDealerDashboard(dealerDeps))
+	r.fiber.Get("/dealer/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/domains", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
 	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
@@ -176,6 +179,7 @@ func NewRouter(db *gorm.DB) *Router {
 		WalletRepo:    r.WalletRepo,
 		PaymentRepo:   r.PaymentRepo,
 		AssetRegistry: r.assetRegistry,
+		PriceOracle:   pricing.NewCoinGecko(),
 		Notifier:      webhooksvc.NewNotifier(),
 	}
 	r.fiber.Post("/payments/create", handlers.HandlePaymentCreate(paymentDeps))

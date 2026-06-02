@@ -289,116 +289,120 @@ func main() {
 		"bnbchain",
 	}
 
-	subscribeBus := func(chain blockchain.Chain) {
-		events := bus.Subscribe(chain.ChainID(), 1000)
-		go func() {
-			for {
-				select {
-				case <-mainCtx.Done():
-					return
-				case event, ok := <-events:
-					if !ok {
+	var isEnabled = false
+
+	if isEnabled {
+		subscribeBus := func(chain blockchain.Chain) {
+			events := bus.Subscribe(chain.ChainID(), 1000)
+			go func() {
+				for {
+					select {
+					case <-mainCtx.Done():
 						return
-					}
-					if event.Transaction == nil {
+					case event, ok := <-events:
+						if !ok {
+							return
+						}
+						if event.Transaction == nil {
+							if event.Ack != nil {
+								event.Ack <- nil
+							}
+							continue
+						}
+
+						tx := event.Transaction
+						fmt.Printf(
+							"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
+							chain.Name(),
+							tx.ChainID,
+							event.Type,
+							ptrValue(tx.Hash),
+							ptrValue(tx.Block),
+							ptrValue(tx.From),
+							ptrValue(tx.To),
+							ptrValue(tx.Amount),
+							ptrValue(tx.Symbol),
+							ptrValue(tx.LogIndex),
+						)
+
+						err := coreApplication.CORE.Router.TransactionRepo.Create(*tx)
+						if err != nil {
+							fmt.Println("Transaction save error:", err)
+						} else {
+							txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
+							if webhookErr != nil {
+								err = webhookErr
+								fmt.Println("Deposit processing error:", webhookErr)
+							}
+							handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
+						}
 						if event.Ack != nil {
-							event.Ack <- nil
+							event.Ack <- err
 						}
-						continue
-					}
-
-					tx := event.Transaction
-					fmt.Printf(
-						"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
-						chain.Name(),
-						tx.ChainID,
-						event.Type,
-						ptrValue(tx.Hash),
-						ptrValue(tx.Block),
-						ptrValue(tx.From),
-						ptrValue(tx.To),
-						ptrValue(tx.Amount),
-						ptrValue(tx.Symbol),
-						ptrValue(tx.LogIndex),
-					)
-
-					err := coreApplication.CORE.Router.TransactionRepo.Create(*tx)
-					if err != nil {
-						fmt.Println("Transaction save error:", err)
-					} else {
-						txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
-						if webhookErr != nil {
-							err = webhookErr
-							fmt.Println("Deposit processing error:", webhookErr)
-						}
-						handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
-					}
-					if event.Ack != nil {
-						event.Ack <- err
 					}
 				}
+			}()
+		}
+
+		for _, chainName := range chainNames {
+			chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
+			if err != nil {
+				log.Printf("[%s] chain not found: %v\n", chainName, err)
+				continue
 			}
-		}()
+
+			state, err := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chain.ChainID())
+			if err != nil {
+				log.Printf("[%s] chain state error: %v\n", chainName, err)
+				continue
+			}
+
+			var worker blockchain.Worker
+			switch chain.ChainID() {
+			case constants.Bitcoin:
+				worker = btcListener.NewRpcListener(
+					chain,
+					assetRegistry,
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+					},
+				)
+			case constants.Solana:
+				worker = solListener.NewRpcListener(
+					chain,
+					assetRegistry,
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+					},
+				)
+			default:
+				worker = evmListener.NewRpcListener(
+					chain,
+					assetRegistry,
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+					},
+				)
+			}
+
+			if err := chain.AddWorker(worker); err != nil {
+				log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
+				continue
+			}
+			subscribeBus(chain)
+		}
+
+		for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx) {
+			log.Printf("[%s] worker start error: %v\n", chainName, startErr)
+		}
+
 	}
-
-	for _, chainName := range chainNames {
-		chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
-		if err != nil {
-			log.Printf("[%s] chain not found: %v\n", chainName, err)
-			continue
-		}
-
-		state, err := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chain.ChainID())
-		if err != nil {
-			log.Printf("[%s] chain state error: %v\n", chainName, err)
-			continue
-		}
-
-		var worker blockchain.Worker
-		switch chain.ChainID() {
-		case constants.Bitcoin:
-			worker = btcListener.NewRpcListener(
-				chain,
-				assetRegistry,
-				state,
-				bus,
-				func(s *models.ChainState) error {
-					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-				},
-			)
-		case constants.Solana:
-			worker = solListener.NewRpcListener(
-				chain,
-				assetRegistry,
-				state,
-				bus,
-				func(s *models.ChainState) error {
-					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-				},
-			)
-		default:
-			worker = evmListener.NewRpcListener(
-				chain,
-				assetRegistry,
-				state,
-				bus,
-				func(s *models.ChainState) error {
-					return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-				},
-			)
-		}
-
-		if err := chain.AddWorker(worker); err != nil {
-			log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
-			continue
-		}
-		subscribeBus(chain)
-	}
-
-	for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx) {
-		log.Printf("[%s] worker start error: %v\n", chainName, startErr)
-	}
-
 	fiberApp := coreApplication.CORE.Router.GetFiber()
 	port := os.Getenv("PORT")
 	log.Println("App running on", port)

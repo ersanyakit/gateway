@@ -5,55 +5,103 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Checkout</title>
   <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/checkout.js" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <div class="topbar">
-      <div class="brand">Gateway Checkout</div>
-      <div class="summary">
-        <div>Order {{.Session.OrderID}}</div>
+  <main class="checkout-shell">
+    <header class="checkout-topbar">
+      <a class="brand checkout-brand" href="/">
+        <span class="brand-mark">G</span>
+        <span class="brand-text">
+          <span class="brand-name">Gateway Checkout</span>
+          <span class="brand-sub">Secure crypto payment</span>
+        </span>
+      </a>
+      <div class="checkout-order">
+        <span>Order {{.Session.OrderID}}</span>
         <strong>{{.Session.Amount}} {{.Session.Currency}}</strong>
       </div>
-    </div>
+    </header>
 
-    <section class="panel">
-      <div class="panel-head">
-        <div>
-          <h1>Select payment asset</h1>
-          <div class="sub">Choose the network and asset for this checkout.</div>
+    <section class="checkout-card">
+      <div class="checkout-card-head">
+        <div class="checkout-title-block">
+          <span class="checkout-eyebrow">Hosted payment</span>
+          <h1>{{if .SelectedSymbol}}Select network{{else}}Select asset{{end}}</h1>
+          <p>{{if .SelectedSymbol}}{{.SelectedSymbol}} icin kullanilacak network'u sec.{{else}}Odemeyi yapmak istedigin asset'i sec.{{end}}</p>
+        </div>
+        <div class="checkout-timer">
+          <span>Expires in</span>
+          <strong data-countdown-unix="{{.ExpiresAtUnix}}">--:--</strong>
         </div>
       </div>
 
-      {{if .Error}}
-      <div class="alert">{{.Error}}</div>
-      {{end}}
-
-      <div class="grid">
-        {{range .Assets}}
-        <form method="post" action="/checkout/{{$.Session.SessionToken}}/select">
-          <input type="hidden" name="chain_id" value="{{.ChainID}}">
-          <input type="hidden" name="symbol" value="{{.Symbol}}">
-          <input type="hidden" name="token" value="{{.Token}}">
-          <button class="asset" type="submit" {{if not .Available}}disabled{{end}}>
-            <span class="asset-main">
-              <span class="asset-row">
-                <span class="symbol">{{.Symbol}}</span>
-                <span>
-                  <span class="name">{{.Name}}</span><br>
-                  <span class="chain">{{.ChainName}}</span>
-                </span>
-              </span>
-              <span class="asset-row">
-                <span class="amount">{{.AmountDisplay}}</span>
-                <span class="chain">{{if .Native}}native{{else}}token{{end}}</span>
-              </span>
-            </span>
-          </button>
-        </form>
-        {{end}}
+      <div class="checkout-progress" aria-label="Checkout progress">
+        <span class="is-active"><strong>1</strong> Asset</span>
+        <span {{if .SelectedSymbol}}class="is-active"{{end}}><strong>2</strong> Network</span>
+        <span><strong>3</strong> Pay</span>
       </div>
 
-      <div class="footer">Session expires at {{.Session.ExpiresAt}}.</div>
+      {{if .Error}}
+      <div class="checkout-alert">{{.Error}}</div>
+      {{end}}
+
+      {{if .SelectedSymbol}}
+        <div class="checkout-step">
+          <div class="checkout-selected">
+            <a class="back-link" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
+            <div>
+              <span>Selected asset</span>
+              <strong>{{.SelectedSymbol}}</strong>
+            </div>
+          </div>
+          <div class="checkout-list">
+            {{range .Assets}}
+            <form method="post" action="/checkout/{{$.Session.SessionToken}}/select">
+              <input type="hidden" name="chain_id" value="{{.ChainID}}">
+              <input type="hidden" name="symbol" value="{{.Symbol}}">
+              <input type="hidden" name="token" value="{{.Token}}">
+              <button class="checkout-option" type="submit" {{if not .Available}}disabled{{end}}>
+                <span class="checkout-token">
+                  <span class="token-icon">{{.Symbol}}</span>
+                  <span>
+                    <strong>{{.ChainName}}</strong>
+                    <small>{{.Name}} · {{if .Native}}Native{{else}}Token{{end}}</small>
+                  </span>
+                </span>
+                <span class="checkout-quote">
+                  <strong>{{.AmountDisplay}}</strong>
+                  <small>{{if .Available}}Continue{{else}}Unavailable{{end}}</small>
+                </span>
+              </button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+      {{else}}
+        <div class="checkout-list">
+          {{range .AssetGroups}}
+          <a class="checkout-option" href="{{.URL}}">
+            <span class="checkout-token">
+              <span class="token-icon">{{.Symbol}}</span>
+              <span>
+                <strong>{{.Name}}</strong>
+                <small>{{.ChainCount}} network available</small>
+              </span>
+            </span>
+            <span class="checkout-quote">
+              <strong>{{.AmountDisplay}}</strong>
+              <small>Select</small>
+            </span>
+          </a>
+          {{end}}
+        </div>
+      {{end}}
+
+      <footer class="checkout-footer">
+        <span>Price is calculated at selection time with CoinGecko.</span>
+        <span>Session expires when the timer reaches zero.</span>
+      </footer>
     </section>
   </main>
 </body>

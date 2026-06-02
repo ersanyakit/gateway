@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"core/asset"
 	"core/blockchain"
 	"core/constants"
 	"core/models"
@@ -39,6 +40,7 @@ type DealerDeps struct {
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
 	TransactionRepo *repositories.TransactionRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
+	AssetRegistry   *asset.Registry
 	Blockchains     *blockchain.ChainFactory
 }
 
@@ -58,6 +60,11 @@ type DealerPageData struct {
 	DashboardURL      string
 	DomainsURL        string
 	LogoutURL         string
+	ActivePanel       string
+	TreasuryURL       string
+	ActivityURL       string
+	WithdrawalsURL    string
+	DomainsPanelURL   string
 	Domains           []DealerDomainView
 	Wallets           []DealerWalletView
 	WithdrawalWallets []DealerWalletView
@@ -410,10 +417,12 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 
 		data := dealerPageData("Bayi paneli", "dashboard")
 		fillDealerMerchant(&data, merchant)
+		data.ActivePanel = currentDashboardPanel(c)
 		applyFlash(c, &data)
 		data.Domains = dealerDomainViews(domains)
 		data.Withdrawals = dealerWithdrawalViews(withdrawals)
 		data.Balances = dealerBalanceViews(balances)
+		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
 		data.Activities = dealerActivityViews(transactions)
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
@@ -1077,17 +1086,42 @@ func dealerPageData(title string, active string) DealerPageData {
 	}
 
 	return DealerPageData{
-		Title:         title,
-		Active:        active,
-		OIDCLoginURL:  oidcURL,
-		OIDCProvider:  provider,
-		RegisterURL:   "/dealer/register",
-		LoginURL:      "/dealer/login",
-		OnboardingURL: "/dealer/onboarding",
-		DashboardURL:  "/dealer/dashboard",
-		DomainsURL:    "/dealer/domains",
-		LogoutURL:     "/dealer/logout",
+		Title:           title,
+		Active:          active,
+		OIDCLoginURL:    oidcURL,
+		OIDCProvider:    provider,
+		RegisterURL:     "/dealer/register",
+		LoginURL:        "/dealer/login",
+		OnboardingURL:   "/dealer/onboarding",
+		DashboardURL:    "/dealer/dashboard",
+		TreasuryURL:     "/dealer/dashboard/treasury",
+		ActivityURL:     "/dealer/dashboard/activity",
+		WithdrawalsURL:  "/dealer/dashboard/withdrawals",
+		DomainsPanelURL: "/dealer/dashboard/domains",
+		DomainsURL:      "/dealer/domains",
+		LogoutURL:       "/dealer/logout",
+		ActivePanel:     "treasury",
 	}
+}
+
+func dashboardPanel(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "activity":
+		return "activity"
+	case "withdrawals":
+		return "withdrawals"
+	case "domains":
+		return "domains"
+	default:
+		return "treasury"
+	}
+}
+
+func currentDashboardPanel(c fiber.Ctx) string {
+	if strings.EqualFold(c.Path(), "/dealer/domains") {
+		return "domains"
+	}
+	return dashboardPanel(c.Params("section"))
 }
 
 func dealerDomainViews(domains []models.Domain) []DealerDomainView {
@@ -1222,6 +1256,49 @@ func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
 		})
 	}
 	return views
+}
+
+func dealerAllBalanceViews(registry *asset.Registry, balances []DealerBalanceView) []DealerBalanceView {
+	if registry == nil {
+		return balances
+	}
+	byKey := make(map[string]DealerBalanceView, len(balances))
+	for _, balance := range balances {
+		byKey[balanceKey(balance.Chain, balance.Symbol, balance.Token)] = balance
+	}
+
+	assets := registry.ListAll()
+	views := make([]DealerBalanceView, 0, len(assets))
+	seen := make(map[string]struct{}, len(assets))
+	for _, assetInfo := range assets {
+		token := ""
+		if !assetInfo.IsNative() {
+			token = assetInfo.GetIdentifier()
+		}
+		key := balanceKey(chainLabel(assetInfo.GetChainID()), assetInfo.GetSymbol(), token)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if balance, ok := byKey[key]; ok {
+			views = append(views, balance)
+			continue
+		}
+		views = append(views, DealerBalanceView{
+			Chain:         chainLabel(assetInfo.GetChainID()),
+			Symbol:        assetInfo.GetSymbol(),
+			Token:         token,
+			AmountRaw:     "0",
+			AmountDisplay: "0",
+			Decimals:      assetInfo.GetDecimals(),
+			DisplayToken:  emptyDash(token),
+		})
+	}
+	return views
+}
+
+func balanceKey(chain string, symbol string, token string) string {
+	return strings.ToLower(strings.TrimSpace(chain)) + "|" + strings.ToUpper(strings.TrimSpace(symbol)) + "|" + strings.ToLower(strings.TrimSpace(token))
 }
 
 func dealerChainVaultViews(balances []DealerBalanceView) []DealerChainVaultView {

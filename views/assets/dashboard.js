@@ -1,43 +1,39 @@
 document.addEventListener('DOMContentLoaded', function () {
-  var tabs = Array.prototype.slice.call(document.querySelectorAll('[data-dashboard-tab]'));
-  var panels = Array.prototype.slice.call(document.querySelectorAll('[data-dashboard-panel]'));
-  if (tabs.length === 0 || panels.length === 0) {
-    return;
-  }
-
-  function activate(tabName) {
-    var exists = tabs.some(function (tab) {
-      return tab.getAttribute('data-dashboard-tab') === tabName;
-    });
-    if (!exists) {
-      tabName = tabs[0].getAttribute('data-dashboard-tab');
-    }
-
-    tabs.forEach(function (tab) {
-      var selected = tab.getAttribute('data-dashboard-tab') === tabName;
-      tab.setAttribute('aria-selected', selected ? 'true' : 'false');
-    });
-
-    panels.forEach(function (panel) {
-      var active = panel.getAttribute('data-dashboard-panel') === tabName;
-      panel.classList.toggle('hidden', !active);
-      panel.setAttribute('aria-hidden', active ? 'false' : 'true');
-    });
-  }
-
-  tabs.forEach(function (tab) {
-    tab.addEventListener('click', function () {
-      var tabName = tab.getAttribute('data-dashboard-tab');
-      activate(tabName);
-      if (history.replaceState) {
-        history.replaceState(null, '', '#' + tabName);
+  document.querySelectorAll('[data-copy-target]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var target = document.getElementById(button.getAttribute('data-copy-target'));
+      if (!target) {
+        return;
       }
+      var value = target.innerText || target.value || '';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(value);
+      }
+      button.innerText = 'Kopyalandı';
+      window.setTimeout(function () {
+        button.innerText = 'Kopyala';
+      }, 1200);
     });
   });
 
-  window.addEventListener('hashchange', function () {
-    activate(window.location.hash.replace('#', ''));
+  document.querySelectorAll('[data-generate-secret]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var input = document.getElementById(button.getAttribute('data-generate-secret'));
+      if (!input) {
+        return;
+      }
+      var bytes = new Uint8Array(32);
+      if (window.crypto && window.crypto.getRandomValues) {
+        window.crypto.getRandomValues(bytes);
+      } else {
+        for (var i = 0; i < bytes.length; i += 1) {
+          bytes[i] = Math.floor(Math.random() * 256);
+        }
+      }
+      input.value = Array.prototype.map.call(bytes, function (byte) {
+        return byte.toString(16).padStart(2, '0');
+      }).join('');
+      input.focus();
+    });
   });
-
-  activate(window.location.hash.replace('#', '') || tabs[0].getAttribute('data-dashboard-tab'));
 });

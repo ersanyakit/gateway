@@ -5,50 +5,83 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pay</title>
   <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/checkout.js" defer></script>
 </head>
 <body>
-  <main class="shell">
-    <div class="topbar">
-      <div class="brand">Gateway Checkout</div>
-      <div class="summary">
-        <div>Order {{.Session.OrderID}}</div>
+  <main class="checkout-shell pay-shell">
+    <header class="checkout-topbar">
+      <a class="brand checkout-brand" href="/">
+        <span class="brand-mark">G</span>
+        <span class="brand-text">
+          <span class="brand-name">Gateway Checkout</span>
+          <span class="brand-sub">Secure crypto payment</span>
+        </span>
+      </a>
+      <div class="checkout-order">
+        <span>Order {{.Session.OrderID}}</span>
         <strong>{{.AmountDisplay}}</strong>
       </div>
-    </div>
+    </header>
 
-    <section class="panel payment-panel">
-      <div class="qr-side">
-        <div class="qr-box">
-          <img src="{{.QRCodeURL}}" alt="Payment QR">
+    <section class="checkout-card pay-card-pro">
+      <div class="checkout-card-head">
+        <div class="checkout-title-block">
+          <span class="checkout-eyebrow">Payment request</span>
+          <h1>Send payment</h1>
+          <p>{{.ChainName}} network onayindan sonra odeme otomatik islenir.</p>
+        </div>
+        <div class="checkout-timer">
+          <span>Expires in</span>
+          <strong data-countdown-unix="{{.ExpiresAtUnix}}">--:--</strong>
         </div>
       </div>
-      <div class="details">
-        <div>
-          <h1>Send payment</h1>
-          <div class="sub">Network: {{.ChainName}}. The page updates after the deposit is confirmed.</div>
+
+      <div class="checkout-progress" aria-label="Checkout progress">
+        <span class="is-active"><strong>1</strong> Asset</span>
+        <span class="is-active"><strong>2</strong> Network</span>
+        <span class="is-active"><strong>3</strong> Pay</span>
+      </div>
+
+      <div class="pay-layout">
+        <div class="pay-qr-panel">
+          <div class="qr-box">
+            <img src="{{.QRCodeURL}}" alt="Payment QR">
+          </div>
+          <div class="status" id="statusLabel">Waiting for payment</div>
         </div>
 
-        <div class="status" id="statusLabel">Waiting for payment</div>
+        <div class="pay-details">
+          <div class="pay-summary-card">
+            <div>
+              <span>Amount</span>
+              <strong>{{.AmountDisplay}}</strong>
+            </div>
+            <div>
+              <span>Network</span>
+              <strong>{{.ChainName}}</strong>
+            </div>
+          </div>
 
-        <div class="row">
-          <div class="label">Amount</div>
-          <div class="value">{{.Session.ExpectedAmountRaw}} raw units<br>{{.AmountDisplay}}</div>
-        </div>
+          <div class="copy-field">
+            <div>
+              <span>Deposit address</span>
+              <button type="button" onclick="copyAddress()">Copy</button>
+            </div>
+            <code id="depositAddress">{{.Session.DepositAddress}}</code>
+          </div>
 
-        <div class="row">
-          <div class="label">Deposit address</div>
-          <div class="value" id="depositAddress">{{.Session.DepositAddress}}</div>
-        </div>
+          <div class="copy-field">
+            <div>
+              <span>Payment URI</span>
+            </div>
+            <code>{{.PaymentURI}}</code>
+          </div>
 
-        <div class="row">
-          <div class="label">Payment URI</div>
-          <div class="value">{{.PaymentURI}}</div>
-        </div>
-
-        <div class="actions">
-          <button class="button primary" type="button" onclick="copyAddress()">Copy address</button>
-          <a class="button" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
-          <a class="button" href="/checkout/{{.Session.SessionToken}}/cancel">Cancel</a>
+          <div class="pay-actions">
+            <button class="button primary" type="button" onclick="copyAddress()">Copy address</button>
+            <a class="button secondary" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
+            <a class="button ghost" href="/checkout/{{.Session.SessionToken}}/cancel">Cancel</a>
+          </div>
         </div>
       </div>
     </section>
