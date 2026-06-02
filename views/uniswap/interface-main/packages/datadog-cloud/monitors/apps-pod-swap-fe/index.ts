@@ -1,5 +1,0 @@
-export { swapFeApiMonitors } from './swap-api'
-export { swapFeCiMonitors } from './ci'
-export { swapFeOnChainMonitors } from './on-chain'
-export { swapFeSolanaMonitors } from './solana'
-export { swapFeUniswapXMonitors } from './uniswap-x'
