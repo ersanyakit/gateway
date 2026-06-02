@@ -1,0 +1,22 @@
+<header class="sticky top-0 z-40 border-b border-line bg-white/80 backdrop-blur-xl">
+  <div class="mx-auto flex min-h-[72px] w-full max-w-[1180px] items-center justify-between gap-4 px-4 py-3">
+    <a class="flex min-w-0 items-center gap-3" href="{{if .HasSession}}{{.DashboardURL}}{{else}}/{{end}}" aria-label="Gateway Bayi Portalı">
+      <span class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-line bg-[#fff3fc] text-sm font-black text-accentHover shadow-glow">G</span>
+      <span class="grid min-w-0 gap-0.5">
+        <span class="truncate text-[15px] font-extrabold leading-tight text-ink">Gateway Bayi Portalı</span>
+        <span class="truncate text-xs font-semibold leading-tight text-muted">Crypto checkout operations</span>
+      </span>
+    </a>
+
+    <nav class="flex flex-wrap items-center justify-end gap-2" aria-label="Bayi menüsü">
+      {{if .HasSession}}
+        <a class="inline-flex min-h-10 items-center rounded-full px-4 text-sm font-bold {{if eq .Active "dashboard"}}border border-line bg-white text-ink shadow-sm{{else}}text-muted hover:bg-white hover:text-ink{{end}}" href="{{.DashboardURL}}">Panel</a>
+        <a class="inline-flex min-h-10 items-center rounded-full px-4 text-sm font-bold text-muted hover:bg-white hover:text-ink" href="{{.LogoutURL}}">Çıkış</a>
+      {{else}}
+        <a class="inline-flex min-h-10 items-center rounded-full px-4 text-sm font-bold {{if eq .Active "home"}}border border-line bg-white text-ink shadow-sm{{else}}text-muted hover:bg-white hover:text-ink{{end}}" href="/">Ürün</a>
+        <a class="inline-flex min-h-10 items-center rounded-full px-4 text-sm font-bold {{if eq .Active "login"}}border border-line bg-white text-ink shadow-sm{{else}}text-muted hover:bg-white hover:text-ink{{end}}" href="{{.LoginURL}}">Giriş</a>
+        <a class="inline-flex min-h-10 items-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.RegisterURL}}">Kayıt</a>
+      {{end}}
+    </nav>
+  </div>
+</header>

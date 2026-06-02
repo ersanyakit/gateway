@@ -1,4 +1,737 @@
+basePath: /
+definitions:
+  types.DomainCreateResponse:
+    properties:
+      api_key:
+        type: string
+      created_at:
+        type: string
+      domain_url:
+        type: string
+      hd_account_id:
+        type: integer
+      id:
+        type: string
+      is_enabled:
+        type: boolean
+      key_id:
+        type: string
+      merchant_id:
+        type: string
+      updated_at:
+        type: string
+      webhook_url:
+        type: string
+    type: object
+  types.DomainParams:
+    properties:
+      api_key:
+        type: string
+      api_secret:
+        type: string
+      domain_id:
+        type: string
+      domain_url:
+        type: string
+      merchant_id:
+        type: string
+      webhook_secret:
+        type: string
+      webhook_url:
+        type: string
+    type: object
+  types.ErrorResponse:
+    properties:
+      error:
+        type: string
+      errors: {}
+      success:
+        type: boolean
+    type: object
+  types.MerchantCreateResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.MerchantParams:
+    properties:
+      captcha:
+        type: string
+      cursor:
+        type: string
+      email:
+        type: string
+      email_repeat:
+        type: string
+      id:
+        type: string
+      limit:
+        type: integer
+      name:
+        type: string
+      password:
+        type: string
+      password_repeat:
+        type: string
+    type: object
+  types.PaymentCreateParams:
+    properties:
+      amount:
+        type: string
+      cancel_url:
+        type: string
+      currency:
+        type: string
+      domain_id:
+        type: string
+      merchant_id:
+        type: string
+      order_id:
+        type: string
+      product_id:
+        type: string
+      success_url:
+        type: string
+      user_id:
+        type: string
+    type: object
+  types.PaymentCreateResponse:
+    properties:
+      checkout_url:
+        type: string
+      deposit_wallet:
+        type: string
+      expires_at:
+        type: string
+      payment_id:
+        type: string
+      session_token:
+        type: string
+      status:
+        type: string
+      success:
+        type: boolean
+    type: object
+  types.PaymentStatusResponse:
+    properties:
+      cancel_path:
+        type: string
+      paid:
+        type: boolean
+      status:
+        type: string
+      success:
+        type: boolean
+      success_path:
+        type: string
+    type: object
+  types.WalletCreateResponse:
+    properties:
+      avalanche:
+        type: string
+      base:
+        type: string
+      bitcoin:
+        type: string
+      bnbchain:
+        type: string
+      chiliz:
+        type: string
+      created_at:
+        type: string
+      domain_id:
+        type: string
+      ethereum:
+        type: string
+      hd_account_id:
+        type: integer
+      hd_address_id:
+        type: integer
+      id:
+        type: string
+      merchant_id:
+        type: string
+      product_id:
+        type: string
+      solana:
+        type: string
+      tron:
+        type: string
+      unichain:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  types.WalletParams:
+    properties:
+      domain_id:
+        type: string
+      merchant_id:
+        type: string
+      product_id:
+        type: string
+      user_id:
+        type: string
+    type: object
 info:
   contact: {}
-paths: {}
+  description: Multi-chain merchant payment gateway API.
+  title: Gateway API
+  version: "1.0"
+paths:
+  /auth/oidc/login:
+    get:
+      description: Redirects the dealer to the configured OIDC authorization URL.
+        Configure DEALER_OIDC_LOGIN_URL, OIDC_LOGIN_URL, or OIDC_AUTH_URL.
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to OIDC provider
+          schema:
+            type: string
+        "501":
+          description: HTML page explaining missing OIDC configuration
+          schema:
+            type: string
+      summary: Start dealer OIDC login
+      tags:
+      - Dealers
+  /checkout/{token}:
+    get:
+      description: Renders the hosted checkout page where the payer selects a network
+        and asset.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML checkout page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Show checkout
+      tags:
+      - Payments
+  /checkout/{token}/cancel:
+    get:
+      description: Cancels the hosted checkout session, sends a payment_failed webhook
+        when applicable, and redirects to the merchant cancel URL.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant cancel URL or rendered result page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Cancel checkout
+      tags:
+      - Payments
+  /checkout/{token}/pay:
+    get:
+      description: Renders the QR code, payment address, selected chain, asset, and
+        amount for a checkout session.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML payment page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Show payment instructions
+      tags:
+      - Payments
+  /checkout/{token}/qr.png:
+    get:
+      description: Returns a PNG QR code containing the payment URI or deposit address.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: PNG QR code
+          schema:
+            type: file
+        "404":
+          description: Not found
+          schema:
+            type: string
+        "500":
+          description: QR generation failed
+          schema:
+            type: string
+      summary: Get checkout QR code
+      tags:
+      - Payments
+  /checkout/{token}/return/success:
+    get:
+      description: Redirects a paid checkout session to the merchant success URL or
+        renders the built-in success page.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant success URL or rendered result page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Return after successful payment
+      tags:
+      - Payments
+  /checkout/{token}/select:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores the selected network and asset, computes the raw expected
+        amount, and redirects to the payment page.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: Chain ID
+        in: formData
+        name: chain_id
+        required: true
+        type: integer
+      - description: Asset symbol
+        in: formData
+        name: symbol
+        required: true
+        type: string
+      - description: Token contract address or asset identifier
+        in: formData
+        name: token
+        type: string
+      produces:
+      - text/html
+      responses:
+        "303":
+          description: Redirect to payment page
+          schema:
+            type: string
+        "400":
+          description: HTML checkout page with validation error
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Select checkout asset
+      tags:
+      - Payments
+  /checkout/{token}/status.json:
+    get:
+      description: Returns whether the checkout session is paid and the next hosted
+        checkout paths.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.PaymentStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Get checkout status
+      tags:
+      - Payments
+  /dealer/dashboard:
+    get:
+      description: Renders the authenticated dealer panel with merchant info, domain
+        creation form, and current domains.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML dealer dashboard
+          schema:
+            type: string
+        "302":
+          description: Redirect to dealer login
+          schema:
+            type: string
+      summary: Show dealer dashboard
+      tags:
+      - Dealers
+  /dealer/domains:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant domain using the authenticated dealer session
+        and redirects back to the dashboard.
+      parameters:
+      - description: Domain URL
+        in: formData
+        name: domain_url
+        required: true
+        type: string
+      - description: Webhook URL
+        in: formData
+        name: webhook_url
+        required: true
+        type: string
+      - description: Webhook secret
+        in: formData
+        name: webhook_secret
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to dealer login or dashboard with error
+          schema:
+            type: string
+      summary: Create dealer domain from panel
+      tags:
+      - Dealers
+  /dealer/login:
+    get:
+      description: Renders the hosted dealer login page with the OIDC sign-in action.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML dealer login page
+          schema:
+            type: string
+      summary: Show dealer login
+      tags:
+      - Dealers
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Authenticates a dealer with email and password, sets a dealer session
+        cookie, and redirects to onboarding.
+      parameters:
+      - description: Dealer email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to dealer onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML login page with validation error
+          schema:
+            type: string
+        "401":
+          description: HTML login page with authentication error
+          schema:
+            type: string
+      summary: Dealer email login
+      tags:
+      - Dealers
+  /dealer/onboarding:
+    get:
+      description: Renders the hosted onboarding page after a dealer merchant is created.
+      parameters:
+      - description: Merchant ID
+        in: query
+        name: merchant_id
+        type: string
+      - description: Dealer name
+        in: query
+        name: name
+        type: string
+      - description: Dealer email
+        in: query
+        name: email
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML dealer onboarding page
+          schema:
+            type: string
+      summary: Show dealer onboarding
+      tags:
+      - Dealers
+  /dealer/register:
+    get:
+      description: Renders the hosted self-service dealer registration page.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML dealer registration page
+          schema:
+            type: string
+      summary: Show dealer registration
+      tags:
+      - Dealers
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant/dealer account from the hosted self-service
+        registration page and redirects to onboarding.
+      parameters:
+      - description: Dealer name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: Dealer email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Dealer email confirmation
+        in: formData
+        name: email_repeat
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      - description: Password confirmation
+        in: formData
+        name: password_repeat
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to dealer onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML registration page with validation error
+          schema:
+            type: string
+        "500":
+          description: HTML registration page with server error
+          schema:
+            type: string
+      summary: Create dealer from form
+      tags:
+      - Dealers
+  /merchant.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a merchant/dealer account for self-service onboarding.
+      parameters:
+      - description: Dealer merchant create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.MerchantParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.MerchantCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create dealer merchant
+      tags:
+      - Dealers
+  /merchant.domain.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a merchant domain with webhook settings and returns the
+        API key used by payment requests.
+      parameters:
+      - description: Merchant domain create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.DomainParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.DomainCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create merchant domain
+      tags:
+      - Dealers
+  /merchant.wallet.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates or returns the deterministic multi-chain wallet for a merchant
+        domain, product_id, and user_id.
+      parameters:
+      - description: User wallet create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.WalletParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.WalletCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create user wallet
+      tags:
+      - Users
+  /payments/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a checkout session for a merchant order and returns a hosted
+        checkout URL.
+      parameters:
+      - description: Payment create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.PaymentCreateParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - BearerAuth: []
+      summary: Create payment session
+      tags:
+      - Payments
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
 swagger: "2.0"

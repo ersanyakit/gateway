@@ -16,6 +16,17 @@ func NewMerchantHandler(service *services.MerchantService) *MerchantHandler {
 	return &MerchantHandler{service: service}
 }
 
+// HandleMerchantCreate creates a dealer merchant account.
+// @Summary Create dealer merchant
+// @Description Creates a merchant/dealer account for self-service onboarding.
+// @Tags Dealers
+// @Accept json
+// @Produce json
+// @Param payload body types.MerchantParams true "Dealer merchant create payload"
+// @Success 201 {object} types.MerchantCreateResponse
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 500 {object} types.ErrorResponse
+// @Router /merchant.create [post]
 func HandleMerchantCreate(s *services.MerchantService) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var params types.MerchantParams

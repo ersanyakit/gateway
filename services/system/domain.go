@@ -1,9 +1,12 @@
 package services
 
 import (
+	"context"
 	"core/models"
 	"core/repositories"
 	"core/types"
+
+	"github.com/google/uuid"
 )
 
 type DomainService struct {
@@ -20,6 +23,10 @@ func (s *DomainService) ServiceName() string {
 
 func (s *DomainService) Create(params types.DomainParams) (*models.Domain, error) {
 	return s.domainRepo.Create(params)
+}
+
+func (s *DomainService) ListByMerchant(ctx context.Context, merchantID uuid.UUID) ([]models.Domain, error) {
+	return s.domainRepo.ListByMerchant(ctx, merchantID)
 }
 
 func (s *DomainService) FindByID(params types.DomainParams) (*models.Domain, error) {

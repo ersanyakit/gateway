@@ -181,6 +181,45 @@ func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([
 	return transactions, err
 }
 
+func (r *TransactionRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.Transaction, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+
+	var transactions []models.Transaction
+	err := r.DB().WithContext(ctx).
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&transactions).Error
+	return transactions, err
+}
+
+func (r *TransactionRepo) MerchantDepositSummary(ctx context.Context, merchantID uuid.UUID) ([]models.DepositSummary, error) {
+	var summaries []models.DepositSummary
+	err := r.DB().WithContext(ctx).Raw(`
+		SELECT
+			chain_id,
+			token,
+			symbol,
+			decimals,
+			SUM(amount::numeric)::text AS amount_raw,
+			COUNT(*) AS transaction_count,
+			COUNT(DISTINCT user_id) AS user_count,
+			MIN(created_at) AS first_deposit_at,
+			MAX(created_at) AS last_deposit_at
+		FROM transactions
+		WHERE merchant_id = ?
+			AND wallet_id IS NOT NULL
+			AND status = ?
+			AND amount ~ '^[0-9]+$'
+			AND amount::numeric > 0
+		GROUP BY chain_id, token, symbol, decimals
+		ORDER BY chain_id ASC, symbol ASC
+	`, merchantID, "confirmed").Scan(&summaries).Error
+	return summaries, err
+}
+
 func (r *TransactionRepo) DomainDepositSummary(params types.DepositSummaryParams) ([]models.DepositSummary, error) {
 	if err := params.Validate(); err != nil {
 		return nil, err

@@ -1,0 +1,60 @@
+<section class="grid min-h-[calc(100vh-184px)] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_520px]">
+  <div class="grid max-w-2xl gap-6">
+    <div class="inline-flex w-fit items-center gap-2 rounded-full border border-line bg-white/80 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover shadow-sm">
+      <span class="h-2 w-2 rounded-full bg-accent"></span>
+      Merchant onboarding
+    </div>
+    <div class="grid gap-4">
+      <h1 class="m-0 text-5xl font-black leading-[0.96] text-ink sm:text-6xl">Satış sitene crypto checkout ekle.</h1>
+      <p class="m-0 max-w-xl text-base leading-8 text-muted">Bayi hesabını oluştur, domain ve webhook bilgilerini bağla, ödeme session'larını API üzerinden başlat.</p>
+    </div>
+    <div class="grid gap-3 sm:grid-cols-3">
+      <div class="rounded-3xl border border-line bg-white/85 p-4 shadow-sm"><strong class="grid h-9 w-9 place-items-center rounded-full bg-[#fff3fc] text-accentHover">1</strong><span class="mt-3 block text-sm font-bold text-muted">Bayi hesabı</span></div>
+      <div class="rounded-3xl border border-line bg-white/85 p-4 shadow-sm"><strong class="grid h-9 w-9 place-items-center rounded-full bg-[#fff3fc] text-accentHover">2</strong><span class="mt-3 block text-sm font-bold text-muted">Domain ve webhook</span></div>
+      <div class="rounded-3xl border border-line bg-white/85 p-4 shadow-sm"><strong class="grid h-9 w-9 place-items-center rounded-full bg-[#fff3fc] text-accentHover">3</strong><span class="mt-3 block text-sm font-bold text-muted">Checkout API</span></div>
+    </div>
+  </div>
+
+  <section class="grid gap-4 rounded-[28px] border border-line bg-white/90 p-5 shadow-soft backdrop-blur" aria-labelledby="register-title">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="m-0 text-2xl font-black text-ink" id="register-title">Bayi kaydı</h2>
+        <p class="m-0 mt-2 text-sm leading-6 text-muted">Merchant hesabı için temel bilgileri gir.</p>
+      </div>
+      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-accent text-sm font-black text-white shadow-glow">+</span>
+    </div>
+
+    {{if .Error}}<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+
+    <form class="grid gap-3 sm:grid-cols-2" method="post" action="{{.RegisterURL}}">
+      <label class="grid gap-2 text-sm font-bold text-muted sm:col-span-2" for="name">
+        Bayi adı
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="name" name="name" type="text" autocomplete="organization" minlength="3" required>
+      </label>
+
+      <label class="grid gap-2 text-sm font-bold text-muted" for="email">
+        E-posta
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="email" name="email" type="email" autocomplete="email" required>
+      </label>
+
+      <label class="grid gap-2 text-sm font-bold text-muted" for="email_repeat">
+        E-posta tekrar
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="email_repeat" name="email_repeat" type="email" autocomplete="email" required>
+      </label>
+
+      <label class="grid gap-2 text-sm font-bold text-muted" for="password">
+        Şifre
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="password" name="password" type="password" autocomplete="new-password" minlength="6" required>
+      </label>
+
+      <label class="grid gap-2 text-sm font-bold text-muted" for="password_repeat">
+        Şifre tekrar
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="password_repeat" name="password_repeat" type="password" autocomplete="new-password" minlength="6" required>
+      </label>
+
+      <button class="mt-1 inline-flex min-h-12 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover sm:col-span-2" type="submit">Kaydı oluştur</button>
+    </form>
+
+    <p class="m-0 text-center text-sm font-semibold text-muted">Zaten kayıtlıysan <a class="font-extrabold text-accentHover" href="{{.LoginURL}}">giriş ekranına dön</a>.</p>
+  </section>
+</section>

@@ -96,6 +96,9 @@ func Migrate(app *application.App) error {
 		&models.Merchant{},
 		&models.Transaction{},
 		&models.Wallet{},
+		&models.PaymentSession{},
+		&models.WithdrawalRequest{},
+		&models.ActivityLog{},
 	)
 
 	return err

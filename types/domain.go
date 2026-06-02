@@ -17,6 +17,19 @@ type DomainParams struct {
 	APISecret *string `json:"api_secret,omitempty"`
 }
 
+type DomainCreateResponse struct {
+	ID          string `json:"id"`
+	MerchantID  string `json:"merchant_id"`
+	DomainURL   string `json:"domain_url"`
+	KeyID       string `json:"key_id"`
+	APIKey      string `json:"api_key"`
+	HDAccountID uint32 `json:"hd_account_id"`
+	WebhookURL  string `json:"webhook_url"`
+	IsEnabled   bool   `json:"is_enabled"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 func (d *DomainParams) Validate() error {
 	if d.MerchantID == nil || *d.MerchantID == "" {
 		return errors.New("MerchantID is required")

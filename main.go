@@ -53,30 +53,30 @@ func webhookRetryInterval() time.Duration {
 	return interval
 }
 
-func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, eventType string, txParam types.TransactionParam) error {
+func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, eventType string, txParam types.TransactionParam) (*models.Transaction, error) {
 	if txParam.To == nil || txParam.Amount == nil || !isPositiveAmount(*txParam.Amount) {
-		return nil
+		return nil, nil
 	}
 
 	wallet, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, txParam.ChainID, *txParam.To)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	txModel, err := coreApplication.CORE.Router.TransactionRepo.BindWallet(ctx, uniqueHash, eventType, wallet)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if txModel.WebhookSentAt != nil {
-		return nil
+		return txModel, nil
 	}
 
 	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -85,10 +85,37 @@ func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, ev
 	err = notifier.Deliver(deliveryCtx, wallet.Domain, *txModel)
 	if err != nil {
 		fmt.Println("Webhook delivery error:", err)
-		return coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, false, err)
+		return txModel, coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, false, err)
 	}
 
-	return coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, true, nil)
+	return txModel, coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, true, nil)
+}
+
+func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, txModel *models.Transaction) {
+	if txModel == nil || coreApplication.CORE.Router.PaymentRepo == nil {
+		return
+	}
+
+	session, changed, err := coreApplication.CORE.Router.PaymentRepo.MarkPaidByTransaction(ctx, *txModel)
+	if err != nil {
+		log.Println("Payment match error:", err)
+		return
+	}
+	if !changed || session == nil || session.WebhookSentAt != nil {
+		return
+	}
+
+	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	err = notifier.DeliverPayment(deliveryCtx, session.Domain, *session)
+	cancel()
+	if err != nil {
+		log.Println("Payment webhook delivery error:", err)
+		_ = coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
+		return
+	}
+	if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
+		log.Println("Payment webhook mark delivered error:", err)
+	}
 }
 
 func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
@@ -122,6 +149,28 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 
 		if err := coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, true, nil); err != nil {
 			log.Println("Webhook mark delivered error:", err)
+		}
+	}
+
+	if coreApplication.CORE.Router.PaymentRepo == nil {
+		return
+	}
+	sessions, err := coreApplication.CORE.Router.PaymentRepo.ListPendingWebhooks(ctx, 100)
+	if err != nil {
+		log.Println("Pending payment webhook query error:", err)
+		return
+	}
+	for _, session := range sessions {
+		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		err = notifier.DeliverPayment(deliveryCtx, session.Domain, session)
+		cancel()
+		if err != nil {
+			log.Println("Payment webhook retry error:", err)
+			_ = coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
+			continue
+		}
+		if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
+			log.Println("Payment webhook mark delivered error:", err)
 		}
 	}
 }
@@ -189,6 +238,16 @@ func GetApp() (*coreApplication.App, error) {
 	return NewApp()
 }
 
+// @title Gateway API
+// @version 1.0
+// @description Multi-chain merchant payment gateway API.
+// @BasePath /
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name X-API-Key
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	mainCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -266,9 +325,13 @@ func main() {
 					err := coreApplication.CORE.Router.TransactionRepo.Create(*tx)
 					if err != nil {
 						fmt.Println("Transaction save error:", err)
-					} else if webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx); webhookErr != nil {
-						err = webhookErr
-						fmt.Println("Deposit processing error:", webhookErr)
+					} else {
+						txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
+						if webhookErr != nil {
+							err = webhookErr
+							fmt.Println("Deposit processing error:", webhookErr)
+						}
+						handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
 					}
 					if event.Ack != nil {
 						event.Ack <- err

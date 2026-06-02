@@ -189,6 +189,45 @@ func (r *WalletRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Wallet
 	return &wallet, nil
 }
 
+func (r *WalletRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.Wallet, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&wallets).Error
+	return wallets, err
+}
+
+func (r *WalletRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, limit int, offset int) ([]models.Wallet, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	var total int64
+	if err := r.DB().WithContext(ctx).
+		Model(&models.Wallet{}).
+		Where("merchant_id = ?", merchantID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&wallets).Error
+	return wallets, total, err
+}
+
 func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.ChainID, address string) (*models.Wallet, error) {
 	address = strings.TrimSpace(address)
 	if address == "" {

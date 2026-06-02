@@ -1,0 +1,16 @@
+<section class="grid min-h-[calc(100vh-184px)] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_430px]">
+  <div class="grid max-w-2xl gap-5">
+    <span class="inline-flex w-fit rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">OIDC</span>
+    <h1 class="m-0 text-5xl font-black leading-[0.96] text-ink sm:text-6xl">Kimlik sağlayıcı bağlantısı bekliyor.</h1>
+    <p class="m-0 max-w-xl text-base leading-8 text-muted">OIDC login yapılandırması tamamlandığında bayi girişi doğrudan sağlayıcıya yönlenecek.</p>
+  </div>
+
+  <section class="grid gap-4 rounded-[28px] border border-line bg-white/90 p-5 shadow-soft" aria-labelledby="oidc-title">
+    <div>
+      <h2 class="m-0 text-2xl font-black text-ink" id="oidc-title">OIDC ayarı eksik</h2>
+      <p class="m-0 mt-2 text-sm leading-6 text-muted">OIDC_AUTHORITY/OIDC_AUTH_URL, OIDC_CLIENT_ID ve OIDC_REDIRECT_URI değerleri gerekli.</p>
+    </div>
+    {{if .Error}}<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+    <a class="inline-flex min-h-12 items-center justify-center rounded-full border border-line bg-white px-5 text-sm font-extrabold text-ink hover:bg-wash" href="{{.LoginURL}}">Giriş ekranına dön</a>
+  </section>
+</section>

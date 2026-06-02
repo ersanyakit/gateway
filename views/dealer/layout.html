@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} | Gateway Bayi Portalı</title>
+  <link rel="stylesheet" href="/assets/tailwind.css">
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body class="min-h-screen bg-[#f7f7f8] text-ink antialiased">
+  <div class="min-h-screen grid grid-rows-[auto_1fr_auto] bg-[radial-gradient(circle_at_50%_-12%,rgba(255,55,199,0.13),transparent_34%),linear-gradient(180deg,#fff_0%,#f7f7f8_52%,#fff_100%)]">
+    {{template "dealer/partials/header" .}}
+    <main class="py-8 sm:py-10 lg:py-12">
+      <div class="mx-auto w-full max-w-[1180px] px-4">
+        {{embed}}
+      </div>
+    </main>
+    {{template "dealer/partials/footer" .}}
+  </div>
+</body>
+</html>

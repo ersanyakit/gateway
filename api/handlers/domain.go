@@ -15,6 +15,17 @@ func NewDomainHandler(service *services.DomainService) *DomainHandler {
 	return &DomainHandler{service: service}
 }
 
+// HandleDomainCreate creates a merchant domain configuration.
+// @Summary Create merchant domain
+// @Description Creates a merchant domain with webhook settings and returns the API key used by payment requests.
+// @Tags Dealers
+// @Accept json
+// @Produce json
+// @Param payload body types.DomainParams true "Merchant domain create payload"
+// @Success 201 {object} types.DomainCreateResponse
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 500 {object} types.ErrorResponse
+// @Router /merchant.domain.create [post]
 func HandleDomainCreate(s *services.DomainService) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var params types.DomainParams

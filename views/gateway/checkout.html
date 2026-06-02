@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Checkout</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div class="brand">Gateway Checkout</div>
+      <div class="summary">
+        <div>Order {{.Session.OrderID}}</div>
+        <strong>{{.Session.Amount}} {{.Session.Currency}}</strong>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h1>Select payment asset</h1>
+          <div class="sub">Choose the network and asset for this checkout.</div>
+        </div>
+      </div>
+
+      {{if .Error}}
+      <div class="alert">{{.Error}}</div>
+      {{end}}
+
+      <div class="grid">
+        {{range .Assets}}
+        <form method="post" action="/checkout/{{$.Session.SessionToken}}/select">
+          <input type="hidden" name="chain_id" value="{{.ChainID}}">
+          <input type="hidden" name="symbol" value="{{.Symbol}}">
+          <input type="hidden" name="token" value="{{.Token}}">
+          <button class="asset" type="submit" {{if not .Available}}disabled{{end}}>
+            <span class="asset-main">
+              <span class="asset-row">
+                <span class="symbol">{{.Symbol}}</span>
+                <span>
+                  <span class="name">{{.Name}}</span><br>
+                  <span class="chain">{{.ChainName}}</span>
+                </span>
+              </span>
+              <span class="asset-row">
+                <span class="amount">{{.AmountDisplay}}</span>
+                <span class="chain">{{if .Native}}native{{else}}token{{end}}</span>
+              </span>
+            </span>
+          </button>
+        </form>
+        {{end}}
+      </div>
+
+      <div class="footer">Session expires at {{.Session.ExpiresAt}}.</div>
+    </section>
+  </main>
+</body>
+</html>

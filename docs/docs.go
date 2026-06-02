@@ -14,17 +14,1104 @@ const docTemplate = `{
     },
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
-    "paths": {}
+    "paths": {
+        "/auth/oidc/login": {
+            "get": {
+                "description": "Redirects the dealer to the configured OIDC authorization URL. Configure DEALER_OIDC_LOGIN_URL, OIDC_LOGIN_URL, or OIDC_AUTH_URL.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Start dealer OIDC login",
+                "responses": {
+                    "302": {
+                        "description": "Redirect to OIDC provider",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "501": {
+                        "description": "HTML page explaining missing OIDC configuration",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}": {
+            "get": {
+                "description": "Renders the hosted checkout page where the payer selects a network and asset.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Show checkout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML checkout page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "410": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/cancel": {
+            "get": {
+                "description": "Cancels the hosted checkout session, sends a payment_failed webhook when applicable, and redirects to the merchant cancel URL.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Cancel checkout",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to merchant cancel URL or rendered result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/pay": {
+            "get": {
+                "description": "Renders the QR code, payment address, selected chain, asset, and amount for a checkout session.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Show payment instructions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML payment page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "410": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/qr.png": {
+            "get": {
+                "description": "Returns a PNG QR code containing the payment URI or deposit address.",
+                "produces": [
+                    "image/png"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Get checkout QR code",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "PNG QR code",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "QR generation failed",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/return/success": {
+            "get": {
+                "description": "Redirects a paid checkout session to the merchant success URL or renders the built-in success page.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Return after successful payment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to merchant success URL or rendered result page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/select": {
+            "post": {
+                "description": "Stores the selected network and asset, computes the raw expected amount, and redirects to the payment page.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Select checkout asset",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Chain ID",
+                        "name": "chain_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Asset symbol",
+                        "name": "symbol",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token contract address or asset identifier",
+                        "name": "token",
+                        "in": "formData"
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to payment page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML checkout page with validation error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "410": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/status.json": {
+            "get": {
+                "description": "Returns whether the checkout session is paid and the next hosted checkout paths.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Get checkout status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.PaymentStatusResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/dealer/dashboard": {
+            "get": {
+                "description": "Renders the authenticated dealer panel with merchant info, domain creation form, and current domains.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Show dealer dashboard",
+                "responses": {
+                    "200": {
+                        "description": "HTML dealer dashboard",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "302": {
+                        "description": "Redirect to dealer login",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/dealer/domains": {
+            "post": {
+                "description": "Creates a merchant domain using the authenticated dealer session and redirects back to the dashboard.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Create dealer domain from panel",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Domain URL",
+                        "name": "domain_url",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Webhook URL",
+                        "name": "webhook_url",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Webhook secret",
+                        "name": "webhook_secret",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to dealer login or dashboard with error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/dealer/login": {
+            "get": {
+                "description": "Renders the hosted dealer login page with the OIDC sign-in action.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Show dealer login",
+                "responses": {
+                    "200": {
+                        "description": "HTML dealer login page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Authenticates a dealer with email and password, sets a dealer session cookie, and redirects to onboarding.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Dealer email login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dealer email",
+                        "name": "email",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password",
+                        "name": "password",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to dealer onboarding",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML login page with validation error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "HTML login page with authentication error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/dealer/onboarding": {
+            "get": {
+                "description": "Renders the hosted onboarding page after a dealer merchant is created.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Show dealer onboarding",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Merchant ID",
+                        "name": "merchant_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Dealer name",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Dealer email",
+                        "name": "email",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML dealer onboarding page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/dealer/register": {
+            "get": {
+                "description": "Renders the hosted self-service dealer registration page.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Show dealer registration",
+                "responses": {
+                    "200": {
+                        "description": "HTML dealer registration page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a merchant/dealer account from the hosted self-service registration page and redirects to onboarding.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Create dealer from form",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dealer name",
+                        "name": "name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Dealer email",
+                        "name": "email",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Dealer email confirmation",
+                        "name": "email_repeat",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password",
+                        "name": "password",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password confirmation",
+                        "name": "password_repeat",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to dealer onboarding",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML registration page with validation error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "HTML registration page with server error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant.create": {
+            "post": {
+                "description": "Creates a merchant/dealer account for self-service onboarding.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Create dealer merchant",
+                "parameters": [
+                    {
+                        "description": "Dealer merchant create payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.MerchantParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.MerchantCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant.domain.create": {
+            "post": {
+                "description": "Creates a merchant domain with webhook settings and returns the API key used by payment requests.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Create merchant domain",
+                "parameters": [
+                    {
+                        "description": "Merchant domain create payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.DomainParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.DomainCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant.wallet.create": {
+            "post": {
+                "description": "Creates or returns the deterministic multi-chain wallet for a merchant domain, product_id, and user_id.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Users"
+                ],
+                "summary": "Create user wallet",
+                "parameters": [
+                    {
+                        "description": "User wallet create payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.WalletParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.WalletCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/payments/create": {
+            "post": {
+                "description": "Creates a checkout session for a merchant order and returns a hosted checkout URL.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Create payment session",
+                "parameters": [
+                    {
+                        "description": "Payment create payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.PaymentCreateParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.PaymentCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ]
+            }
+        }
+    },
+    "definitions": {
+        "types.DomainCreateResponse": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "domain_url": {
+                    "type": "string"
+                },
+                "hd_account_id": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "is_enabled": {
+                    "type": "boolean"
+                },
+                "key_id": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.DomainParams": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "type": "string"
+                },
+                "api_secret": {
+                    "type": "string"
+                },
+                "domain_id": {
+                    "type": "string"
+                },
+                "domain_url": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "webhook_secret": {
+                    "type": "string"
+                },
+                "webhook_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error": {
+                    "type": "string"
+                },
+                "errors": {},
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "types.MerchantCreateResponse": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.MerchantParams": {
+            "type": "object",
+            "properties": {
+                "captcha": {
+                    "type": "string"
+                },
+                "cursor": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "email_repeat": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "password_repeat": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.PaymentCreateParams": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "cancel_url": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "domain_id": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "order_id": {
+                    "type": "string"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "success_url": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.PaymentCreateResponse": {
+            "type": "object",
+            "properties": {
+                "checkout_url": {
+                    "type": "string"
+                },
+                "deposit_wallet": {
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
+                "session_token": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "types.PaymentStatusResponse": {
+            "type": "object",
+            "properties": {
+                "cancel_path": {
+                    "type": "string"
+                },
+                "paid": {
+                    "type": "boolean"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                },
+                "success_path": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WalletCreateResponse": {
+            "type": "object",
+            "properties": {
+                "avalanche": {
+                    "type": "string"
+                },
+                "base": {
+                    "type": "string"
+                },
+                "bitcoin": {
+                    "type": "string"
+                },
+                "bnbchain": {
+                    "type": "string"
+                },
+                "chiliz": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "domain_id": {
+                    "type": "string"
+                },
+                "ethereum": {
+                    "type": "string"
+                },
+                "hd_account_id": {
+                    "type": "integer"
+                },
+                "hd_address_id": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "solana": {
+                    "type": "string"
+                },
+                "tron": {
+                    "type": "string"
+                },
+                "unichain": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "types.WalletParams": {
+            "type": "object",
+            "properties": {
+                "domain_id": {
+                    "type": "string"
+                },
+                "merchant_id": {
+                    "type": "string"
+                },
+                "product_id": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "securityDefinitions": {
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "name": "X-API-Key",
+            "in": "header"
+        },
+        "BearerAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        }
+    }
 }`
 
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
-	Version:          "",
+	Version:          "1.0",
 	Host:             "",
-	BasePath:         "",
+	BasePath:         "/",
 	Schemes:          []string{},
-	Title:            "",
-	Description:      "",
+	Title:            "Gateway API",
+	Description:      "Multi-chain merchant payment gateway API.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

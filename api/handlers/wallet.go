@@ -15,6 +15,17 @@ func NewWalletHandler(service *services.WalletService) *WalletHandler {
 	return &WalletHandler{service: service}
 }
 
+// HandleWalletCreate creates or returns a product/user scoped wallet.
+// @Summary Create user wallet
+// @Description Creates or returns the deterministic multi-chain wallet for a merchant domain, product_id, and user_id.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Param payload body types.WalletParams true "User wallet create payload"
+// @Success 201 {object} types.WalletCreateResponse
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 500 {object} types.ErrorResponse
+// @Router /merchant.wallet.create [post]
 func HandleWalletCreate(s *services.WalletService) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		var params types.WalletParams

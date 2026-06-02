@@ -1,0 +1,55 @@
+<section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+  <div class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+    <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+      <div>
+        <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Admin paneli</span>
+        <h1 class="m-0 mt-4 text-3xl font-black text-ink sm:text-4xl">Çekim talepleri</h1>
+        <p class="m-0 mt-2 text-sm leading-6 text-muted">Bayi taleplerini incele, onayla veya reddet.</p>
+      </div>
+    </div>
+
+    {{if .Success}}<div class="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
+    {{if .Error}}<div class="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+
+    {{if .Withdrawals}}
+      <div class="mt-5 overflow-hidden rounded-3xl border border-line">
+        <div class="hidden grid-cols-[1.2fr_0.75fr_1fr_0.65fr_0.8fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
+          <span>Merchant</span><span>Amount</span><span>Destination</span><span>Status</span><span>Action</span>
+        </div>
+        {{range .Withdrawals}}
+          <article class="grid gap-4 border-t border-line px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_0.75fr_1fr_0.65fr_0.8fr] lg:items-start">
+            <div>
+              <strong class="block text-sm font-black text-ink">{{.MerchantName}}</strong>
+              <small class="mt-1 block truncate text-xs font-semibold text-muted">Wallet {{.WalletID}}</small>
+              {{if .Note}}<small class="mt-1 block text-xs font-semibold text-muted">{{.Note}}</small>{{end}}
+            </div>
+            <div><strong class="block text-sm font-black text-ink">{{.AmountRaw}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.Chain}}</small></div>
+            <div><code class="block break-words text-xs text-muted">{{.ToAddress}}</code>{{if .TxHash}}<code class="mt-2 block break-words text-xs text-muted">Tx {{.TxHash}}</code>{{end}}{{if .Error}}<code class="mt-2 block break-words text-xs text-red-700">{{.Error}}</code>{{end}}</div>
+            <div><span class="rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{.Status}}</span><time class="mt-2 block text-xs font-bold text-muted">{{.CreatedAt}}</time></div>
+            <div class="grid gap-2">
+              {{if eq .Status "pending"}}
+                <form method="post" action="/admin/withdrawals/{{.ID}}/approve">
+                  <button class="inline-flex min-h-10 w-full items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Onayla</button>
+                </form>
+                <form class="grid gap-2" method="post" action="/admin/withdrawals/{{.ID}}/reject">
+                  <input class="min-h-10 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="reason" type="text" placeholder="Red sebebi">
+                  <button class="inline-flex min-h-10 w-full items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" type="submit">Reddet</button>
+                </form>
+              {{else}}
+                <span class="text-xs font-bold text-muted">İşlem tamamlandı</span>
+              {{end}}
+            </div>
+          </article>
+        {{end}}
+      </div>
+    {{else}}
+      <div class="mt-5 rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz çekim talebi yok.</div>
+    {{end}}
+  </div>
+
+  <aside class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft xl:sticky xl:top-24 xl:self-start">
+    <h2 class="m-0 text-lg font-black text-ink">Admin</h2>
+    <p class="m-0 mt-2 break-words text-sm font-semibold text-muted">{{.MerchantEmail}}</p>
+    <a class="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" href="/admin/logout">Çıkış yap</a>
+  </aside>
+</section>

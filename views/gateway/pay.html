@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pay</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div class="brand">Gateway Checkout</div>
+      <div class="summary">
+        <div>Order {{.Session.OrderID}}</div>
+        <strong>{{.AmountDisplay}}</strong>
+      </div>
+    </div>
+
+    <section class="panel payment-panel">
+      <div class="qr-side">
+        <div class="qr-box">
+          <img src="{{.QRCodeURL}}" alt="Payment QR">
+        </div>
+      </div>
+      <div class="details">
+        <div>
+          <h1>Send payment</h1>
+          <div class="sub">Network: {{.ChainName}}. The page updates after the deposit is confirmed.</div>
+        </div>
+
+        <div class="status" id="statusLabel">Waiting for payment</div>
+
+        <div class="row">
+          <div class="label">Amount</div>
+          <div class="value">{{.Session.ExpectedAmountRaw}} raw units<br>{{.AmountDisplay}}</div>
+        </div>
+
+        <div class="row">
+          <div class="label">Deposit address</div>
+          <div class="value" id="depositAddress">{{.Session.DepositAddress}}</div>
+        </div>
+
+        <div class="row">
+          <div class="label">Payment URI</div>
+          <div class="value">{{.PaymentURI}}</div>
+        </div>
+
+        <div class="actions">
+          <button class="button primary" type="button" onclick="copyAddress()">Copy address</button>
+          <a class="button" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
+          <a class="button" href="/checkout/{{.Session.SessionToken}}/cancel">Cancel</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function copyAddress() {
+      var value = document.getElementById("depositAddress").innerText;
+      navigator.clipboard && navigator.clipboard.writeText(value);
+    }
+
+    async function pollStatus() {
+      try {
+        var response = await fetch("/checkout/{{.Session.SessionToken}}/status.json", { cache: "no-store" });
+        var data = await response.json();
+        if (data && data.paid) {
+          document.getElementById("statusLabel").innerText = "Payment confirmed";
+          window.location.href = data.success_path;
+          return;
+        }
+        if (data && (data.status === "expired" || data.status === "canceled" || data.status === "failed")) {
+          document.getElementById("statusLabel").innerText = "Payment " + data.status;
+          return;
+        }
+      } catch (e) {}
+      window.setTimeout(pollStatus, 5000);
+    }
+    pollStatus();
+  </script>
+</body>
+</html>

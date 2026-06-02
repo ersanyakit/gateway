@@ -19,6 +19,7 @@ require (
 	github.com/okx/go-wallet-sdk/coins/solana v0.0.6
 	github.com/okx/go-wallet-sdk/coins/tron v0.0.0-20260109084318-8b582cd9edc0
 	github.com/okx/go-wallet-sdk/crypto v0.0.3
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/swaggo/swag v1.16.6
 	github.com/vchitai/go-socket.io/v4 v4.1.12
 	golang.org/x/crypto v0.51.0
@@ -126,4 +127,6 @@ require (
 	golang.org/x/time v0.9.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
+	gopkg.in/yaml.v2 v2.4.0 // indirect
+	sigs.k8s.io/yaml v1.3.0 // indirect
 )

@@ -21,6 +21,14 @@ type MerchantParams struct {
 	Limit  int        `json:"limit,omitempty"`
 }
 
+type MerchantCreateResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 func (p *MerchantParams) ValidateEmail() error {
 	if p.Context == nil {
 		return errors.New("context is required")

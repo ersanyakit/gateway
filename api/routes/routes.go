@@ -10,12 +10,15 @@ import (
 	"core/constants"
 	"core/repositories"
 	services "core/services/system"
+	webhooksvc "core/services/webhook"
 	"fmt"
 	"strings"
 
 	"github.com/bytedance/sonic"
 	fiber "github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
+	"github.com/gofiber/fiber/v3/middleware/paginate"
+	staticmw "github.com/gofiber/fiber/v3/middleware/static"
 	"github.com/gofiber/template/html/v3"
 	"gorm.io/gorm"
 
@@ -38,6 +41,9 @@ type Router struct {
 	WalletRepo      *repositories.WalletRepo
 	ChainStateRepo  *repositories.ChainStateRepo
 	TransactionRepo *repositories.TransactionRepo
+	PaymentRepo     *repositories.PaymentRepo
+	WithdrawalRepo  *repositories.WithdrawalRequestRepo
+	ActivityLogRepo *repositories.ActivityLogRepo
 	MerchantService *services.MerchantService
 	WalletService   *services.WalletService
 	DomainService   *services.DomainService
@@ -48,7 +54,7 @@ func NewRouter(db *gorm.DB) *Router {
 	var sonicAPI = sonic.Config{
 		EscapeHTML: false,
 	}.Froze()
-	engine := html.New("./views/gateway", ".html")
+	engine := html.New("./views", ".html")
 	engine.Reload(false)
 	engine.Debug(false)
 
@@ -72,6 +78,16 @@ func NewRouter(db *gorm.DB) *Router {
 		blockchains:   configurations.NewChainFactory(),
 	}
 
+	r.fiber.Use(paginate.New(
+		paginate.Config{
+			PageKey:      "page",
+			LimitKey:     "limit",
+			DefaultPage:  1,
+			DefaultLimit: constants.DEFAULT_LIMIT,
+			MaxLimit:     constants.MAXIMUM_LIMIT,
+		},
+	))
+
 	r.fiber.Use(cors.New(cors.Config{
 		AllowOriginsFunc: func(origin string) bool {
 			return true
@@ -94,6 +110,9 @@ func NewRouter(db *gorm.DB) *Router {
 
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
 	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
+	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
+	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
+	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
 	r.MerchantService = services.NewMerchantService(r.MerchantRepo)
 
@@ -102,6 +121,8 @@ func NewRouter(db *gorm.DB) *Router {
 
 	r.WalletRepo = repositories.NewWalletRepo(r.DomainRepo)
 	r.WalletService = services.NewWalletService(r.WalletRepo)
+
+	r.fiber.Use("/assets", staticmw.New("./views/assets"))
 
 	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
 	r.fiber.Post(constants.CMD_MERCHANT_FETCH.String(), handlers.HandleMerchantFetch(r.MerchantService))
@@ -118,6 +139,53 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_MERCHANT_WALLET_CREATE.String(), handlers.HandleWalletCreate(r.WalletService))
 	r.fiber.Post(constants.CMD_WITHDRAW.String(), handlers.HandleWithdraw(r.WalletRepo, r.blockchains))
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
+
+	r.fiber.Get("/", handlers.HandleDealerHome())
+	r.fiber.Get("/dealer/login", handlers.HandleDealerLogin())
+	r.fiber.Post("/dealer/login", handlers.HandleDealerLoginSubmit(r.MerchantService, r.ActivityLogRepo))
+	r.fiber.Get("/dealer/register", handlers.HandleDealerRegister())
+	r.fiber.Post("/dealer/register", handlers.HandleDealerRegisterSubmit(r.MerchantService, r.ActivityLogRepo))
+	dealerDeps := handlers.DealerDeps{
+		MerchantService: r.MerchantService,
+		DomainService:   r.DomainService,
+		WalletRepo:      r.WalletRepo,
+		WithdrawalRepo:  r.WithdrawalRepo,
+		TransactionRepo: r.TransactionRepo,
+		ActivityLogRepo: r.ActivityLogRepo,
+		Blockchains:     r.blockchains,
+	}
+	r.fiber.Get("/dealer", handlers.HandleDealerDashboard(dealerDeps))
+	r.fiber.Get("/dealer/dashboard", handlers.HandleDealerDashboard(dealerDeps))
+	r.fiber.Get("/dealer/domains", handlers.HandleDealerDashboard(dealerDeps))
+	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
+	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
+	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
+	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
+	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
+	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo))
+	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())
+	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit())
+	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
+	r.fiber.Get("/admin/withdrawals", handlers.HandleAdminDashboard(dealerDeps))
+	r.fiber.Post("/admin/withdrawals/:id/approve", handlers.HandleAdminWithdrawalApprove(dealerDeps))
+	r.fiber.Post("/admin/withdrawals/:id/reject", handlers.HandleAdminWithdrawalReject(dealerDeps))
+	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())
+
+	paymentDeps := handlers.PaymentHandlerDeps{
+		DomainRepo:    r.DomainRepo,
+		WalletRepo:    r.WalletRepo,
+		PaymentRepo:   r.PaymentRepo,
+		AssetRegistry: r.assetRegistry,
+		Notifier:      webhooksvc.NewNotifier(),
+	}
+	r.fiber.Post("/payments/create", handlers.HandlePaymentCreate(paymentDeps))
+	r.fiber.Get("/checkout/:token", handlers.HandleCheckout(paymentDeps))
+	r.fiber.Post("/checkout/:token/select", handlers.HandleCheckoutSelectAsset(paymentDeps))
+	r.fiber.Get("/checkout/:token/pay", handlers.HandleCheckoutPay(paymentDeps))
+	r.fiber.Get("/checkout/:token/qr.png", handlers.HandleCheckoutQRCode(paymentDeps))
+	r.fiber.Get("/checkout/:token/status.json", handlers.HandleCheckoutStatus(paymentDeps))
+	r.fiber.Get("/checkout/:token/cancel", handlers.HandleCheckoutCancel(paymentDeps))
+	r.fiber.Get("/checkout/:token/return/success", handlers.HandleCheckoutSuccessReturn(paymentDeps))
 
 	r.fiber.Get("/swagger/*", swaggo.New())
 	r.fiber.Get("/docs/*", swaggo.New())

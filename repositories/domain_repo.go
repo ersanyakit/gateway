@@ -88,6 +88,18 @@ func (r *DomainRepo) FindByURL(params types.DomainParams) (*models.Domain, error
 	return &domain, nil
 }
 
+func (r *DomainRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID) ([]models.Domain, error) {
+	var domains []models.Domain
+	err := r.merchantRepo.DB().WithContext(ctx).
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Find(&domains).Error
+	if err != nil {
+		return nil, err
+	}
+	return domains, nil
+}
+
 func (r *DomainRepo) IsDomainExists(ctx context.Context, merchantID uuid.UUID, domainURL, webhookURL string) (bool, error) {
 	var count int64
 	err := r.merchantRepo.DB().WithContext(ctx).

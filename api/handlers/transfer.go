@@ -33,7 +33,7 @@ func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.Chai
 			})
 		}
 
-		result, err := executeWalletTransfer(walletRepo, chains, params, false)
+		result, err := ExecuteWalletTransfer(walletRepo, chains, params, false)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
@@ -66,7 +66,7 @@ func HandleSweep(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFa
 			})
 		}
 
-		result, err := executeWalletTransfer(walletRepo, chains, params, true)
+		result, err := ExecuteWalletTransfer(walletRepo, chains, params, true)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
@@ -81,7 +81,7 @@ func HandleSweep(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFa
 	}
 }
 
-func executeWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory, params requesttypes.TransferParams, sweep bool) (*blockchain.TransactionResult, error) {
+func ExecuteWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory, params requesttypes.TransferParams, sweep bool) (*blockchain.TransactionResult, error) {
 	chain, err := chains.GetChain(*params.Chain)
 	if err != nil {
 		return nil, err
