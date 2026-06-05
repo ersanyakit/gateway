@@ -63,14 +63,13 @@ func (r *DomainRepo) FindByAPIKey(params types.DomainParams) (*models.Domain, er
 }
 
 func (r *DomainRepo) FindByAPISecret(params types.DomainParams) (*models.Domain, error) {
-	encryptedSecret, err := helpers.EncryptSecret(*params.APISecret)
+	hashed, err := helpers.HMACSecret(*params.APISecret)
 	if err != nil {
 		return nil, err
 	}
-
 	var domain models.Domain
 	err = r.merchantRepo.DB().WithContext(params.Context).
-		Where("api_secret = ?", encryptedSecret).
+		Where("api_secret = ?", hashed).
 		First(&domain).Error
 	if err != nil {
 		return nil, err
@@ -163,7 +162,9 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		tx.Rollback()
 		return nil, err
 	}
-	encryptedAPISecret, err := helpers.EncryptSecret(apiSecretPlain)
+	// Store HMAC(MASTER_KEY, secret) so FindByAPISecret can do a deterministic lookup.
+	// AES-GCM encryption is non-deterministic and cannot be used for DB WHERE clauses.
+	hashedAPISecret, err := helpers.HMACSecret(apiSecretPlain)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -180,7 +181,7 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		DomainURL:     *params.DomainURL,
 		KeyID:         keyID,
 		APIKey:        apiKey,
-		APISecret:     encryptedAPISecret,
+		APISecret:     hashedAPISecret,
 		WebhookURL:    *params.WebhookURL,
 		WebhookSecret: encryptedWebhookSecret,
 		HDAccountID:   hdIndex,

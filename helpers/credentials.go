@@ -69,6 +69,19 @@ func HashSHA256(value string) string {
 	return hex.EncodeToString(h[:])
 }
 
+// HMACSecret computes HMAC-SHA256(MASTER_KEY, secret) — deterministic one-way hash
+// suitable for DB lookup without revealing the plaintext. Use this for storing API
+// secrets that must be looked up by value (not decrypted).
+func HMACSecret(secret string) (string, error) {
+	masterKey := os.Getenv("MASTER_KEY")
+	if masterKey == "" {
+		return "", errors.New("MASTER_KEY not set")
+	}
+	mac := hmac.New(sha256.New, []byte(masterKey))
+	mac.Write([]byte(secret))
+	return hex.EncodeToString(mac.Sum(nil)), nil
+}
+
 func ConstantTimeEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }

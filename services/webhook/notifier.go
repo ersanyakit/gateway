@@ -125,7 +125,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 
 	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
 	if err != nil {
-		secret = domain.WebhookSecret
+		return fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err)
 	}
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -208,7 +208,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 
 	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
 	if err != nil {
-		secret = domain.WebhookSecret
+		return fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err)
 	}
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)

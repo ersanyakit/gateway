@@ -28,6 +28,7 @@ import (
 
 	coreApplication "core/application"
 	coreDB "core/services/database"
+	coreHelpers "core/helpers"
 
 	"github.com/joho/godotenv"
 	"gorm.io/gorm"
@@ -232,11 +233,19 @@ func bootstrapAdminAccount(ctx context.Context) {
 	if email == "" {
 		email = "admin@gateway.local"
 	}
-	if password == "" {
-		password = "admin123"
-	}
 	if name == "" {
 		name = "Admin"
+	}
+	if password == "" {
+		// No hardcoded default — generate a strong one-time random password.
+		rnd, err := coreHelpers.GenerateSecret()
+		if err != nil {
+			log.Printf("Bootstrap admin: failed to generate random password: %v\n", err)
+			return
+		}
+		password = rnd
+		log.Printf("[BOOTSTRAP] ADMIN_PASSWORD not set in .env — generated first-run password: %s\n", password)
+		log.Printf("[BOOTSTRAP] Set ADMIN_PASSWORD in .env before restarting to use a fixed password.\n")
 	}
 	created, err := coreApplication.CORE.Router.AdminRepo.EnsureBootstrapAdmin(ctx, email, name, password)
 	if err != nil {

@@ -82,6 +82,29 @@ func (r *ProductRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, 
 	return products, err
 }
 
+func (r *ProductRepo) ListPage(ctx context.Context, page, limit int) ([]models.Product, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.Product{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var products []models.Product
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").
+		Preload("Domain").
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&products).Error
+	return products, total, err
+}
+
+func (r *ProductRepo) DB() *gorm.DB { return r.db }
+
 func newProductLinkToken() (string, error) {
 	bytes := make([]byte, 18)
 	if _, err := rand.Read(bytes); err != nil {

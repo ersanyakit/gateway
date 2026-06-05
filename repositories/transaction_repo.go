@@ -208,19 +208,34 @@ func (r *TransactionRepo) List(ctx context.Context, limit int) ([]models.Transac
 }
 
 func (r *TransactionRepo) ListPage(ctx context.Context, page, limit int) ([]models.Transaction, int64, error) {
+	return r.ListPageFiltered(ctx, page, limit, "", "", "")
+}
+
+// ListPageFiltered lists transactions with optional filters: from address, to address, tx hash.
+// Empty string = no filter for that field.
+func (r *TransactionRepo) ListPageFiltered(ctx context.Context, page, limit int, from, to, hash string) ([]models.Transaction, int64, error) {
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 200 {
 		limit = 50
 	}
+	q := r.DB().WithContext(ctx).Model(&models.Transaction{})
+	if from != "" {
+		q = q.Where("LOWER(from_address) = LOWER(?)", from)
+	}
+	if to != "" {
+		q = q.Where("LOWER(to_address) = LOWER(?)", to)
+	}
+	if hash != "" {
+		q = q.Where("LOWER(hash) = LOWER(?)", hash)
+	}
 	var total int64
-	if err := r.DB().WithContext(ctx).Model(&models.Transaction{}).Count(&total).Error; err != nil {
+	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var rows []models.Transaction
-	err := r.DB().WithContext(ctx).
-		Order("created_at DESC").
+	err := q.Order("created_at DESC").
 		Limit(limit).Offset((page - 1) * limit).
 		Find(&rows).Error
 	return rows, total, err

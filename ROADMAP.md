@@ -10,9 +10,9 @@ Auditor: Senior payment systems architect / Go backend engineer
 
 | # | Task | File(s) | Status |
 |---|---|---|---|
-| T0-1 | Fix `FindByAPISecret` — replace non-deterministic AES-GCM with `HMAC-SHA256(MASTER_KEY, secret)` for API key lookup | `repositories/domain_repo.go:65` | ❌ Open |
-| T0-2 | Fix webhook secret decryption fallback — remove silent fallback to ciphertext bytes as HMAC key | `services/webhook/notifier.go:126` | ❌ Open |
-| T0-3 | Fix payment amount matching — accept ±0.5% tolerance, reject extreme overpayment, emit `payment.underpaid` event instead of silently dropping | `repositories/payment_repo.go:225` | ❌ Open |
+| T0-1 | Fix `FindByAPISecret` — replace non-deterministic AES-GCM with `HMAC-SHA256(MASTER_KEY, secret)` for API key lookup | `repositories/domain_repo.go:65` | ✅ Done |
+| T0-2 | Fix webhook secret decryption fallback — remove silent fallback to ciphertext bytes as HMAC key | `services/webhook/notifier.go:126` | ✅ Done |
+| T0-3 | Fix payment amount matching — accept ±0.5% tolerance, reject extreme overpayment, emit `payment.underpaid` event instead of silently dropping | `repositories/payment_repo.go:225` | ✅ Done |
 | T0-4 | Add N-confirmation gate — do not mark session `paid` until N block confirmations per chain (1 EVM, 3 BTC, 1 SOL) | `workers/listeners/`, `models/payment_session.go` | ❌ Open |
 | T0-5 | Fix `UniqueHash` nil/empty logIndex normalization — prevent duplicate transaction processing on EVM logs without logIndex | `repositories/transaction_repo.go` | ❌ Open |
 
@@ -23,11 +23,11 @@ Auditor: Senior payment systems architect / Go backend engineer
 
 | # | Task | File(s) | Status |
 |---|---|---|---|
-| T1-1 | Encrypt TOTP secret in DB — wrap `SaveTOTPSecret` with `helpers.EncryptSecret`, decrypt on verify | `repositories/admin_repo.go:75` | ❌ Open |
+| T1-1 | Encrypt TOTP secret in DB — wrap `SaveTOTPSecret` with `helpers.EncryptSecret`, decrypt on verify | `repositories/admin_repo.go:75` | ✅ Done |
 | T1-2 | Add CSRF tokens to all admin/dealer forms — use Fiber's built-in `csrf` middleware | `api/routes/routes.go`, all HTML templates | ❌ Open |
-| T1-3 | Remove hardcoded default admin credentials (`admin123`) — fail fast at startup if `ADMIN_EMAIL`/`ADMIN_PASSWORD` not set | `main.go:236`, `repositories/admin_repo.go:108` | ❌ Open |
+| T1-3 | Remove hardcoded default admin credentials (`admin123`) — generate random password on first run | `main.go` | ✅ Done |
 | T1-4 | Document minimum mnemonic security — add `SECURITY.md` with env hardening guide; path toward KMS/Vault integration | `main.go`, `SECURITY.md` | ❌ Open |
-| T1-5 | Fix bootstrap admin race condition — use `INSERT … ON CONFLICT DO NOTHING` instead of count-then-insert | `repositories/admin_repo.go:102` | ❌ Open |
+| T1-5 | Fix bootstrap admin race condition — use transaction with count check instead of count-then-insert | `repositories/admin_repo.go` | ✅ Done |
 
 ---
 

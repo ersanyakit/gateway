@@ -113,11 +113,14 @@ type DealerPageData struct {
 	AdminWalletsURL     string
 	AdminActivityURL    string
 	AdminSweepURL       string
+	AdminLinksURL       string
 	DepositCount        int
 	WithdrawalCount     int
 
-	AdminPagination    DealerPaginationView
+	AdminPagination     DealerPaginationView
 	AdminMerchantFilter string
+	AdminTOTPEnabled    bool
+	AdminSecurityURL    string
 }
 
 type DealerDomainView struct {
@@ -164,6 +167,7 @@ type DealerProductView struct {
 	Amount      string
 	Currency    string
 	Language    string
+	Merchant    string
 	Domain      string
 	PaymentURL  string
 	LogoURL     string
@@ -1084,10 +1088,84 @@ func HandleAdminResetTOTP(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/admins", "Geçersiz ID.")
 		}
 		// Clear TOTP so next login triggers re-setup.
-		deps.AdminRepo.DB().WithContext(c.Context()).Model(&models.Admin{}).
-			Where("id = ?", id).
-			Updates(map[string]any{"totp_secret": "", "totp_enabled": false})
+		_ = deps.AdminRepo.DisableTOTP(c.Context(), id)
 		return redirectWithSuccess(c, "/admin/admins", "2FA sıfırlandı. Sonraki girişte yeniden kurulacak.")
+	}
+}
+
+// HandleAdminTOTPEnable initiates 2FA setup for the currently logged-in admin.
+// It sets the temporary setup cookie (same as the login flow) and redirects to /admin/2fa/setup.
+func HandleAdminTOTPEnable(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+		if err != nil {
+			return redirectWithError(c, "/admin/security", "Admin bulunamadı.")
+		}
+		if admin.TOTPEnabled {
+			return redirectWithError(c, "/admin/security", "2FA zaten etkin.")
+		}
+		val := signedDealerSessionValue(admin.ID.String())
+		c.Cookie(&fiber.Cookie{
+			Name:     adminSetupTOTPCookie,
+			Value:    val,
+			HTTPOnly: true,
+			SameSite: "Lax",
+			MaxAge:   600,
+		})
+		return c.Redirect().To("/admin/2fa/setup")
+	}
+}
+
+// HandleAdminTOTPDisableConfirm shows the TOTP verification form for disabling 2FA.
+func HandleAdminTOTPDisableConfirm(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+		if err != nil {
+			return redirectWithError(c, "/admin/security", "Admin bulunamadı.")
+		}
+		if !admin.TOTPEnabled {
+			return redirectWithError(c, "/admin/security", "2FA zaten devre dışı.")
+		}
+		data := adminPageData(adminEmail, "security")
+		data.AdminTOTPEnabled = true
+		applyFlash(c, &data)
+		return c.Render("dealer/admin_2fa_disable", data, "dealer/layout")
+	}
+}
+
+// HandleAdminTOTPDisableSubmit verifies the TOTP code and disables 2FA for the current admin.
+func HandleAdminTOTPDisableSubmit(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+		if err != nil {
+			return redirectWithError(c, "/admin/security", "Admin bulunamadı.")
+		}
+		if !admin.TOTPEnabled {
+			return redirectWithSuccess(c, "/admin/security", "2FA zaten devre dışı.")
+		}
+		code := strings.TrimSpace(c.FormValue("code"))
+		if !totp.Validate(code, admin.TOTPSecret) {
+			data := adminPageData(adminEmail, "security")
+			data.AdminTOTPEnabled = true
+			data.Error = "Kod hatalı. Lütfen tekrar deneyin."
+			return c.Status(fiber.StatusUnprocessableEntity).Render("dealer/admin_2fa_disable", data, "dealer/layout")
+		}
+		if err := deps.AdminRepo.DisableTOTP(c.Context(), admin.ID); err != nil {
+			return redirectWithError(c, "/admin/security", "2FA devre dışı bırakılamadı: "+err.Error())
+		}
+		return redirectWithSuccess(c, "/admin/security", "2FA başarıyla devre dışı bırakıldı.")
 	}
 }
 
@@ -1203,6 +1281,16 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		case "sweep":
 			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
 			data.WithdrawalWallets = dealerWalletViews(wallets)
+
+		case "links":
+			rows, total, _ := deps.ProductRepo.ListPage(c.Context(), page, limit)
+			data.Products = dealerProductViews(c, rows)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/links")
+
+		case "security":
+			if admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail); err == nil {
+				data.AdminTOTPEnabled = admin.TOTPEnabled
+			}
 
 		default: // overview
 			recentRows, _, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
@@ -1846,6 +1934,10 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "sweep"
 	case "/admin/admins":
 		return "admins"
+	case "/admin/security":
+		return "security"
+	case "/admin/links":
+		return "links"
 	default:
 		return "overview"
 	}
@@ -1868,6 +1960,8 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminWalletsURL:     "/admin/wallets",
 		AdminActivityURL:    "/admin/activity",
 		AdminSweepURL:       "/admin/sweep",
+		AdminSecurityURL:    "/admin/security",
+		AdminLinksURL:       "/admin/links",
 	}
 	return data
 }
@@ -1902,6 +1996,7 @@ func dealerProductViews(c fiber.Ctx, products []models.Product) []DealerProductV
 			Amount:      product.Amount,
 			Currency:    product.Currency,
 			Language:    strings.ToUpper(product.Language),
+			Merchant:    product.Merchant.Name,
 			Domain:      product.Domain.DomainURL,
 			PaymentURL:  baseURL(c) + "/payment-links/" + product.LinkToken,
 			LogoURL:     product.LogoURL,

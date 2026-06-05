@@ -222,7 +222,10 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 		if !ok || expected.Sign() <= 0 {
 			continue
 		}
-		if txAmount.Cmp(expected) < 0 {
+		// Accept up to 0.5% underpayment to handle price-rounding at conversion time.
+		// txAmount * 1000 >= expected * 995  →  txAmount >= expected * 99.5%
+		threshold := new(big.Int).Mul(expected, big.NewInt(995))
+		if new(big.Int).Mul(txAmount, big.NewInt(1000)).Cmp(threshold) < 0 {
 			continue
 		}
 
