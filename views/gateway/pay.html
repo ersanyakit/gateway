@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,103 +7,126 @@
   <link rel="stylesheet" href="/assets/style.css">
   <script src="/assets/checkout.js" defer></script>
 </head>
-<body>
-  <main class="checkout-shell pay-shell">
-    <header class="checkout-topbar">
-      <a class="brand checkout-brand" href="/">
-        <span class="brand-mark">G</span>
-        <span class="brand-text">
-          <span class="brand-name">Gateway Checkout</span>
-          <span class="brand-sub">Secure crypto payment</span>
+<body class="crypto-page">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="/checkout/{{.Session.SessionToken}}">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Crypto Checkout</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
         </span>
       </a>
-      <div class="checkout-order">
-        <span>Order {{.Session.OrderID}}</span>
-        <strong>{{.AmountDisplay}}</strong>
+      <div class="crypto-steps" aria-label="Checkout progress">
+        <span class="crypto-step-dot done"></span>
+        <span class="crypto-step-dot done"></span>
+        <span class="crypto-step-dot active"></span>
       </div>
     </header>
 
-    <section class="checkout-card pay-card-pro">
-      <div class="checkout-card-head">
-        <div class="checkout-title-block">
-          <span class="checkout-eyebrow">Payment request</span>
-          <h1>Send payment</h1>
-          <p>{{.ChainName}} network onayindan sonra odeme otomatik islenir.</p>
+    <section class="crypto-card">
+      <div class="crypto-stack">
+        <div class="crypto-flex-between crypto-align-start">
+          <div>
+            <p class="crypto-label">{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}</p>
+            <div class="crypto-send-amount">{{.AmountDisplay}}</div>
+            <p class="crypto-muted">Order {{.Session.OrderID}} · {{.Session.Amount}} {{.Session.Currency}}</p>
+          </div>
+          <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+            <span>--:--</span>
+          </div>
         </div>
-        <div class="checkout-timer">
-          <span>Expires in</span>
-          <strong data-countdown-unix="{{.ExpiresAtUnix}}">--:--</strong>
-        </div>
-      </div>
 
-      <div class="checkout-progress" aria-label="Checkout progress">
-        <span class="is-active"><strong>1</strong> Asset</span>
-        <span class="is-active"><strong>2</strong> Network</span>
-        <span class="is-active"><strong>3</strong> Pay</span>
-      </div>
+        <div class="crypto-progress-bar"><span data-progress-fill data-countdown-unix="{{.ExpiresAtUnix}}"></span></div>
 
-      <div class="pay-layout">
-        <div class="pay-qr-panel">
-          <div class="qr-box">
+        <section class="crypto-qr-wrap">
+          <div class="crypto-qr-outer">
             <img src="{{.QRCodeURL}}" alt="Payment QR">
+            <span class="crypto-qr-logo">{{.Session.SelectedSymbol}}</span>
           </div>
-          <div class="status" id="statusLabel">Waiting for payment</div>
-        </div>
+          <span class="crypto-net-pill"><i></i>{{.ChainName}}</span>
+          <p>{{if .IsEnglish}}Scan with your wallet app to pay{{else}}Ödeme için wallet uygulamanla QR kodu tara{{end}}</p>
+        </section>
 
-        <div class="pay-details">
-          <div class="pay-summary-card">
-            <div>
-              <span>Amount</span>
-              <strong>{{.AmountDisplay}}</strong>
-            </div>
-            <div>
-              <span>Network</span>
-              <strong>{{.ChainName}}</strong>
-            </div>
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">{{if .IsEnglish}}Wallet address{{else}}Wallet adresi{{end}}</p>
+            <button class="crypto-copy-btn" type="button" data-copy-target="depositAddress">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+            </button>
           </div>
+          <code class="crypto-copy-value" id="depositAddress">{{.Session.DepositAddress}}</code>
+        </section>
 
-          <div class="copy-field">
-            <div>
-              <span>Deposit address</span>
-              <button type="button" onclick="copyAddress()">Copy</button>
-            </div>
-            <code id="depositAddress">{{.Session.DepositAddress}}</code>
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">{{if .IsEnglish}}Exact amount{{else}}Tam tutar{{end}}</p>
+            <button class="crypto-copy-btn" type="button" data-copy-value="{{.AmountDisplay}}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+            </button>
           </div>
+          <code class="crypto-copy-value no-bg">{{.AmountDisplay}}</code>
+        </section>
 
-          <div class="copy-field">
-            <div>
-              <span>Payment URI</span>
-            </div>
-            <code>{{.PaymentURI}}</code>
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">Payment URI</p>
           </div>
+          <code class="crypto-copy-value">{{.PaymentURI}}</code>
+        </section>
 
-          <div class="pay-actions">
-            <button class="button primary" type="button" onclick="copyAddress()">Copy address</button>
-            <a class="button secondary" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
-            <a class="button ghost" href="/checkout/{{.Session.SessionToken}}/cancel">Cancel</a>
-          </div>
+        <section class="crypto-status-box" id="statusLabel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          <span>
+            <strong>{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}</strong>
+            <small>{{if .IsEnglish}}Send the exact amount to the address above{{else}}Yukarıdaki adrese tam tutarı gönder{{end}}</small>
+          </span>
+          <span class="crypto-bouncing-dots"><i></i><i></i><i></i></span>
+        </section>
+
+        <section class="crypto-warning">
+          <span>!</span>
+          <p>{{if .IsEnglish}}Send only{{else}}Sadece{{end}} <strong>{{.Session.SelectedSymbol}}</strong> {{if .IsEnglish}}on the{{else}}assetini{{end}} <strong>{{.ChainName}}</strong> {{if .IsEnglish}}network. Sending other assets may result in permanent loss.{{else}}network üzerinde gönder. Farklı asset göndermek kalıcı kayba yol açabilir.{{end}}</p>
+        </section>
+
+        <div>
+          <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
+          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
+          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/cancel">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
         </div>
       </div>
     </section>
+
+    <p class="crypto-footer">{{if .IsEnglish}}Secured by signed webhooks · Non-custodial payments{{else}}İmzalı webhooklar ile güvenli · Non-custodial ödeme{{end}}</p>
   </main>
 
   <script>
-    function copyAddress() {
-      var value = document.getElementById("depositAddress").innerText;
-      navigator.clipboard && navigator.clipboard.writeText(value);
-    }
-
     async function pollStatus() {
       try {
         var response = await fetch("/checkout/{{.Session.SessionToken}}/status.json", { cache: "no-store" });
         var data = await response.json();
         if (data && data.paid) {
-          document.getElementById("statusLabel").innerText = "Payment confirmed";
+          var status = document.getElementById("statusLabel");
+          if (status) {
+            status.className = "crypto-status-box confirming";
+            status.innerHTML = "<strong>Payment confirmed</strong>";
+          }
           window.location.href = data.success_path;
           return;
         }
         if (data && (data.status === "expired" || data.status === "canceled" || data.status === "failed")) {
-          document.getElementById("statusLabel").innerText = "Payment " + data.status;
+          var label = document.getElementById("statusLabel");
+          if (label) {
+            label.className = "crypto-status-box expired";
+            label.innerHTML = "<strong>Payment " + data.status + "</strong>";
+          }
           return;
         }
       } catch (e) {}

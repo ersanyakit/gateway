@@ -43,6 +43,7 @@ type Router struct {
 	ChainStateRepo  *repositories.ChainStateRepo
 	TransactionRepo *repositories.TransactionRepo
 	PaymentRepo     *repositories.PaymentRepo
+	ProductRepo     *repositories.ProductRepo
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
 	MerchantService *services.MerchantService
@@ -112,6 +113,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
 	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
 	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
+	r.ProductRepo = repositories.NewProductRepo(r.db)
 	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
@@ -150,6 +152,8 @@ func NewRouter(db *gorm.DB) *Router {
 		MerchantService: r.MerchantService,
 		DomainService:   r.DomainService,
 		WalletRepo:      r.WalletRepo,
+		ProductRepo:     r.ProductRepo,
+		PaymentRepo:     r.PaymentRepo,
 		WithdrawalRepo:  r.WithdrawalRepo,
 		TransactionRepo: r.TransactionRepo,
 		ActivityLogRepo: r.ActivityLogRepo,
@@ -161,6 +165,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/dealer/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/domains", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
+	r.fiber.Post("/dealer/products", handlers.HandleDealerProductCreate(dealerDeps))
 	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
 	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
 	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
@@ -183,6 +188,7 @@ func NewRouter(db *gorm.DB) *Router {
 		Notifier:      webhooksvc.NewNotifier(),
 	}
 	r.fiber.Post("/payments/create", handlers.HandlePaymentCreate(paymentDeps))
+	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))
 	r.fiber.Get("/checkout/:token", handlers.HandleCheckout(paymentDeps))
 	r.fiber.Post("/checkout/:token/select", handlers.HandleCheckoutSelectAsset(paymentDeps))
 	r.fiber.Get("/checkout/:token/pay", handlers.HandleCheckoutPay(paymentDeps))

@@ -37,6 +37,8 @@ type DealerDeps struct {
 	MerchantService *services.MerchantService
 	DomainService   *services.DomainService
 	WalletRepo      *repositories.WalletRepo
+	ProductRepo     *repositories.ProductRepo
+	PaymentRepo     *repositories.PaymentRepo
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
 	TransactionRepo *repositories.TransactionRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
@@ -65,11 +67,15 @@ type DealerPageData struct {
 	ActivityURL       string
 	WithdrawalsURL    string
 	DomainsPanelURL   string
+	ProductsURL       string
+	ProductsPanelURL  string
 	Domains           []DealerDomainView
 	Wallets           []DealerWalletView
 	WithdrawalWallets []DealerWalletView
 	WalletPage        DealerPaginationView
 	Withdrawals       []DealerWithdrawalView
+	Products          []DealerProductView
+	Payments          []DealerPaymentView
 	Balances          []DealerBalanceView
 	ChainVaults       []DealerChainVaultView
 	Activities        []DealerActivityView
@@ -79,7 +85,17 @@ type DealerPageData struct {
 	AssetCount        int
 	NetworkCount      int
 	ActivityCount     int
+	ProductCount      int
+	PaymentCount      int
+	WalletCountAll    int
+	MerchantCount     int
 	HasSession        bool
+	Language          string
+	PaymentLinkURL    string
+
+	AdminMerchants []DealerAdminMerchantView
+	AdminWallets   []DealerWalletView
+	AdminDeposits  []DealerActivityView
 }
 
 type DealerDomainView struct {
@@ -94,12 +110,49 @@ type DealerDomainView struct {
 type DealerWalletView struct {
 	ID        string
 	ShortID   string
+	Merchant  string
 	Label     string
 	ProductID string
 	UserID    string
 	Domain    string
 	CreatedAt string
 	Addresses []DealerAddressView
+}
+
+type DealerProductView struct {
+	ID          string
+	Name        string
+	Description string
+	Amount      string
+	Currency    string
+	Language    string
+	Domain      string
+	PaymentURL  string
+	CreatedAt   string
+}
+
+type DealerPaymentView struct {
+	ID             string
+	OrderID        string
+	ProductID      string
+	UserID         string
+	Merchant       string
+	Domain         string
+	Amount         string
+	Currency       string
+	Status         string
+	CheckoutURL    string
+	SelectedAsset  string
+	SelectedChain  string
+	DepositAddress string
+	CreatedAt      string
+}
+
+type DealerAdminMerchantView struct {
+	ID        string
+	Name      string
+	Email     string
+	CreatedAt string
 }
 
 type DealerPaginationView struct {
@@ -397,6 +450,26 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			data.Error = "İşlem geçmişi okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 		}
+		var products []models.Product
+		if deps.ProductRepo != nil {
+			products, err = deps.ProductRepo.ListByMerchant(c.Context(), merchant.ID, 100)
+			if err != nil {
+				data := dealerPageData("Bayi paneli", "dashboard")
+				fillDealerMerchant(&data, merchant)
+				data.Error = "Ürün listesi okunamadı: " + err.Error()
+				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
+			}
+		}
+		var payments []models.PaymentSession
+		if deps.PaymentRepo != nil {
+			payments, err = deps.PaymentRepo.ListByMerchant(c.Context(), merchant.ID, 100)
+			if err != nil {
+				data := dealerPageData("Bayi paneli", "dashboard")
+				fillDealerMerchant(&data, merchant)
+				data.Error = "Checkout listesi okunamadı: " + err.Error()
+				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
+			}
+		}
 		balances, err := deps.TransactionRepo.MerchantDepositSummary(c.Context(), merchant.ID)
 		if err != nil {
 			data := dealerPageData("Bayi paneli", "dashboard")
@@ -421,12 +494,16 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		applyFlash(c, &data)
 		data.Domains = dealerDomainViews(domains)
 		data.Withdrawals = dealerWithdrawalViews(withdrawals)
+		data.Products = dealerProductViews(c, products)
+		data.Payments = dealerPaymentViews(c, payments)
 		data.Balances = dealerBalanceViews(balances)
 		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
 		data.Activities = dealerActivityViews(transactions)
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
 		data.DomainCount = len(domains)
+		data.ProductCount = len(data.Products)
+		data.PaymentCount = len(data.Payments)
 		data.AssetCount = len(data.Balances)
 		data.NetworkCount = len(data.ChainVaults)
 		data.ActivityCount = len(data.AuditLogs) + len(transactions)
@@ -479,6 +556,129 @@ func HandleDealerDomainCreate(merchantService *services.MerchantService, domainS
 		}
 		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "success", "domain", subjectID, "Domain ve webhook endpoint oluşturuldu.")
 		return redirectWithSuccess(c, "/dealer/dashboard", "Domain eklendi.")
+	}
+}
+
+func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return redirectDealerLogin(c)
+		}
+		if deps.ProductRepo == nil {
+			return redirectWithError(c, "/dealer/dashboard/products", "Product repository hazır değil.")
+		}
+
+		domainIDRaw := strings.TrimSpace(c.FormValue("domain_id"))
+		domainID, err := uuid.Parse(domainIDRaw)
+		if err != nil {
+			return redirectWithError(c, "/dealer/dashboard/products", "Geçerli domain seçmelisin.")
+		}
+		domainIDString := domainID.String()
+		domain, err := deps.DomainService.FindByID(types.DomainParams{
+			Context:  c.Context(),
+			DomainID: &domainIDString,
+		})
+		if err != nil || domain.MerchantID != merchant.ID {
+			return redirectWithError(c, "/dealer/dashboard/products", "Domain bulunamadı.")
+		}
+
+		name := strings.TrimSpace(c.FormValue("name"))
+		description := strings.TrimSpace(c.FormValue("description"))
+		amount := strings.TrimSpace(c.FormValue("amount"))
+		currency := strings.ToUpper(strings.TrimSpace(c.FormValue("currency")))
+		language := normalizeLanguage(c.FormValue("language"))
+		successURL := strings.TrimSpace(c.FormValue("success_url"))
+		cancelURL := strings.TrimSpace(c.FormValue("cancel_url"))
+		if name == "" {
+			return redirectWithError(c, "/dealer/dashboard/products", "Ürün adı zorunlu.")
+		}
+		if err := types.ValidatePositiveDecimal(amount); err != nil {
+			return redirectWithError(c, "/dealer/dashboard/products", "Tutar pozitif decimal olmalı.")
+		}
+		if currency == "" {
+			currency = "USD"
+		}
+
+		product := &models.Product{
+			MerchantID:  merchant.ID,
+			DomainID:    domain.ID,
+			Name:        name,
+			Description: description,
+			Amount:      amount,
+			Currency:    currency,
+			Language:    language,
+			SuccessURL:  successURL,
+			CancelURL:   cancelURL,
+			IsActive:    true,
+		}
+		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "failed", "product", name, err.Error())
+			return redirectWithError(c, "/dealer/dashboard/products", "Ürün oluşturulamadı: "+err.Error())
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "success", "product", product.ID.String(), "Payment link ürünü oluşturuldu.")
+		link := baseURL(c) + "/payment-links/" + product.LinkToken
+		return redirectWithSuccess(c, "/dealer/dashboard/products", "Payment link oluşturuldu: "+link)
+	}
+}
+
+func HandlePaymentLink(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if deps.ProductRepo == nil || deps.PaymentRepo == nil || deps.WalletRepo == nil {
+			return renderPaymentLinkError(c, "Payment link altyapısı hazır değil.")
+		}
+		product, err := deps.ProductRepo.FindByToken(c.Context(), c.Params("token"))
+		if err != nil {
+			return renderPaymentLinkError(c, "Payment link bulunamadı.")
+		}
+		language := normalizeLanguage(product.Language)
+		if requestedLang := strings.TrimSpace(c.Query("lang")); requestedLang != "" {
+			language = normalizeLanguage(requestedLang)
+		}
+		c.Cookie(&fiber.Cookie{
+			Name:     "gateway_lang",
+			Value:    language,
+			Path:     "/",
+			HTTPOnly: true,
+			SameSite: "Lax",
+			MaxAge:   60 * 60 * 24 * 365,
+		})
+
+		orderID := "plink-" + product.ID.String() + "-" + uuid.NewString()
+		userID := valueOrDefault(stringPtr(strings.TrimSpace(c.Query("user_id"))), "guest")
+		merchantID := product.MerchantID.String()
+		domainID := product.DomainID.String()
+		productID := product.ID.String()
+		wallet, err := deps.WalletRepo.Create(types.WalletParams{
+			Context:    c.Context(),
+			MerchantId: &merchantID,
+			DomainId:   &domainID,
+			ProductId:  &productID,
+			UserId:     &userID,
+		})
+		if err != nil {
+			return renderPaymentLinkError(c, "Wallet oluşturulamadı: "+err.Error())
+		}
+
+		expiresAt := time.Now().Add(paymentSessionTTL())
+		session := &models.PaymentSession{
+			MerchantID: product.MerchantID,
+			DomainID:   product.DomainID,
+			WalletID:   wallet.ID,
+			OrderID:    orderID,
+			ProductID:  productID,
+			UserID:     userID,
+			Amount:     product.Amount,
+			Currency:   product.Currency,
+			SuccessURL: product.SuccessURL,
+			CancelURL:  product.CancelURL,
+			Status:     models.PaymentStatusPending,
+			ExpiresAt:  &expiresAt,
+		}
+		if err := deps.PaymentRepo.Create(c.Context(), session); err != nil {
+			return renderPaymentLinkError(c, "Checkout oluşturulamadı: "+err.Error())
+		}
+		return c.Redirect().To("/checkout/" + session.SessionToken + "?lang=" + url.QueryEscape(language))
 	}
 }
 
@@ -603,6 +803,45 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.Error = "Çekim talepleri okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
 		}
+		merchants, err := deps.MerchantService.List(c.Context(), 200)
+		if err != nil {
+			data := dealerPageData("Admin paneli", "admin")
+			data.DashboardURL = "/admin/withdrawals"
+			data.LogoutURL = "/admin/logout"
+			data.MerchantEmail = adminEmail
+			data.Error = "Bayi listesi okunamadı: " + err.Error()
+			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+		}
+		var payments []models.PaymentSession
+		if deps.PaymentRepo != nil {
+			payments, err = deps.PaymentRepo.List(c.Context(), 200)
+			if err != nil {
+				data := dealerPageData("Admin paneli", "admin")
+				data.DashboardURL = "/admin/withdrawals"
+				data.LogoutURL = "/admin/logout"
+				data.MerchantEmail = adminEmail
+				data.Error = "Checkout listesi okunamadı: " + err.Error()
+				return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+			}
+		}
+		wallets, err := deps.WalletRepo.List(c.Context(), 200)
+		if err != nil {
+			data := dealerPageData("Admin paneli", "admin")
+			data.DashboardURL = "/admin/withdrawals"
+			data.LogoutURL = "/admin/logout"
+			data.MerchantEmail = adminEmail
+			data.Error = "Wallet listesi okunamadı: " + err.Error()
+			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+		}
+		deposits, err := deps.TransactionRepo.List(c.Context(), 200)
+		if err != nil {
+			data := dealerPageData("Admin paneli", "admin")
+			data.DashboardURL = "/admin/withdrawals"
+			data.LogoutURL = "/admin/logout"
+			data.MerchantEmail = adminEmail
+			data.Error = "Deposit listesi okunamadı: " + err.Error()
+			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+		}
 		data := dealerPageData("Admin paneli", "admin")
 		data.HasSession = true
 		data.DashboardURL = "/admin/withdrawals"
@@ -610,6 +849,14 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		data.MerchantEmail = adminEmail
 		applyFlash(c, &data)
 		data.Withdrawals = dealerWithdrawalViews(requests)
+		data.AdminMerchants = dealerAdminMerchantViews(merchants)
+		data.Payments = dealerPaymentViews(c, payments)
+		data.AdminWallets = dealerWalletViews(wallets)
+		data.AdminDeposits = dealerActivityViews(deposits)
+		data.MerchantCount = len(data.AdminMerchants)
+		data.PaymentCount = len(data.Payments)
+		data.WalletCountAll = len(data.AdminWallets)
+		data.ActivityCount = len(data.AdminDeposits)
 		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
 	}
 }
@@ -1086,22 +1333,42 @@ func dealerPageData(title string, active string) DealerPageData {
 	}
 
 	return DealerPageData{
-		Title:           title,
-		Active:          active,
-		OIDCLoginURL:    oidcURL,
-		OIDCProvider:    provider,
-		RegisterURL:     "/dealer/register",
-		LoginURL:        "/dealer/login",
-		OnboardingURL:   "/dealer/onboarding",
-		DashboardURL:    "/dealer/dashboard",
-		TreasuryURL:     "/dealer/dashboard/treasury",
-		ActivityURL:     "/dealer/dashboard/activity",
-		WithdrawalsURL:  "/dealer/dashboard/withdrawals",
-		DomainsPanelURL: "/dealer/dashboard/domains",
-		DomainsURL:      "/dealer/domains",
-		LogoutURL:       "/dealer/logout",
-		ActivePanel:     "treasury",
+		Title:            title,
+		Active:           active,
+		OIDCLoginURL:     oidcURL,
+		OIDCProvider:     provider,
+		RegisterURL:      "/dealer/register",
+		LoginURL:         "/dealer/login",
+		OnboardingURL:    "/dealer/onboarding",
+		DashboardURL:     "/dealer/dashboard",
+		TreasuryURL:      "/dealer/dashboard/treasury",
+		ActivityURL:      "/dealer/dashboard/activity",
+		WithdrawalsURL:   "/dealer/dashboard/withdrawals",
+		DomainsPanelURL:  "/dealer/dashboard/domains",
+		ProductsURL:      "/dealer/products",
+		ProductsPanelURL: "/dealer/dashboard/products",
+		DomainsURL:       "/dealer/domains",
+		LogoutURL:        "/dealer/logout",
+		ActivePanel:      "treasury",
 	}
+}
+
+func normalizeLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "en", "en-us", "en-gb":
+		return "en"
+	default:
+		return "tr"
+	}
+}
+
+func renderPaymentLinkError(c fiber.Ctx, message string) error {
+	return c.Status(fiber.StatusNotFound).Render("gateway/payment_result", fiber.Map{
+		"Title":      "Payment link unavailable",
+		"Message":    message,
+		"Status":     "error",
+		"ResultKind": "error",
+	})
 }
 
 func dashboardPanel(raw string) string {
@@ -1112,6 +1379,8 @@ func dashboardPanel(raw string) string {
 		return "withdrawals"
 	case "domains":
 		return "domains"
+	case "products":
+		return "products"
 	default:
 		return "treasury"
 	}
@@ -1139,12 +1408,84 @@ func dealerDomainViews(domains []models.Domain) []DealerDomainView {
 	return views
 }
 
+func dealerProductViews(c fiber.Ctx, products []models.Product) []DealerProductView {
+	views := make([]DealerProductView, 0, len(products))
+	for _, product := range products {
+		views = append(views, DealerProductView{
+			ID:          product.ID.String(),
+			Name:        product.Name,
+			Description: emptyDash(product.Description),
+			Amount:      product.Amount,
+			Currency:    product.Currency,
+			Language:    strings.ToUpper(product.Language),
+			Domain:      product.Domain.DomainURL,
+			PaymentURL:  baseURL(c) + "/payment-links/" + product.LinkToken,
+			CreatedAt:   formatPanelTime(product.CreatedAt),
+		})
+	}
+	return views
+}
+
+func dealerPaymentViews(c fiber.Ctx, payments []models.PaymentSession) []DealerPaymentView {
+	views := make([]DealerPaymentView, 0, len(payments))
+	for _, payment := range payments {
+		selectedChain := "-"
+		if payment.SelectedChainID != nil {
+			selectedChain = chainLabel(*payment.SelectedChainID)
+		}
+		checkoutURL := baseURL(c) + "/checkout/" + payment.SessionToken
+		merchant := payment.Merchant.Name
+		if strings.TrimSpace(merchant) == "" {
+			merchant = shortText(payment.MerchantID.String(), 8, 6)
+		}
+		domain := payment.Domain.DomainURL
+		if strings.TrimSpace(domain) == "" {
+			domain = shortText(payment.DomainID.String(), 8, 6)
+		}
+		views = append(views, DealerPaymentView{
+			ID:             payment.ID.String(),
+			OrderID:        payment.OrderID,
+			ProductID:      emptyDash(payment.ProductID),
+			UserID:         emptyDash(payment.UserID),
+			Merchant:       merchant,
+			Domain:         domain,
+			Amount:         payment.Amount,
+			Currency:       payment.Currency,
+			Status:         payment.Status,
+			CheckoutURL:    checkoutURL,
+			SelectedAsset:  emptyDash(payment.SelectedSymbol),
+			SelectedChain:  selectedChain,
+			DepositAddress: shortText(payment.DepositAddress, 12, 8),
+			CreatedAt:      formatPanelTime(payment.CreatedAt),
+		})
+	}
+	return views
+}
+
+func dealerAdminMerchantViews(merchants []models.Merchant) []DealerAdminMerchantView {
+	views := make([]DealerAdminMerchantView, 0, len(merchants))
+	for _, merchant := range merchants {
+		views = append(views, DealerAdminMerchantView{
+			ID:        merchant.ID.String(),
+			Name:      merchant.Name,
+			Email:     merchant.Email,
+			CreatedAt: formatPanelTime(merchant.CreatedAt),
+		})
+	}
+	return views
+}
+
 func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 	views := make([]DealerWalletView, 0, len(wallets))
 	for _, wallet := range wallets {
+		merchant := wallet.Merchant.Name
+		if strings.TrimSpace(merchant) == "" {
+			merchant = shortText(wallet.MerchantID.String(), 8, 6)
+		}
 		views = append(views, DealerWalletView{
 			ID:        wallet.ID.String(),
 			ShortID:   shortText(wallet.ID.String(), 8, 6),
+			Merchant:  merchant,
 			Label:     walletLabel(wallet),
 			ProductID: emptyDash(wallet.ProductID),
 			UserID:    emptyDash(wallet.UserID),

@@ -202,6 +202,20 @@ func (r *WalletRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, l
 	return wallets, err
 }
 
+func (r *WalletRepo) List(ctx context.Context, limit int) ([]models.Wallet, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Preload("Merchant").
+		Preload("Domain").
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&wallets).Error
+	return wallets, err
+}
+
 func (r *WalletRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, limit int, offset int) ([]models.Wallet, int64, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 20

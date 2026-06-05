@@ -172,9 +172,12 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		}
 
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
+		lang := checkoutLanguage(c)
 		options := checkoutAssetOptions(c.Context(), deps, *session, selectedSymbol)
 		return c.Render("gateway/checkout", fiber.Map{
 			"Session":        session,
+			"Lang":           lang,
+			"IsEnglish":      lang == "en",
 			"AssetGroups":    checkoutAssetGroups(c.Context(), deps, *session),
 			"SelectedSymbol": selectedSymbol,
 			"Assets":         options,
@@ -282,9 +285,12 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		}
 
 		amountDisplay := formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)
+		lang := checkoutLanguage(c)
 		qrURL := "/checkout/" + session.SessionToken + "/qr.png"
 		return c.Render("gateway/pay", fiber.Map{
 			"Session":       session,
+			"Lang":          lang,
+			"IsEnglish":     lang == "en",
 			"QRCodeURL":     qrURL,
 			"PaymentURI":    paymentURI(*session),
 			"ChainName":     constants.ChainName(*session.SelectedChainID),
@@ -377,9 +383,11 @@ func HandleCheckoutCancel(deps PaymentHandlerDeps) fiber.Handler {
 			return c.Redirect().To(session.CancelURL)
 		}
 		return c.Render("gateway/payment_result", fiber.Map{
-			"Title":   "Payment canceled",
-			"Message": "The checkout session was canceled.",
-			"Status":  session.Status,
+			"Title":      "Payment canceled",
+			"Message":    "The checkout session was canceled.",
+			"Status":     session.Status,
+			"ResultKind": "canceled",
+			"IsEnglish":  checkoutLanguage(c) == "en",
 		})
 	}
 }
@@ -406,9 +414,11 @@ func HandleCheckoutSuccessReturn(deps PaymentHandlerDeps) fiber.Handler {
 			return c.Redirect().To(session.SuccessURL)
 		}
 		return c.Render("gateway/payment_result", fiber.Map{
-			"Title":   "Payment complete",
-			"Message": "Payment received successfully.",
-			"Status":  session.Status,
+			"Title":      "Payment complete",
+			"Message":    "Payment received successfully.",
+			"Status":     session.Status,
+			"ResultKind": "success",
+			"IsEnglish":  checkoutLanguage(c) == "en",
 		})
 	}
 }
@@ -672,8 +682,11 @@ func paymentDepositAddressForChain(wallet models.Wallet, chainID constants.Chain
 }
 
 func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, message string) error {
+	lang := checkoutLanguage(c)
 	return c.Status(fiber.StatusBadRequest).Render("gateway/checkout", fiber.Map{
 		"Session":        session,
+		"Lang":           lang,
+		"IsEnglish":      lang == "en",
 		"AssetGroups":    checkoutAssetGroups(c.Context(), deps, *session),
 		"SelectedSymbol": strings.ToUpper(strings.TrimSpace(c.FormValue("symbol"))),
 		"Assets":         checkoutAssetOptions(c.Context(), deps, *session, strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))),
@@ -684,10 +697,28 @@ func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *mode
 
 func renderPaymentError(c fiber.Ctx, status int, message string) error {
 	return c.Status(status).Render("gateway/payment_result", fiber.Map{
-		"Title":   "Payment unavailable",
-		"Message": message,
-		"Status":  "error",
+		"Title":      "Payment unavailable",
+		"Message":    message,
+		"Status":     "error",
+		"ResultKind": "error",
+		"IsEnglish":  checkoutLanguage(c) == "en",
 	})
+}
+
+func checkoutLanguage(c fiber.Ctx) string {
+	lang := normalizeLanguage(c.Query("lang"))
+	if strings.TrimSpace(c.Query("lang")) == "" {
+		lang = normalizeLanguage(c.Cookies("gateway_lang"))
+	}
+	c.Cookie(&fiber.Cookie{
+		Name:     "gateway_lang",
+		Value:    lang,
+		Path:     "/",
+		HTTPOnly: true,
+		SameSite: "Lax",
+		MaxAge:   60 * 60 * 24 * 365,
+	})
+	return lang
 }
 
 func markPaymentCanceledOrExpired(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession, status string) error {

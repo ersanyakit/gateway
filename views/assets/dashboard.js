@@ -1,11 +1,14 @@
 document.addEventListener('DOMContentLoaded', function () {
-  document.querySelectorAll('[data-copy-target]').forEach(function (button) {
+  document.querySelectorAll('[data-copy-target], [data-copy-value]').forEach(function (button) {
     button.addEventListener('click', function () {
+      var value = button.getAttribute('data-copy-value') || '';
       var target = document.getElementById(button.getAttribute('data-copy-target'));
-      if (!target) {
+      if (!value && target) {
+        value = target.innerText || target.value || '';
+      }
+      if (!value) {
         return;
       }
-      var value = target.innerText || target.value || '';
       if (navigator.clipboard) {
         navigator.clipboard.writeText(value);
       }

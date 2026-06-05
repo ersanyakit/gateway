@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crypto Checkout – Web3Pay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #F3F4F8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2.5rem 1rem;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── BG circles ── */
+    .bg-circles { position: fixed; inset: 0; overflow: hidden; pointer-events: none; }
+    .bg-circles .c1 { position: absolute; top: -10rem; right: -10rem; width: 24rem; height: 24rem; border-radius: 50%; background: #ffe4ef; opacity: .4; filter: blur(64px); }
+    .bg-circles .c2 { position: absolute; bottom: -10rem; left: -10rem; width: 24rem; height: 24rem; border-radius: 50%; background: #dbeafe; opacity: .3; filter: blur(64px); }
+
+    /* ── Container ── */
+    .container { position: relative; width: 100%; max-width: 28rem; }
+
+    /* ── Header ── */
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+    .header-left { display: flex; align-items: center; gap: .5rem; }
+    .header-icon {
+      width: 2.25rem; height: 2.25rem; border-radius: .75rem; border: 1px solid #E5E7EB;
+      background: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 1px 2px rgba(0,0,0,.05); cursor: pointer; transition: background .15s;
+    }
+    .header-icon:hover { background: #f9fafb; }
+    .header-icon svg { width: 15px; height: 15px; }
+    .header-icon .shield { color: #FF007A; }
+    .header-icon .chevron { color: #3B4263; }
+    .header-title { font-size: .875rem; font-weight: 600; color: #0D111C; line-height: 1; }
+    .header-sub { font-size: .75rem; color: #8B93A7; margin-top: 2px; }
+
+    /* ── Steps ── */
+    .steps { display: flex; align-items: center; gap: 6px; }
+    .step-dot {
+      height: 6px; border-radius: 9999px; transition: all .3s;
+    }
+    .step-dot.done { width: 1.25rem; background: #FF007A; }
+    .step-dot.active { width: 2rem; background: #FF007A; }
+    .step-dot.pending { width: 1.25rem; background: #e5e7eb; }
+
+    /* ── Card ── */
+    .card {
+      background: #fff; border-radius: 1.5rem; border: 1px solid #E5E7EB;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.06);
+      padding: 1.5rem;
+    }
+
+    /* ── Sections ── */
+    .section {
+      background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 1rem;
+      padding: 1.25rem;
+    }
+    .section + .section { margin-top: 1.25rem; }
+
+    .label-xs {
+      font-size: .6875rem; font-weight: 600; color: #8B93A7;
+      text-transform: uppercase; letter-spacing: .05em; margin-bottom: .25rem;
+    }
+    .label-xs.mb-4 { margin-bottom: 1rem; }
+
+    .text-primary { color: #0D111C; }
+    .text-secondary { color: #3B4263; }
+    .text-muted { color: #8B93A7; }
+    .text-pink { color: #FF007A; }
+
+    /* ── Price ── */
+    .price-big { font-size: 1.875rem; font-weight: 700; color: #0D111C; }
+    .price-sub { font-size: .875rem; color: #3B4263; margin-top: 2px; }
+    .price-rate { font-size: .75rem; color: #8B93A7; margin-top: 2px; }
+
+    /* ── Badges ── */
+    .badges { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: 1.25rem; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+      border-radius: 9999px; background: #F9FAFB; border: 1px solid #E5E7EB;
+      font-size: .75rem; font-weight: 500; color: #3B4263;
+    }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #10b981; }
+
+    /* ── Summary rows ── */
+    .summary-row { display: flex; justify-content: space-between; align-items: center; }
+    .summary-row + .summary-row { margin-top: .75rem; }
+    .summary-row .k { font-size: .875rem; color: #3B4263; }
+    .summary-row .v { font-size: .875rem; font-weight: 500; color: #0D111C; }
+    .summary-row .v.green { color: #059669; }
+    .summary-row .v.bold { font-weight: 700; font-size: 1.125rem; }
+    .divider { height: 1px; background: #E5E7EB; margin: .75rem 0; }
+
+    /* ── Buttons ── */
+    .btn {
+      display: flex; align-items: center; justify-content: center; gap: .5rem;
+      width: 100%; padding: .8rem 1.25rem; font-size: .875rem; font-weight: 600;
+      border-radius: .875rem; cursor: pointer; transition: all .2s; border: none;
+      font-family: inherit;
+    }
+    .btn-primary {
+      color: #fff; background: linear-gradient(135deg, #FF007A, #E6006E);
+      box-shadow: 0 2px 8px rgba(255,0,122,.3);
+    }
+    .btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(255,0,122,.4); }
+    .btn-primary:active:not(:disabled) { transform: translateY(0); }
+    .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-ghost {
+      color: #3B4263; background: transparent; border: 1px solid #E5E7EB;
+    }
+    .btn-ghost:hover { background: #F9FAFB; }
+    .btn + .btn { margin-top: .5rem; }
+
+    /* ── Crypto grid ── */
+    .crypto-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+    .crypto-btn {
+      position: relative; display: flex; flex-direction: column; align-items: center; gap: .5rem;
+      padding: .875rem; border-radius: 1rem; border: 1px solid #E5E7EB; background: #F9FAFB;
+      cursor: pointer; transition: all .15s; font-family: inherit;
+    }
+    .crypto-btn:hover { border-color: #FF007A; background: #FFF0F6; }
+    .crypto-btn.selected { border-color: #FF007A; background: #FFF0F6; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    .crypto-btn .check-badge {
+      position: absolute; top: .5rem; right: .5rem; width: 1rem; height: 1rem;
+      border-radius: 50%; background: #FF007A; display: flex; align-items: center; justify-content: center;
+    }
+    .crypto-btn .check-badge svg { width: 10px; height: 10px; color: #fff; stroke-width: 3; }
+    .crypto-circle {
+      width: 2.25rem; height: 2.25rem; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .875rem; font-weight: 700;
+    }
+    .crypto-symbol { font-size: .75rem; font-weight: 600; }
+    .crypto-symbol.pink { color: #E6006E; }
+    .crypto-name { font-size: 10px; color: #8B93A7; line-height: 1.2; margin-top: 2px; }
+
+    /* ── Network selector ── */
+    .network-selector { position: relative; }
+    .network-toggle {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: 1rem; border-radius: 1rem; border: 1px solid #E5E7EB; background: #F9FAFB;
+      cursor: pointer; font-family: inherit; font-size: .875rem; font-weight: 500; color: #0D111C;
+      transition: background .15s;
+    }
+    .network-toggle:hover { background: #f3f4f6; }
+    .network-toggle .left { display: flex; align-items: center; gap: .75rem; }
+    .network-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .network-toggle .arrow { transition: transform .2s; color: #8B93A7; }
+    .network-toggle .arrow.open { transform: rotate(180deg); }
+    .network-dropdown {
+      position: absolute; top: 100%; left: 0; right: 0; margin-top: 4px;
+      background: #fff; border-radius: 1rem; border: 1px solid #E5E7EB;
+      box-shadow: 0 8px 30px rgba(0,0,0,.12); z-index: 20; overflow: hidden;
+    }
+    .network-option {
+      width: 100%; display: flex; align-items: center; justify-content: space-between;
+      padding: .75rem 1rem; cursor: pointer; transition: background .1s; border: none; background: none; font-family: inherit;
+    }
+    .network-option:hover { background: #f9fafb; }
+    .network-option .left { display: flex; align-items: center; gap: .75rem; }
+    .network-option .n-name { font-size: .875rem; font-weight: 500; color: #0D111C; }
+    .network-option .n-short { font-size: .75rem; color: #8B93A7; }
+
+    .network-badge {
+      display: flex; align-items: center; gap: .5rem; padding: .875rem;
+      border-radius: 1rem; border: 1px solid #E5E7EB; background: #F9FAFB;
+    }
+    .network-badge .only { margin-left: auto; font-size: .75rem; color: #8B93A7; padding: 2px 8px; background: #f3f4f6; border-radius: 9999px; }
+
+    /* ── Timer ── */
+    .timer-box {
+      display: flex; align-items: center; gap: .5rem; padding: .5rem .75rem;
+      border-radius: .75rem; border: 1px solid #E5E7EB; background: #F9FAFB;
+    }
+    .timer-box.expired { border-color: #fecaca; background: #fef2f2; }
+    .timer-box svg { width: 14px; height: 14px; }
+    .timer-box .time { font-size: .875rem; font-family: monospace; font-weight: 600; color: #0D111C; }
+    .timer-box.expired .time { color: #ef4444; }
+    .timer-box.expired svg { color: #ef4444; }
+
+    .progress-bar { height: 4px; border-radius: 9999px; background: #f3f4f6; overflow: hidden; }
+    .progress-bar .fill { height: 100%; border-radius: 9999px; transition: width 1s; }
+
+    /* ── QR ── */
+    .qr-wrap {
+      background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 1rem;
+      padding: 1.5rem; display: flex; flex-direction: column; align-items: center; gap: 1rem;
+    }
+    .qr-outer {
+      padding: 1rem; border-radius: 1rem; border: 2px solid; background: #fff;
+      position: relative;
+    }
+    .qr-outer canvas { display: block; }
+    .qr-center {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .qr-logo {
+      width: 2.25rem; height: 2.25rem; border-radius: 50%; border: 2px solid #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .75rem; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.1);
+    }
+    .net-pill {
+      display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+      border-radius: 9999px; font-size: .75rem; font-weight: 500;
+    }
+    .net-pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    /* ── Address / Amount copy ── */
+    .copy-section {
+      background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 1rem; padding: 1rem;
+    }
+    .copy-section + .copy-section { margin-top: .75rem; }
+    .copy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: .5rem; }
+    .copy-btn {
+      display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 500;
+      color: #FF007A; cursor: pointer; background: none; border: none; font-family: inherit;
+      transition: color .15s;
+    }
+    .copy-btn:hover { color: #E6006E; }
+    .copy-btn svg { width: 12px; height: 12px; }
+    .copy-value {
+      font-size: .75rem; font-family: monospace; color: #3B4263; word-break: break-all;
+      line-height: 1.6; background: #f9fafb; padding: .75rem; border-radius: .75rem;
+      border: 1px solid #E5E7EB;
+    }
+    .copy-value.no-bg { background: none; border: none; padding: 0; }
+
+    /* ── Status ── */
+    .status-box {
+      display: flex; align-items: center; gap: .75rem; padding: 1rem;
+      border-radius: 1rem; border: 1px solid #E5E7EB; background: #F9FAFB;
+      transition: all .5s;
+    }
+    .status-box.detecting { border-color: #fde68a; background: #fffbeb; }
+    .status-box.confirming { border-color: #bbf7d0; background: #f0fdf4; }
+    .status-box svg { flex-shrink: 0; width: 18px; height: 18px; }
+    .status-box .info { flex: 1; min-width: 0; }
+    .status-box .info .title { font-size: .875rem; font-weight: 500; color: #0D111C; }
+    .status-box .info .sub { font-size: .75rem; color: #8B93A7; margin-top: 2px; }
+    .bouncing-dots { display: flex; gap: 4px; flex-shrink: 0; }
+    .bouncing-dots span {
+      width: 6px; height: 6px; border-radius: 50%; background: #d1d5db;
+      animation: bounce 1s infinite;
+    }
+    .bouncing-dots span:nth-child(2) { animation-delay: .15s; }
+    .bouncing-dots span:nth-child(3) { animation-delay: .3s; }
+    @keyframes bounce {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+
+    .pulse-dot {
+      position: absolute; top: -2px; right: -2px; width: 10px; height: 10px;
+      border-radius: 50%; background: #fbbf24; border: 2px solid #fff;
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: .5; } 100% { opacity: 1; } }
+
+    /* ── Warning ── */
+    .warning {
+      display: flex; align-items: flex-start; gap: .625rem; padding: .875rem;
+      border-radius: .75rem; background: #fffbeb; border: 1px solid #fef3c7;
+    }
+    .warning-icon {
+      width: 1rem; height: 1rem; border-radius: 50%; background: #fbbf24;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px;
+    }
+    .warning-icon span { color: #fff; font-size: 10px; font-weight: 700; line-height: 1; }
+    .warning p { font-size: .75rem; color: #b45309; line-height: 1.5; }
+
+    /* ── Success ── */
+    .success-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 1.5rem;
+      opacity: 0; transform: translateY(1rem); transition: all .5s;
+    }
+    .success-wrap.visible { opacity: 1; transform: translateY(0); }
+
+    .success-icon { position: relative; display: flex; align-items: center; justify-content: center; margin-top: .5rem; }
+    .success-ring1 {
+      position: absolute; width: 7rem; height: 7rem; border-radius: 50%;
+      background: #dcfce7; animation: ping-slow 2s cubic-bezier(0,0,.2,1) infinite; opacity: .2;
+    }
+    .success-ring2 { position: absolute; width: 6rem; height: 6rem; border-radius: 50%; background: #dcfce7; opacity: .4; }
+    .success-circle {
+      position: relative; width: 5rem; height: 5rem; border-radius: 50%;
+      background: #22c55e; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px rgba(34,197,94,.3);
+    }
+    .success-circle svg { width: 40px; height: 40px; color: #fff; }
+    @keyframes ping-slow {
+      0% { transform: scale(1); opacity: .3; }
+      70% { transform: scale(1.5); opacity: 0; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+
+    .success-title { font-size: 1.5rem; font-weight: 700; color: #0D111C; text-align: center; }
+    .success-sub { font-size: .875rem; color: #3B4263; text-align: center; line-height: 1.5; margin-top: .5rem; }
+
+    .summary-card { width: 100%; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 1rem; overflow: hidden; }
+    .summary-card .body { padding: 1.25rem; }
+    .summary-card .row { display: flex; justify-content: space-between; align-items: center; }
+    .summary-card .row + .row { margin-top: 1rem; }
+    .summary-card .row .k { font-size: .875rem; color: #3B4263; }
+    .summary-card .row .v { font-size: .875rem; font-weight: 600; color: #0D111C; }
+    .summary-card .row .v small { display: block; font-size: .75rem; color: #8B93A7; font-weight: 400; margin-top: 2px; }
+    .summary-card .tx-section { border-top: 1px solid #E5E7EB; padding: 1rem 1.25rem; background: #f9fafb; }
+    .summary-card .tx-hash { font-size: .75rem; font-family: monospace; color: #3B4263; word-break: break-all; line-height: 1.6; }
+
+    .thank-box {
+      width: 100%; padding: 1rem; border-radius: 1rem; background: #FFF0F6;
+      border: 1px solid #FFE4EF; text-align: center;
+    }
+    .thank-box p:first-child { font-size: .875rem; font-weight: 500; color: #be185d; }
+    .thank-box p:last-child { font-size: .75rem; color: #FF007A; margin-top: 4px; }
+
+    /* ── Footer ── */
+    .footer { text-align: center; font-size: .75rem; color: #8B93A7; margin-top: 1.25rem; }
+
+    /* ── Product image ── */
+    .product-img {
+      width: 4rem; height: 4rem; border-radius: .75rem; overflow: hidden; flex-shrink: 0;
+      background: linear-gradient(135deg, rgba(255,0,122,.08), rgba(255,0,122,.19));
+    }
+    .product-img img { width: 100%; height: 100%; object-fit: cover; }
+
+    /* ── Flex helpers ── */
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .flex-start { display: flex; align-items: flex-start; gap: 1rem; }
+    .flex-col { display: flex; flex-direction: column; }
+    .gap-5 > * + * { margin-top: 1.25rem; }
+    .gap-6 > * + * { margin-top: 1.5rem; }
+    .mt-1 { margin-top: .25rem; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <div class="bg-circles"><div class="c1"></div><div class="c2"></div></div>
+
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <div class="header-icon" id="headerIcon"></div>
+        <div>
+          <div class="header-title">Crypto Checkout</div>
+          <div class="header-sub">Powered by Web3Pay</div>
+        </div>
+      </div>
+      <div class="steps" id="steps"></div>
+    </div>
+
+    <!-- Card -->
+    <div class="card" id="card"></div>
+
+    <!-- Footer -->
+    <p class="footer">Secured by end-to-end encryption · Non-custodial payments</p>
+  </div>
+
+<script>
+// ─── DATA ──────────────────────────────────────────────
+var PRODUCT = { name: 'Pro Subscription', description: 'Unlimited access to all features, priority support, and advanced analytics.', price: 99.00, currency: '$' };
+
+var CRYPTOS = [
+  { id:'eth', symbol:'ETH', name:'Ethereum', color:'#627EEA', bgColor:'#EEF2FF', networks:[
+    {id:'ethereum',name:'Ethereum Mainnet',shortName:'Ethereum',color:'#627EEA'},
+    {id:'arbitrum',name:'Arbitrum One',shortName:'Arbitrum',color:'#28A0F0'},
+    {id:'optimism',name:'Optimism',shortName:'Optimism',color:'#FF0420'},
+    {id:'polygon',name:'Polygon',shortName:'Polygon',color:'#8247E5'}
+  ]},
+  { id:'btc', symbol:'BTC', name:'Bitcoin', color:'#F7931A', bgColor:'#FFF7ED', networks:[
+    {id:'bitcoin',name:'Bitcoin Network',shortName:'Bitcoin',color:'#F7931A'}
+  ]},
+  { id:'usdt', symbol:'USDT', name:'Tether', color:'#26A17B', bgColor:'#ECFDF5', networks:[
+    {id:'ethereum-usdt',name:'Ethereum (ERC-20)',shortName:'ERC-20',color:'#627EEA'},
+    {id:'tron-usdt',name:'Tron (TRC-20)',shortName:'TRC-20',color:'#FF060A'},
+    {id:'polygon-usdt',name:'Polygon',shortName:'Polygon',color:'#8247E5'}
+  ]},
+  { id:'usdc', symbol:'USDC', name:'USD Coin', color:'#2775CA', bgColor:'#EFF6FF', networks:[
+    {id:'ethereum-usdc',name:'Ethereum (ERC-20)',shortName:'ERC-20',color:'#627EEA'},
+    {id:'polygon-usdc',name:'Polygon',shortName:'Polygon',color:'#8247E5'},
+    {id:'arbitrum-usdc',name:'Arbitrum',shortName:'Arbitrum',color:'#28A0F0'}
+  ]},
+  { id:'sol', symbol:'SOL', name:'Solana', color:'#9945FF', bgColor:'#F5F3FF', networks:[
+    {id:'solana',name:'Solana Mainnet',shortName:'Solana',color:'#9945FF'}
+  ]},
+  { id:'matic', symbol:'MATIC', name:'Polygon', color:'#8247E5', bgColor:'#F5F3FF', networks:[
+    {id:'polygon-matic',name:'Polygon Mainnet',shortName:'Polygon',color:'#8247E5'}
+  ]}
+];
+
+var RATES = { eth:3500, btc:67000, usdt:1, usdc:1, sol:145, matic:0.75 };
+var WALLETS = {
+  eth:'0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18',
+  btc:'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh',
+  usdt:'0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18',
+  usdc:'0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18',
+  sol:'7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU',
+  matic:'0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18'
+};
+
+var STEP_IDS = ['product','select','payment','success'];
+var STEP_LABELS = ['Review','Currency','Pay','Done'];
+
+// ─── STATE ─────────────────────────────────────────────
+var step = 'product';
+var selCrypto = null;
+var selNetwork = null;
+var cryptoAmount = 0;
+var timerInterval = null;
+var timeLeft = 900;
+
+// ─── SVG HELPERS ───────────────────────────────────────
+function svgIcon(paths, size, cls, sw) {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+(size||18)+'" height="'+(size||18)+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+(sw||2)+'" stroke-linecap="round" stroke-linejoin="round" class="'+(cls||'')+'">'+paths+'</svg>';
+}
+var IC = {
+  chevronL: svgIcon('<polyline points="15 18 9 12 15 6"/>'),
+  shield: svgIcon('<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',15,'shield'),
+  chevronD: svgIcon('<polyline points="6 9 12 15 18 9"/>',16,'arrow'),
+  check: svgIcon('<polyline points="20 6 9 17 4 12"/>'),
+  copy: svgIcon('<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',12),
+  clock: svgIcon('<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',14),
+  wifi: svgIcon('<path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',18),
+  checkCircle: svgIcon('<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',40),
+  arrowR: svgIcon('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',16),
+  checkSm: svgIcon('<polyline points="20 6 9 17 4 12"/>',10,'',3),
+  checkMd: svgIcon('<polyline points="20 6 9 17 4 12"/>',14,'',2.5),
+  checkXs: svgIcon('<polyline points="20 6 9 17 4 12"/>',12,'',2.5),
+};
+
+// ─── RENDER ENGINE ─────────────────────────────────────
+function render() {
+  renderHeader();
+  renderCard();
+}
+
+function renderHeader() {
+  var iconEl = document.getElementById('headerIcon');
+  var stepsEl = document.getElementById('steps');
+  var canBack = step === 'select' || step === 'payment';
+
+  if (canBack && step !== 'success') {
+    iconEl.innerHTML = IC.chevronL;
+    iconEl.querySelector('svg').classList.add('chevron');
+    iconEl.onclick = function() {
+      if (step === 'select') go('product');
+      else if (step === 'payment') go('select');
+    };
+  } else {
+    iconEl.innerHTML = IC.shield;
+    iconEl.onclick = null;
+  }
+
+  if (step === 'success') {
+    stepsEl.innerHTML = '';
+    return;
+  }
+  var idx = STEP_IDS.indexOf(step);
+  var html = '';
+  for (var i = 0; i < 3; i++) {
+    var cls = i < idx ? 'done' : i === idx ? 'active' : 'pending';
+    html += '<div class="step-dot '+cls+'"></div>';
+  }
+  stepsEl.innerHTML = html;
+}
+
+function renderCard() {
+  var el = document.getElementById('card');
+  if (step === 'product') el.innerHTML = renderProduct();
+  else if (step === 'select') el.innerHTML = renderSelector();
+  else if (step === 'payment') el.innerHTML = renderPayment();
+  else if (step === 'success') el.innerHTML = renderSuccess();
+  bindCard();
+}
+
+// ─── PRODUCT STEP ──────────────────────────────────────
+function renderProduct() {
+  return '<div class="gap-6">' +
+    '<div class="section"><div class="flex-start">' +
+      '<div class="product-img"><img src="https://images.pexels.com/photos/3861969/pexels-photo-3861969.jpeg?auto=compress&cs=tinysrgb&w=200&h=200&dpr=2" alt="'+PRODUCT.name+'"/></div>' +
+      '<div style="flex:1;min-width:0">' +
+        '<p class="label-xs">Product</p>' +
+        '<h2 style="font-size:.9375rem;font-weight:600;color:#0D111C;line-height:1.3">'+PRODUCT.name+'</h2>' +
+        '<p style="font-size:.875rem;color:#3B4263;margin-top:4px;line-height:1.5">'+PRODUCT.description+'</p>' +
+      '</div>' +
+    '</div></div>' +
+    '<div class="section">' +
+      '<p class="label-xs mb-4">Order Summary</p>' +
+      '<div class="summary-row"><span class="k">'+PRODUCT.name+'</span><span class="v">'+PRODUCT.currency+PRODUCT.price.toFixed(2)+'</span></div>' +
+      '<div class="summary-row"><span class="k">Network Fee</span><span class="v green">Included</span></div>' +
+      '<div class="divider"></div>' +
+      '<div class="summary-row"><span class="k" style="font-weight:600">Total</span><span class="v bold">'+PRODUCT.currency+PRODUCT.price.toFixed(2)+'</span></div>' +
+    '</div>' +
+    '<div class="badges">' +
+      ['Secure','Non-custodial','Instant'].map(function(b){ return '<span class="badge"><span class="badge-dot"></span>'+b+'</span>'; }).join('') +
+    '</div>' +
+    '<button class="btn btn-primary" onclick="go(\'select\')">Pay with Crypto</button>' +
+  '</div>';
+}
+
+// ─── SELECTOR STEP ─────────────────────────────────────
+function renderSelector() {
+  var rateStr = '';
+  var amtStr = '';
+  if (selCrypto) {
+    var rate = RATES[selCrypto.id] || 1;
+    amtStr = (PRODUCT.price / rate).toFixed(selCrypto.id === 'btc' ? 6 : 4) + ' ' + selCrypto.symbol;
+    rateStr = '1 ' + selCrypto.symbol + ' = ' + PRODUCT.currency + rate.toLocaleString();
+  }
+
+  var html = '<div class="gap-5">';
+  // Amount
+  html += '<div class="section"><p class="label-xs">You Pay</p>' +
+    '<div class="flex-between" style="align-items:flex-end">' +
+      '<span class="price-big">'+PRODUCT.currency+PRODUCT.price.toFixed(2)+'</span>';
+  if (selCrypto) {
+    html += '<div style="text-align:right"><p class="price-sub">≈ '+amtStr+'</p><p class="price-rate">'+rateStr+'</p></div>';
+  }
+  html += '</div></div>';
+
+  // Crypto grid
+  html += '<div><p class="label-xs" style="margin-bottom:.75rem;padding:0 4px">Select Currency</p><div class="crypto-grid">';
+  CRYPTOS.forEach(function(c) {
+    var sel = selCrypto && selCrypto.id === c.id;
+    html += '<button class="crypto-btn'+(sel?' selected':'')+'" data-crypto="'+c.id+'">' +
+      (sel ? '<div class="check-badge">'+IC.checkSm+'</div>' : '') +
+      '<div class="crypto-circle" style="background:'+c.bgColor+';color:'+c.color+'">'+c.symbol.charAt(0)+'</div>' +
+      '<div style="text-align:center"><p class="crypto-symbol'+(sel?' pink':'')+'">'+c.symbol+'</p><p class="crypto-name">'+c.name+'</p></div>' +
+    '</button>';
+  });
+  html += '</div></div>';
+
+  // Network
+  if (selCrypto) {
+    if (selCrypto.networks.length > 1) {
+      html += '<div><p class="label-xs" style="margin-bottom:.75rem;padding:0 4px">Select Network</p>' +
+        '<div class="network-selector">' +
+          '<button class="network-toggle" id="netToggle">' +
+            '<div class="left"><div class="network-dot" style="background:'+(selNetwork?selNetwork.color:'#ccc')+'"></div><span>'+(selNetwork?selNetwork.name:'')+'</span></div>' +
+            '<div class="arrow">'+IC.chevronD+'</div>' +
+          '</button>' +
+          '<div class="network-dropdown hidden" id="netDropdown">';
+      selCrypto.networks.forEach(function(n) {
+        html += '<button class="network-option" data-network="'+n.id+'">' +
+          '<div class="left"><div class="network-dot" style="background:'+n.color+'"></div><div><div class="n-name">'+n.name+'</div><div class="n-short">'+n.shortName+'</div></div></div>' +
+          (selNetwork && selNetwork.id === n.id ? IC.checkMd : '') +
+        '</button>';
+      });
+      html += '</div></div></div>';
+    } else {
+      var n = selCrypto.networks[0];
+      html += '<div class="network-badge"><div class="network-dot" style="background:'+n.color+'"></div><span style="font-size:.875rem;font-weight:500;color:#0D111C">'+n.name+'</span><span class="only">Only network</span></div>';
+    }
+  }
+
+  // Buttons
+  var disabled = !selCrypto || !selNetwork;
+  html += '<div style="margin-top:.25rem">' +
+    '<button class="btn btn-primary" id="continueBtn"'+(disabled?' disabled':'')+'>Continue to Payment</button>' +
+    '<button class="btn btn-ghost" onclick="go(\'product\')">Back</button>' +
+  '</div>';
+
+  html += '</div>';
+  return html;
+}
+
+// ─── PAYMENT STEP ──────────────────────────────────────
+function renderPayment() {
+  var wallet = WALLETS[selCrypto.id] || '0x0000000000000000000000000000000000000000';
+  var fmt = Number(cryptoAmount).toFixed(selCrypto.id === 'btc' ? 6 : 4);
+
+  var expired = timeLeft === 0;
+  var progress = ((900 - timeLeft) / 900) * 100;
+  var barColor = timeLeft > 120 ? '#10B981' : timeLeft > 60 ? '#F59E0B' : '#EF4444';
+  var m = Math.floor(timeLeft / 60).toString().padStart(2, '0');
+  var s = (timeLeft % 60).toString().padStart(2, '0');
+  var timeStr = expired ? 'Expired' : m + ':' + s;
+
+  var html = '<div class="gap-5">';
+
+  // Header with timer
+  html += '<div class="flex-between">' +
+    '<div><p class="label-xs">Send Exactly</p>' +
+      '<p style="font-size:1.5rem;font-weight:700;color:#0D111C;margin-top:4px">'+fmt+' <span style="color:'+selCrypto.color+'">'+selCrypto.symbol+'</span></p>' +
+      '<p class="price-sub">≈ '+PRODUCT.currency+PRODUCT.price.toFixed(2)+'</p>' +
+    '</div>' +
+    '<div class="timer-box'+(expired?' expired':'')+'">'+IC.clock+'<span class="time">'+timeStr+'</span></div>' +
+  '</div>';
+
+  // Progress
+  html += '<div class="progress-bar"><div class="fill" style="width:'+progress+'%;background:'+barColor+'"></div></div>';
+
+  // QR
+  var qrBorder = expired ? '#FCA5A5' : selCrypto.color + '40';
+  html += '<div class="qr-wrap"><div class="qr-outer" style="border-color:'+qrBorder+'"><canvas id="qrCanvas"></canvas>' +
+    '<div class="qr-center"><div class="qr-logo" style="background:'+selCrypto.bgColor+';color:'+selCrypto.color+'">'+selCrypto.symbol.charAt(0)+'</div></div></div>' +
+    '<div class="net-pill" style="background:'+selNetwork.color+'15;color:'+selNetwork.color+'"><div class="dot" style="background:'+selNetwork.color+'"></div>'+selNetwork.name+'</div>' +
+    '<p style="font-size:.75rem;color:#8B93A7;text-align:center">Scan with your wallet app to pay</p></div>';
+
+  // Wallet address
+  html += '<div class="copy-section"><div class="copy-header"><p class="label-xs" style="margin:0">Wallet Address</p>' +
+    '<button class="copy-btn" id="copyAddr">'+IC.copy+' Copy</button></div>' +
+    '<p class="copy-value" id="addrVal">'+wallet+'</p></div>';
+
+  // Amount
+  html += '<div class="copy-section"><div class="flex-between">' +
+    '<div><p class="label-xs" style="margin:0 0 4px">Exact Amount</p><p class="copy-value no-bg" style="font-weight:600">'+fmt+' '+selCrypto.symbol+'</p></div>' +
+    '<button class="copy-btn" id="copyAmt">'+IC.copy+' Copy</button></div></div>';
+
+  // Status
+  html += '<div class="status-box" id="statusBox">' +
+    '<div style="position:relative">'+IC.wifi+'</div>' +
+    '<div class="info"><div class="title" id="statusTitle">Waiting for payment...</div><div class="sub" id="statusSub">Send the exact amount to the address above</div></div>' +
+    '<div class="bouncing-dots" id="bounceDots"><span></span><span></span><span></span></div>' +
+  '</div>';
+
+  // Warning
+  html += '<div class="warning"><div class="warning-icon"><span>!</span></div><p>Send only <strong>'+selCrypto.symbol+'</strong> on the <strong>'+selNetwork.shortName+'</strong> network. Sending other assets may result in permanent loss.</p></div>';
+
+  // Buttons
+  html += '<div>';
+  if (!expired) {
+    html += '<button class="btn btn-primary" id="simulateBtn">Simulate Payment (Demo)</button>';
+  } else {
+    html += '<button class="btn btn-primary" onclick="go(\'select\')">Try Again</button>';
+  }
+  html += '<button class="btn btn-ghost" onclick="go(\'select\')">Cancel</button></div>';
+
+  html += '</div>';
+  return html;
+}
+
+// ─── SUCCESS STEP ──────────────────────────────────────
+function renderSuccess() {
+  var fmt = Number(cryptoAmount).toFixed(selCrypto.id === 'btc' ? 6 : 4);
+  var txHash = '0x' + Array.from({length:64}, function(){ return Math.floor(Math.random()*16).toString(16); }).join('');
+  var now = new Date();
+  var dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  var html = '<div class="success-wrap" id="successWrap">' +
+    '<div class="success-icon"><div class="success-ring1"></div><div class="success-ring2"></div><div class="success-circle">'+IC.checkCircle+'</div></div>' +
+    '<div><h2 class="success-title">Payment Successful!</h2><p class="success-sub">Your payment has been confirmed on the '+selNetwork.shortName+' network.</p></div>' +
+    '<div class="summary-card"><div class="body">' +
+      '<div class="row"><span class="k">Product</span><span class="v">'+PRODUCT.name+'</span></div>' +
+      '<div class="row"><span class="k">Amount</span><span class="v">'+PRODUCT.currency+PRODUCT.price.toFixed(2)+'<small>'+fmt+' '+selCrypto.symbol+'</small></span></div>' +
+      '<div class="row"><span class="k">Network</span><span class="v"><span class="net-pill" style="background:'+selNetwork.color+'15;color:'+selNetwork.color+'"><span class="dot" style="background:'+selNetwork.color+'"></span>'+selNetwork.shortName+'</span></span></div>' +
+      '<div class="row"><span class="k">Status</span><span class="v" style="display:flex;align-items:center;gap:6px"><span style="width:8px;height:8px;border-radius:50%;background:#22c55e"></span><span style="color:#059669;font-weight:600">Confirmed</span></span></div>' +
+      '<div class="row"><span class="k">Date</span><span class="v" style="font-weight:500">'+dateStr+'</span></div>' +
+    '</div><div class="tx-section"><p class="label-xs" style="margin-bottom:.5rem">Transaction Hash</p><p class="tx-hash">'+txHash+'</p></div></div>' +
+    '<div class="thank-box"><p>Thank you for your purchase!</p><p>A confirmation has been sent to your wallet.</p></div>' +
+    '<button class="btn btn-primary" onclick="resetAll()">Back to Shop '+IC.arrowR+'</button>' +
+  '</div>';
+  return html;
+}
+
+// ─── NAVIGATION ────────────────────────────────────────
+function go(s) {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  step = s;
+  if (s === 'payment') { timeLeft = 900; startTimer(); }
+  render();
+}
+
+function resetAll() {
+  step = 'product';
+  selCrypto = null;
+  selNetwork = null;
+  cryptoAmount = 0;
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  render();
+}
+
+// ─── TIMER ─────────────────────────────────────────────
+function startTimer() {
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(function() {
+    timeLeft--;
+    if (timeLeft <= 0) { timeLeft = 0; clearInterval(timerInterval); timerInterval = null; }
+    if (step === 'payment') render();
+  }, 1000);
+}
+
+// ─── EVENT BINDING ─────────────────────────────────────
+function bindCard() {
+  // Crypto buttons
+  document.querySelectorAll('[data-crypto]').forEach(function(btn) {
+    btn.onclick = function() {
+      var id = this.getAttribute('data-crypto');
+      selCrypto = CRYPTOS.find(function(c){ return c.id === id; });
+      selNetwork = selCrypto.networks[0];
+      render();
+    };
+  });
+
+  // Network toggle
+  var netToggle = document.getElementById('netToggle');
+  var netDropdown = document.getElementById('netDropdown');
+  if (netToggle && netDropdown) {
+    netToggle.onclick = function() {
+      netDropdown.classList.toggle('hidden');
+      var arrow = netToggle.querySelector('.arrow');
+      if (arrow) arrow.classList.toggle('open');
+    };
+  }
+
+  // Network options
+  document.querySelectorAll('[data-network]').forEach(function(btn) {
+    btn.onclick = function() {
+      var id = this.getAttribute('data-network');
+      selNetwork = selCrypto.networks.find(function(n){ return n.id === id; });
+      render();
+    };
+  });
+
+  // Continue
+  var contBtn = document.getElementById('continueBtn');
+  if (contBtn) {
+    contBtn.onclick = function() {
+      if (!selCrypto || !selNetwork) return;
+      var rate = RATES[selCrypto.id] || 1;
+      cryptoAmount = PRODUCT.price / rate;
+      go('payment');
+    };
+  }
+
+  // QR Code
+  var qrCanvas = document.getElementById('qrCanvas');
+  if (qrCanvas && selCrypto && typeof QRCode !== 'undefined') {
+    var wallet = WALLETS[selCrypto.id] || '';
+    var expired = timeLeft === 0;
+    QRCode.toCanvas(qrCanvas, wallet, {
+      width: 180, margin: 0,
+      color: { dark: expired ? '#D1D5DB' : '#0D111C', light: '#ffffff' },
+      errorCorrectionLevel: 'M',
+    }).catch(function(){});
+  }
+
+  // Copy address
+  var copyAddr = document.getElementById('copyAddr');
+  if (copyAddr) {
+    copyAddr.onclick = function() {
+      var val = document.getElementById('addrVal').textContent;
+      copyText(val);
+      copyAddr.innerHTML = IC.checkXs + ' Copied';
+      setTimeout(function(){ copyAddr.innerHTML = IC.copy + ' Copy'; }, 2000);
+    };
+  }
+
+  // Copy amount
+  var copyAmt = document.getElementById('copyAmt');
+  if (copyAmt) {
+    copyAmt.onclick = function() {
+      var fmt = Number(cryptoAmount).toFixed(selCrypto.id === 'btc' ? 6 : 4);
+      copyText(fmt);
+      copyAmt.innerHTML = IC.checkXs + ' Copied';
+      setTimeout(function(){ copyAmt.innerHTML = IC.copy + ' Copy'; }, 2000);
+    };
+  }
+
+  // Simulate
+  var simBtn = document.getElementById('simulateBtn');
+  if (simBtn) {
+    simBtn.onclick = function() {
+      simBtn.disabled = true;
+      simBtn.textContent = 'Detecting...';
+      var statusBox = document.getElementById('statusBox');
+      var statusTitle = document.getElementById('statusTitle');
+      var statusSub = document.getElementById('statusSub');
+      var bounceDots = document.getElementById('bounceDots');
+
+      statusBox.className = 'status-box detecting';
+      statusTitle.textContent = 'Transaction detected!';
+      statusSub.textContent = 'Found your transaction in the mempool';
+      bounceDots.style.display = 'none';
+
+      setTimeout(function() {
+        statusBox.className = 'status-box confirming';
+        statusTitle.textContent = 'Confirming on-chain...';
+        statusSub.textContent = 'Waiting for block confirmation';
+      }, 1500);
+
+      setTimeout(function() {
+        go('success');
+      }, 3500);
+    };
+  }
+
+  // Success animation
+  var successWrap = document.getElementById('successWrap');
+  if (successWrap) {
+    setTimeout(function(){ successWrap.classList.add('visible'); }, 50);
+  }
+}
+
+function copyText(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(function(){ fallbackCopy(text); });
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+}
+
+// ─── INIT ──────────────────────────────────────────────
+render();
+</script>
+</body>
+</html>

@@ -1,108 +1,119 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Checkout</title>
+  <title>Crypto Checkout</title>
   <link rel="stylesheet" href="/assets/style.css">
   <script src="/assets/checkout.js" defer></script>
 </head>
-<body>
-  <main class="checkout-shell">
-    <header class="checkout-topbar">
-      <a class="brand checkout-brand" href="/">
-        <span class="brand-mark">G</span>
-        <span class="brand-text">
-          <span class="brand-name">Gateway Checkout</span>
-          <span class="brand-sub">Secure crypto payment</span>
+<body class="crypto-page">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="/">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Crypto Checkout</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
         </span>
       </a>
-      <div class="checkout-order">
-        <span>Order {{.Session.OrderID}}</span>
-        <strong>{{.Session.Amount}} {{.Session.Currency}}</strong>
+      <div class="crypto-steps" aria-label="Checkout progress">
+        <span class="crypto-step-dot done"></span>
+        <span class="crypto-step-dot active"></span>
+        <span class="crypto-step-dot pending"></span>
       </div>
     </header>
 
-    <section class="checkout-card">
-      <div class="checkout-card-head">
-        <div class="checkout-title-block">
-          <span class="checkout-eyebrow">Hosted payment</span>
-          <h1>{{if .SelectedSymbol}}Select network{{else}}Select asset{{end}}</h1>
-          <p>{{if .SelectedSymbol}}{{.SelectedSymbol}} icin kullanilacak network'u sec.{{else}}Odemeyi yapmak istedigin asset'i sec.{{end}}</p>
-        </div>
-        <div class="checkout-timer">
-          <span>Expires in</span>
-          <strong data-countdown-unix="{{.ExpiresAtUnix}}">--:--</strong>
-        </div>
-      </div>
-
-      <div class="checkout-progress" aria-label="Checkout progress">
-        <span class="is-active"><strong>1</strong> Asset</span>
-        <span {{if .SelectedSymbol}}class="is-active"{{end}}><strong>2</strong> Network</span>
-        <span><strong>3</strong> Pay</span>
-      </div>
-
-      {{if .Error}}
-      <div class="checkout-alert">{{.Error}}</div>
-      {{end}}
-
-      {{if .SelectedSymbol}}
-        <div class="checkout-step">
-          <div class="checkout-selected">
-            <a class="back-link" href="/checkout/{{.Session.SessionToken}}">Change asset</a>
+    <section class="crypto-card">
+      <div class="crypto-stack">
+        <section class="crypto-section">
+          <div class="crypto-flex-between crypto-align-end">
             <div>
-              <span>Selected asset</span>
-              <strong>{{.SelectedSymbol}}</strong>
+              <p class="crypto-label">{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}</p>
+              <div class="crypto-price">{{.Session.Amount}} {{.Session.Currency}}</div>
+              <p class="crypto-muted">Order {{.Session.OrderID}}</p>
+            </div>
+            <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+              <span>--:--</span>
             </div>
           </div>
-          <div class="checkout-list">
+        </section>
+
+        {{if .Error}}
+        <div class="crypto-alert">{{.Error}}</div>
+        {{end}}
+
+        {{if .SelectedSymbol}}
+        <section>
+          <div class="crypto-flex-between crypto-section-title">
+              <p class="crypto-label">{{if .IsEnglish}}Select network{{else}}Network seç{{end}}</p>
+            <a class="crypto-copy-btn" href="/checkout/{{.Session.SessionToken}}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+              {{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}
+            </a>
+          </div>
+
+          <div class="crypto-network-list">
             {{range .Assets}}
             <form method="post" action="/checkout/{{$.Session.SessionToken}}/select">
               <input type="hidden" name="chain_id" value="{{.ChainID}}">
               <input type="hidden" name="symbol" value="{{.Symbol}}">
               <input type="hidden" name="token" value="{{.Token}}">
-              <button class="checkout-option" type="submit" {{if not .Available}}disabled{{end}}>
-                <span class="checkout-token">
-                  <span class="token-icon">{{.Symbol}}</span>
+              <button class="crypto-network-option" type="submit" {{if not .Available}}disabled{{end}}>
+                <span class="crypto-network-left">
+                  <span class="crypto-network-dot"></span>
                   <span>
                     <strong>{{.ChainName}}</strong>
                     <small>{{.Name}} · {{if .Native}}Native{{else}}Token{{end}}</small>
                   </span>
                 </span>
-                <span class="checkout-quote">
+                <span class="crypto-network-right">
                   <strong>{{.AmountDisplay}}</strong>
-                  <small>{{if .Available}}Continue{{else}}Unavailable{{end}}</small>
+                  <small>{{if .Available}}{{if $.IsEnglish}}Continue{{else}}Devam et{{end}}{{else}}{{if $.IsEnglish}}Unavailable{{else}}Uygun değil{{end}}{{end}}</small>
                 </span>
               </button>
             </form>
             {{end}}
           </div>
-        </div>
-      {{else}}
-        <div class="checkout-list">
-          {{range .AssetGroups}}
-          <a class="checkout-option" href="{{.URL}}">
-            <span class="checkout-token">
-              <span class="token-icon">{{.Symbol}}</span>
-              <span>
-                <strong>{{.Name}}</strong>
-                <small>{{.ChainCount}} network available</small>
-              </span>
-            </span>
-            <span class="checkout-quote">
-              <strong>{{.AmountDisplay}}</strong>
-              <small>Select</small>
-            </span>
-          </a>
-          {{end}}
-        </div>
-      {{end}}
+        </section>
+        {{else}}
+        <section>
+          <p class="crypto-label crypto-section-title">{{if .IsEnglish}}Select currency{{else}}Para birimi seç{{end}}</p>
+          <div class="crypto-grid">
+            {{range .AssetGroups}}
+            <a class="crypto-btn" href="{{.URL}}">
+              <span class="crypto-circle">{{.Symbol}}</span>
+              <span class="crypto-symbol">{{.Symbol}}</span>
+              <span class="crypto-name">{{.Name}}</span>
+              <span class="crypto-amount">{{.AmountDisplay}}</span>
+              <span class="crypto-network-count">{{.ChainCount}} network</span>
+            </a>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
 
-      <footer class="checkout-footer">
-        <span>Price is calculated at selection time with CoinGecko.</span>
-        <span>Session expires when the timer reaches zero.</span>
-      </footer>
+        <section class="crypto-section">
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>CoinGecko</strong></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network fee{{else}}Network ücreti{{end}}</span><strong class="green">{{if .IsEnglish}}Included{{else}}Dahil{{end}}</strong></div>
+          <div class="crypto-divider"></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Total{{else}}Toplam{{end}}</span><strong>{{.Session.Amount}} {{.Session.Currency}}</strong></div>
+        </section>
+
+        <div class="crypto-badges">
+          <span><i></i>{{if .IsEnglish}}Secure{{else}}Güvenli{{end}}</span>
+          <span><i></i>Hosted checkout</span>
+          <span><i></i>{{if .IsEnglish}}On-chain confirmation{{else}}On-chain onay{{end}}</span>
+        </div>
+      </div>
     </section>
+
+    <p class="crypto-footer">{{if .IsEnglish}}Secured by signed webhooks · Non-custodial payments{{else}}İmzalı webhooklar ile güvenli · Non-custodial ödeme{{end}}</p>
   </main>
 </body>
 </html>

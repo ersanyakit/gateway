@@ -64,6 +64,34 @@ func (r *PaymentRepo) FindByToken(ctx context.Context, token string) (*models.Pa
 	return &session, nil
 }
 
+func (r *PaymentRepo) List(ctx context.Context, limit int) ([]models.PaymentSession, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var sessions []models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").
+		Preload("Domain").
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&sessions).Error
+	return sessions, err
+}
+
+func (r *PaymentRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.PaymentSession, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var sessions []models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Preload("Domain").
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&sessions).Error
+	return sessions, err
+}
+
 func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID constants.ChainID, symbol string, assetToken *string, decimals uint8, amountRaw string, depositAddress string) (*models.PaymentSession, error) {
 	updates := map[string]interface{}{
 		"selected_chain_id":   &chainID,

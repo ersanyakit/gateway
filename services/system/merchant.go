@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"core/models"
 	"core/repositories"
 	"core/types"
@@ -73,4 +74,8 @@ func (s *MerchantService) DeleteByID(params types.MerchantParams) error {
 
 func (s *MerchantService) Fetch(params types.MerchantParams) ([]models.Merchant, *uuid.UUID, error) {
 	return s.merchantRepo.Fetch(params)
+}
+
+func (s *MerchantService) List(ctx context.Context, limit int) ([]models.Merchant, error) {
+	return s.merchantRepo.List(ctx, limit)
 }

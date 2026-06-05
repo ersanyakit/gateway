@@ -195,6 +195,18 @@ func (r *TransactionRepo) ListByMerchant(ctx context.Context, merchantID uuid.UU
 	return transactions, err
 }
 
+func (r *TransactionRepo) List(ctx context.Context, limit int) ([]models.Transaction, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var transactions []models.Transaction
+	err := r.DB().WithContext(ctx).
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&transactions).Error
+	return transactions, err
+}
+
 func (r *TransactionRepo) MerchantDepositSummary(ctx context.Context, merchantID uuid.UUID) ([]models.DepositSummary, error) {
 	var summaries []models.DepositSummary
 	err := r.DB().WithContext(ctx).Raw(`

@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"context"
 	"core/blockchain"
 	helpers "core/helpers"
 	"core/models"
@@ -195,6 +196,19 @@ func (r *MerchantRepo) Fetch(params types.MerchantParams) ([]models.Merchant, *u
 	}
 
 	return merchants, nextCursor, nil
+}
+
+func (r *MerchantRepo) List(ctx context.Context, limit int) ([]models.Merchant, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var merchants []models.Merchant
+	err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL").
+		Order("created_at DESC").
+		Limit(limit).
+		Find(&merchants).Error
+	return merchants, err
 }
 
 func (r *MerchantRepo) CreateDomain() (*models.Domain, error) {
