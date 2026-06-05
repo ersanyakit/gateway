@@ -8,6 +8,7 @@ require (
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/bytedance/sonic v1.15.1
 	github.com/ethereum/go-ethereum v1.17.2
+	github.com/fasthttp/websocket v1.5.3
 	github.com/gagliardetto/solana-go v1.12.0
 	github.com/gofiber/contrib/v3/swaggo v1.0.6
 	github.com/gofiber/fiber/v3 v3.3.0
@@ -96,6 +97,7 @@ require (
 	github.com/okx/go-wallet-sdk/util v0.0.6 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/redis/go-redis/v9 v9.0.2 // indirect
+	github.com/savsgio/gotils v0.0.0-20230208104028-c358bd845dee // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect
 	github.com/streamingfast/logging v0.0.0-20230608130331-f22c91403091 // indirect
 	github.com/supranational/blst v0.3.16 // indirect

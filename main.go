@@ -6,6 +6,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
+	"core/services/realtime"
 	webhooksvc "core/services/webhook"
 	"core/types"
 	"core/workers/dispatcher"
@@ -101,7 +102,11 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		log.Println("Payment match error:", err)
 		return
 	}
-	if !changed || session == nil || session.WebhookSentAt != nil {
+	if !changed || session == nil {
+		return
+	}
+	publishPaymentUpdate(session)
+	if session.WebhookSentAt != nil {
 		return
 	}
 
@@ -116,6 +121,22 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 	if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
 		log.Println("Payment webhook mark delivered error:", err)
 	}
+}
+
+func publishPaymentUpdate(session *models.PaymentSession) {
+	if session == nil || coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.PaymentHub == nil {
+		return
+	}
+	coreApplication.CORE.Router.PaymentHub.Broadcast(session.SessionToken, realtime.PaymentEvent{
+		Event:       "payment.updated",
+		Status:      session.Status,
+		Paid:        session.Status == models.PaymentStatusPaid,
+		PaymentID:   session.ID.String(),
+		TxHash:      ptrValue(session.TxHash),
+		SuccessPath: "/checkout/" + session.SessionToken + "/return/success",
+		CancelPath:  "/checkout/" + session.SessionToken + "/cancel",
+		UpdatedAt:   time.Now().UnixMilli(),
+	})
 }
 
 func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {

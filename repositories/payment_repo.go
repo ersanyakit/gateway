@@ -115,6 +115,29 @@ func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID con
 	return r.FindByToken(ctx, token)
 }
 
+func (r *PaymentRepo) ResetSelection(ctx context.Context, token string) (*models.PaymentSession, error) {
+	updates := map[string]interface{}{
+		"selected_chain_id":   nil,
+		"selected_token":      nil,
+		"selected_symbol":     "",
+		"selected_decimals":   uint8(0),
+		"expected_amount_raw": "",
+		"deposit_address":     "",
+		"status":              models.PaymentStatusPending,
+		"updated_at":          time.Now(),
+	}
+
+	if err := r.db.WithContext(ctx).
+		Model(&models.PaymentSession{}).
+		Where("session_token = ?", token).
+		Where("status IN ?", []string{models.PaymentStatusPending, models.PaymentStatusAwaitingPayment}).
+		Updates(updates).Error; err != nil {
+		return nil, err
+	}
+
+	return r.FindByToken(ctx, token)
+}
+
 func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.PaymentSession, bool, error) {
 	var session models.PaymentSession
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

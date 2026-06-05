@@ -2633,6 +2633,79 @@ h1 {
   font-weight: 700;
 }
 
+.crypto-live-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #ffe4ef;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff7fb, #ffffff);
+}
+
+.crypto-live-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.crypto-live-row span:last-child {
+  min-width: 0;
+}
+
+.crypto-live-row strong,
+.crypto-live-row small {
+  display: block;
+}
+
+.crypto-live-row strong {
+  color: #0d111c;
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.crypto-live-row small {
+  margin-top: 3px;
+  color: #3b4263;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.crypto-live-pulse {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35);
+  animation: crypto-pulse 1.6s infinite;
+}
+
+@keyframes crypto-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.crypto-payment-steps-list {
+  margin: 0;
+  padding-left: 20px;
+  color: #3b4263;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.crypto-payment-steps-list li + li {
+  margin-top: 5px;
+}
+
 .crypto-copy-section {
   padding: 16px;
   border: 1px solid #e5e7eb;
@@ -2699,10 +2772,21 @@ h1 {
   color: #0d111c;
 }
 
+.crypto-status-box.detecting {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
 .crypto-status-box.confirming {
   border-color: #bbf7d0;
   background: #f0fdf4;
   color: #059669;
+}
+
+.crypto-status-box.offline {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .crypto-status-box.expired {
@@ -3298,6 +3382,7 @@ h1 {
   .crypto-section,
   .crypto-copy-section,
   .crypto-status-box,
+  .crypto-live-panel,
   .crypto-warning,
   .crypto-qr-wrap {
     padding: 14px;

@@ -10,6 +10,7 @@ import (
 	"core/constants"
 	"core/repositories"
 	"core/services/pricing"
+	"core/services/realtime"
 	services "core/services/system"
 	webhooksvc "core/services/webhook"
 	"fmt"
@@ -49,6 +50,7 @@ type Router struct {
 	MerchantService *services.MerchantService
 	WalletService   *services.WalletService
 	DomainService   *services.DomainService
+	PaymentHub      *realtime.PaymentHub
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -116,6 +118,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.ProductRepo = repositories.NewProductRepo(r.db)
 	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
+	r.PaymentHub = realtime.NewPaymentHub()
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
 	r.MerchantService = services.NewMerchantService(r.MerchantRepo)
 
@@ -186,12 +189,15 @@ func NewRouter(db *gorm.DB) *Router {
 		AssetRegistry: r.assetRegistry,
 		PriceOracle:   pricing.NewCoinGecko(),
 		Notifier:      webhooksvc.NewNotifier(),
+		PaymentHub:    r.PaymentHub,
 	}
 	r.fiber.Post("/payments/create", handlers.HandlePaymentCreate(paymentDeps))
 	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))
 	r.fiber.Get("/checkout/:token", handlers.HandleCheckout(paymentDeps))
 	r.fiber.Post("/checkout/:token/select", handlers.HandleCheckoutSelectAsset(paymentDeps))
+	r.fiber.Get("/checkout/:token/change", handlers.HandleCheckoutChangeAsset(paymentDeps))
 	r.fiber.Get("/checkout/:token/pay", handlers.HandleCheckoutPay(paymentDeps))
+	r.fiber.Get("/checkout/:token/ws", handlers.HandleCheckoutSocket(paymentDeps))
 	r.fiber.Get("/checkout/:token/qr.png", handlers.HandleCheckoutQRCode(paymentDeps))
 	r.fiber.Get("/checkout/:token/status.json", handlers.HandleCheckoutStatus(paymentDeps))
 	r.fiber.Get("/checkout/:token/cancel", handlers.HandleCheckoutCancel(paymentDeps))

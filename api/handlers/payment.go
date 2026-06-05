@@ -16,9 +16,11 @@ import (
 	"core/models"
 	"core/repositories"
 	"core/services/pricing"
+	"core/services/realtime"
 	webhooksvc "core/services/webhook"
 	"core/types"
 
+	"github.com/fasthttp/websocket"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
@@ -32,6 +34,7 @@ type PaymentHandlerDeps struct {
 	AssetRegistry *asset.Registry
 	PriceOracle   pricing.PriceOracle
 	Notifier      *webhooksvc.Notifier
+	PaymentHub    *realtime.PaymentHub
 }
 
 type CheckoutAssetOption struct {
@@ -260,6 +263,37 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 	}
 }
 
+// HandleCheckoutChangeAsset clears the selected asset so the payer can choose again.
+// @Summary Change checkout asset
+// @Description Resets a pending or awaiting payment session back to asset selection.
+// @Tags Payments
+// @Produce html
+// @Param token path string true "Payment session token"
+// @Success 303 {string} string "Redirect to checkout page"
+// @Failure 404 {string} string "HTML error page"
+// @Failure 410 {string} string "HTML error page"
+// @Router /checkout/{token}/change [get]
+func HandleCheckoutChangeAsset(deps PaymentHandlerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		session, err := deps.PaymentRepo.FindByToken(c.Context(), c.Params("token"))
+		if err != nil {
+			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
+		}
+		if session.Status == models.PaymentStatusPaid {
+			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
+		}
+		if isSessionExpired(session) {
+			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
+			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
+		}
+		updatedSession, err := deps.PaymentRepo.ResetSelection(c.Context(), session.SessionToken)
+		if err != nil {
+			return renderPaymentError(c, fiber.StatusInternalServerError, "Could not change this checkout asset.")
+		}
+		return c.Redirect().To("/checkout/" + updatedSession.SessionToken)
+	}
+}
+
 // HandleCheckoutPay renders the payment instruction page.
 // @Summary Show payment instructions
 // @Description Renders the QR code, payment address, selected chain, asset, and amount for a checkout session.
@@ -280,6 +314,9 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
 		}
+		if session.Status == models.PaymentStatusPaid {
+			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
+		}
 		if session.Status == models.PaymentStatusPending {
 			return c.Redirect().To("/checkout/" + session.SessionToken)
 		}
@@ -296,6 +333,42 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			"ChainName":     constants.ChainName(*session.SelectedChainID),
 			"AmountDisplay": amountDisplay,
 			"ExpiresAtUnix": checkoutExpiresAtUnix(session),
+		})
+	}
+}
+
+// HandleCheckoutSocket streams live checkout status updates over WebSocket.
+// @Summary Subscribe checkout status
+// @Description Opens a WebSocket connection that emits payment status changes for the checkout session.
+// @Tags Payments
+// @Param token path string true "Payment session token"
+// @Router /checkout/{token}/ws [get]
+func HandleCheckoutSocket(deps PaymentHandlerDeps) fiber.Handler {
+	upgrader := websocket.FastHTTPUpgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	return func(c fiber.Ctx) error {
+		if deps.PaymentHub == nil {
+			return c.SendStatus(fiber.StatusServiceUnavailable)
+		}
+		session, err := deps.PaymentRepo.FindByToken(c.Context(), c.Params("token"))
+		if err != nil {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		if isSessionExpired(session) && session.Status != models.PaymentStatusPaid {
+			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
+			return c.SendStatus(fiber.StatusGone)
+		}
+		return upgrader.Upgrade(c.RequestCtx(), func(conn *websocket.Conn) {
+			deps.PaymentHub.Subscribe(session.SessionToken, conn, realtime.PaymentEvent{
+				Status:      session.Status,
+				Paid:        session.Status == models.PaymentStatusPaid,
+				PaymentID:   session.ID.String(),
+				TxHash:      valueOrDefault(session.TxHash, ""),
+				SuccessPath: "/checkout/" + session.SessionToken + "/return/success",
+				CancelPath:  "/checkout/" + session.SessionToken + "/cancel",
+			})
 		})
 	}
 }
