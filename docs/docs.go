@@ -15,9 +15,51 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/auth/oidc/callback": {
+            "get": {
+                "description": "Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the dealer in.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Complete dealer OIDC login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OIDC state",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to dealer dashboard",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Redirect to dealer login with error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/oidc/login": {
             "get": {
-                "description": "Redirects the dealer to the configured OIDC authorization URL. Configure DEALER_OIDC_LOGIN_URL, OIDC_LOGIN_URL, or OIDC_AUTH_URL.",
+                "description": "Redirects the dealer to the configured OIDC authorization URL.",
                 "produces": [
                     "text/html"
                 ],
@@ -109,6 +151,47 @@ const docTemplate = `{
                         }
                     },
                     "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/checkout/{token}/change": {
+            "get": {
+                "description": "Resets a pending or awaiting payment session back to asset selection.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Change checkout asset",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to checkout page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "HTML error page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "410": {
                         "description": "HTML error page",
                         "schema": {
                             "type": "string"
@@ -337,6 +420,25 @@ const docTemplate = `{
                         }
                     }
                 }
+            }
+        },
+        "/checkout/{token}/ws": {
+            "get": {
+                "description": "Opens a WebSocket connection that emits payment status changes for the checkout session.",
+                "tags": [
+                    "Payments"
+                ],
+                "summary": "Subscribe checkout status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Payment session token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {}
             }
         },
         "/dealer/dashboard": {
@@ -750,6 +852,14 @@ const docTemplate = `{
         },
         "/payments/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Creates a checkout session for a merchant order and returns a hosted checkout URL.",
                 "consumes": [
                     "application/json"
@@ -762,6 +872,12 @@ const docTemplate = `{
                 ],
                 "summary": "Create payment session",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Idempotency key. If omitted, order_id is used within the domain scope.",
+                        "name": "Idempotency-Key",
+                        "in": "header"
+                    },
                     {
                         "description": "Payment create payload",
                         "name": "payload",
@@ -797,15 +913,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "BearerAuth": []
-                    }
-                ]
+                }
             }
         }
     },

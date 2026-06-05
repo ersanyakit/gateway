@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -28,14 +29,15 @@ import (
 )
 
 type PaymentHandlerDeps struct {
-	DomainRepo    *repositories.DomainRepo
-	WalletRepo    *repositories.WalletRepo
-	PaymentRepo   *repositories.PaymentRepo
-	ProductRepo   *repositories.ProductRepo
-	AssetRegistry *asset.Registry
-	PriceOracle   pricing.PriceOracle
-	Notifier      *webhooksvc.Notifier
-	PaymentHub    *realtime.PaymentHub
+	DomainRepo      *repositories.DomainRepo
+	WalletRepo      *repositories.WalletRepo
+	PaymentRepo     *repositories.PaymentRepo
+	ProductRepo     *repositories.ProductRepo
+	IdempotencyRepo *repositories.IdempotencyRepo
+	AssetRegistry   *asset.Registry
+	PriceOracle     pricing.PriceOracle
+	Notifier        *webhooksvc.Notifier
+	PaymentHub      *realtime.PaymentHub
 }
 
 func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, productID string) (name, description, logoURL string) {
@@ -82,6 +84,7 @@ type CheckoutAssetGroup struct {
 // @Produce json
 // @Security ApiKeyAuth
 // @Security BearerAuth
+// @Param Idempotency-Key header string false "Idempotency key. If omitted, order_id is used within the domain scope."
 // @Param payload body types.PaymentCreateParams true "Payment create payload"
 // @Success 201 {object} types.PaymentCreateResponse
 // @Failure 400 {object} types.ErrorResponse
@@ -113,6 +116,55 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 			})
 		}
 
+		idempotencyKey := paymentIdempotencyKey(c, params)
+		var idempotencyRecord *models.IdempotencyKey
+		if deps.IdempotencyRepo != nil && idempotencyKey != "" {
+			requestHash, err := deps.IdempotencyRepo.RequestHash(params)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"success": false,
+					"error":   "idempotency hash failed: " + err.Error(),
+				})
+			}
+			record, shouldCreate, err := deps.IdempotencyRepo.Begin(params.Context, domain.ID, domain.MerchantID, idempotencyKey, requestHash, 24*time.Hour)
+			if err != nil {
+				status := fiber.StatusInternalServerError
+				if errors.Is(err, repositories.ErrIdempotencyConflict) {
+					status = fiber.StatusConflict
+				}
+				return c.Status(status).JSON(fiber.Map{
+					"success": false,
+					"error":   err.Error(),
+				})
+			}
+			idempotencyRecord = record
+			if !shouldCreate {
+				if record.ResponseBody != "" {
+					c.Set("Content-Type", "application/json")
+					return c.Status(fiber.StatusOK).SendString(record.ResponseBody)
+				}
+				if record.PaymentSessionID != nil {
+					session, err := deps.PaymentRepo.FindByID(params.Context, *record.PaymentSessionID)
+					if err == nil {
+						checkoutURL := baseURL(c) + "/checkout/" + session.SessionToken
+						return c.Status(fiber.StatusOK).JSON(fiber.Map{
+							"success":        true,
+							"payment_id":     session.ID,
+							"session_token":  session.SessionToken,
+							"checkout_url":   checkoutURL,
+							"status":         session.Status,
+							"expires_at":     session.ExpiresAt,
+							"deposit_wallet": session.WalletID,
+						})
+					}
+				}
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+					"success": false,
+					"error":   "idempotency key is still in progress",
+				})
+			}
+		}
+
 		productID := valueOrDefault(params.ProductID, *params.OrderID)
 		userID := valueOrDefault(params.UserID, *params.OrderID)
 		merchantID := domain.MerchantID.String()
@@ -133,20 +185,24 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 
 		expiresAt := time.Now().Add(paymentSessionTTL())
 		session := &models.PaymentSession{
-			MerchantID: domain.MerchantID,
-			DomainID:   domain.ID,
-			WalletID:   wallet.ID,
-			OrderID:    *params.OrderID,
-			ProductID:  productID,
-			UserID:     userID,
-			Amount:     *params.Amount,
-			Currency:   *params.Currency,
-			SuccessURL: valueOrDefault(params.SuccessURL, ""),
-			CancelURL:  valueOrDefault(params.CancelURL, ""),
-			Status:     models.PaymentStatusPending,
-			ExpiresAt:  &expiresAt,
+			MerchantID:     domain.MerchantID,
+			DomainID:       domain.ID,
+			WalletID:       wallet.ID,
+			OrderID:        *params.OrderID,
+			ProductID:      productID,
+			UserID:         userID,
+			Amount:         *params.Amount,
+			Currency:       *params.Currency,
+			SuccessURL:     valueOrDefault(params.SuccessURL, ""),
+			CancelURL:      valueOrDefault(params.CancelURL, ""),
+			IdempotencyKey: idempotencyKey,
+			Status:         models.PaymentStatusPending,
+			ExpiresAt:      &expiresAt,
 		}
 		if err := deps.PaymentRepo.Create(params.Context, session); err != nil {
+			if idempotencyRecord != nil {
+				_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
+			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"success": false,
 				"error":   "payment session create failed: " + err.Error(),
@@ -154,7 +210,7 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 		}
 
 		checkoutURL := baseURL(c) + "/checkout/" + session.SessionToken
-		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		response := fiber.Map{
 			"success":        true,
 			"payment_id":     session.ID,
 			"session_token":  session.SessionToken,
@@ -162,7 +218,13 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 			"status":         session.Status,
 			"expires_at":     session.ExpiresAt,
 			"deposit_wallet": wallet.ID,
-		})
+		}
+		if idempotencyRecord != nil {
+			if body, err := json.Marshal(response); err == nil {
+				_ = deps.IdempotencyRepo.Complete(params.Context, idempotencyRecord.ID, session.ID, string(body))
+			}
+		}
+		return c.Status(fiber.StatusCreated).JSON(response)
 	}
 }
 
@@ -548,6 +610,17 @@ func resolvePaymentDomain(c fiber.Ctx, repo *repositories.DomainRepo, params typ
 		return domain, nil
 	}
 	return nil, errors.New("X-API-Key or DomainID is required")
+}
+
+func paymentIdempotencyKey(c fiber.Ctx, params types.PaymentCreateParams) string {
+	key := strings.TrimSpace(c.Get("Idempotency-Key"))
+	if key != "" {
+		return key
+	}
+	if params.OrderID == nil {
+		return ""
+	}
+	return "order:" + strings.TrimSpace(*params.OrderID)
 }
 
 func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session models.PaymentSession) []CheckoutAssetGroup {

@@ -7,6 +7,13 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	TransactionStatusPendingConfirmation = "pending_confirmation"
+	TransactionStatusConfirmed           = "confirmed"
+	TransactionStatusFailed              = "failed"
+	TransactionStatusReorged             = "reorged"
+)
+
 type Transaction struct {
 	ID         uuid.UUID         `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
 	ChainID    constants.ChainID `gorm:"type:bigint;not null;index" json:"chain_id"`
@@ -25,7 +32,11 @@ type Transaction struct {
 	ToAddress   string `gorm:"type:varchar(128);not null;index" json:"to_address"`
 	Amount      string `gorm:"type:text;not null" json:"amount"`
 
-	Status string `gorm:"type:varchar(20);not null;index" json:"status"` // pending, confirmed, failed vs.
+	Status                string     `gorm:"type:varchar(32);not null;index" json:"status"` // pending, pending_confirmation, confirmed, failed.
+	Confirmations         uint       `gorm:"not null;default:0" json:"confirmations"`
+	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
+	FinalizedAt           *time.Time `json:"finalized_at,omitempty"`
+	ReorgedAt             *time.Time `json:"reorged_at,omitempty"`
 
 	EventType  string     `gorm:"type:varchar(64);index" json:"event_type,omitempty"`
 	WalletID   *uuid.UUID `gorm:"type:uuid;index" json:"wallet_id,omitempty"`

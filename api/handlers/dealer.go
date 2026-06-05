@@ -13,26 +13,25 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
+	"golang.org/x/oauth2"
 )
 
 const dealerSessionCookie = "dealer_session"
 const adminSessionCookie = "admin_session"
 const adminPendingTOTPCookie = "admin_totp_pending" // temp: holds admin ID awaiting 2FA
-const adminSetupTOTPCookie = "admin_totp_setup"    // temp: holds admin ID during TOTP setup
+const adminSetupTOTPCookie = "admin_totp_setup"     // temp: holds admin ID during TOTP setup
 const oidcStateCookie = "oidc_state"
 const oidcNonceCookie = "oidc_nonce"
 const flashSuccessCookie = "flash_success"
@@ -45,6 +44,7 @@ type DealerDeps struct {
 	ProductRepo     *repositories.ProductRepo
 	PaymentRepo     *repositories.PaymentRepo
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
+	LedgerRepo      *repositories.LedgerRepo
 	TransactionRepo *repositories.TransactionRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
 	AdminRepo       *repositories.AdminRepo
@@ -99,10 +99,10 @@ type DealerPageData struct {
 	Language          string
 	PaymentLinkURL    string
 
-	AdminMerchants     []DealerAdminMerchantView
-	AdminWallets       []DealerWalletView
-	AdminDeposits      []DealerActivityView
-	AdminActivityLogs  []DealerAuditLogView
+	AdminMerchants    []DealerAdminMerchantView
+	AdminWallets      []DealerWalletView
+	AdminDeposits     []DealerActivityView
+	AdminActivityLogs []DealerAuditLogView
 
 	AdminPanel          string
 	AdminOverviewURL    string
@@ -147,8 +147,8 @@ type DealerWalletView struct {
 }
 
 type DealerWalletBalanceRow struct {
-	Chain    string
-	Symbol   string
+	Chain     string
+	Symbol    string
 	Deposited string
 	Locked    string
 	Available string
@@ -203,9 +203,9 @@ type DealerAdminMerchantView struct {
 }
 
 type DealerPageURL struct {
-	Page    int
-	URL     string
-	Active  bool
+	Page     int
+	URL      string
+	Active   bool
 	Ellipsis bool
 }
 
@@ -322,18 +322,6 @@ func (b *flexibleBool) UnmarshalJSON(data []byte) error {
 	}
 	*b = flexibleBool(parsed)
 	return nil
-}
-
-type oidcProviderConfig struct {
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	UserInfoEndpoint      string `json:"userinfo_endpoint"`
-}
-
-type oidcTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	TokenType   string `json:"token_type"`
 }
 
 func HandleDealerHome() fiber.Handler {
@@ -527,12 +515,25 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 			}
 		}
-		balances, err := deps.TransactionRepo.MerchantDepositSummary(c.Context(), merchant.ID)
-		if err != nil {
-			data := dealerPageData("Bayi paneli", "dashboard")
-			fillDealerMerchant(&data, merchant)
-			data.Error = "Bakiye özeti okunamadı: " + err.Error()
-			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
+		var balances []models.DepositSummary
+		var ledgerBalances []repositories.LedgerBalanceRow
+		if deps.LedgerRepo != nil {
+			ledgerBalances, err = deps.LedgerRepo.MerchantBalances(c.Context(), merchant.ID)
+			if err != nil {
+				data := dealerPageData("Bayi paneli", "dashboard")
+				fillDealerMerchant(&data, merchant)
+				data.Error = "Ledger bakiyesi okunamadı: " + err.Error()
+				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
+			}
+		}
+		if len(ledgerBalances) == 0 {
+			balances, err = deps.TransactionRepo.MerchantDepositSummary(c.Context(), merchant.ID)
+			if err != nil {
+				data := dealerPageData("Bayi paneli", "dashboard")
+				fillDealerMerchant(&data, merchant)
+				data.Error = "Bakiye özeti okunamadı: " + err.Error()
+				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
+			}
 		}
 		var auditLogs []models.ActivityLog
 		if deps.ActivityLogRepo != nil {
@@ -555,7 +556,11 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.Withdrawals = dealerWithdrawalViews(withdrawals)
 		data.Products = dealerProductViews(c, products)
 		data.Payments = dealerPaymentViews(c, payments)
-		data.Balances = dealerBalanceViews(balances)
+		if len(ledgerBalances) > 0 {
+			data.Balances = dealerLedgerBalanceViews(ledgerBalances)
+		} else {
+			data.Balances = dealerBalanceViews(balances)
+		}
 		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
 		data.Activities = dealerActivityViews(transactions)
@@ -831,6 +836,12 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		if err := deps.WithdrawalRepo.Create(c.Context(), request); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
 			return redirectWithError(c, "/dealer/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
+		}
+		if deps.LedgerRepo != nil {
+			if err := deps.LedgerRepo.CreateWithdrawalHold(c.Context(), *request); err != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", request.ID.String(), err.Error())
+				return redirectWithError(c, "/dealer/dashboard", "Çekim bakiyesi kilitlenemedi: "+err.Error())
+			}
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "success", "withdrawal", request.ID.String(), "Çekim talebi admin onayına gönderildi.")
 		return redirectWithSuccess(c, "/dealer/dashboard", "Çekim talebi admin onayına gönderildi.")
@@ -1413,6 +1424,12 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if err := deps.WithdrawalRepo.MarkApproved(c.Context(), id, adminEmail, result.TxHash); err != nil {
 			return redirectWithError(c, "/admin/withdrawals", "Talep güncellenemedi: "+err.Error())
 		}
+		if deps.LedgerRepo != nil {
+			request.TxHash = result.TxHash
+			if err := deps.LedgerRepo.PostWithdrawalDebit(c.Context(), *request, result.TxHash); err != nil {
+				return redirectWithError(c, "/admin/withdrawals", "Ledger güncellenemedi: "+err.Error())
+			}
+		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
 	}
 }
@@ -1455,26 +1472,25 @@ func HandleAdminLogout() fiber.Handler {
 // @Router /auth/oidc/login [get]
 func HandleOIDCLogin() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		authURL, _, _, err := oidcEndpoints()
-		clientID := strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID"))
-		redirectURI := strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URI"))
-		if err != nil || clientID == "" || redirectURI == "" {
+		ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+		defer cancel()
+
+		oauthConfig, _, err := oidcOAuthConfig(ctx)
+		if err != nil {
 			data := dealerPageData("OIDC yapılandırması eksik", "login")
-			data.Error = "OIDC_AUTHORITY/OIDC_AUTH_URL, OIDC_CLIENT_ID veya OIDC_REDIRECT_URI eksik."
+			data.Error = err.Error()
 			return c.Status(fiber.StatusNotImplemented).Render("dealer/oidc_missing", data, "dealer/layout")
 		}
 		state := uuid.NewString()
 		nonce := uuid.NewString()
 		setOIDCCookie(c, oidcStateCookie, state)
 		setOIDCCookie(c, oidcNonceCookie, nonce)
-		q := url.Values{}
-		q.Set("client_id", clientID)
-		q.Set("redirect_uri", redirectURI)
-		q.Set("response_type", "code")
-		q.Set("scope", oidcScopes())
-		q.Set("state", state)
-		q.Set("nonce", nonce)
-		return c.Redirect().To(authURL + "?" + q.Encode())
+
+		options := []oauth2.AuthCodeOption{oidc.Nonce(nonce)}
+		if prompt := strings.TrimSpace(os.Getenv("OIDC_PROMPT")); prompt != "" {
+			options = append(options, oauth2.SetAuthURLParam("prompt", prompt))
+		}
+		return c.Redirect().To(oauthConfig.AuthCodeURL(state, options...))
 	}
 }
 
@@ -1493,29 +1509,58 @@ func HandleOIDCCallback(service *services.MerchantService, activityRepo *reposit
 		code := strings.TrimSpace(c.Query("code"))
 		state := strings.TrimSpace(c.Query("state"))
 		expectedState := strings.TrimSpace(c.Cookies(oidcStateCookie))
+		expectedNonce := strings.TrimSpace(c.Cookies(oidcNonceCookie))
 		clearOIDCCookie(c, oidcStateCookie)
 		clearOIDCCookie(c, oidcNonceCookie)
 		if code == "" || state == "" || expectedState == "" || !hmac.Equal([]byte(state), []byte(expectedState)) {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC state doğrulaması başarısız.")
 			return redirectWithError(c, "/dealer/login", "OIDC oturum doğrulaması başarısız.")
 		}
-
-		_, tokenEndpoint, userInfoEndpoint, err := oidcEndpoints()
-		if err != nil || tokenEndpoint == "" || userInfoEndpoint == "" {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC endpoint yapılandırması eksik.")
-			return redirectWithError(c, "/dealer/login", "OIDC endpoint yapılandırması eksik.")
+		if expectedNonce == "" {
+			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce cookie bulunamadı.")
+			return redirectWithError(c, "/dealer/login", "OIDC nonce doğrulaması başarısız.")
 		}
 
-		token, err := exchangeOIDCCode(c, tokenEndpoint, code)
+		ctx, cancel := context.WithTimeout(c.Context(), 20*time.Second)
+		defer cancel()
+		oauthConfig, provider, err := oidcOAuthConfig(ctx)
+		if err != nil {
+			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
+			return redirectWithError(c, "/dealer/login", "OIDC yapılandırması eksik: "+err.Error())
+		}
+
+		token, err := oauthConfig.Exchange(ctx, code)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
 			return redirectWithError(c, "/dealer/login", "OIDC token alınamadı: "+err.Error())
 		}
-		userInfo, err := fetchOIDCUserInfo(userInfoEndpoint, token.AccessToken)
+		rawIDToken, ok := token.Extra("id_token").(string)
+		if !ok || strings.TrimSpace(rawIDToken) == "" {
+			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC id_token dönmedi.")
+			return redirectWithError(c, "/dealer/login", "OIDC id_token dönmedi.")
+		}
+		idToken, err := provider.Verifier(&oidc.Config{ClientID: oauthConfig.ClientID}).Verify(ctx, rawIDToken)
+		if err != nil {
+			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
+			return redirectWithError(c, "/dealer/login", "OIDC id_token doğrulanamadı: "+err.Error())
+		}
+		if !hmac.Equal([]byte(idToken.Nonce), []byte(expectedNonce)) {
+			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce doğrulaması başarısız.")
+			return redirectWithError(c, "/dealer/login", "OIDC nonce doğrulaması başarısız.")
+		}
+		if idToken.AccessTokenHash != "" && token.AccessToken != "" {
+			if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
+				logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
+				return redirectWithError(c, "/dealer/login", "OIDC access token doğrulanamadı: "+err.Error())
+			}
+		}
+
+		userInfo, err := oidcUserFromToken(ctx, provider, token, idToken)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
 			return redirectWithError(c, "/dealer/login", "OIDC kullanıcı bilgisi alınamadı: "+err.Error())
 		}
+
 		email := strings.TrimSpace(userInfo.Email)
 		if email == "" {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC email bilgisi dönmedi.")
@@ -1618,77 +1663,75 @@ func clearFlashCookie(c fiber.Ctx, name string) {
 	})
 }
 
-func exchangeOIDCCode(c fiber.Ctx, tokenEndpoint string, code string) (*oidcTokenResponse, error) {
+func oidcOAuthConfig(ctx context.Context) (*oauth2.Config, *oidc.Provider, error) {
+	authority := oidcAuthority()
 	clientID := strings.TrimSpace(os.Getenv("OIDC_CLIENT_ID"))
-	clientSecret := os.Getenv("OIDC_CLIENT_SECRET")
 	redirectURI := strings.TrimSpace(os.Getenv("OIDC_REDIRECT_URI"))
-	if clientID == "" || clientSecret == "" || redirectURI == "" {
-		return nil, errors.New("OIDC_CLIENT_ID, OIDC_CLIENT_SECRET veya OIDC_REDIRECT_URI eksik")
+	if authority == "" || clientID == "" || redirectURI == "" {
+		return nil, nil, errors.New("OIDC_AUTHORITY, OIDC_CLIENT_ID veya OIDC_REDIRECT_URI eksik")
 	}
 
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", redirectURI)
-	form.Set("client_id", clientID)
-	form.Set("client_secret", clientSecret)
-
-	req, err := http.NewRequestWithContext(c.Context(), http.MethodPost, tokenEndpoint, strings.NewReader(form.Encode()))
+	provider, err := oidc.NewProvider(ctx, authority)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("token endpoint HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, nil, fmt.Errorf("OIDC provider discovery başarısız: %w", err)
 	}
 
-	var token oidcTokenResponse
-	if err := json.Unmarshal(body, &token); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(token.AccessToken) == "" {
-		return nil, errors.New("access_token boş")
-	}
-	return &token, nil
+	return &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: os.Getenv("OIDC_CLIENT_SECRET"),
+		RedirectURL:  redirectURI,
+		Endpoint:     provider.Endpoint(),
+		Scopes:       oidcScopesList(),
+	}, provider, nil
 }
 
-func fetchOIDCUserInfo(userInfoEndpoint string, accessToken string) (*oidcUserInfo, error) {
-	req, err := http.NewRequest(http.MethodGet, userInfoEndpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("userinfo endpoint HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+func oidcUserFromToken(ctx context.Context, provider *oidc.Provider, token *oauth2.Token, idToken *oidc.IDToken) (*oidcUserInfo, error) {
+	var claims oidcUserInfo
+	if idToken != nil {
+		if err := idToken.Claims(&claims); err != nil {
+			return nil, err
+		}
+		if claims.Sub == "" {
+			claims.Sub = idToken.Subject
+		}
 	}
 
-	var userInfo oidcUserInfo
-	if err := json.Unmarshal(body, &userInfo); err != nil {
-		return nil, err
+	if provider != nil && token != nil && token.AccessToken != "" {
+		userInfo, err := provider.UserInfo(ctx, oauth2.StaticTokenSource(token))
+		if err == nil {
+			if claims.Sub == "" {
+				claims.Sub = userInfo.Subject
+			}
+			if claims.Email == "" {
+				claims.Email = userInfo.Email
+			}
+			if !bool(claims.EmailVerified) {
+				claims.EmailVerified = flexibleBool(userInfo.EmailVerified)
+			}
+			var extraClaims oidcUserInfo
+			if err := userInfo.Claims(&extraClaims); err == nil {
+				if claims.Name == "" {
+					claims.Name = extraClaims.Name
+				}
+				if claims.Email == "" {
+					claims.Email = extraClaims.Email
+				}
+				if claims.Sub == "" {
+					claims.Sub = extraClaims.Sub
+				}
+			}
+		} else if strings.TrimSpace(claims.Email) == "" {
+			return nil, err
+		}
 	}
-	return &userInfo, nil
+
+	claims.Email = strings.ToLower(strings.TrimSpace(claims.Email))
+	claims.Name = strings.TrimSpace(claims.Name)
+	claims.Sub = strings.TrimSpace(claims.Sub)
+	if claims.Email == "" {
+		return nil, errors.New("OIDC email bilgisi dönmedi")
+	}
+	return &claims, nil
 }
 
 func findOrCreateOIDCMerchant(c fiber.Ctx, service *services.MerchantService, userInfo *oidcUserInfo) (*models.Merchant, error) {
@@ -1945,11 +1988,11 @@ func currentAdminPanel(c fiber.Ctx) string {
 
 func adminPageData(adminEmail string, panel string) DealerPageData {
 	data := DealerPageData{
-		Title:        "Admin paneli",
-		Active:       "admin",
-		HasSession:   true,
+		Title:         "Admin paneli",
+		Active:        "admin",
+		HasSession:    true,
 		MerchantEmail: adminEmail,
-		LogoutURL:    "/admin/logout",
+		LogoutURL:     "/admin/logout",
 
 		AdminPanel:          panel,
 		AdminOverviewURL:    "/admin",
@@ -2267,6 +2310,29 @@ func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
 			Deposits:      summary.TransactionCount,
 			Users:         summary.UserCount,
 			LastDeposit:   lastDeposit,
+			DisplayToken:  emptyDash(token),
+		})
+	}
+	return views
+}
+
+func dealerLedgerBalanceViews(rows []repositories.LedgerBalanceRow) []DealerBalanceView {
+	views := make([]DealerBalanceView, 0, len(rows))
+	for _, row := range rows {
+		if row.Account != models.LedgerAccountMerchantAvailable {
+			continue
+		}
+		token := ""
+		if row.Token != nil {
+			token = *row.Token
+		}
+		views = append(views, DealerBalanceView{
+			Chain:         chainLabel(constants.ChainID(row.ChainID)),
+			Symbol:        row.Symbol,
+			Token:         token,
+			AmountRaw:     row.BalanceRaw,
+			AmountDisplay: formatTokenAmount(row.BalanceRaw, row.Decimals),
+			Decimals:      row.Decimals,
 			DisplayToken:  emptyDash(token),
 		})
 	}
@@ -2611,78 +2677,39 @@ func dealerSessionSecret() string {
 }
 
 func oidcScopes() string {
-	scopes := strings.TrimSpace(os.Getenv("OIDC_SCOPES"))
-	if scopes == "" {
-		return "openid profile email roles"
-	}
-	return strings.ReplaceAll(scopes, ",", " ")
+	return strings.Join(oidcScopesList(), " ")
 }
 
-func oidcEndpoints() (string, string, string, error) {
-	authURL := strings.TrimSpace(os.Getenv("OIDC_AUTH_URL"))
-	tokenURL := strings.TrimSpace(os.Getenv("OIDC_TOKEN_URL"))
-	userInfoURL := strings.TrimSpace(os.Getenv("OIDC_USERINFO_URL"))
-	authority := strings.TrimRight(strings.TrimSpace(os.Getenv("OIDC_AUTHORITY")), "/")
-
-	if authority != "" {
-		if cfg, err := fetchOIDCDiscovery(authority); err == nil {
-			if authURL == "" {
-				authURL = cfg.AuthorizationEndpoint
-			}
-			if tokenURL == "" {
-				tokenURL = cfg.TokenEndpoint
-			}
-			if userInfoURL == "" {
-				userInfoURL = cfg.UserInfoEndpoint
-			}
-		}
-		if authURL == "" {
-			authURL = authority + "/connect/authorize"
-		}
-		if tokenURL == "" {
-			tokenURL = authority + "/connect/token"
-		}
-		if userInfoURL == "" {
-			userInfoURL = authority + "/connect/userinfo"
+func oidcScopesList() []string {
+	raw := strings.TrimSpace(os.Getenv("OIDC_SCOPES"))
+	if raw == "" {
+		raw = "openid profile email roles"
+	}
+	raw = strings.ReplaceAll(raw, ",", " ")
+	parts := strings.Fields(raw)
+	hasOpenID := false
+	for _, scope := range parts {
+		if scope == oidc.ScopeOpenID {
+			hasOpenID = true
+			break
 		}
 	}
-
-	if !validAbsoluteURL(authURL) {
-		return "", "", "", errors.New("OIDC authorization endpoint missing")
+	if !hasOpenID {
+		parts = append([]string{oidc.ScopeOpenID}, parts...)
 	}
-	if tokenURL != "" && !validAbsoluteURL(tokenURL) {
-		return "", "", "", errors.New("OIDC token endpoint invalid")
-	}
-	if userInfoURL != "" && !validAbsoluteURL(userInfoURL) {
-		return "", "", "", errors.New("OIDC userinfo endpoint invalid")
-	}
-	return authURL, tokenURL, userInfoURL, nil
+	return parts
 }
 
-func fetchOIDCDiscovery(authority string) (*oidcProviderConfig, error) {
-	client := http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(authority + "/.well-known/openid-configuration")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("discovery HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
-	}
-	var cfg oidcProviderConfig
-	if err := json.Unmarshal(body, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
+func oidcAuthority() string {
 
-func validAbsoluteURL(value string) bool {
-	parsed, err := url.ParseRequestURI(value)
-	return err == nil && parsed.Scheme != "" && parsed.Host != ""
+	for _, key := range []string{"OIDC_AUTHORITY", "OIDC_ISSUER_URL"} {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+
 }
 
 func stringPtr(value string) *string {

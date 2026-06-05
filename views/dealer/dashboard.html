@@ -77,7 +77,7 @@
               <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink text-[10px] font-black text-white">{{.Symbol}}</div>
               <div class="min-w-0 flex-1">
                 <span class="block text-sm font-black text-ink">{{.Symbol}}</span>
-                <span class="block text-xs font-semibold text-muted">{{.Chain}}</span>
+                <span class="block text-xs font-semibold text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
               </div>
               <div class="shrink-0 text-right">
                 <strong class="block text-sm font-black text-ink">{{.AmountDisplay}}</strong>
@@ -96,7 +96,14 @@
             <article class="flex min-h-12 items-center justify-between gap-3 rounded-2xl border border-line {{if .Empty}}bg-white{{else}}bg-[#fff3fc]{{end}} px-3 py-2">
               <div class="flex min-w-0 items-center gap-3">
                 <span class="h-2 w-2 shrink-0 rounded-full {{if .Empty}}bg-line{{else}}bg-accent{{end}}"></span>
-                <strong class="truncate text-sm font-black text-ink">{{.Chain}}</strong>
+                <div class="min-w-0">
+                  <strong class="truncate text-sm font-black text-ink">{{.Chain}}</strong>
+                  {{if .Assets}}
+                    <span class="mt-1 block truncate text-xs font-semibold text-muted">
+                      {{range $index, $asset := .Assets}}{{if $index}} · {{end}}{{$asset.Chain}} üzerinde {{$asset.Symbol}}{{end}}
+                    </span>
+                  {{end}}
+                </div>
               </div>
               <span class="shrink-0 rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{if .Empty}}hazır{{else}}{{.Deposits}} deposit{{end}}</span>
             </article>

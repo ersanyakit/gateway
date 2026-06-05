@@ -7,6 +7,7 @@ require (
 	github.com/btcsuite/btcd/btcec/v2 v2.3.6
 	github.com/btcsuite/btcd/btcutil v1.1.6
 	github.com/bytedance/sonic v1.15.1
+	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/fasthttp/websocket v1.5.3
 	github.com/gagliardetto/solana-go v1.12.0
@@ -25,6 +26,7 @@ require (
 	github.com/swaggo/swag v1.16.6
 	github.com/vchitai/go-socket.io/v4 v4.1.12
 	golang.org/x/crypto v0.51.0
+	golang.org/x/oauth2 v0.36.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
 )
@@ -58,6 +60,7 @@ require (
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/gagliardetto/binary v0.8.0 // indirect
 	github.com/gagliardetto/treeout v0.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

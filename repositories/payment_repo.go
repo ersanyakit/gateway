@@ -68,6 +68,18 @@ func (r *PaymentRepo) FindByToken(ctx context.Context, token string) (*models.Pa
 	return &session, nil
 }
 
+func (r *PaymentRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.PaymentSession, error) {
+	var session models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Preload("Domain").
+		Preload("Wallet").
+		First(&session, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
 func (r *PaymentRepo) List(ctx context.Context, limit int) ([]models.PaymentSession, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
@@ -193,6 +205,9 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 	if txModel.WalletID == nil || txModel.Amount == "" {
 		return nil, false, nil
 	}
+	if txModel.Status != models.TransactionStatusConfirmed || txModel.FinalizedAt == nil {
+		return nil, false, nil
+	}
 
 	txAmount, ok := new(big.Int).SetString(txModel.Amount, 10)
 	if !ok || txAmount.Sign() <= 0 {
@@ -247,6 +262,8 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 			now := time.Now()
 			paidSession.Status = models.PaymentStatusPaid
 			paidSession.PaidAt = &now
+			paidSession.ConfirmedAt = txModel.FinalizedAt
+			paidSession.ConfirmationsRequired = txModel.ConfirmationsRequired
 			paidSession.TxUniqueHash = &txModel.UniqueHash
 			paidSession.TxHash = &txModel.Hash
 			paidSession.WebhookEvent = "payment_succeeded"

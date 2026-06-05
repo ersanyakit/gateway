@@ -27,13 +27,14 @@ type PaymentSession struct {
 	WalletID   uuid.UUID `gorm:"type:uuid;not null;index" json:"wallet_id"`
 	Wallet     Wallet    `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
 
-	OrderID    string `gorm:"size:128;not null;index" json:"order_id"`
-	ProductID  string `gorm:"size:128;index" json:"product_id"`
-	UserID     string `gorm:"size:128;index" json:"user_id"`
-	Amount     string `gorm:"size:80;not null" json:"amount"`
-	Currency   string `gorm:"size:20;not null;index" json:"currency"`
-	SuccessURL string `gorm:"size:500" json:"success_url,omitempty"`
-	CancelURL  string `gorm:"size:500" json:"cancel_url,omitempty"`
+	OrderID        string `gorm:"size:128;not null;index" json:"order_id"`
+	ProductID      string `gorm:"size:128;index" json:"product_id"`
+	UserID         string `gorm:"size:128;index" json:"user_id"`
+	Amount         string `gorm:"size:80;not null" json:"amount"`
+	Currency       string `gorm:"size:20;not null;index" json:"currency"`
+	SuccessURL     string `gorm:"size:500" json:"success_url,omitempty"`
+	CancelURL      string `gorm:"size:500" json:"cancel_url,omitempty"`
+	IdempotencyKey string `gorm:"size:180;index" json:"idempotency_key,omitempty"`
 
 	SelectedChainID   *constants.ChainID `gorm:"type:bigint;index" json:"selected_chain_id,omitempty"`
 	SelectedToken     *string            `gorm:"type:varchar(128);index" json:"selected_token,omitempty"`
@@ -44,10 +45,12 @@ type PaymentSession struct {
 
 	Status string `gorm:"size:32;not null;index" json:"status"`
 
-	PaidAt       *time.Time `json:"paid_at,omitempty"`
-	ExpiresAt    *time.Time `json:"expires_at,omitempty"`
-	TxUniqueHash *string    `gorm:"size:256;index" json:"tx_unique_hash,omitempty"`
-	TxHash       *string    `gorm:"size:128;index" json:"tx_hash,omitempty"`
+	PaidAt                *time.Time `json:"paid_at,omitempty"`
+	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
+	TxUniqueHash          *string    `gorm:"size:256;index" json:"tx_unique_hash,omitempty"`
+	TxHash                *string    `gorm:"size:128;index" json:"tx_hash,omitempty"`
+	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
+	ConfirmedAt           *time.Time `json:"confirmed_at,omitempty"`
 
 	WebhookEvent     string     `gorm:"size:64;index" json:"webhook_event,omitempty"`
 	WebhookSentAt    *time.Time `json:"webhook_sent_at,omitempty"`

@@ -189,10 +189,38 @@ info:
   title: Gateway API
   version: "1.0"
 paths:
+  /auth/oidc/callback:
+    get:
+      description: Exchanges the OIDC authorization code for tokens, fetches userinfo,
+        and signs the dealer in.
+      parameters:
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: OIDC state
+        in: query
+        name: state
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to dealer dashboard
+          schema:
+            type: string
+        "400":
+          description: Redirect to dealer login with error
+          schema:
+            type: string
+      summary: Complete dealer OIDC login
+      tags:
+      - Dealers
   /auth/oidc/login:
     get:
       description: Redirects the dealer to the configured OIDC authorization URL.
-        Configure DEALER_OIDC_LOGIN_URL, OIDC_LOGIN_URL, or OIDC_AUTH_URL.
       produces:
       - text/html
       responses:
@@ -257,6 +285,33 @@ paths:
           schema:
             type: string
       summary: Cancel checkout
+      tags:
+      - Payments
+  /checkout/{token}/change:
+    get:
+      description: Resets a pending or awaiting payment session back to asset selection.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "303":
+          description: Redirect to checkout page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Change checkout asset
       tags:
       - Payments
   /checkout/{token}/pay:
@@ -408,6 +463,20 @@ paths:
           schema:
             $ref: '#/definitions/types.ErrorResponse'
       summary: Get checkout status
+      tags:
+      - Payments
+  /checkout/{token}/ws:
+    get:
+      description: Opens a WebSocket connection that emits payment status changes
+        for the checkout session.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      responses: {}
+      summary: Subscribe checkout status
       tags:
       - Payments
   /dealer/dashboard:
@@ -694,6 +763,11 @@ paths:
       description: Creates a checkout session for a merchant order and returns a hosted
         checkout URL.
       parameters:
+      - description: Idempotency key. If omitted, order_id is used within the domain
+          scope.
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Payment create payload
         in: body
         name: payload

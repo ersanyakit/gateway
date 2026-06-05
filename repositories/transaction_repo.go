@@ -166,6 +166,55 @@ func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash str
 		Updates(updates).Error
 }
 
+func (r *TransactionRepo) MarkFinality(ctx context.Context, uniqueHash string, confirmations, required uint, finalized bool) (*models.Transaction, error) {
+	updates := map[string]interface{}{
+		"confirmations":          confirmations,
+		"confirmations_required": required,
+		"updated_at":             time.Now(),
+	}
+	if finalized {
+		now := time.Now()
+		updates["status"] = models.TransactionStatusConfirmed
+		updates["finalized_at"] = &now
+	} else {
+		updates["status"] = models.TransactionStatusPendingConfirmation
+	}
+	if err := r.DB().WithContext(ctx).
+		Model(&models.Transaction{}).
+		Where("unique_hash = ?", uniqueHash).
+		Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	return r.FindByUniqueHash(ctx, uniqueHash)
+}
+
+func (r *TransactionRepo) MarkFailed(ctx context.Context, uniqueHash string) (*models.Transaction, error) {
+	if err := r.DB().WithContext(ctx).
+		Model(&models.Transaction{}).
+		Where("unique_hash = ?", uniqueHash).
+		Updates(map[string]interface{}{
+			"status":     models.TransactionStatusFailed,
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		return nil, err
+	}
+	return r.FindByUniqueHash(ctx, uniqueHash)
+}
+
+func (r *TransactionRepo) ListPendingFinality(ctx context.Context, limit int) ([]models.Transaction, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	var rows []models.Transaction
+	err := r.DB().WithContext(ctx).
+		Where("wallet_id IS NOT NULL").
+		Where("status = ?", models.TransactionStatusPendingConfirmation).
+		Order("created_at ASC").
+		Limit(limit).
+		Find(&rows).Error
+	return rows, err
+}
+
 func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]models.Transaction, error) {
 	if limit <= 0 {
 		limit = 100
@@ -174,6 +223,7 @@ func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([
 	var transactions []models.Transaction
 	err := r.DB().WithContext(ctx).
 		Where("wallet_id IS NOT NULL").
+		Where("status = ?", models.TransactionStatusConfirmed).
 		Where("webhook_sent_at IS NULL").
 		Order("created_at ASC").
 		Limit(limit).
@@ -242,12 +292,12 @@ func (r *TransactionRepo) ListPageFiltered(ctx context.Context, page, limit int,
 }
 
 type WalletBalanceRow struct {
-	WalletID uuid.UUID
-	ChainID  int64
-	Symbol   string
-	Decimals uint8
+	WalletID  uuid.UUID
+	ChainID   int64
+	Symbol    string
+	Decimals  uint8
 	Deposited string
-	TxCount  int64
+	TxCount   int64
 }
 
 type WalletLockedRow struct {

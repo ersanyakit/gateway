@@ -39,20 +39,24 @@ type Router struct {
 	blockchains   *blockchain.ChainFactory
 	assetRegistry *asset.Registry
 
-	MerchantRepo    *repositories.MerchantRepo
-	DomainRepo      *repositories.DomainRepo
-	WalletRepo      *repositories.WalletRepo
-	ChainStateRepo  *repositories.ChainStateRepo
-	TransactionRepo *repositories.TransactionRepo
-	PaymentRepo     *repositories.PaymentRepo
-	ProductRepo     *repositories.ProductRepo
-	WithdrawalRepo  *repositories.WithdrawalRequestRepo
-	ActivityLogRepo *repositories.ActivityLogRepo
-	AdminRepo       *repositories.AdminRepo
-	MerchantService *services.MerchantService
-	WalletService   *services.WalletService
-	DomainService   *services.DomainService
-	PaymentHub      *realtime.PaymentHub
+	MerchantRepo        *repositories.MerchantRepo
+	DomainRepo          *repositories.DomainRepo
+	WalletRepo          *repositories.WalletRepo
+	ChainStateRepo      *repositories.ChainStateRepo
+	TransactionRepo     *repositories.TransactionRepo
+	PaymentRepo         *repositories.PaymentRepo
+	ProductRepo         *repositories.ProductRepo
+	WithdrawalRepo      *repositories.WithdrawalRequestRepo
+	LedgerRepo          *repositories.LedgerRepo
+	IdempotencyRepo     *repositories.IdempotencyRepo
+	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
+	RefundRepo          *repositories.RefundRepo
+	ActivityLogRepo     *repositories.ActivityLogRepo
+	AdminRepo           *repositories.AdminRepo
+	MerchantService     *services.MerchantService
+	WalletService       *services.WalletService
+	DomainService       *services.DomainService
+	PaymentHub          *realtime.PaymentHub
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -119,6 +123,10 @@ func NewRouter(db *gorm.DB) *Router {
 	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
 	r.ProductRepo = repositories.NewProductRepo(r.db)
 	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
+	r.LedgerRepo = repositories.NewLedgerRepo(r.db)
+	r.IdempotencyRepo = repositories.NewIdempotencyRepo(r.db)
+	r.WebhookDeliveryRepo = repositories.NewWebhookDeliveryRepo(r.db)
+	r.RefundRepo = repositories.NewRefundRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
 	r.AdminRepo = repositories.NewAdminRepo(r.db)
 	r.PaymentHub = realtime.NewPaymentHub()
@@ -161,6 +169,7 @@ func NewRouter(db *gorm.DB) *Router {
 		ProductRepo:     r.ProductRepo,
 		PaymentRepo:     r.PaymentRepo,
 		WithdrawalRepo:  r.WithdrawalRepo,
+		LedgerRepo:      r.LedgerRepo,
 		TransactionRepo: r.TransactionRepo,
 		ActivityLogRepo: r.ActivityLogRepo,
 		AdminRepo:       r.AdminRepo,
@@ -203,14 +212,15 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 
 	paymentDeps := handlers.PaymentHandlerDeps{
-		DomainRepo:    r.DomainRepo,
-		WalletRepo:    r.WalletRepo,
-		PaymentRepo:   r.PaymentRepo,
-		ProductRepo:   r.ProductRepo,
-		AssetRegistry: r.assetRegistry,
-		PriceOracle:   pricing.NewCoinGecko(),
-		Notifier:      webhooksvc.NewNotifier(),
-		PaymentHub:    r.PaymentHub,
+		DomainRepo:      r.DomainRepo,
+		WalletRepo:      r.WalletRepo,
+		PaymentRepo:     r.PaymentRepo,
+		ProductRepo:     r.ProductRepo,
+		AssetRegistry:   r.assetRegistry,
+		PriceOracle:     pricing.NewCoinGecko(),
+		Notifier:        webhooksvc.NewNotifier(),
+		PaymentHub:      r.PaymentHub,
+		IdempotencyRepo: r.IdempotencyRepo,
 	}
 	r.fiber.Post("/payments/create", middleware.RateLimitPaymentCreate(), handlers.HandlePaymentCreate(paymentDeps))
 	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))
