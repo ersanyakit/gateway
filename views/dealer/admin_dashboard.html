@@ -1,168 +1,434 @@
-<section class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
-  <div class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-    <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+<section class="grid gap-4">
+
+  {{/* ── Header ── */}}
+  <header class="overflow-hidden rounded-[28px] border border-line bg-white/90 p-4 shadow-soft sm:p-5">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Admin paneli</span>
-        <h1 class="m-0 mt-4 text-3xl font-black text-ink sm:text-4xl">Admin overview</h1>
-        <p class="m-0 mt-2 text-sm leading-6 text-muted">Tüm bayileri, checkoutları, cüzdanları, depositleri ve çekim taleplerini tek ekrandan izle.</p>
+        <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-1.5 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Admin Panel</span>
+        <h1 class="m-0 mt-3 text-2xl font-black text-ink sm:text-3xl">Platform yönetimi</h1>
+        <p class="m-0 mt-1.5 text-sm font-semibold text-muted">{{.MerchantEmail}}</p>
+      </div>
+      <div class="flex shrink-0 flex-wrap gap-2">
+        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center">
+          <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Bayi</span>
+          <strong class="block text-2xl font-black text-ink">{{.MerchantCount}}</strong>
+        </div>
+        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center">
+          <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Checkout</span>
+          <strong class="block text-2xl font-black text-ink">{{.PaymentCount}}</strong>
+        </div>
+        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center">
+          <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Deposit</span>
+          <strong class="block text-2xl font-black text-ink">{{.DepositCount}}</strong>
+        </div>
+        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center">
+          <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Wallet</span>
+          <strong class="block text-2xl font-black text-ink">{{.WalletCountAll}}</strong>
+        </div>
+        <a class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" href="{{.LogoutURL}}">Çıkış</a>
       </div>
     </div>
 
-    {{if .Success}}<div class="mt-5 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
-    {{if .Error}}<div class="mt-5 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
+    {{if .Error}}<div class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+  </header>
 
-    <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div class="rounded-3xl border border-line bg-wash p-4"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Bayi</span><strong class="mt-2 block text-3xl font-black text-ink">{{.MerchantCount}}</strong></div>
-      <div class="rounded-3xl border border-line bg-wash p-4"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Checkout</span><strong class="mt-2 block text-3xl font-black text-ink">{{.PaymentCount}}</strong></div>
-      <div class="rounded-3xl border border-line bg-wash p-4"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Wallet</span><strong class="mt-2 block text-3xl font-black text-ink">{{.WalletCountAll}}</strong></div>
-      <div class="rounded-3xl border border-line bg-wash p-4"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Deposit/activity</span><strong class="mt-2 block text-3xl font-black text-ink">{{.ActivityCount}}</strong></div>
+  {{/* ── Nav tabs ── */}}
+  <nav class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/85 p-2 shadow-sm backdrop-blur">
+    <div class="flex gap-1.5 overflow-x-auto">
+      <a class="dash-tab" href="{{.AdminOverviewURL}}"    aria-selected="{{if eq .AdminPanel "overview"}}true{{else}}false{{end}}">Overview</a>
+      <a class="dash-tab" href="{{.AdminMerchantsURL}}"   aria-selected="{{if eq .AdminPanel "merchants"}}true{{else}}false{{end}}">Bayiler</a>
+      <a class="dash-tab" href="{{.AdminPaymentsURL}}"    aria-selected="{{if eq .AdminPanel "payments"}}true{{else}}false{{end}}">Payments</a>
+      <a class="dash-tab" href="{{.AdminDepositsURL}}"    aria-selected="{{if eq .AdminPanel "deposits"}}true{{else}}false{{end}}">Deposits</a>
+      <a class="dash-tab" href="{{.AdminWithdrawalsURL}}" aria-selected="{{if eq .AdminPanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals</a>
+      <a class="dash-tab" href="{{.AdminWalletsURL}}"     aria-selected="{{if eq .AdminPanel "wallets"}}true{{else}}false{{end}}">Wallets</a>
+      <a class="dash-tab" href="{{.AdminActivityURL}}"    aria-selected="{{if eq .AdminPanel "activity"}}true{{else}}false{{end}}">Activity</a>
+      <a class="dash-tab" href="{{.AdminSweepURL}}"       aria-selected="{{if eq .AdminPanel "sweep"}}true{{else}}false{{end}}">Sweep / Transfer</a>
     </div>
+  </nav>
 
-    <section class="mt-6">
-      <div class="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Tüm bayiler</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Platformdaki merchant hesapları.</p>
-        </div>
-      </div>
-      {{if .AdminMerchants}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          <div class="hidden grid-cols-[1fr_1fr_0.7fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-            <span>Bayi</span><span>ID</span><span>Created</span>
-          </div>
-          {{range .AdminMerchants}}
-            <article class="grid gap-3 border-t border-line px-4 py-4 first:border-t-0 lg:grid-cols-[1fr_1fr_0.7fr] lg:items-center">
-              <div><strong class="block text-sm font-black text-ink">{{.Name}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.Email}}</small></div>
-              <code class="block truncate text-xs text-muted">{{.ID}}</code>
-              <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz bayi yok.</div>
-      {{end}}
-    </section>
-
-    <section class="mt-6">
-      <div class="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Pay ve checkoutlar</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Tüm hosted checkout sessionları ve durumları.</p>
-        </div>
-      </div>
-      {{if .Payments}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          <div class="hidden grid-cols-[1.1fr_0.8fr_0.7fr_0.7fr_0.7fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-            <span>Checkout</span><span>Bayi</span><span>Amount</span><span>Status</span><span>Created</span>
-          </div>
-          {{range .Payments}}
-            <article class="grid gap-3 border-t border-line px-4 py-4 first:border-t-0 lg:grid-cols-[1.1fr_0.8fr_0.7fr_0.7fr_0.7fr] lg:items-center">
-              <div class="min-w-0"><strong class="block truncate text-sm font-black text-ink">{{.OrderID}}</strong><code class="mt-1 block truncate text-xs text-muted">{{.CheckoutURL}}</code><small class="mt-1 block text-xs font-semibold text-muted">{{.SelectedAsset}} / {{.SelectedChain}}</small></div>
-              <div><strong class="block text-sm font-black text-ink">{{.Merchant}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.Domain}}</small></div>
-              <div><strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.ProductID}}</small></div>
-              <div><span class="rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{.Status}}</span></div>
-              <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz checkout yok.</div>
-      {{end}}
-    </section>
-
-    <section class="mt-6">
-      <div class="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Tüm cüzdanlar</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Merchant/product/user bazında üretilen wallet kayıtları.</p>
-        </div>
-      </div>
-      {{if .AdminWallets}}
-        <div class="grid gap-3 md:grid-cols-2">
-          {{range .AdminWallets}}
-            <article class="rounded-3xl border border-line bg-wash p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0"><strong class="block text-sm font-black text-ink">{{.Label}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.Merchant}} · {{.Domain}}</small></div>
-                <span class="rounded-full bg-white px-3 py-1 text-xs font-extrabold text-muted">{{.ShortID}}</span>
-              </div>
-              <div class="mt-3 grid gap-1">
-                {{range .Addresses}}<code class="block truncate text-xs text-muted">{{.Chain}} {{.Address}}</code>{{end}}
-              </div>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz wallet yok.</div>
-      {{end}}
-    </section>
-
-    <section class="mt-6">
-      <div class="mb-3 flex items-end justify-between gap-3">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Tüm depositler</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Cüzdanla eşleşmiş ya da zincirden okunmuş son işlemler.</p>
-        </div>
-      </div>
-      {{if .AdminDeposits}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          {{range .AdminDeposits}}
-            <article class="grid gap-3 border-t border-line px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_0.7fr_0.7fr_0.7fr] lg:items-center">
-              <div class="min-w-0"><strong class="block text-sm font-black text-ink">{{.Chain}} · {{.Symbol}} · {{.AmountDisplay}}</strong><code class="mt-1 block truncate text-xs text-muted">{{.Hash}}</code></div>
-              <div><span class="block text-sm font-bold text-ink">{{.Status}}</span><small class="mt-1 block text-xs font-semibold text-muted">{{.Type}}</small></div>
-              <div><span class="block truncate text-sm font-bold text-ink">{{.ProductID}}</span><small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}}</small></div>
-              <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz deposit yok.</div>
-      {{end}}
-    </section>
-
-    <section class="mt-6">
-      <h2 class="m-0 text-xl font-black text-ink">Çekim talepleri</h2>
-      <p class="m-0 mt-1 text-sm leading-6 text-muted">Bayi taleplerini incele, onayla veya reddet.</p>
-    </section>
-
-    {{if .Withdrawals}}
-      <div class="mt-5 overflow-hidden rounded-3xl border border-line">
-        <div class="hidden grid-cols-[1.2fr_0.75fr_1fr_0.65fr_0.8fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-          <span>Merchant</span><span>Amount</span><span>Destination</span><span>Status</span><span>Action</span>
-        </div>
-        {{range .Withdrawals}}
-          <article class="grid gap-4 border-t border-line px-4 py-4 first:border-t-0 lg:grid-cols-[1.2fr_0.75fr_1fr_0.65fr_0.8fr] lg:items-start">
-            <div>
-              <strong class="block text-sm font-black text-ink">{{.MerchantName}}</strong>
-              <small class="mt-1 block truncate text-xs font-semibold text-muted">Wallet {{.WalletID}}</small>
-              {{if .Note}}<small class="mt-1 block text-xs font-semibold text-muted">{{.Note}}</small>{{end}}
-            </div>
-            <div><strong class="block text-sm font-black text-ink">{{.AmountRaw}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.Chain}}</small></div>
-            <div><code class="block break-words text-xs text-muted">{{.ToAddress}}</code>{{if .TxHash}}<code class="mt-2 block break-words text-xs text-muted">Tx {{.TxHash}}</code>{{end}}{{if .Error}}<code class="mt-2 block break-words text-xs text-red-700">{{.Error}}</code>{{end}}</div>
-            <div><span class="rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{.Status}}</span><time class="mt-2 block text-xs font-bold text-muted">{{.CreatedAt}}</time></div>
-            <div class="grid gap-2">
-              {{if eq .Status "pending"}}
-                <form method="post" action="/admin/withdrawals/{{.ID}}/approve">
-                  <button class="inline-flex min-h-10 w-full items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Onayla</button>
-                </form>
-                <form class="grid gap-2" method="post" action="/admin/withdrawals/{{.ID}}/reject">
-                  <input class="min-h-10 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="reason" type="text" placeholder="Red sebebi">
-                  <button class="inline-flex min-h-10 w-full items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" type="submit">Reddet</button>
-                </form>
-              {{else}}
-                <span class="text-xs font-bold text-muted">İşlem tamamlandı</span>
-              {{end}}
-            </div>
-          </article>
-        {{end}}
-      </div>
-    {{else}}
-      <div class="mt-5 rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz çekim talebi yok.</div>
-    {{end}}
+  {{/* ══════════════════════════════════════
+       PANEL: Overview
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "overview"}}
+  <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Toplam bayi</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.MerchantCount}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminMerchantsURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Checkout session</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.PaymentCount}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminPaymentsURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">On-chain deposit</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.DepositCount}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminDepositsURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Çekim talebi</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.WithdrawalCount}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminWithdrawalsURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Wallet</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.WalletCountAll}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminWalletsURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Activity log</span>
+      <strong class="mt-2 block text-4xl font-black text-ink">{{.ActivityCount}}</strong>
+      <a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminActivityURL}}">Tümünü gör →</a>
+    </div>
+    <div class="rounded-3xl border border-line bg-white p-5 sm:col-span-2">
+      <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Sweep / Transfer</span>
+      <p class="mt-2 text-sm font-semibold text-muted">Wallet'lardan manuel para transferi veya sweep işlemi başlat.</p>
+      <a class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-sm font-extrabold text-white hover:opacity-80" href="{{.AdminSweepURL}}">Sweep / Transfer →</a>
+    </div>
   </div>
 
-  <aside class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft xl:sticky xl:top-24 xl:self-start">
-    <h2 class="m-0 text-lg font-black text-ink">Admin</h2>
-    <p class="m-0 mt-2 break-words text-sm font-semibold text-muted">{{.MerchantEmail}}</p>
-    <a class="mt-5 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" href="/admin/logout">Çıkış yap</a>
-  </aside>
+  {{/* Son depositler – kısa özet */}}
+  {{if .AdminDeposits}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="flex items-center justify-between border-b border-line px-5 py-4">
+      <h2 class="m-0 text-base font-black text-ink">Son depositler</h2>
+      <a class="text-xs font-bold text-accent hover:underline" href="{{.AdminDepositsURL}}">Tümünü gör</a>
+    </div>
+    {{range $i, $d := .AdminDeposits}}{{if lt $i 8}}
+    <article class="flex items-center gap-3 border-b border-line px-5 py-3 last:border-b-0">
+      <div class="min-w-0 flex-1">
+        <span class="block text-sm font-bold text-ink">{{$d.Chain}} · {{$d.Symbol}} · {{$d.AmountDisplay}}</span>
+        <code class="mt-0.5 block truncate text-xs text-muted">{{$d.Hash}}</code>
+      </div>
+      <span class="shrink-0 rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{$d.Status}}</span>
+      <time class="shrink-0 text-xs font-bold text-muted">{{$d.CreatedAt}}</time>
+    </article>
+    {{end}}{{end}}
+  </div>
+  {{end}}
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Merchants
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "merchants"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">Bayiler <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.MerchantCount}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Platformda kayıtlı tüm merchant hesapları.</p>
+    </div>
+    {{if .AdminMerchants}}
+    <div class="hidden grid-cols-[2fr_2fr_1fr] gap-4 border-b border-line bg-wash px-5 py-3 text-xs font-black uppercase tracking-[0.06em] text-muted lg:grid">
+      <span>Bayi</span><span>ID</span><span>Kayıt tarihi</span>
+    </div>
+    {{range .AdminMerchants}}
+    <article class="grid gap-2 border-b border-line px-5 py-4 last:border-b-0 hover:bg-wash lg:grid-cols-[2fr_2fr_1fr] lg:items-center">
+      <div class="flex items-center gap-3">
+        <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink text-xs font-black text-white">{{printf "%.1s" .Name}}</div>
+        <div class="min-w-0">
+          <strong class="block truncate text-sm font-black text-ink">{{.Name}}</strong>
+          <small class="block truncate text-xs font-semibold text-muted">{{.Email}}</small>
+        </div>
+      </div>
+      <code class="block truncate text-xs text-muted">{{.ID}}</code>
+      <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Henüz bayi yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Payments
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "payments"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">Checkout sessions <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.PaymentCount}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Tüm hosted checkout ve payment link sessionları.</p>
+    </div>
+    {{if .Payments}}
+    <div class="hidden grid-cols-[2fr_1.2fr_1fr_0.8fr_1fr] gap-3 border-b border-line bg-wash px-5 py-3 text-xs font-black uppercase tracking-[0.06em] text-muted lg:grid">
+      <span>Sipariş</span><span>Bayi / Domain</span><span>Tutar</span><span>Durum</span><span>Tarih</span>
+    </div>
+    {{range .Payments}}
+    <article class="grid gap-2 border-b border-line px-5 py-4 last:border-b-0 hover:bg-wash lg:grid-cols-[2fr_1.2fr_1fr_0.8fr_1fr] lg:items-start">
+      <div class="min-w-0">
+        <strong class="block truncate text-sm font-black text-ink">{{.OrderID}}</strong>
+        <small class="mt-0.5 block text-xs font-semibold text-muted">{{.SelectedAsset}}{{if .SelectedChain}} · {{.SelectedChain}}{{end}}</small>
+        {{if .DepositAddress}}<code class="mt-0.5 block truncate text-xs text-muted">{{.DepositAddress}}</code>{{end}}
+      </div>
+      <div>
+        <span class="block text-sm font-bold text-ink">{{.Merchant}}</span>
+        <small class="block truncate text-xs font-semibold text-muted">{{.Domain}}</small>
+      </div>
+      <div>
+        <strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong>
+        {{if .ProductID}}<small class="block truncate text-xs font-semibold text-muted">{{.ProductID}}</small>{{end}}
+      </div>
+      <div>
+        <span class="rounded-full px-3 py-1 text-xs font-extrabold
+          {{if eq .Status "paid"}}bg-emerald-50 text-emerald-700
+          {{else if eq .Status "awaiting_payment"}}bg-blue-50 text-blue-700
+          {{else if eq .Status "pending"}}bg-amber-50 text-amber-700
+          {{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span>
+      </div>
+      <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Henüz checkout session yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Deposits
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "deposits"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">On-chain deposits <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.DepositCount}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Zincirden okunmuş ve cüzdanla eşleşmiş işlemler.</p>
+    </div>
+    {{if .AdminDeposits}}
+    <div class="hidden grid-cols-[2.5fr_0.8fr_1fr_1fr_1fr] gap-3 border-b border-line bg-wash px-5 py-3 text-xs font-black uppercase tracking-[0.06em] text-muted lg:grid">
+      <span>Hash / Adres</span><span>Chain</span><span>Tutar</span><span>Durum</span><span>Tarih</span>
+    </div>
+    {{range .AdminDeposits}}
+    <article class="grid gap-2 border-b border-line px-5 py-4 last:border-b-0 hover:bg-wash lg:grid-cols-[2.5fr_0.8fr_1fr_1fr_1fr] lg:items-start">
+      <div class="min-w-0">
+        <code class="block truncate text-xs font-bold text-ink">{{.Hash}}</code>
+        {{if .UserID}}<small class="mt-0.5 block truncate text-xs text-muted">User: {{.UserID}}</small>{{end}}
+        {{if .ProductID}}<small class="block truncate text-xs text-muted">Product: {{.ProductID}}</small>{{end}}
+      </div>
+      <span class="text-xs font-bold text-ink">{{.Chain}}</span>
+      <div>
+        <strong class="block text-sm font-black text-ink">{{.AmountDisplay}}</strong>
+        <small class="block text-xs font-semibold text-muted">{{.Symbol}}</small>
+      </div>
+      <span class="rounded-full px-3 py-1 text-xs font-extrabold
+        {{if eq .Status "confirmed"}}bg-emerald-50 text-emerald-700
+        {{else if eq .Status "pending"}}bg-amber-50 text-amber-700
+        {{else}}bg-wash text-muted{{end}}">{{.Status}}</span>
+      <time class="text-xs font-bold text-muted">{{.CreatedAt}}</time>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Henüz deposit yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Withdrawals
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "withdrawals"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">Çekim talepleri <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.WithdrawalCount}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Bayi taleplerini incele, onayla veya reddet.</p>
+    </div>
+    {{if .Withdrawals}}
+    <div class="hidden grid-cols-[1.5fr_0.8fr_1.5fr_0.7fr_1fr] gap-3 border-b border-line bg-wash px-5 py-3 text-xs font-black uppercase tracking-[0.06em] text-muted lg:grid">
+      <span>Merchant</span><span>Chain / Tutar</span><span>Hedef adres</span><span>Durum</span><span>İşlem</span>
+    </div>
+    {{range .Withdrawals}}
+    <article class="grid gap-4 border-b border-line px-5 py-5 last:border-b-0 lg:grid-cols-[1.5fr_0.8fr_1.5fr_0.7fr_1fr] lg:items-start">
+      <div class="min-w-0">
+        <strong class="block text-sm font-black text-ink">{{.MerchantName}}</strong>
+        <code class="mt-0.5 block truncate text-xs text-muted">{{.WalletID}}</code>
+        {{if .Note}}<small class="mt-1 block text-xs font-semibold text-muted">{{.Note}}</small>{{end}}
+      </div>
+      <div>
+        <strong class="block text-sm font-black text-ink">{{.Chain}}</strong>
+        <span class="block text-xs font-bold text-muted">{{.AmountRaw}}</span>
+      </div>
+      <div class="min-w-0">
+        <code class="block break-all text-xs text-muted">{{.ToAddress}}</code>
+        {{if .TxHash}}<code class="mt-1 block break-all text-xs text-emerald-700">Tx: {{.TxHash}}</code>{{end}}
+        {{if .Error}}<code class="mt-1 block break-all text-xs text-red-700">{{.Error}}</code>{{end}}
+      </div>
+      <div>
+        <span class="rounded-full px-3 py-1 text-xs font-extrabold
+          {{if eq .Status "approved"}}bg-emerald-50 text-emerald-700
+          {{else if eq .Status "pending"}}bg-amber-50 text-amber-700
+          {{else if eq .Status "rejected"}}bg-red-50 text-red-700
+          {{else}}bg-wash text-muted{{end}}">{{.Status}}</span>
+        <time class="mt-1.5 block text-xs font-bold text-muted">{{.CreatedAt}}</time>
+      </div>
+      <div class="grid gap-2">
+        {{if eq .Status "pending"}}
+        <form method="post" action="/admin/withdrawals/{{.ID}}/approve">
+          <button class="inline-flex min-h-9 w-full items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Onayla</button>
+        </form>
+        <form method="post" action="/admin/withdrawals/{{.ID}}/reject" class="grid gap-1.5">
+          <input class="min-h-9 rounded-2xl border border-line bg-wash px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="reason" type="text" placeholder="Red sebebi (isteğe bağlı)">
+          <button class="inline-flex min-h-9 w-full items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" type="submit">Reddet</button>
+        </form>
+        {{else}}
+        <span class="text-xs font-bold text-muted">Tamamlandı</span>
+        {{end}}
+      </div>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Bekleyen çekim talebi yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Wallets
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "wallets"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">Wallets <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.WalletCountAll}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Merchant/product/user bazında üretilmiş HD wallet kayıtları.</p>
+    </div>
+    {{if .AdminWallets}}
+    {{range .AdminWallets}}
+    <article class="border-b border-line px-5 py-4 last:border-b-0 hover:bg-wash">
+      <div class="flex items-start justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-2">
+            <strong class="text-sm font-black text-ink">{{.Label}}</strong>
+            <code class="rounded-lg bg-wash px-2 py-0.5 text-xs text-muted">{{.ShortID}}</code>
+          </div>
+          <small class="mt-0.5 block text-xs font-semibold text-muted">{{.Merchant}} · {{.Domain}}</small>
+          {{if .UserID}}<small class="block text-xs text-muted">User: {{.UserID}}</small>{{end}}
+        </div>
+        <time class="shrink-0 text-xs font-bold text-muted">{{.CreatedAt}}</time>
+      </div>
+      <div class="mt-3 grid gap-1 sm:grid-cols-2 xl:grid-cols-3">
+        {{range .Addresses}}
+        <div class="flex items-center gap-2 rounded-xl border border-line bg-wash px-3 py-1.5">
+          <span class="shrink-0 text-xs font-black text-muted">{{.Chain}}</span>
+          <code class="min-w-0 flex-1 truncate text-xs text-ink">{{.Address}}</code>
+        </div>
+        {{end}}
+      </div>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Henüz wallet yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Activity Logs
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "activity"}}
+  <div class="overflow-hidden rounded-3xl border border-line bg-white">
+    <div class="border-b border-line px-5 py-4">
+      <h2 class="m-0 text-lg font-black text-ink">Activity logs <span class="ml-2 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.ActivityCount}}</span></h2>
+      <p class="m-0 mt-1 text-sm font-semibold text-muted">Platform genelinde tüm bayi ve sistem aktiviteleri.</p>
+    </div>
+    {{if .AdminActivityLogs}}
+    <div class="hidden grid-cols-[1.6fr_0.8fr_1.2fr_0.7fr_0.8fr_1fr] gap-3 border-b border-line bg-wash px-5 py-3 text-xs font-black uppercase tracking-[0.06em] text-muted lg:grid">
+      <span>Olay</span><span>Aktör</span><span>Açıklama</span><span>IP</span><span>Durum</span><span>Tarih</span>
+    </div>
+    {{range .AdminActivityLogs}}
+    <article class="grid gap-2 border-b border-line px-5 py-3 last:border-b-0 hover:bg-wash {{if .IsFailed}}bg-red-50/30{{end}} lg:grid-cols-[1.6fr_0.8fr_1.2fr_0.7fr_0.8fr_1fr] lg:items-center">
+      <div class="flex items-center gap-2 min-w-0">
+        <span class="min-w-0 truncate text-sm font-bold text-ink">{{.Event}}</span>
+        {{if .IsOIDC}}<span class="shrink-0 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-extrabold text-violet-700">OIDC</span>{{end}}
+      </div>
+      <span class="truncate text-xs font-semibold text-muted">{{.Actor}}</span>
+      <small class="truncate text-xs font-semibold {{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</small>
+      <code class="text-xs text-muted">{{.IPAddress}}</code>
+      <span class="rounded-full px-2.5 py-0.5 text-xs font-extrabold
+        {{if eq .Status "success"}}bg-emerald-50 text-emerald-700
+        {{else if eq .Status "failed"}}bg-red-50 text-red-700
+        {{else}}bg-wash text-muted{{end}}">{{.Status}}</span>
+      <time class="text-xs font-bold text-muted" title="{{.CreatedISO}}">{{.CreatedAt}}</time>
+    </article>
+    {{end}}
+    {{else}}
+    <div class="px-5 py-12 text-center text-sm font-semibold text-muted">Henüz activity log yok.</div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{/* ══════════════════════════════════════
+       PANEL: Sweep / Transfer
+  ══════════════════════════════════════ */}}
+  {{if eq .AdminPanel "sweep"}}
+  <div class="grid gap-4 xl:grid-cols-[1fr_380px]">
+
+    <div class="overflow-hidden rounded-3xl border border-line bg-white">
+      <div class="border-b border-line px-5 py-4">
+        <h2 class="m-0 text-lg font-black text-ink">Sweep / Transfer</h2>
+        <p class="m-0 mt-1 text-sm font-semibold text-muted">Wallet ID girerek tüm bakiyeyi süpür (sweep) ya da belirli bir tutarı aktar (transfer).</p>
+      </div>
+      <div class="p-5">
+        {{if .Success}}<div class="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+        <form method="post" action="/admin/sweep" class="grid gap-4">
+          <div>
+            <label class="mb-1.5 block text-xs font-black uppercase tracking-[0.06em] text-muted">Wallet ID <span class="text-red-500">*</span></label>
+            <input class="min-h-11 w-full rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="wallet_id" type="text" placeholder="UUID" required>
+            <p class="mt-1 text-xs text-muted">Wallet listesinden kopyalayabilirsin.</p>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs font-black uppercase tracking-[0.06em] text-muted">Chain <span class="text-red-500">*</span></label>
+            <select class="min-h-11 w-full rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="chain" required>
+              <option value="">Chain seç</option>
+              <option value="ethereum">Ethereum</option>
+              <option value="base">Base</option>
+              <option value="bnbchain">BNB Chain</option>
+              <option value="avalanche">Avalanche</option>
+              <option value="unichain">Unichain</option>
+              <option value="chiliz">Chiliz</option>
+              <option value="chiliz-spicy">Chiliz Spicy (Testnet)</option>
+              <option value="tron">TRON</option>
+              <option value="solana">Solana</option>
+              <option value="bitcoin">Bitcoin</option>
+            </select>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs font-black uppercase tracking-[0.06em] text-muted">Hedef adres <span class="text-red-500">*</span></label>
+            <input class="min-h-11 w-full rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="to_address" type="text" placeholder="0x... veya chain adres formatı" required>
+          </div>
+          <div>
+            <label class="mb-1.5 block text-xs font-black uppercase tracking-[0.06em] text-muted">Tutar (ham, wei / satoshi) — boş bırakılırsa sweep</label>
+            <input class="min-h-11 w-full rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="amount_raw" type="text" placeholder="Boş bırak = Tümünü süpür">
+            <p class="mt-1 text-xs text-muted">Belirli tutar için raw değer gir (örn. 1000000000000000000 = 1 ETH). Boş bırakılırsa tüm bakiye hedefe aktarılır.</p>
+          </div>
+          <div class="flex gap-3">
+            <button class="inline-flex min-h-11 flex-1 items-center justify-center rounded-full bg-accent px-6 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Transfer gönder</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <aside class="rounded-3xl border border-line bg-white p-5">
+      <h3 class="m-0 text-base font-black text-ink">Wallets</h3>
+      <p class="m-0 mt-1 text-xs font-semibold text-muted">ID'yi kopyalayarak formu doldur.</p>
+      <div class="mt-4 grid gap-2">
+        {{range .WithdrawalWallets}}
+        <div class="rounded-2xl border border-line bg-wash p-3">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <strong class="block truncate text-xs font-black text-ink">{{.Label}}</strong>
+              <small class="block truncate text-xs text-muted">{{.Merchant}}</small>
+            </div>
+            <button class="shrink-0 rounded-lg border border-line bg-white px-2.5 py-1 text-xs font-bold text-ink hover:bg-white" type="button" data-copy-value="{{.ID}}">Copy</button>
+          </div>
+          <code class="mt-1.5 block truncate text-xs text-muted">{{.ID}}</code>
+        </div>
+        {{else}}
+        <p class="text-xs text-muted">Henüz wallet yok.</p>
+        {{end}}
+      </div>
+    </aside>
+  </div>
+  {{end}}
+
 </section>

@@ -31,10 +31,26 @@ type PaymentHandlerDeps struct {
 	DomainRepo    *repositories.DomainRepo
 	WalletRepo    *repositories.WalletRepo
 	PaymentRepo   *repositories.PaymentRepo
+	ProductRepo   *repositories.ProductRepo
 	AssetRegistry *asset.Registry
 	PriceOracle   pricing.PriceOracle
 	Notifier      *webhooksvc.Notifier
 	PaymentHub    *realtime.PaymentHub
+}
+
+func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, productID string) (name, description, logoURL string) {
+	if deps.ProductRepo == nil || productID == "" {
+		return
+	}
+	id, err := uuid.Parse(productID)
+	if err != nil {
+		return
+	}
+	product, err := deps.ProductRepo.FindByID(ctx, id)
+	if err != nil {
+		return
+	}
+	return product.Name, product.Description, product.LogoURL
 }
 
 type CheckoutAssetOption struct {
@@ -177,15 +193,19 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
 		lang := checkoutLanguage(c)
 		options := checkoutAssetOptions(c.Context(), deps, *session, selectedSymbol)
+		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 		return c.Render("gateway/checkout", fiber.Map{
-			"Session":        session,
-			"Lang":           lang,
-			"IsEnglish":      lang == "en",
-			"AssetGroups":    checkoutAssetGroups(c.Context(), deps, *session),
-			"SelectedSymbol": selectedSymbol,
-			"Assets":         options,
-			"ExpiresAtUnix":  checkoutExpiresAtUnix(session),
-			"Error":          "",
+			"Session":            session,
+			"Lang":               lang,
+			"IsEnglish":          lang == "en",
+			"AssetGroups":        checkoutAssetGroups(c.Context(), deps, *session),
+			"SelectedSymbol":     selectedSymbol,
+			"Assets":             options,
+			"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
+			"Error":              "",
+			"ProductName":        productName,
+			"ProductDescription": productDesc,
+			"ProductLogoURL":     productLogo,
 		})
 	}
 }
@@ -324,15 +344,19 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		amountDisplay := formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)
 		lang := checkoutLanguage(c)
 		qrURL := "/checkout/" + session.SessionToken + "/qr.png"
+		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 		return c.Render("gateway/pay", fiber.Map{
-			"Session":       session,
-			"Lang":          lang,
-			"IsEnglish":     lang == "en",
-			"QRCodeURL":     qrURL,
-			"PaymentURI":    paymentURI(*session),
-			"ChainName":     constants.ChainName(*session.SelectedChainID),
-			"AmountDisplay": amountDisplay,
-			"ExpiresAtUnix": checkoutExpiresAtUnix(session),
+			"Session":            session,
+			"Lang":               lang,
+			"IsEnglish":          lang == "en",
+			"QRCodeURL":          qrURL,
+			"PaymentURI":         paymentURI(*session),
+			"ChainName":          constants.ChainName(*session.SelectedChainID),
+			"AmountDisplay":      amountDisplay,
+			"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
+			"ProductName":        productName,
+			"ProductDescription": productDesc,
+			"ProductLogoURL":     productLogo,
 		})
 	}
 }
@@ -756,15 +780,19 @@ func paymentDepositAddressForChain(wallet models.Wallet, chainID constants.Chain
 
 func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, message string) error {
 	lang := checkoutLanguage(c)
+	productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 	return c.Status(fiber.StatusBadRequest).Render("gateway/checkout", fiber.Map{
-		"Session":        session,
-		"Lang":           lang,
-		"IsEnglish":      lang == "en",
-		"AssetGroups":    checkoutAssetGroups(c.Context(), deps, *session),
-		"SelectedSymbol": strings.ToUpper(strings.TrimSpace(c.FormValue("symbol"))),
-		"Assets":         checkoutAssetOptions(c.Context(), deps, *session, strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))),
-		"ExpiresAtUnix":  checkoutExpiresAtUnix(session),
-		"Error":          message,
+		"Session":            session,
+		"Lang":               lang,
+		"IsEnglish":          lang == "en",
+		"AssetGroups":        checkoutAssetGroups(c.Context(), deps, *session),
+		"SelectedSymbol":     strings.ToUpper(strings.TrimSpace(c.FormValue("symbol"))),
+		"Assets":             checkoutAssetOptions(c.Context(), deps, *session, strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))),
+		"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
+		"Error":              message,
+		"ProductName":        productName,
+		"ProductDescription": productDesc,
+		"ProductLogoURL":     productLogo,
 	})
 }
 

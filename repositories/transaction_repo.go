@@ -207,6 +207,59 @@ func (r *TransactionRepo) List(ctx context.Context, limit int) ([]models.Transac
 	return transactions, err
 }
 
+func (r *TransactionRepo) ListPage(ctx context.Context, page, limit int) ([]models.Transaction, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.DB().WithContext(ctx).Model(&models.Transaction{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []models.Transaction
+	err := r.DB().WithContext(ctx).
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&rows).Error
+	return rows, total, err
+}
+
+type WalletBalanceRow struct {
+	WalletID uuid.UUID
+	ChainID  int64
+	Symbol   string
+	Decimals uint8
+	Deposited string
+	TxCount  int64
+}
+
+type WalletLockedRow struct {
+	WalletID uuid.UUID
+	Locked   string
+}
+
+func (r *TransactionRepo) AllWalletDeposits(ctx context.Context) ([]WalletBalanceRow, error) {
+	var rows []WalletBalanceRow
+	err := r.DB().WithContext(ctx).Raw(`
+		SELECT wallet_id,
+		       chain_id,
+		       symbol,
+		       decimals,
+		       SUM(amount::numeric)::text AS deposited,
+		       COUNT(*) AS tx_count
+		FROM transactions
+		WHERE wallet_id IS NOT NULL
+		  AND status = 'confirmed'
+		  AND amount ~ '^[0-9]+$'
+		  AND amount::numeric > 0
+		GROUP BY wallet_id, chain_id, symbol, decimals
+		ORDER BY wallet_id, chain_id, symbol
+	`).Scan(&rows).Error
+	return rows, err
+}
+
 func (r *TransactionRepo) MerchantDepositSummary(ctx context.Context, merchantID uuid.UUID) ([]models.DepositSummary, error) {
 	var summaries []models.DepositSummary
 	err := r.DB().WithContext(ctx).Raw(`

@@ -211,6 +211,33 @@ func (r *MerchantRepo) List(ctx context.Context, limit int) ([]models.Merchant, 
 	return merchants, err
 }
 
+func (r *MerchantRepo) ListPage(ctx context.Context, page, limit int) ([]models.Merchant, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.Merchant{}).
+		Where("deleted_at IS NULL").Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var merchants []models.Merchant
+	err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL").
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&merchants).Error
+	return merchants, total, err
+}
+
+func (r *MerchantRepo) SetActive(ctx context.Context, id uuid.UUID, active bool) error {
+	return r.db.WithContext(ctx).Model(&models.Merchant{}).
+		Where("id = ?", id).
+		Update("is_active", active).Error
+}
+
 func (r *MerchantRepo) CreateDomain() (*models.Domain, error) {
 
 	env := "live" //test

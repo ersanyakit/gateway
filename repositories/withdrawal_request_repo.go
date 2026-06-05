@@ -49,6 +49,26 @@ func (r *WithdrawalRequestRepo) List(ctx context.Context, status string, limit i
 	return requests, err
 }
 
+func (r *WithdrawalRequestRepo) ListPage(ctx context.Context, page, limit int) ([]models.WithdrawalRequest, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var requests []models.WithdrawalRequest
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").Preload("Wallet").
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&requests).Error
+	return requests, total, err
+}
+
 func (r *WithdrawalRequestRepo) Find(ctx context.Context, id uuid.UUID) (*models.WithdrawalRequest, error) {
 	var request models.WithdrawalRequest
 	err := r.db.WithContext(ctx).Preload("Merchant").Preload("Wallet").First(&request, "id = ?", id).Error

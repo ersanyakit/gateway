@@ -44,8 +44,11 @@ func NewAssetRegistry() *asset.Registry {
 	registry.Register(asset.NewTRC20(constants.TRON, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT", "Tether USD", 6))
 	registry.Register(asset.NewTRC20(constants.TRON, "TYhWwKpw43ENFWBTGpzLHn3882f2au7SMi", "WBTC", "Wrapped BTC", 8))
 
-	// Chiliz
+	// Chiliz Mainnet
 	registry.Register(asset.NewEVMNative(constants.Chiliz, "CHZ", "Chiliz", 18))
+
+	// Chiliz Spicy Testnet
+	registry.Register(asset.NewEVMNative(constants.ChilizSpicy, "CHZ", "Chiliz Spicy (Testnet)", 18))
 
 	return registry
 }

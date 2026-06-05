@@ -13,6 +13,7 @@ type Merchant struct {
 	Email    string    `gorm:"size:255;not null;index" json:"email"`
 	Password string    `json:"-"`
 	Domains  []Domain  `gorm:"foreignKey:MerchantID" json:"domains,omitempty"`
+	IsActive bool      `gorm:"not null;default:true;index" json:"is_active"`
 
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`

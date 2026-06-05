@@ -4,6 +4,7 @@ import (
 	"core/asset"
 	"core/blockchain"
 	"core/constants"
+	"core/helpers"
 	"core/models"
 	"core/repositories"
 	services "core/services/system"
@@ -93,9 +94,25 @@ type DealerPageData struct {
 	Language          string
 	PaymentLinkURL    string
 
-	AdminMerchants []DealerAdminMerchantView
-	AdminWallets   []DealerWalletView
-	AdminDeposits  []DealerActivityView
+	AdminMerchants     []DealerAdminMerchantView
+	AdminWallets       []DealerWalletView
+	AdminDeposits      []DealerActivityView
+	AdminActivityLogs  []DealerAuditLogView
+
+	AdminPanel          string
+	AdminOverviewURL    string
+	AdminMerchantsURL   string
+	AdminPaymentsURL    string
+	AdminDepositsURL    string
+	AdminWithdrawalsURL string
+	AdminWalletsURL     string
+	AdminActivityURL    string
+	AdminSweepURL       string
+	DepositCount        int
+	WithdrawalCount     int
+
+	AdminPagination    DealerPaginationView
+	AdminMerchantFilter string
 }
 
 type DealerDomainView struct {
@@ -108,15 +125,31 @@ type DealerDomainView struct {
 }
 
 type DealerWalletView struct {
-	ID        string
-	ShortID   string
-	Merchant  string
-	Label     string
-	ProductID string
-	UserID    string
-	Domain    string
-	CreatedAt string
-	Addresses []DealerAddressView
+	ID            string
+	ShortID       string
+	Merchant      string
+	Label         string
+	ProductID     string
+	UserID        string
+	Domain        string
+	CreatedAt     string
+	Addresses     []DealerAddressView
+	MissingChains []DealerMissingChainView
+	Balances      []DealerWalletBalanceRow
+}
+
+type DealerWalletBalanceRow struct {
+	Chain    string
+	Symbol   string
+	Deposited string
+	Locked    string
+	Available string
+}
+
+type DealerMissingChainView struct {
+	ChainName  string
+	ChainLabel string
+	WalletID   string
 }
 
 type DealerProductView struct {
@@ -128,6 +161,10 @@ type DealerProductView struct {
 	Language    string
 	Domain      string
 	PaymentURL  string
+	LogoURL     string
+	LogoText    string
+	SuccessURL  string
+	CancelURL   string
 	CreatedAt   string
 }
 
@@ -152,6 +189,7 @@ type DealerAdminMerchantView struct {
 	ID        string
 	Name      string
 	Email     string
+	IsActive  bool
 	CreatedAt string
 }
 
@@ -239,6 +277,8 @@ type DealerAuditLogView struct {
 	Path        string
 	CreatedAt   string
 	CreatedISO  string
+	IsOIDC      bool
+	IsFailed    bool
 }
 
 type oidcUserInfo struct {
@@ -488,6 +528,8 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			}
 		}
 
+		wallets, _ := deps.WalletRepo.ListByMerchant(c.Context(), merchant.ID, 200)
+
 		data := dealerPageData("Bayi paneli", "dashboard")
 		fillDealerMerchant(&data, merchant)
 		data.ActivePanel = currentDashboardPanel(c)
@@ -501,6 +543,9 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
 		data.Activities = dealerActivityViews(transactions)
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
+		data.Wallets = dealerWalletViews(wallets)
+		data.WithdrawalWallets = data.Wallets
+		data.WalletCount = len(wallets)
 		data.DomainCount = len(domains)
 		data.ProductCount = len(data.Products)
 		data.PaymentCount = len(data.Payments)
@@ -544,6 +589,10 @@ func HandleDealerDomainCreate(merchantService *services.MerchantService, domainS
 		if err := params.Validate(); err != nil {
 			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "failed", "domain", domainURL, err.Error())
 			return redirectWithError(c, "/dealer/dashboard", err.Error())
+		}
+		if err := helpers.ValidateWebhookURL(webhookURL); err != nil {
+			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "failed", "domain", domainURL, err.Error())
+			return redirectWithError(c, "/dealer/dashboard", "Geçersiz webhook URL: "+err.Error())
 		}
 		domain, err := domainService.Create(params)
 		if err != nil {
@@ -590,6 +639,7 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		language := normalizeLanguage(c.FormValue("language"))
 		successURL := strings.TrimSpace(c.FormValue("success_url"))
 		cancelURL := strings.TrimSpace(c.FormValue("cancel_url"))
+		logoURL := strings.TrimSpace(c.FormValue("logo_url"))
 		if name == "" {
 			return redirectWithError(c, "/dealer/dashboard/products", "Ürün adı zorunlu.")
 		}
@@ -610,6 +660,7 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			Language:    language,
 			SuccessURL:  successURL,
 			CancelURL:   cancelURL,
+			LogoURL:     logoURL,
 			IsActive:    true,
 		}
 		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
@@ -679,6 +730,39 @@ func HandlePaymentLink(deps DealerDeps) fiber.Handler {
 			return renderPaymentLinkError(c, "Checkout oluşturulamadı: "+err.Error())
 		}
 		return c.Redirect().To("/checkout/" + session.SessionToken + "?lang=" + url.QueryEscape(language))
+	}
+}
+
+func HandleDealerFillWalletAddress(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return redirectDealerLogin(c)
+		}
+
+		walletID, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/dealer/dashboard/treasury", "Geçersiz wallet.")
+		}
+
+		chain := strings.ToLower(strings.TrimSpace(c.FormValue("chain")))
+		if chain == "" {
+			return redirectWithError(c, "/dealer/dashboard/treasury", "Chain belirtilmeli.")
+		}
+
+		wallet, err := deps.WalletRepo.FindByID(c.Context(), walletID)
+		if err != nil || wallet.MerchantID != merchant.ID {
+			return redirectWithError(c, "/dealer/dashboard/treasury", "Wallet bulunamadı.")
+		}
+
+		_, err = deps.WalletRepo.FillChainAddress(c.Context(), walletID, chain, deps.Blockchains)
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "wallet.fill_address", "failed", "wallet", walletID.String(), err.Error())
+			return redirectWithError(c, "/dealer/dashboard/treasury", "Adres türetilemedi: "+err.Error())
+		}
+
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "wallet.fill_address", "success", "wallet", walletID.String(), chain+" adresi oluşturuldu.")
+		return redirectWithSuccess(c, "/dealer/dashboard/treasury", chain+" adresi oluşturuldu.")
 	}
 }
 
@@ -794,70 +878,173 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		requests, err := deps.WithdrawalRepo.List(c.Context(), "", 200)
-		if err != nil {
-			data := dealerPageData("Admin paneli", "admin")
-			data.DashboardURL = "/admin/withdrawals"
-			data.LogoutURL = "/admin/logout"
-			data.MerchantEmail = adminEmail
-			data.Error = "Çekim talepleri okunamadı: " + err.Error()
-			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+
+		panel := currentAdminPanel(c)
+		data := adminPageData(adminEmail, panel)
+		applyFlash(c, &data)
+
+		page := queryInt(c, "page", 1)
+		limit := queryInt(c, "limit", 50)
+
+		// Always load total counts for the header stats (lightweight count queries).
+		var merchantTotal, paymentTotal, depositTotal, withdrawalTotal, walletTotal, activityTotal int64
+		if deps.MerchantService != nil {
+			deps.MerchantService.Repo().DB().WithContext(c.Context()).Model(&models.Merchant{}).Where("deleted_at IS NULL").Count(&merchantTotal)
 		}
-		merchants, err := deps.MerchantService.List(c.Context(), 200)
-		if err != nil {
-			data := dealerPageData("Admin paneli", "admin")
-			data.DashboardURL = "/admin/withdrawals"
-			data.LogoutURL = "/admin/logout"
-			data.MerchantEmail = adminEmail
-			data.Error = "Bayi listesi okunamadı: " + err.Error()
-			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
-		}
-		var payments []models.PaymentSession
 		if deps.PaymentRepo != nil {
-			payments, err = deps.PaymentRepo.List(c.Context(), 200)
-			if err != nil {
-				data := dealerPageData("Admin paneli", "admin")
-				data.DashboardURL = "/admin/withdrawals"
-				data.LogoutURL = "/admin/logout"
-				data.MerchantEmail = adminEmail
-				data.Error = "Checkout listesi okunamadı: " + err.Error()
-				return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+			deps.PaymentRepo.CountAll(c.Context(), &paymentTotal)
+		}
+		deps.TransactionRepo.DB().WithContext(c.Context()).Model(&models.Transaction{}).Count(&depositTotal)
+		deps.WithdrawalRepo.DB().WithContext(c.Context()).Model(&models.WithdrawalRequest{}).Count(&withdrawalTotal)
+		deps.WalletRepo.DB().WithContext(c.Context()).Model(&models.Wallet{}).Count(&walletTotal)
+		if deps.ActivityLogRepo != nil {
+			deps.ActivityLogRepo.DB().WithContext(c.Context()).Model(&models.ActivityLog{}).Count(&activityTotal)
+		}
+		data.MerchantCount = int(merchantTotal)
+		data.PaymentCount = int(paymentTotal)
+		data.DepositCount = int(depositTotal)
+		data.WithdrawalCount = int(withdrawalTotal)
+		data.WalletCountAll = int(walletTotal)
+		data.ActivityCount = int(activityTotal)
+
+		switch panel {
+		case "merchants":
+			rows, total, _ := deps.MerchantService.Repo().ListPage(c.Context(), page, limit)
+			data.AdminMerchants = dealerAdminMerchantViews(rows)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/merchants")
+
+		case "payments":
+			rows, total, _ := deps.PaymentRepo.ListPage(c.Context(), page, limit)
+			data.Payments = dealerPaymentViews(c, rows)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/payments")
+
+		case "deposits":
+			rows, total, _ := deps.TransactionRepo.ListPage(c.Context(), page, limit)
+			data.AdminDeposits = dealerActivityViews(rows)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/deposits")
+
+		case "withdrawals":
+			rows, total, _ := deps.WithdrawalRepo.ListPage(c.Context(), page, limit)
+			data.Withdrawals = dealerWithdrawalViews(rows)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/withdrawals")
+
+		case "wallets":
+			rows, total, _ := deps.WalletRepo.ListPage(c.Context(), page, limit)
+			balanceMap := buildWalletBalanceMap(c.Context(), deps.TransactionRepo)
+			data.AdminWallets = dealerWalletViewsWithBalances(rows, balanceMap)
+			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/wallets")
+
+		case "activity":
+			merchantFilter := strings.TrimSpace(c.Query("merchant_id"))
+			data.AdminMerchantFilter = merchantFilter
+			var mID *uuid.UUID
+			if merchantFilter != "" {
+				if parsed, err := uuid.Parse(merchantFilter); err == nil {
+					mID = &parsed
+				}
+			}
+			rows, total, _ := deps.ActivityLogRepo.ListPage(c.Context(), page, limit, mID)
+			data.AdminActivityLogs = dealerAuditLogViews(rows)
+			// Also load merchants list for the filter dropdown.
+			merchants, _ := deps.MerchantService.List(c.Context(), 500)
+			data.AdminMerchants = dealerAdminMerchantViews(merchants)
+			baseURL := "/admin/activity"
+			if merchantFilter != "" {
+				baseURL += "?merchant_id=" + merchantFilter + "&"
+			} else {
+				baseURL += "?"
+			}
+			data.AdminPagination = dealerPaginationView(page, limit, total, baseURL[:len(baseURL)-1])
+
+		case "sweep":
+			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
+			data.WithdrawalWallets = dealerWalletViews(wallets)
+
+		default: // overview
+			rows, total, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
+			data.AdminDeposits = dealerActivityViews(rows)
+			_ = total
+		}
+
+		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
+	}
+}
+
+func HandleAdminMerchantToggle(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := requireAdmin(c)
+		if !ok {
+			return c.Status(403).SendString("unauthorized")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/merchants", "Geçersiz merchant ID.")
+		}
+		merchants, _ := deps.MerchantService.List(c.Context(), 1000)
+		for _, m := range merchants {
+			if m.ID == id {
+				newActive := !m.IsActive
+				if err := deps.MerchantService.Repo().SetActive(c.Context(), id, newActive); err != nil {
+					return redirectWithError(c, "/admin/merchants", "Güncelleme başarısız: "+err.Error())
+				}
+				status := "aktifleştirildi"
+				if !newActive {
+					status = "pasif edildi"
+				}
+				return redirectWithSuccess(c, "/admin/merchants", m.Name+" "+status+".")
 			}
 		}
-		wallets, err := deps.WalletRepo.List(c.Context(), 200)
-		if err != nil {
-			data := dealerPageData("Admin paneli", "admin")
-			data.DashboardURL = "/admin/withdrawals"
-			data.LogoutURL = "/admin/logout"
-			data.MerchantEmail = adminEmail
-			data.Error = "Wallet listesi okunamadı: " + err.Error()
-			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+		return redirectWithError(c, "/admin/merchants", "Merchant bulunamadı.")
+	}
+}
+
+func HandleAdminSweep(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		deposits, err := deps.TransactionRepo.List(c.Context(), 200)
-		if err != nil {
-			data := dealerPageData("Admin paneli", "admin")
-			data.DashboardURL = "/admin/withdrawals"
-			data.LogoutURL = "/admin/logout"
-			data.MerchantEmail = adminEmail
-			data.Error = "Deposit listesi okunamadı: " + err.Error()
-			return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
+		walletID := strings.TrimSpace(c.FormValue("wallet_id"))
+		chain := strings.TrimSpace(c.FormValue("chain"))
+		toAddress := strings.TrimSpace(c.FormValue("to_address"))
+		amountRaw := strings.TrimSpace(c.FormValue("amount_raw"))
+		isSweep := amountRaw == "" || amountRaw == "0"
+
+		if walletID == "" || chain == "" || toAddress == "" {
+			return redirectWithError(c, "/admin/sweep", "Wallet, chain ve hedef adres zorunlu.")
 		}
-		data := dealerPageData("Admin paneli", "admin")
-		data.HasSession = true
-		data.DashboardURL = "/admin/withdrawals"
-		data.LogoutURL = "/admin/logout"
-		data.MerchantEmail = adminEmail
-		applyFlash(c, &data)
-		data.Withdrawals = dealerWithdrawalViews(requests)
-		data.AdminMerchants = dealerAdminMerchantViews(merchants)
-		data.Payments = dealerPaymentViews(c, payments)
-		data.AdminWallets = dealerWalletViews(wallets)
-		data.AdminDeposits = dealerActivityViews(deposits)
-		data.MerchantCount = len(data.AdminMerchants)
-		data.PaymentCount = len(data.Payments)
-		data.WalletCountAll = len(data.AdminWallets)
-		data.ActivityCount = len(data.AdminDeposits)
-		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
+
+		params := types.TransferParams{
+			Context:   c.Context(),
+			WalletID:  &walletID,
+			Chain:     &chain,
+			ToAddress: &toAddress,
+		}
+		if !isSweep {
+			params.AmountRaw = &amountRaw
+		}
+
+		if isSweep {
+			if err := params.ValidateSweep(); err != nil {
+				return redirectWithError(c, "/admin/sweep", err.Error())
+			}
+		} else {
+			if err := params.ValidateWithdraw(); err != nil {
+				return redirectWithError(c, "/admin/sweep", err.Error())
+			}
+		}
+
+		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, isSweep)
+		if err != nil {
+			if deps.ActivityLogRepo != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.sweep", "failed", "wallet", walletID, err.Error())
+			}
+			return redirectWithError(c, "/admin/sweep", "Transfer başarısız: "+err.Error())
+		}
+		if deps.ActivityLogRepo != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.sweep", "success", "wallet", walletID, "Tx: "+result.TxHash)
+		}
+		return redirectWithSuccess(c, "/admin/sweep", "Transfer gönderildi. Tx: "+result.TxHash)
 	}
 }
 
@@ -1393,6 +1580,53 @@ func currentDashboardPanel(c fiber.Ctx) string {
 	return dashboardPanel(c.Params("section"))
 }
 
+func currentAdminPanel(c fiber.Ctx) string {
+	path := strings.ToLower(strings.TrimSuffix(c.Path(), "/"))
+	section := c.Params("section")
+	if section != "" {
+		return strings.ToLower(strings.TrimSpace(section))
+	}
+	switch path {
+	case "/admin/merchants":
+		return "merchants"
+	case "/admin/payments":
+		return "payments"
+	case "/admin/deposits":
+		return "deposits"
+	case "/admin/withdrawals":
+		return "withdrawals"
+	case "/admin/wallets":
+		return "wallets"
+	case "/admin/activity":
+		return "activity"
+	case "/admin/sweep":
+		return "sweep"
+	default:
+		return "overview"
+	}
+}
+
+func adminPageData(adminEmail string, panel string) DealerPageData {
+	data := DealerPageData{
+		Title:        "Admin paneli",
+		Active:       "admin",
+		HasSession:   true,
+		MerchantEmail: adminEmail,
+		LogoutURL:    "/admin/logout",
+
+		AdminPanel:          panel,
+		AdminOverviewURL:    "/admin",
+		AdminMerchantsURL:   "/admin/merchants",
+		AdminPaymentsURL:    "/admin/payments",
+		AdminDepositsURL:    "/admin/deposits",
+		AdminWithdrawalsURL: "/admin/withdrawals",
+		AdminWalletsURL:     "/admin/wallets",
+		AdminActivityURL:    "/admin/activity",
+		AdminSweepURL:       "/admin/sweep",
+	}
+	return data
+}
+
 func dealerDomainViews(domains []models.Domain) []DealerDomainView {
 	views := make([]DealerDomainView, 0, len(domains))
 	for _, domain := range domains {
@@ -1411,15 +1645,24 @@ func dealerDomainViews(domains []models.Domain) []DealerDomainView {
 func dealerProductViews(c fiber.Ctx, products []models.Product) []DealerProductView {
 	views := make([]DealerProductView, 0, len(products))
 	for _, product := range products {
+		logoText := "?"
+		if product.Name != "" {
+			runes := []rune(product.Name)
+			logoText = strings.ToUpper(string(runes[0]))
+		}
 		views = append(views, DealerProductView{
 			ID:          product.ID.String(),
 			Name:        product.Name,
-			Description: emptyDash(product.Description),
+			Description: product.Description,
 			Amount:      product.Amount,
 			Currency:    product.Currency,
 			Language:    strings.ToUpper(product.Language),
 			Domain:      product.Domain.DomainURL,
 			PaymentURL:  baseURL(c) + "/payment-links/" + product.LinkToken,
+			LogoURL:     product.LogoURL,
+			LogoText:    logoText,
+			SuccessURL:  product.SuccessURL,
+			CancelURL:   product.CancelURL,
 			CreatedAt:   formatPanelTime(product.CreatedAt),
 		})
 	}
@@ -1482,16 +1725,27 @@ func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 		if strings.TrimSpace(merchant) == "" {
 			merchant = shortText(wallet.MerchantID.String(), 8, 6)
 		}
+		missing := make([]DealerMissingChainView, 0)
+		for _, def := range walletChainDefs(wallet) {
+			if strings.TrimSpace(def.address) == "" {
+				missing = append(missing, DealerMissingChainView{
+					ChainName:  def.chainName,
+					ChainLabel: def.label,
+					WalletID:   wallet.ID.String(),
+				})
+			}
+		}
 		views = append(views, DealerWalletView{
-			ID:        wallet.ID.String(),
-			ShortID:   shortText(wallet.ID.String(), 8, 6),
-			Merchant:  merchant,
-			Label:     walletLabel(wallet),
-			ProductID: emptyDash(wallet.ProductID),
-			UserID:    emptyDash(wallet.UserID),
-			Domain:    shortText(wallet.DomainID.String(), 8, 6),
-			CreatedAt: formatPanelTime(wallet.CreatedAt),
-			Addresses: walletAddressViews(wallet),
+			ID:            wallet.ID.String(),
+			ShortID:       shortText(wallet.ID.String(), 8, 6),
+			Merchant:      merchant,
+			Label:         walletLabel(wallet),
+			ProductID:     emptyDash(wallet.ProductID),
+			UserID:        emptyDash(wallet.UserID),
+			Domain:        shortText(wallet.DomainID.String(), 8, 6),
+			CreatedAt:     formatPanelTime(wallet.CreatedAt),
+			Addresses:     walletAddressViews(wallet),
+			MissingChains: missing,
 		})
 	}
 	return views
@@ -1536,22 +1790,32 @@ func dealerPaginationView(page int, limit int, total int64, basePath string) Dea
 	return view
 }
 
-func walletAddressViews(wallet models.Wallet) []DealerAddressView {
-	addresses := []DealerAddressView{
-		{Chain: "BTC", Address: wallet.BitcoinAddress},
-		{Chain: "ETH", Address: wallet.EthereumAddress},
-		{Chain: "BASE", Address: wallet.BaseAddress},
-		{Chain: "UNI", Address: wallet.UnichainAddress},
-		{Chain: "AVAX", Address: wallet.AvalancheAddress},
-		{Chain: "BSC", Address: wallet.BinanceAddress},
-		{Chain: "CHZ", Address: wallet.ChilizAddress},
-		{Chain: "TRX", Address: wallet.TronAddress},
-		{Chain: "SOL", Address: wallet.SolanaAddress},
+type walletChainDef struct {
+	label     string
+	chainName string
+	address   string
+}
+
+func walletChainDefs(wallet models.Wallet) []walletChainDef {
+	return []walletChainDef{
+		{"BTC", "bitcoin", wallet.BitcoinAddress},
+		{"ETH", "ethereum", wallet.EthereumAddress},
+		{"BASE", "base", wallet.BaseAddress},
+		{"UNI", "unichain", wallet.UnichainAddress},
+		{"AVAX", "avalanche", wallet.AvalancheAddress},
+		{"BSC", "bnbchain", wallet.BinanceAddress},
+		{"CHZ", "chiliz", wallet.ChilizAddress},
+		{"CHZ-Spicy", "chiliz-spicy", wallet.ChilizSpicyAddress},
+		{"TRX", "tron", wallet.TronAddress},
+		{"SOL", "solana", wallet.SolanaAddress},
 	}
-	filtered := make([]DealerAddressView, 0, len(addresses))
-	for _, address := range addresses {
-		if strings.TrimSpace(address.Address) != "" {
-			filtered = append(filtered, address)
+}
+
+func walletAddressViews(wallet models.Wallet) []DealerAddressView {
+	filtered := make([]DealerAddressView, 0, 10)
+	for _, def := range walletChainDefs(wallet) {
+		if strings.TrimSpace(def.address) != "" {
+			filtered = append(filtered, DealerAddressView{Chain: def.label, Address: def.address})
 		}
 	}
 	return filtered
@@ -1723,6 +1987,8 @@ func dealerAuditLogViews(logs []models.ActivityLog) []DealerAuditLogView {
 			Path:        emptyDash(log.Path),
 			CreatedAt:   formatPanelTime(log.CreatedAt),
 			CreatedISO:  log.CreatedAt.UTC().Format(time.RFC3339Nano),
+			IsOIDC:      strings.Contains(log.Event, "oidc"),
+			IsFailed:    log.Status == "failed",
 		})
 	}
 	return views

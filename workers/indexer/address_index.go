@@ -54,6 +54,7 @@ func (a *AddressIndex) Load() error {
 			"tron_address",
 			"solana_address",
 			"chiliz_address",
+			"chiliz_spicy_address",
 		).
 		Find(&wallets).Error
 
@@ -81,6 +82,7 @@ func (a *AddressIndex) Load() error {
 		a.addUnsafe(constants.TRON, w.TronAddress, info)
 		a.addUnsafe(constants.Solana, w.SolanaAddress, info)
 		a.addUnsafe(constants.Chiliz, w.ChilizAddress, info)
+		a.addUnsafe(constants.ChilizSpicy, w.ChilizSpicyAddress, info)
 	}
 
 	return nil
@@ -121,7 +123,7 @@ func (a *AddressIndex) Get(chainID constants.ChainID, address string) (WalletInf
 func normalizeAddress(chainID constants.ChainID, address string) string {
 	address = strings.TrimSpace(address)
 	switch chainID {
-	case constants.Ethereum, constants.Avalanche, constants.Binance, constants.Base, constants.Unichain, constants.Chiliz:
+	case constants.Ethereum, constants.Avalanche, constants.Binance, constants.Base, constants.Unichain, constants.Chiliz, constants.ChilizSpicy:
 		return strings.ToLower(address)
 	default:
 		return address

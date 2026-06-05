@@ -123,8 +123,13 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 		return err
 	}
 
+	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
+	if err != nil {
+		secret = domain.WebhookSecret
+	}
+
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	signature := helpers.GenerateSignature(domain.WebhookSecret, timestamp, body)
+	signature := helpers.GenerateSignature(secret, timestamp, body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, domain.WebhookURL, bytes.NewReader(body))
 	if err != nil {
@@ -201,8 +206,13 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 		return err
 	}
 
+	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
+	if err != nil {
+		secret = domain.WebhookSecret
+	}
+
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	signature := helpers.GenerateSignature(domain.WebhookSecret, timestamp, body)
+	signature := helpers.GenerateSignature(secret, timestamp, body)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, domain.WebhookURL, bytes.NewReader(body))
 	if err != nil {

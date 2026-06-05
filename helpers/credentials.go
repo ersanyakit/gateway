@@ -10,7 +10,10 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -140,4 +143,94 @@ func EncryptSecret(secret string) (string, error) {
 	ciphertext := gcm.Seal(nonce, nonce, []byte(secret), nil)
 
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+func DecryptSecret(encrypted string) (string, error) {
+	masterKey := os.Getenv("MASTER_KEY")
+	if masterKey == "" {
+		return "", errors.New("MASTER_KEY not set")
+	}
+
+	hash := sha256.Sum256([]byte(masterKey))
+	key := hash[:]
+
+	ciphertext, err := base64.StdEncoding.DecodeString(encrypted)
+	if err != nil {
+		return "", err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return "", errors.New("ciphertext too short")
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
+}
+
+var privateRanges = []*net.IPNet{
+	mustParseCIDR("10.0.0.0/8"),
+	mustParseCIDR("172.16.0.0/12"),
+	mustParseCIDR("192.168.0.0/16"),
+	mustParseCIDR("127.0.0.0/8"),
+	mustParseCIDR("169.254.0.0/16"),
+	mustParseCIDR("100.64.0.0/10"),
+	mustParseCIDR("::1/128"),
+	mustParseCIDR("fc00::/7"),
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
+func isPrivateIP(ip net.IP) bool {
+	for _, r := range privateRanges {
+		if r.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func ValidateWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook url: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return errors.New("webhook url must use http or https scheme")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("webhook url must have a host")
+	}
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("webhook url host lookup failed: %w", err)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return errors.New("webhook url must not resolve to a private or loopback address")
+		}
+	}
+	return nil
 }

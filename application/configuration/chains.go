@@ -17,6 +17,8 @@ func NewChainFactory() *blockchain.ChainFactory {
 	factory.RegisterAlias("binance", "bnbchain")
 	factory.RegisterAlias("bsc", "bnbchain")
 	factory.RegisterChain("chiliz", chains.NewChilizChain())
+	factory.RegisterChain("chiliz-spicy", chains.NewChilizSpicyChain())
+	factory.RegisterAlias("spicy", "chiliz-spicy")
 	factory.RegisterChain("base", chains.NewBaseChain())
 	factory.RegisterChain("unichain", chains.NewUnichainChain())
 	return factory

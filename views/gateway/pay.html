@@ -30,6 +30,12 @@
 
     <section class="crypto-card">
       <div class="crypto-stack">
+        {{if .ProductName}}
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb">
+          {{if .ProductLogoURL}}<img style="width:28px;height:28px;border-radius:8px;object-fit:cover;flex-shrink:0" src="{{.ProductLogoURL}}" alt="">{{else}}<div style="width:28px;height:28px;border-radius:8px;background:#0d111c;display:grid;place-items:center;flex-shrink:0;font-size:11px;font-weight:900;color:#fff;letter-spacing:0">{{printf "%.1s" .ProductName}}</div>{{end}}
+          <strong style="font-size:13px;font-weight:700;color:#0d111c;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{.ProductName}}</strong>
+        </div>
+        {{end}}
         <div class="crypto-flex-between crypto-align-start">
           <div>
             <p class="crypto-label">{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}</p>

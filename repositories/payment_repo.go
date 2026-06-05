@@ -78,6 +78,27 @@ func (r *PaymentRepo) List(ctx context.Context, limit int) ([]models.PaymentSess
 	return sessions, err
 }
 
+func (r *PaymentRepo) ListPage(ctx context.Context, page, limit int) ([]models.PaymentSession, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.PaymentSession{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var sessions []models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").
+		Preload("Domain").
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&sessions).Error
+	return sessions, total, err
+}
+
 func (r *PaymentRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.PaymentSession, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -270,6 +291,20 @@ func (r *PaymentRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]mod
 		Limit(limit).
 		Find(&sessions).Error
 	return sessions, err
+}
+
+func (r *PaymentRepo) MarkExpiredSessions(ctx context.Context) (int64, error) {
+	result := r.db.WithContext(ctx).
+		Model(&models.PaymentSession{}).
+		Where("status IN ?", []string{models.PaymentStatusPending, models.PaymentStatusAwaitingPayment}).
+		Where("expires_at IS NOT NULL").
+		Where("expires_at < ?", time.Now()).
+		Updates(map[string]interface{}{
+			"status":        models.PaymentStatusExpired,
+			"webhook_event": "payment_expired",
+			"updated_at":    time.Now(),
+		})
+	return result.RowsAffected, result.Error
 }
 
 func newPaymentSessionToken() (string, error) {

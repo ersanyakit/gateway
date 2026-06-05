@@ -22,6 +22,7 @@ type Product struct {
 	SuccessURL  string `gorm:"size:500" json:"success_url,omitempty"`
 	CancelURL   string `gorm:"size:500" json:"cancel_url,omitempty"`
 
+	LogoURL   string `gorm:"size:500" json:"logo_url,omitempty"`
 	LinkToken string `gorm:"size:80;uniqueIndex;not null" json:"link_token"`
 	IsActive  bool   `gorm:"not null;default:true" json:"is_active"`
 

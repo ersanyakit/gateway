@@ -152,7 +152,18 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		return nil, errors.New("MASTER_KEY not set")
 	}
 
-	encryptedSecret, err := helpers.EncryptSecret(*params.WebhookSecret)
+	encryptedWebhookSecret, err := helpers.EncryptSecret(*params.WebhookSecret)
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	apiSecretPlain, err := helpers.GenerateSecret()
+	if err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+	encryptedAPISecret, err := helpers.EncryptSecret(apiSecretPlain)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -169,9 +180,9 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		DomainURL:     *params.DomainURL,
 		KeyID:         keyID,
 		APIKey:        apiKey,
-		APISecret:     encryptedSecret,
+		APISecret:     encryptedAPISecret,
 		WebhookURL:    *params.WebhookURL,
-		WebhookSecret: *params.WebhookSecret,
+		WebhookSecret: encryptedWebhookSecret,
 		HDAccountID:   hdIndex,
 	}
 

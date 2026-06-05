@@ -66,9 +66,9 @@ func InitDB() error {
 		return fmt.Errorf("failed to get sql db: %w", err)
 	}
 
-	sqlDB.SetMaxIdleConns(10)           // Boşta bekleyen bağlantıların maksimum sayısı
-	sqlDB.SetMaxOpenConns(0)            // Aynı anda açık olabilecek maksimum bağlantı sayısı
-	sqlDB.SetConnMaxLifetime(time.Hour) // Bağlantının yeniden kullanılabilir olacağı maksimum süre
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	DB = db
 	return nil

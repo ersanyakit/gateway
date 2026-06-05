@@ -3,6 +3,7 @@ package routes
 
 import (
 	"core/api/handlers"
+	"core/api/middleware"
 	"core/api/router"
 	configurations "core/application/configuration"
 	"core/asset"
@@ -170,33 +171,36 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
 	r.fiber.Post("/dealer/products", handlers.HandleDealerProductCreate(dealerDeps))
 	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
+	r.fiber.Post("/dealer/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
 	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
 	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
 	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
 	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo))
 	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())
 	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit())
-	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
-	r.fiber.Get("/admin/withdrawals", handlers.HandleAdminDashboard(dealerDeps))
+	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())
 	r.fiber.Post("/admin/withdrawals/:id/approve", handlers.HandleAdminWithdrawalApprove(dealerDeps))
 	r.fiber.Post("/admin/withdrawals/:id/reject", handlers.HandleAdminWithdrawalReject(dealerDeps))
-	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())
+	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))
+	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
+	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 
 	paymentDeps := handlers.PaymentHandlerDeps{
 		DomainRepo:    r.DomainRepo,
 		WalletRepo:    r.WalletRepo,
 		PaymentRepo:   r.PaymentRepo,
+		ProductRepo:   r.ProductRepo,
 		AssetRegistry: r.assetRegistry,
 		PriceOracle:   pricing.NewCoinGecko(),
 		Notifier:      webhooksvc.NewNotifier(),
 		PaymentHub:    r.PaymentHub,
 	}
-	r.fiber.Post("/payments/create", handlers.HandlePaymentCreate(paymentDeps))
+	r.fiber.Post("/payments/create", middleware.RateLimitPaymentCreate(), handlers.HandlePaymentCreate(paymentDeps))
 	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))
-	r.fiber.Get("/checkout/:token", handlers.HandleCheckout(paymentDeps))
-	r.fiber.Post("/checkout/:token/select", handlers.HandleCheckoutSelectAsset(paymentDeps))
-	r.fiber.Get("/checkout/:token/change", handlers.HandleCheckoutChangeAsset(paymentDeps))
-	r.fiber.Get("/checkout/:token/pay", handlers.HandleCheckoutPay(paymentDeps))
+	r.fiber.Get("/checkout/:token", middleware.RateLimitCheckout(), handlers.HandleCheckout(paymentDeps))
+	r.fiber.Post("/checkout/:token/select", middleware.RateLimitCheckout(), handlers.HandleCheckoutSelectAsset(paymentDeps))
+	r.fiber.Get("/checkout/:token/change", middleware.RateLimitCheckout(), handlers.HandleCheckoutChangeAsset(paymentDeps))
+	r.fiber.Get("/checkout/:token/pay", middleware.RateLimitCheckout(), handlers.HandleCheckoutPay(paymentDeps))
 	r.fiber.Get("/checkout/:token/ws", handlers.HandleCheckoutSocket(paymentDeps))
 	r.fiber.Get("/checkout/:token/qr.png", handlers.HandleCheckoutQRCode(paymentDeps))
 	r.fiber.Get("/checkout/:token/status.json", handlers.HandleCheckoutStatus(paymentDeps))

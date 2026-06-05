@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"core/blockchain"
 	"core/constants"
 	"core/models"
 	"core/types"
@@ -145,25 +146,31 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		}
 	}
 
+	chilizSpicyAddr := ""
+	if walletsMap["chiliz-spicy"] != nil {
+		chilizSpicyAddr = walletsMap["chiliz-spicy"].Address
+	}
+
 	wallet := &models.Wallet{
-		ID:               uuid.New(),
-		HDAddressId:      hdAccountId,
-		HDAccountID:      domain.HDAccountID,
-		MerchantID:       merchantUUID,
-		DomainID:         domainUUID,
-		ProductID:        *params.ProductId,
-		UserID:           *params.UserId,
-		BitcoinAddress:   walletsMap["bitcoin"].Address,
-		EthereumAddress:  walletsMap["ethereum"].Address,
-		AvalancheAddress: walletsMap["avalanche"].Address,
-		BinanceAddress:   walletsMap["bnbchain"].Address,
-		BaseAddress:      walletsMap["base"].Address,
-		UnichainAddress:  walletsMap["unichain"].Address,
-		TronAddress:      walletsMap["tron"].Address,
-		SolanaAddress:    walletsMap["solana"].Address,
-		ChilizAddress:    walletsMap["chiliz"].Address,
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
+		ID:                 uuid.New(),
+		HDAddressId:        hdAccountId,
+		HDAccountID:        domain.HDAccountID,
+		MerchantID:         merchantUUID,
+		DomainID:           domainUUID,
+		ProductID:          *params.ProductId,
+		UserID:             *params.UserId,
+		BitcoinAddress:     walletsMap["bitcoin"].Address,
+		EthereumAddress:    walletsMap["ethereum"].Address,
+		AvalancheAddress:   walletsMap["avalanche"].Address,
+		BinanceAddress:     walletsMap["bnbchain"].Address,
+		BaseAddress:        walletsMap["base"].Address,
+		UnichainAddress:    walletsMap["unichain"].Address,
+		TronAddress:        walletsMap["tron"].Address,
+		SolanaAddress:      walletsMap["solana"].Address,
+		ChilizAddress:      walletsMap["chiliz"].Address,
+		ChilizSpicyAddress: chilizSpicyAddr,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	if err := tx.Create(wallet).Error; err != nil {
@@ -175,7 +182,11 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		return nil, err
 	}
 
-	return wallet, nil
+	// Fill any chain addresses not covered by the initial HD wallet map
+	// (e.g. chains added after this wallet was first created).
+	_ = r.EnsureAllAddresses(params.Context, wallet.ID, r.domainRepo.MerchantRepo().blockchains)
+
+	return r.FindByID(params.Context, wallet.ID)
 }
 
 func (r *WalletRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Wallet, error) {
@@ -214,6 +225,27 @@ func (r *WalletRepo) List(ctx context.Context, limit int) ([]models.Wallet, erro
 		Limit(limit).
 		Find(&wallets).Error
 	return wallets, err
+}
+
+func (r *WalletRepo) ListPage(ctx context.Context, page, limit int) ([]models.Wallet, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.DB().WithContext(ctx).Model(&models.Wallet{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Preload("Merchant").
+		Preload("Domain").
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&wallets).Error
+	return wallets, total, err
 }
 
 func (r *WalletRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, limit int, offset int) ([]models.Wallet, int64, error) {
@@ -271,6 +303,8 @@ func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.C
 		err = db.First(&wallet, "solana_address = ?", address).Error
 	case constants.Chiliz:
 		err = db.First(&wallet, "LOWER(chiliz_address) = LOWER(?)", address).Error
+	case constants.ChilizSpicy:
+		err = db.First(&wallet, "LOWER(chiliz_spicy_address) = LOWER(?)", address).Error
 	default:
 		return nil, fmt.Errorf("unsupported chain id %d", chainID)
 	}
@@ -279,4 +313,128 @@ func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.C
 		return nil, err
 	}
 	return &wallet, nil
+}
+
+// chainToFieldName maps a chain name to the GORM column name.
+func chainToFieldName(chainName string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(chainName)) {
+	case "bitcoin":
+		return "bitcoin_address", nil
+	case "ethereum":
+		return "ethereum_address", nil
+	case "base":
+		return "base_address", nil
+	case "unichain":
+		return "unichain_address", nil
+	case "avalanche":
+		return "avalanche_address", nil
+	case "bnbchain", "binance", "bsc":
+		return "binance_address", nil
+	case "chiliz":
+		return "chiliz_address", nil
+	case "chiliz-spicy", "spicy":
+		return "chiliz_spicy_address", nil
+	case "tron":
+		return "tron_address", nil
+	case "solana":
+		return "solana_address", nil
+	default:
+		return "", fmt.Errorf("unknown chain: %s", chainName)
+	}
+}
+
+func walletAddressForChain(wallet models.Wallet, chainName string) string {
+	switch strings.ToLower(strings.TrimSpace(chainName)) {
+	case "bitcoin":
+		return wallet.BitcoinAddress
+	case "ethereum":
+		return wallet.EthereumAddress
+	case "base":
+		return wallet.BaseAddress
+	case "unichain":
+		return wallet.UnichainAddress
+	case "avalanche":
+		return wallet.AvalancheAddress
+	case "bnbchain", "binance", "bsc":
+		return wallet.BinanceAddress
+	case "chiliz":
+		return wallet.ChilizAddress
+	case "chiliz-spicy", "spicy":
+		return wallet.ChilizSpicyAddress
+	case "tron":
+		return wallet.TronAddress
+	case "solana":
+		return wallet.SolanaAddress
+	}
+	return ""
+}
+
+func (r *WalletRepo) FillChainAddress(ctx context.Context, walletID uuid.UUID, chainName string, blockchains *blockchain.ChainFactory) (*models.Wallet, error) {
+	field, err := chainToFieldName(chainName)
+	if err != nil {
+		return nil, err
+	}
+
+	wallet, err := r.FindByID(ctx, walletID)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(walletAddressForChain(*wallet, chainName)) != "" {
+		return wallet, nil
+	}
+
+	chain, err := blockchains.GetChain(chainName)
+	if err != nil {
+		return nil, fmt.Errorf("chain not found: %s", chainName)
+	}
+
+	details, err := chain.CreateHDWallet(ctx, int(wallet.HDAccountID), int(wallet.HDAddressId))
+	if err != nil {
+		return nil, fmt.Errorf("HD wallet derive failed: %w", err)
+	}
+
+	if err := r.DB().WithContext(ctx).
+		Model(&models.Wallet{}).
+		Where("id = ?", walletID).
+		Update(field, details.Address).Error; err != nil {
+		return nil, err
+	}
+
+	return r.FindByID(ctx, walletID)
+}
+
+// EnsureAllAddresses derives and saves any chain addresses that are null on the given wallet.
+// Safe to call repeatedly — skips chains that already have an address.
+func (r *WalletRepo) EnsureAllAddresses(ctx context.Context, walletID uuid.UUID, blockchains *blockchain.ChainFactory) error {
+	wallet, err := r.FindByID(ctx, walletID)
+	if err != nil {
+		return err
+	}
+
+	for _, chainName := range blockchains.ListChains() {
+		if strings.TrimSpace(walletAddressForChain(*wallet, chainName)) != "" {
+			continue
+		}
+		field, err := chainToFieldName(chainName)
+		if err != nil {
+			continue
+		}
+		chain, err := blockchains.GetChain(chainName)
+		if err != nil {
+			continue
+		}
+		details, err := chain.CreateHDWallet(ctx, int(wallet.HDAccountID), int(wallet.HDAddressId))
+		if err != nil {
+			fmt.Printf("[EnsureAllAddresses] %s wallet %s: %v\n", chainName, walletID, err)
+			continue
+		}
+		if err := r.DB().WithContext(ctx).
+			Model(&models.Wallet{}).
+			Where("id = ?", walletID).
+			Update(field, details.Address).Error; err != nil {
+			fmt.Printf("[EnsureAllAddresses] db %s wallet %s: %v\n", chainName, walletID, err)
+		}
+	}
+	return nil
 }

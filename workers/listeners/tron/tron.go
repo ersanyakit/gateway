@@ -102,7 +102,11 @@ func (r *RpcListener) Stop() error {
 }
 
 func (r *RpcListener) connect() error {
-	c, _, err := websocket.DefaultDialer.Dial(r.chain.WSS()[0], nil)
+	wssList := r.chain.WSS()
+	if len(wssList) == 0 {
+		return fmt.Errorf("[%s] no websocket URLs configured", r.chain.Name())
+	}
+	c, _, err := websocket.DefaultDialer.Dial(wssList[0], nil)
 	if err != nil {
 		return err
 	}

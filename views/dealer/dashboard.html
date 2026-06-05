@@ -71,21 +71,17 @@
           <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.AssetCount}} asset</span>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div class="overflow-hidden rounded-3xl border border-line">
           {{range .Balances}}
-            <article class="min-h-[184px] rounded-3xl border border-line bg-wash p-4 shadow-sm">
-              <div class="flex items-start justify-between gap-3">
-                <div class="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-ink text-sm font-black text-white">{{.Symbol}}</div>
-                <span class="rounded-full border border-line bg-white px-3 py-1 text-xs font-extrabold text-muted">{{.Chain}}</span>
+            <article class="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
+              <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink text-[10px] font-black text-white">{{.Symbol}}</div>
+              <div class="min-w-0 flex-1">
+                <span class="block text-sm font-black text-ink">{{.Symbol}}</span>
+                <span class="block text-xs font-semibold text-muted">{{.Chain}}</span>
               </div>
-              <div class="mt-5">
-                <span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
-                <strong class="mt-2 block min-w-0 break-words text-3xl font-black leading-tight text-ink">{{.AmountDisplay}}</strong>
-              </div>
-              <div class="mt-4 flex flex-wrap gap-2 text-xs font-bold text-muted">
-                <span class="rounded-full border border-line bg-white px-3 py-1">{{.Deposits}} deposit</span>
-                <span class="rounded-full border border-line bg-white px-3 py-1">{{.Users}} user</span>
-                {{if .Token}}<span class="max-w-full truncate rounded-full border border-line bg-white px-3 py-1">contract {{.DisplayToken}}</span>{{end}}
+              <div class="shrink-0 text-right">
+                <strong class="block text-sm font-black text-ink">{{.AmountDisplay}}</strong>
+                <span class="block text-xs font-semibold text-muted">{{.Deposits}} dep · {{.Users}} user</span>
               </div>
             </article>
           {{end}}
@@ -110,6 +106,57 @@
     </div>
   </section>
 
+  {{/* Wallet adresleri — treasury paneline eklendi */}}
+  {{if and (eq .ActivePanel "treasury") .Wallets}}
+  <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+    <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+      <div>
+        <h2 class="m-0 text-xl font-black text-ink">Wallet adresleri</h2>
+        <p class="m-0 mt-1 text-sm leading-6 text-muted">Yeni eklenen ağlar için adresler sunucu başlangıcında otomatik türetilir.</p>
+      </div>
+      <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.WalletCount}} wallet</span>
+    </div>
+    <div class="grid gap-3">
+      {{range .Wallets}}
+      <article class="overflow-hidden rounded-3xl border border-line bg-wash">
+        <div class="flex items-center justify-between gap-3 px-4 py-3">
+          <div class="min-w-0">
+            <strong class="block text-sm font-black text-ink">{{.Label}}</strong>
+            <small class="block text-xs font-semibold text-muted">{{if .UserID}}User: {{.UserID}}{{else}}Genel wallet{{end}}</small>
+          </div>
+          <code class="shrink-0 rounded-lg bg-white px-2 py-0.5 text-xs text-muted">{{.ShortID}}</code>
+        </div>
+        {{if .Addresses}}
+        <div class="grid gap-px border-t border-line sm:grid-cols-2 xl:grid-cols-3">
+          {{range .Addresses}}
+          <div class="flex items-center gap-2 bg-white px-4 py-2.5">
+            <span class="w-16 shrink-0 text-xs font-black text-muted">{{.Chain}}</span>
+            <code class="min-w-0 flex-1 truncate text-xs text-ink">{{.Address}}</code>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+        {{if .MissingChains}}
+        <div class="border-t border-dashed border-amber-200 bg-amber-50/60 px-4 py-2.5">
+          <p class="mb-2 text-xs font-bold text-amber-700">Türetilmeyi bekleyen adresler — sunucu yeniden başlatıldığında otomatik oluşturulur:</p>
+          <div class="flex flex-wrap gap-1.5">
+            {{range .MissingChains}}
+            <form method="post" action="/dealer/wallets/{{.WalletID}}/fill-address">
+              <input type="hidden" name="chain" value="{{.ChainName}}">
+              <button type="submit" class="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-700 hover:bg-amber-50">
+                <span>+ {{.ChainLabel}}</span>
+              </button>
+            </form>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      </article>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
   <section class="grid{{if ne .ActivePanel "activity"}} hidden{{end}} gap-4">
     <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
       <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
@@ -126,13 +173,14 @@
             <span>Event</span><span>Actor</span><span>Network</span><span>Request</span><span>Timestamp</span>
           </div>
           {{range .AuditLogs}}
-            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 lg:grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] lg:items-start">
+            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 {{if .IsFailed}}bg-red-50/40{{end}} lg:grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] lg:items-start">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-2">
                   <strong class="text-sm font-black text-ink">{{.Event}}</strong>
                   <span class="rounded-full {{if eq .Status "success"}}bg-emerald-50 text-emerald-700{{else}}bg-red-50 text-red-700{{end}} px-2 py-1 text-xs font-extrabold">{{.Status}}</span>
+                  {{if .IsOIDC}}<span class="rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-violet-700">OIDC</span>{{end}}
                 </div>
-                <small class="mt-2 block text-xs font-semibold leading-5 text-muted">{{.Description}}</small>
+                <small class="mt-2 block text-xs font-semibold leading-5 {{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</small>
                 <code class="mt-2 block truncate text-xs text-muted">{{.Subject}}</code>
               </div>
               <div class="min-w-0"><span class="block truncate text-sm font-bold text-ink">{{.Actor}}</span><small class="mt-1 block text-xs font-semibold text-muted">merchant</small></div>
@@ -194,6 +242,9 @@
         <label class="grid gap-2 text-sm font-bold text-muted" for="product_description">Açıklama
           <textarea class="min-h-24 rounded-2xl border border-line bg-white px-3 py-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_description" name="description" placeholder="Müşterinin checkout öncesi göreceği kısa açıklama"></textarea>
         </label>
+        <label class="grid gap-2 text-sm font-bold text-muted" for="product_logo_url">Logo URL
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_logo_url" name="logo_url" type="url" placeholder="https://example.com/logo.png">
+        </label>
         <div class="grid gap-3 sm:grid-cols-2">
           <label class="grid gap-2 text-sm font-bold text-muted" for="product_amount">Tutar
             <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_amount" name="amount" type="text" inputmode="decimal" placeholder="99.00" required>
@@ -232,20 +283,17 @@
           <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ProductCount}} ürün</span>
         </div>
         {{if .Products}}
-          <div class="grid gap-3">
+          <div class="overflow-hidden rounded-3xl border border-line">
             {{range .Products}}
-              <article class="rounded-3xl border border-line bg-wash p-4">
-                <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                  <div class="min-w-0">
-                    <strong class="block text-sm font-black text-ink">{{.Name}}</strong>
-                    <span class="mt-1 block text-xs font-semibold text-muted">{{.Amount}} {{.Currency}} · {{.Language}} · {{.Domain}}</span>
-                    <p class="m-0 mt-2 text-xs font-semibold leading-5 text-muted">{{.Description}}</p>
-                  </div>
-                  <time class="shrink-0 text-xs font-bold text-muted">{{.CreatedAt}}</time>
+              <article class="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
+                <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink text-sm font-black text-white">{{.LogoText}}</div>
+                <div class="min-w-0 flex-1">
+                  <strong class="block truncate text-sm font-black text-ink">{{.Name}}</strong>
+                  <span class="block text-xs font-semibold text-muted">{{.Amount}} {{.Currency}} · {{.Domain}}</span>
                 </div>
-                <div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <code class="min-w-0 flex-1 truncate rounded-2xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink" id="productLink{{.ID}}">{{.PaymentURL}}</code>
-                  <button class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="productLink{{.ID}}">Kopyala</button>
+                <div class="flex shrink-0 items-center gap-2">
+                  <code class="hidden max-w-[180px] truncate rounded-xl border border-line bg-white px-2 py-1.5 text-xs font-bold text-ink sm:block" id="productLink{{.ID}}">{{.PaymentURL}}</code>
+                  <button class="inline-flex min-h-8 items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="productLink{{.ID}}">Kopyala</button>
                 </div>
               </article>
             {{end}}
@@ -273,7 +321,7 @@
                   <small class="mt-1 block text-xs font-semibold text-muted">{{.ProductID}} · {{.UserID}}</small>
                 </div>
                 <div><strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.SelectedAsset}} / {{.SelectedChain}}</small></div>
-                <div><span class="rounded-full bg-wash px-3 py-1 text-xs font-extrabold text-muted">{{.Status}}</span><small class="mt-2 block text-xs font-semibold text-muted">{{.CreatedAt}}</small></div>
+                <div><span class="rounded-full px-3 py-1 text-xs font-extrabold {{if eq .Status "paid"}}bg-emerald-50 text-emerald-700{{else if eq .Status "pending"}}bg-amber-50 text-amber-700{{else if eq .Status "awaiting_payment"}}bg-blue-50 text-blue-700{{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span><small class="mt-2 block text-xs font-semibold text-muted">{{.CreatedAt}}</small></div>
                 <button class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-value="{{.CheckoutURL}}">Checkout link kopyala</button>
               </article>
             {{end}}

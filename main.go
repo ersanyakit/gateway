@@ -10,9 +10,11 @@ import (
 	webhooksvc "core/services/webhook"
 	"core/types"
 	"core/workers/dispatcher"
+	addressindex "core/workers/indexer"
 	btcListener "core/workers/listeners/bitcoin"
 	evmListener "core/workers/listeners/evm"
 	solListener "core/workers/listeners/solana"
+	tronListener "core/workers/listeners/tron"
 	"errors"
 	"flag"
 	"fmt"
@@ -54,17 +56,40 @@ func webhookRetryInterval() time.Duration {
 	return interval
 }
 
+var addrIndex *addressindex.AddressIndex
+
 func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, eventType string, txParam types.TransactionParam) (*models.Transaction, error) {
 	if txParam.To == nil || txParam.Amount == nil || !isPositiveAmount(*txParam.Amount) {
 		return nil, nil
 	}
 
-	wallet, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, txParam.ChainID, *txParam.To)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+	var wallet *models.Wallet
+	if addrIndex != nil {
+		if info, ok := addrIndex.Get(txParam.ChainID, *txParam.To); ok {
+			w, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, info.WalletID)
+			if err == nil {
+				wallet = w
+			}
+		}
 	}
-	if err != nil {
-		return nil, err
+	if wallet == nil {
+		w, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, txParam.ChainID, *txParam.To)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		wallet = w
+		if addrIndex != nil {
+			addrIndex.Add(txParam.ChainID, *txParam.To, addressindex.WalletInfo{
+				WalletID:   wallet.ID,
+				MerchantID: wallet.MerchantID,
+				DomainID:   wallet.DomainID,
+				ProductID:  wallet.ProductID,
+				UserID:     wallet.UserID,
+			})
+		}
 	}
 
 	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
@@ -80,16 +105,19 @@ func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, ev
 		return txModel, nil
 	}
 
-	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
+	go func() {
+		deliveryCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		err := notifier.Deliver(deliveryCtx, wallet.Domain, *txModel)
+		if err != nil {
+			fmt.Println("Webhook delivery error:", err)
+			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(context.Background(), uniqueHash, false, err)
+		} else {
+			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(context.Background(), uniqueHash, true, nil)
+		}
+	}()
 
-	err = notifier.Deliver(deliveryCtx, wallet.Domain, *txModel)
-	if err != nil {
-		fmt.Println("Webhook delivery error:", err)
-		return txModel, coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, false, err)
-	}
-
-	return txModel, coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, true, nil)
+	return txModel, nil
 }
 
 func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, txModel *models.Transaction) {
@@ -196,6 +224,50 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 	}
 }
 
+func backfillMissingAddresses(ctx context.Context) {
+	wallets, err := coreApplication.CORE.Router.WalletRepo.List(ctx, 10000)
+	if err != nil {
+		log.Printf("Backfill: wallet list error: %v\n", err)
+		return
+	}
+	filled := 0
+	for _, wallet := range wallets {
+		if err := coreApplication.CORE.Router.WalletRepo.EnsureAllAddresses(
+			ctx,
+			wallet.ID,
+			coreApplication.CORE.Router.Blockchains(),
+		); err != nil {
+			log.Printf("Backfill: wallet %s error: %v\n", wallet.ID, err)
+		} else {
+			filled++
+		}
+	}
+	if filled > 0 {
+		log.Printf("Backfill: ensured addresses for %d wallets\n", filled)
+		if err := addrIndex.Load(); err != nil {
+			log.Printf("Backfill: address index reload error: %v\n", err)
+		}
+	}
+}
+
+func startSessionExpiryWorker(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			n, err := coreApplication.CORE.Router.PaymentRepo.MarkExpiredSessions(ctx)
+			if err != nil {
+				log.Println("Session expiry sweep error:", err)
+			} else if n > 0 {
+				log.Printf("Expired %d payment sessions\n", n)
+			}
+		}
+	}
+}
+
 func startWebhookRetryWorker(ctx context.Context, notifier *webhooksvc.Notifier) {
 	ticker := time.NewTicker(webhookRetryInterval())
 	defer ticker.Stop()
@@ -293,15 +365,26 @@ func main() {
 		log.Printf("Deleted %d unsupported chain state rows\n", deletedChainStates)
 	}
 
+	addrIndex = addressindex.NewAddressIndex(mainCtx, coreDB.DB)
+	if err := addrIndex.Load(); err != nil {
+		log.Printf("Address index load error: %v\n", err)
+	} else {
+		log.Println("Address index loaded")
+	}
+
+	go backfillMissingAddresses(mainCtx)
+
 	bus := dispatcher.NewDispatcher()
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
 	webhookNotifier := webhooksvc.NewNotifier()
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
+	go startSessionExpiryWorker(mainCtx)
 
 	chainNames := []string{
 		"bitcoin",
 		"ethereum",
 		"chiliz",
+		"chiliz-spicy",
 		"solana",
 		"tron",
 		"base",
@@ -310,7 +393,7 @@ func main() {
 		"bnbchain",
 	}
 
-	var isEnabled = false
+	var isEnabled = true
 
 	if isEnabled {
 		subscribeBus := func(chain blockchain.Chain) {
@@ -392,6 +475,16 @@ func main() {
 				)
 			case constants.Solana:
 				worker = solListener.NewRpcListener(
+					chain,
+					assetRegistry,
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
+					},
+				)
+			case constants.TRON:
+				worker = tronListener.NewRpcListener(
 					chain,
 					assetRegistry,
 					state,

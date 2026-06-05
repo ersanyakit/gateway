@@ -59,6 +59,15 @@ func (r *ProductRepo) FindByToken(ctx context.Context, token string) (*models.Pr
 	return &product, nil
 }
 
+func (r *ProductRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Product, error) {
+	var product models.Product
+	err := r.db.WithContext(ctx).First(&product, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &product, nil
+}
+
 func (r *ProductRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.Product, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
