@@ -38,6 +38,26 @@ func (r *WithdrawalRequestRepo) ListByMerchant(ctx context.Context, merchantID u
 	return requests, err
 }
 
+func (r *WithdrawalRequestRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, page, limit int) ([]models.WithdrawalRequest, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 20
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).Where("merchant_id = ?", merchantID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var requests []models.WithdrawalRequest
+	err := r.db.WithContext(ctx).
+		Where("merchant_id = ?", merchantID).
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&requests).Error
+	return requests, total, err
+}
+
 func (r *WithdrawalRequestRepo) List(ctx context.Context, status string, limit int) ([]models.WithdrawalRequest, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100

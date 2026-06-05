@@ -279,6 +279,74 @@ func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.Wit
 	return r.db.WithContext(ctx).Create(&entries).Error
 }
 
+func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
+	key := "refund-debit:" + refund.ID.String()
+	exists, err := r.exists(ctx, key)
+	if err != nil || exists {
+		return err
+	}
+	if !r.amountIsPositive(refund.AmountRaw) {
+		return errors.New("refund amount must be positive")
+	}
+	now := time.Now()
+	refundID := refund.ID
+	paymentID := session.ID
+	walletID := session.WalletID
+	chainID := constants.ChainID(0)
+	if session.SelectedChainID != nil {
+		chainID = *session.SelectedChainID
+	}
+	entries := []models.LedgerEntry{
+		{
+			ID:              uuid.New(),
+			MerchantID:      refund.MerchantID,
+			DomainID:        &refund.DomainID,
+			WalletID:        &walletID,
+			PaymentID:       &paymentID,
+			RefundID:        &refundID,
+			TransactionHash: txHash,
+			ChainID:         chainID,
+			Token:           session.SelectedToken,
+			Symbol:          session.SelectedSymbol,
+			Decimals:        session.SelectedDecimals,
+			EntryType:       models.LedgerEntryTypeRefundDebit,
+			Account:         models.LedgerAccountMerchantAvailable,
+			Direction:       models.LedgerDirectionDebit,
+			Status:          models.LedgerStatusPosted,
+			AmountRaw:       refund.AmountRaw,
+			IdempotencyKey:  key,
+			Reference:       refund.ID.String(),
+			PostedAt:        &now,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+		{
+			ID:              uuid.New(),
+			MerchantID:      refund.MerchantID,
+			DomainID:        &refund.DomainID,
+			WalletID:        &walletID,
+			PaymentID:       &paymentID,
+			RefundID:        &refundID,
+			TransactionHash: txHash,
+			ChainID:         chainID,
+			Token:           session.SelectedToken,
+			Symbol:          session.SelectedSymbol,
+			Decimals:        session.SelectedDecimals,
+			EntryType:       models.LedgerEntryTypeRefundDebit,
+			Account:         models.LedgerAccountPlatformClearing,
+			Direction:       models.LedgerDirectionCredit,
+			Status:          models.LedgerStatusPosted,
+			AmountRaw:       refund.AmountRaw,
+			IdempotencyKey:  key,
+			Reference:       refund.ID.String(),
+			PostedAt:        &now,
+			CreatedAt:       now,
+			UpdatedAt:       now,
+		},
+	}
+	return r.db.WithContext(ctx).Create(&entries).Error
+}
+
 func ledgerChainIDFromName(name string) (constants.ChainID, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "bitcoin", "btc":

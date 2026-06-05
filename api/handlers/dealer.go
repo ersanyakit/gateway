@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"core/asset"
 	"core/blockchain"
@@ -8,13 +9,17 @@ import (
 	"core/helpers"
 	"core/models"
 	"core/repositories"
+	"core/services/pricing"
 	services "core/services/system"
 	"core/types"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -25,6 +30,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
+	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/oauth2"
 )
 
@@ -38,18 +44,28 @@ const flashSuccessCookie = "flash_success"
 const flashErrorCookie = "flash_error"
 
 type DealerDeps struct {
-	MerchantService *services.MerchantService
-	DomainService   *services.DomainService
-	WalletRepo      *repositories.WalletRepo
-	ProductRepo     *repositories.ProductRepo
-	PaymentRepo     *repositories.PaymentRepo
-	WithdrawalRepo  *repositories.WithdrawalRequestRepo
-	LedgerRepo      *repositories.LedgerRepo
-	TransactionRepo *repositories.TransactionRepo
-	ActivityLogRepo *repositories.ActivityLogRepo
-	AdminRepo       *repositories.AdminRepo
-	AssetRegistry   *asset.Registry
-	Blockchains     *blockchain.ChainFactory
+	MerchantService     *services.MerchantService
+	DomainService       *services.DomainService
+	WalletRepo          *repositories.WalletRepo
+	ProductRepo         *repositories.ProductRepo
+	PaymentRepo         *repositories.PaymentRepo
+	WithdrawalRepo      *repositories.WithdrawalRequestRepo
+	RefundRepo          *repositories.RefundRepo
+	LedgerRepo          *repositories.LedgerRepo
+	TransactionRepo     *repositories.TransactionRepo
+	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
+	ActivityLogRepo     *repositories.ActivityLogRepo
+	AdminRepo           *repositories.AdminRepo
+	AssetRegistry       *asset.Registry
+	Blockchains         *blockchain.ChainFactory
+	Notifier            WebhookNotifier
+	PriceOracle         pricing.PriceOracle
+}
+
+// WebhookNotifier is the minimal interface the dealer handlers need from the webhook service.
+type WebhookNotifier interface {
+	Deliver(ctx context.Context, domain models.Domain, tx models.Transaction) error
+	DeliverPayment(ctx context.Context, domain models.Domain, session models.PaymentSession) error
 }
 
 type DealerPageData struct {
@@ -71,6 +87,8 @@ type DealerPageData struct {
 	ActivePanel       string
 	TreasuryURL       string
 	ActivityURL       string
+	TransactionsURL   string
+	UsersURL          string
 	WithdrawalsURL    string
 	DomainsPanelURL   string
 	ProductsURL       string
@@ -103,6 +121,8 @@ type DealerPageData struct {
 	AdminWallets      []DealerWalletView
 	AdminDeposits     []DealerActivityView
 	AdminActivityLogs []DealerAuditLogView
+	AdminWebhooks     []DealerWebhookDeliveryView
+	AdminRefunds      []DealerRefundView
 
 	AdminPanel          string
 	AdminOverviewURL    string
@@ -114,13 +134,26 @@ type DealerPageData struct {
 	AdminActivityURL    string
 	AdminSweepURL       string
 	AdminLinksURL       string
+	AdminWebhooksURL    string
+	AdminRefundsURL     string
 	DepositCount        int
 	WithdrawalCount     int
 
-	AdminPagination     DealerPaginationView
-	AdminMerchantFilter string
-	AdminTOTPEnabled    bool
-	AdminSecurityURL    string
+	WalletSearch        string
+	PaymentStatusFilter string
+	PaymentStats        map[string]int64
+
+	AdminPagination          DealerPaginationView
+	AdminMerchantFilter      string
+	AdminTOTPEnabled         bool
+	AdminSecurityURL         string
+	TOTPSecret               string
+	TOTPQRDataURL            string
+	AdminDepositFromFilter   string
+	AdminDepositToFilter     string
+	AdminDepositHashFilter   string
+	AdminWebhookStatusFilter string
+	AdminRefundStatusFilter  string
 }
 
 type DealerDomainView struct {
@@ -149,6 +182,7 @@ type DealerWalletView struct {
 type DealerWalletBalanceRow struct {
 	Chain     string
 	Symbol    string
+	LogoURL   string
 	Deposited string
 	Locked    string
 	Available string
@@ -188,6 +222,7 @@ type DealerPaymentView struct {
 	Currency       string
 	Status         string
 	CheckoutURL    string
+	InvoiceURL     string
 	SelectedAsset  string
 	SelectedChain  string
 	DepositAddress string
@@ -242,12 +277,42 @@ type DealerWithdrawalView struct {
 	CreatedAt    string
 }
 
+type DealerWebhookDeliveryView struct {
+	ID          string
+	EventID     string
+	EventType   string
+	TargetURL   string
+	Status      string
+	Attempts    uint
+	LastError   string
+	CreatedAt   string
+	UpdatedAt   string
+	DeliveredAt string
+}
+
+type DealerRefundView struct {
+	ID          string
+	PaymentID   string
+	MerchantID  string
+	DomainID    string
+	AmountRaw   string
+	Reason      string
+	Status      string
+	TxHash      string
+	Error       string
+	RequestedBy string
+	CreatedAt   string
+}
+
 type DealerBalanceView struct {
 	Chain         string
+	ChainLogoURL  string
 	Symbol        string
 	Token         string
+	LogoURL       string
 	AmountRaw     string
 	AmountDisplay string
+	AmountUSD     string
 	Decimals      uint8
 	Deposits      int64
 	Users         int64
@@ -256,18 +321,21 @@ type DealerBalanceView struct {
 }
 
 type DealerChainVaultView struct {
-	Chain    string
-	Assets   []DealerBalanceView
-	Deposits int64
-	Users    int64
-	Empty    bool
+	Chain        string
+	ChainLogoURL string
+	Assets       []DealerBalanceView
+	Deposits     int64
+	Users        int64
+	Empty        bool
 }
 
 type DealerActivityView struct {
 	ID              string
 	Type            string
 	Chain           string
+	ChainLogoURL    string
 	Symbol          string
+	LogoURL         string
 	AmountRaw       string
 	AmountDisplay   string
 	Status          string
@@ -505,9 +573,11 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 			}
 		}
+		paymentStatusFilter := strings.TrimSpace(c.Query("status"))
 		var payments []models.PaymentSession
+		var paymentTotal int64
 		if deps.PaymentRepo != nil {
-			payments, err = deps.PaymentRepo.ListByMerchant(c.Context(), merchant.ID, 100)
+			payments, paymentTotal, err = deps.PaymentRepo.ListByMerchantPage(c.Context(), merchant.ID, paymentStatusFilter, 1, 100)
 			if err != nil {
 				data := dealerPageData("Bayi paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
@@ -546,7 +616,12 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			}
 		}
 
-		wallets, _ := deps.WalletRepo.ListByMerchant(c.Context(), merchant.ID, 200)
+		const walletPageSize = 20
+		walletPage := max(1, parseQueryInt(c.Query("page"), 1))
+		walletSearch := strings.TrimSpace(c.Query("q"))
+		walletOffset := (walletPage - 1) * walletPageSize
+		wallets, walletTotal, _ := deps.WalletRepo.SearchByMerchantPage(c.Context(), merchant.ID, walletSearch, walletPageSize, walletOffset)
+		allWallets, _ := deps.WalletRepo.ListByMerchant(c.Context(), merchant.ID, 1000)
 
 		data := dealerPageData("Bayi paneli", "dashboard")
 		fillDealerMerchant(&data, merchant)
@@ -562,15 +637,26 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			data.Balances = dealerBalanceViews(balances)
 		}
 		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
+		enrichBalancesWithUSD(c.Context(), data.Balances, deps.PriceOracle)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
 		data.Activities = dealerActivityViews(transactions)
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
 		data.Wallets = dealerWalletViews(wallets)
-		data.WithdrawalWallets = data.Wallets
-		data.WalletCount = len(wallets)
+		data.WithdrawalWallets = dealerWalletViews(allWallets)
+		usersBaseURL := "/dealer/dashboard/users"
+		if walletSearch != "" {
+			usersBaseURL += "?q=" + walletSearch
+		}
+		data.WalletPage = dealerPaginationView(walletPage, walletPageSize, walletTotal, usersBaseURL)
+		data.WalletSearch = walletSearch
+		data.WalletCount = int(walletTotal)
 		data.DomainCount = len(domains)
 		data.ProductCount = len(data.Products)
-		data.PaymentCount = len(data.Payments)
+		data.PaymentCount = int(paymentTotal)
+		data.PaymentStatusFilter = paymentStatusFilter
+		if deps.PaymentRepo != nil {
+			data.PaymentStats, _ = deps.PaymentRepo.StatsByMerchant(c.Context(), merchant.ID)
+		}
 		data.AssetCount = len(data.Balances)
 		data.NetworkCount = len(data.ChainVaults)
 		data.ActivityCount = len(data.AuditLogs) + len(transactions)
@@ -878,6 +964,106 @@ func HandleDealerLogout(service *services.MerchantService, activityRepo *reposit
 	}
 }
 
+// HandleDealerWebhookTest sends a signed test event to the domain's configured webhook URL.
+func HandleDealerWebhookTest(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Oturum gerekli"})
+		}
+
+		domainIDStr := c.Params("id")
+		domain, err := deps.DomainService.FindByID(types.DomainParams{
+			Context:  c.Context(),
+			DomainID: &domainIDStr,
+		})
+		if err != nil || domain.MerchantID != merchant.ID {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Domain bulunamadı"})
+		}
+		if domain.WebhookURL == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bu domain için webhook URL tanımlanmamış"})
+		}
+		if domain.WebhookSecret == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bu domain için webhook secret tanımlanmamış"})
+		}
+
+		secret, err := helpers.DecryptSecret(domain.WebhookSecret)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Webhook secret çözülemedi"})
+		}
+
+		eventID := "test-" + uuid.New().String()
+		testPayload := map[string]interface{}{
+			"event_id":    eventID,
+			"event_type":  "test",
+			"merchant_id": merchant.ID.String(),
+			"domain_id":   domain.ID.String(),
+			"message":     "Bu bir test webhook isteğidir. Sisteme entegre edildiğinizi doğrulamak için gönderilmiştir.",
+			"sent_at":     time.Now().UTC().Format(time.RFC3339),
+		}
+		body, _ := json.Marshal(testPayload)
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		sig := helpers.GenerateSignature(secret, ts, body)
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		req, err := http.NewRequestWithContext(c.Context(), http.MethodPost, domain.WebhookURL, bytes.NewReader(body))
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("User-Agent", "gateway-webhook/1.0")
+		req.Header.Set("X-Gateway-Event", "test")
+		req.Header.Set("X-Gateway-Event-Id", eventID)
+		req.Header.Set("X-Gateway-Timestamp", ts)
+		req.Header.Set("X-Gateway-Signature", "sha256="+sig)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return c.JSON(fiber.Map{"success": false, "error": err.Error()})
+		}
+		defer resp.Body.Close()
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		success := resp.StatusCode >= 200 && resp.StatusCode < 300
+
+		return c.JSON(fiber.Map{
+			"success":     success,
+			"status_code": resp.StatusCode,
+			"response":    string(respBody),
+		})
+	}
+}
+
+func HandleDealerDomainUpdateWebhook(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Oturum gerekli"})
+		}
+
+		domainIDStr := c.Params("id")
+		domainUUID, err := uuid.Parse(domainIDStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Geçersiz domain ID"})
+		}
+
+		webhookURL := strings.TrimSpace(c.FormValue("webhook_url"))
+		webhookSecret := strings.TrimSpace(c.FormValue("webhook_secret"))
+		if webhookURL == "" || webhookSecret == "" {
+			return redirectWithError(c, "/dealer/dashboard/domains", "Webhook URL ve secret boş olamaz")
+		}
+		if err := helpers.ValidateWebhookURL(webhookURL); err != nil {
+			return redirectWithError(c, "/dealer/dashboard/domains", "Geçersiz webhook URL: "+err.Error())
+		}
+
+		if err := deps.DomainService.UpdateWebhook(c.Context(), domainUUID, merchant.ID, webhookURL, webhookSecret); err != nil {
+			return redirectWithError(c, "/dealer/dashboard/domains", "Güncelleme hatası: "+err.Error())
+		}
+
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.update_webhook", "success", "domain", domainIDStr, "Webhook URL ve secret güncellendi.")
+		return redirectWithSuccess(c, "/dealer/dashboard/domains", "Webhook başarıyla güncellendi.")
+	}
+}
+
 func HandleAdminLogin() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		data := dealerPageData("Admin girişi", "admin-login")
@@ -934,6 +1120,14 @@ func HandleAdminLoginSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 	}
 }
 
+func totpQRDataURL(otpauthURL string) string {
+	png, err := qrcode.Encode(otpauthURL, qrcode.Medium, 256)
+	if err != nil {
+		return ""
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+}
+
 func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		adminID, ok := verifyAdminTempCookie(c, adminSetupTOTPCookie)
@@ -966,6 +1160,8 @@ func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 		)
 		data := dealerPageData("2FA kurulum", "admin-2fa-setup")
 		data.Success = qrURL
+		data.TOTPSecret = secret
+		data.TOTPQRDataURL = totpQRDataURL(qrURL)
 		data.MerchantEmail = admin.Email
 		return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
 	}
@@ -991,6 +1187,8 @@ func HandleAdminTOTPSetupSubmit(adminRepo *repositories.AdminRepo) fiber.Handler
 				url.QueryEscape(admin.Email), admin.TOTPSecret,
 			)
 			data.Success = qrURL
+			data.TOTPSecret = admin.TOTPSecret
+			data.TOTPQRDataURL = totpQRDataURL(qrURL)
 			return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
 		}
 		// Enable TOTP.
@@ -1255,9 +1453,16 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/payments")
 
 		case "deposits":
-			rows, total, _ := deps.TransactionRepo.ListPage(c.Context(), page, limit)
+			fromFilter := strings.TrimSpace(c.Query("from"))
+			toFilter := strings.TrimSpace(c.Query("to"))
+			hashFilter := strings.TrimSpace(c.Query("hash"))
+			data.AdminDepositFromFilter = fromFilter
+			data.AdminDepositToFilter = toFilter
+			data.AdminDepositHashFilter = hashFilter
+			rows, total, _ := deps.TransactionRepo.ListPageFiltered(c.Context(), page, limit, fromFilter, toFilter, hashFilter)
 			data.AdminDeposits = dealerActivityViews(rows)
-			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/deposits")
+			depositBase := buildDepositFilterURL(fromFilter, toFilter, hashFilter)
+			data.AdminPagination = dealerPaginationView(page, limit, total, depositBase)
 
 		case "withdrawals":
 			rows, total, _ := deps.WithdrawalRepo.ListPage(c.Context(), page, limit)
@@ -1288,6 +1493,28 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 				activityBase += "?merchant_id=" + merchantFilter
 			}
 			data.AdminPagination = dealerPaginationView(page, limit, total, activityBase)
+
+		case "webhooks":
+			statusFilter := strings.TrimSpace(c.Query("status"))
+			data.AdminWebhookStatusFilter = statusFilter
+			rows, total, _ := deps.WebhookDeliveryRepo.ListPage(c.Context(), page, limit, statusFilter)
+			data.AdminWebhooks = dealerWebhookDeliveryViews(rows)
+			webhookBase := "/admin/webhooks"
+			if statusFilter != "" {
+				webhookBase += "?status=" + statusFilter
+			}
+			data.AdminPagination = dealerPaginationView(page, limit, total, webhookBase)
+
+		case "refunds":
+			statusFilter := strings.TrimSpace(c.Query("status"))
+			data.AdminRefundStatusFilter = statusFilter
+			rows, total, _ := deps.RefundRepo.ListPage(c.Context(), page, limit, statusFilter)
+			data.AdminRefunds = dealerRefundViews(rows)
+			refundBase := "/admin/refunds"
+			if statusFilter != "" {
+				refundBase += "?status=" + statusFilter
+			}
+			data.AdminPagination = dealerPaginationView(page, limit, total, refundBase)
 
 		case "sweep":
 			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
@@ -1337,6 +1564,69 @@ func HandleAdminMerchantToggle(deps DealerDeps) fiber.Handler {
 			}
 		}
 		return redirectWithError(c, "/admin/merchants", "Merchant bulunamadı.")
+	}
+}
+
+func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if deps.WebhookDeliveryRepo == nil || deps.Notifier == nil {
+			return redirectWithError(c, "/admin/webhooks", "Webhook replay servisi hazır değil.")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/webhooks", "Geçersiz webhook delivery.")
+		}
+		delivery, err := deps.WebhookDeliveryRepo.Find(c.Context(), id)
+		if err != nil {
+			return redirectWithError(c, "/admin/webhooks", "Webhook delivery bulunamadı.")
+		}
+		domainID := delivery.DomainID.String()
+		domain, err := deps.DomainService.FindByID(types.DomainParams{
+			Context:  c.Context(),
+			DomainID: &domainID,
+		})
+		if err != nil {
+			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+			return redirectWithError(c, "/admin/webhooks", "Domain bulunamadı: "+err.Error())
+		}
+
+		if delivery.PaymentID != nil {
+			session, err := deps.PaymentRepo.FindByID(c.Context(), *delivery.PaymentID)
+			if err != nil {
+				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+				return redirectWithError(c, "/admin/webhooks", "Payment bulunamadı: "+err.Error())
+			}
+			if err := deps.Notifier.DeliverPayment(c.Context(), *domain, *session); err != nil {
+				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
+			}
+			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Payment webhook yeniden gönderildi.")
+			return redirectWithSuccess(c, "/admin/webhooks", "Payment webhook yeniden gönderildi.")
+		}
+
+		if delivery.TransactionID != nil {
+			txModel, err := deps.TransactionRepo.FindByID(c.Context(), *delivery.TransactionID)
+			if err != nil {
+				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+				return redirectWithError(c, "/admin/webhooks", "Transaction bulunamadı: "+err.Error())
+			}
+			if err := deps.Notifier.Deliver(c.Context(), *domain, *txModel); err != nil {
+				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
+			}
+			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Transaction webhook yeniden gönderildi.")
+			return redirectWithSuccess(c, "/admin/webhooks", "Transaction webhook yeniden gönderildi.")
+		}
+
+		err = errors.New("delivery payment veya transaction referansı taşımıyor")
+		_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+		return redirectWithError(c, "/admin/webhooks", err.Error())
 	}
 }
 
@@ -1452,6 +1742,108 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/withdrawals", "Talep reddedilemedi: "+err.Error())
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi reddedildi.")
+	}
+}
+
+func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if deps.RefundRepo == nil || deps.PaymentRepo == nil || deps.TransactionRepo == nil {
+			return redirectWithError(c, "/admin/refunds", "Refund altyapısı hazır değil.")
+		}
+
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Geçersiz refund.")
+		}
+		refund, err := deps.RefundRepo.Find(c.Context(), id)
+		if err != nil || refund.Status != models.RefundStatusPending {
+			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
+		}
+
+		session, err := deps.PaymentRepo.FindByID(c.Context(), refund.PaymentID)
+		if err != nil || session.Status != models.PaymentStatusPaid {
+			return redirectWithError(c, "/admin/refunds", "Paid payment bulunamadı.")
+		}
+		if session.MerchantID != refund.MerchantID || session.DomainID != refund.DomainID {
+			return redirectWithError(c, "/admin/refunds", "Refund payment merchant/domain ile eşleşmiyor.")
+		}
+		if session.SelectedChainID == nil || !constants.IsSupportedChainID(*session.SelectedChainID) {
+			return redirectWithError(c, "/admin/refunds", "Payment chain bilgisi eksik veya desteklenmiyor.")
+		}
+		if session.TxUniqueHash == nil || strings.TrimSpace(*session.TxUniqueHash) == "" {
+			return redirectWithError(c, "/admin/refunds", "Payment için orijinal deposit transaction bulunamadı.")
+		}
+
+		txModel, err := deps.TransactionRepo.FindByUniqueHash(c.Context(), *session.TxUniqueHash)
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Orijinal deposit transaction okunamadı: "+err.Error())
+		}
+		toAddress := strings.TrimSpace(txModel.FromAddress)
+		if toAddress == "" {
+			return redirectWithError(c, "/admin/refunds", "Refund hedef adresi bulunamadı.")
+		}
+
+		walletID := session.WalletID.String()
+		chain := constants.ChainName(*session.SelectedChainID)
+		amountRaw := refund.AmountRaw
+		params := types.TransferParams{
+			Context:   c.Context(),
+			WalletID:  &walletID,
+			Chain:     &chain,
+			ToAddress: &toAddress,
+			AmountRaw: &amountRaw,
+		}
+		if err := params.ValidateWithdraw(); err != nil {
+			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			return redirectWithError(c, "/admin/refunds", err.Error())
+		}
+
+		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
+		if err != nil {
+			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
+		}
+		if err := deps.RefundRepo.MarkSucceeded(c.Context(), id, adminEmail, result.TxHash); err != nil {
+			return redirectWithError(c, "/admin/refunds", "Refund güncellenemedi: "+err.Error())
+		}
+		if deps.LedgerRepo != nil {
+			if err := deps.LedgerRepo.PostRefundDebit(c.Context(), *refund, *session, result.TxHash); err != nil {
+				return redirectWithError(c, "/admin/refunds", "Refund ledger güncellenemedi: "+err.Error())
+			}
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+result.TxHash)
+		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")
+	}
+}
+
+func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if deps.RefundRepo == nil {
+			return redirectWithError(c, "/admin/refunds", "Refund altyapısı hazır değil.")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Geçersiz refund.")
+		}
+		reason := strings.TrimSpace(c.FormValue("reason"))
+		if reason == "" {
+			reason = "Admin tarafından reddedildi."
+		}
+		if err := deps.RefundRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
+			return redirectWithError(c, "/admin/refunds", "Refund reddedilemedi: "+err.Error())
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason)
+		return redirectWithSuccess(c, "/admin/refunds", "Refund talebi reddedildi.")
 	}
 }
 
@@ -1904,6 +2296,8 @@ func dealerPageData(title string, active string) DealerPageData {
 		DashboardURL:     "/dealer/dashboard",
 		TreasuryURL:      "/dealer/dashboard/treasury",
 		ActivityURL:      "/dealer/dashboard/activity",
+		TransactionsURL:  "/dealer/dashboard/transactions",
+		UsersURL:         "/dealer/dashboard/users",
 		WithdrawalsURL:   "/dealer/dashboard/withdrawals",
 		DomainsPanelURL:  "/dealer/dashboard/domains",
 		ProductsURL:      "/dealer/products",
@@ -1936,12 +2330,16 @@ func dashboardPanel(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "activity":
 		return "activity"
+	case "transactions":
+		return "transactions"
 	case "withdrawals":
 		return "withdrawals"
 	case "domains":
 		return "domains"
 	case "products":
 		return "products"
+	case "users":
+		return "users"
 	default:
 		return "treasury"
 	}
@@ -1973,6 +2371,10 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "wallets"
 	case "/admin/activity":
 		return "activity"
+	case "/admin/webhooks":
+		return "webhooks"
+	case "/admin/refunds":
+		return "refunds"
 	case "/admin/sweep":
 		return "sweep"
 	case "/admin/admins":
@@ -2005,8 +2407,53 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminSweepURL:       "/admin/sweep",
 		AdminSecurityURL:    "/admin/security",
 		AdminLinksURL:       "/admin/links",
+		AdminWebhooksURL:    "/admin/webhooks",
+		AdminRefundsURL:     "/admin/refunds",
 	}
 	return data
+}
+
+func dealerWebhookDeliveryViews(rows []models.WebhookDelivery) []DealerWebhookDeliveryView {
+	views := make([]DealerWebhookDeliveryView, 0, len(rows))
+	for _, row := range rows {
+		deliveredAt := ""
+		if row.DeliveredAt != nil {
+			deliveredAt = formatPanelTime(*row.DeliveredAt)
+		}
+		views = append(views, DealerWebhookDeliveryView{
+			ID:          row.ID.String(),
+			EventID:     row.EventID,
+			EventType:   row.EventType,
+			TargetURL:   row.TargetURL,
+			Status:      row.Status,
+			Attempts:    row.Attempts,
+			LastError:   row.LastError,
+			CreatedAt:   formatPanelTime(row.CreatedAt),
+			UpdatedAt:   formatPanelTime(row.UpdatedAt),
+			DeliveredAt: deliveredAt,
+		})
+	}
+	return views
+}
+
+func dealerRefundViews(rows []models.Refund) []DealerRefundView {
+	views := make([]DealerRefundView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, DealerRefundView{
+			ID:          row.ID.String(),
+			PaymentID:   row.PaymentID.String(),
+			MerchantID:  row.MerchantID.String(),
+			DomainID:    row.DomainID.String(),
+			AmountRaw:   row.AmountRaw,
+			Reason:      row.Reason,
+			Status:      row.Status,
+			TxHash:      row.TxHash,
+			Error:       row.Error,
+			RequestedBy: row.RequestedBy,
+			CreatedAt:   formatPanelTime(row.CreatedAt),
+		})
+	}
+	return views
 }
 
 func dealerDomainViews(domains []models.Domain) []DealerDomainView {
@@ -2059,7 +2506,9 @@ func dealerPaymentViews(c fiber.Ctx, payments []models.PaymentSession) []DealerP
 		if payment.SelectedChainID != nil {
 			selectedChain = chainLabel(*payment.SelectedChainID)
 		}
-		checkoutURL := baseURL(c) + "/checkout/" + payment.SessionToken
+		base := baseURL(c)
+		checkoutURL := base + "/checkout/" + payment.SessionToken
+		invoiceURL := base + "/invoice/" + payment.SessionToken
 		merchant := payment.Merchant.Name
 		if strings.TrimSpace(merchant) == "" {
 			merchant = shortText(payment.MerchantID.String(), 8, 6)
@@ -2079,6 +2528,7 @@ func dealerPaymentViews(c fiber.Ctx, payments []models.PaymentSession) []DealerP
 			Currency:       payment.Currency,
 			Status:         payment.Status,
 			CheckoutURL:    checkoutURL,
+			InvoiceURL:     invoiceURL,
 			SelectedAsset:  emptyDash(payment.SelectedSymbol),
 			SelectedChain:  selectedChain,
 			DepositAddress: shortText(payment.DepositAddress, 12, 8),
@@ -2147,6 +2597,7 @@ func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.Transaction
 		result[r.WalletID] = append(result[r.WalletID], DealerWalletBalanceRow{
 			Chain:     chainLabel(constants.ChainID(r.ChainID)),
 			Symbol:    r.Symbol,
+			LogoURL:   asset.CoinLogoURL(r.Symbol),
 			Deposited: display,
 		})
 	}
@@ -2302,8 +2753,10 @@ func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
 		}
 		views = append(views, DealerBalanceView{
 			Chain:         chainLabel(summary.ChainID),
+			ChainLogoURL:  asset.ChainLogoURL(summary.ChainID),
 			Symbol:        summary.Symbol,
 			Token:         token,
+			LogoURL:       asset.CoinLogoURL(summary.Symbol),
 			AmountRaw:     summary.AmountRaw,
 			AmountDisplay: formatTokenAmount(summary.AmountRaw, summary.Decimals),
 			Decimals:      summary.Decimals,
@@ -2328,8 +2781,10 @@ func dealerLedgerBalanceViews(rows []repositories.LedgerBalanceRow) []DealerBala
 		}
 		views = append(views, DealerBalanceView{
 			Chain:         chainLabel(constants.ChainID(row.ChainID)),
+			ChainLogoURL:  asset.ChainLogoURL(constants.ChainID(row.ChainID)),
 			Symbol:        row.Symbol,
 			Token:         token,
+			LogoURL:       asset.CoinLogoURL(row.Symbol),
 			AmountRaw:     row.BalanceRaw,
 			AmountDisplay: formatTokenAmount(row.BalanceRaw, row.Decimals),
 			Decimals:      row.Decimals,
@@ -2362,13 +2817,17 @@ func dealerAllBalanceViews(registry *asset.Registry, balances []DealerBalanceVie
 		}
 		seen[key] = struct{}{}
 		if balance, ok := byKey[key]; ok {
+			balance.LogoURL = registry.LogoURL(assetInfo.GetSymbol())
+			balance.ChainLogoURL = asset.ChainLogoURL(assetInfo.GetChainID())
 			views = append(views, balance)
 			continue
 		}
 		views = append(views, DealerBalanceView{
 			Chain:         chainLabel(assetInfo.GetChainID()),
+			ChainLogoURL:  asset.ChainLogoURL(assetInfo.GetChainID()),
 			Symbol:        assetInfo.GetSymbol(),
 			Token:         token,
+			LogoURL:       registry.LogoURL(assetInfo.GetSymbol()),
 			AmountRaw:     "0",
 			AmountDisplay: "0",
 			Decimals:      assetInfo.GetDecimals(),
@@ -2376,6 +2835,44 @@ func dealerAllBalanceViews(registry *asset.Registry, balances []DealerBalanceVie
 		})
 	}
 	return views
+}
+
+func enrichBalancesWithUSD(ctx context.Context, balances []DealerBalanceView, oracle pricing.PriceOracle) {
+	if oracle == nil {
+		return
+	}
+	cache := make(map[string]string)
+	for i := range balances {
+		sym := balances[i].Symbol
+		if _, ok := cache[sym]; !ok {
+			price, err := oracle.Price(ctx, sym, "USD")
+			if err != nil || price == nil {
+				cache[sym] = ""
+				continue
+			}
+			amtF := parseTokenFloat(balances[i].AmountDisplay)
+			pf, _ := price.Float64()
+			usd := amtF * pf
+			if usd > 0 {
+				cache[sym] = fmt.Sprintf("$%.2f", usd)
+			} else {
+				cache[sym] = ""
+			}
+		}
+		balances[i].AmountUSD = cache[sym]
+	}
+}
+
+func parseTokenFloat(display string) float64 {
+	display = strings.TrimSpace(display)
+	if display == "" || display == "0" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(display, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 func balanceKey(chain string, symbol string, token string) string {
@@ -2393,9 +2890,10 @@ func dealerChainVaultViews(balances []DealerBalanceView) []DealerChainVaultView 
 		chain := chainLabel(chainID)
 		assets := byChain[chain]
 		view := DealerChainVaultView{
-			Chain:  chain,
-			Assets: assets,
-			Empty:  len(assets) == 0,
+			Chain:        chain,
+			ChainLogoURL: asset.ChainLogoURL(chainID),
+			Assets:       assets,
+			Empty:        len(assets) == 0,
 		}
 		for _, asset := range assets {
 			view.Deposits += asset.Deposits
@@ -2423,7 +2921,9 @@ func dealerActivityViews(transactions []models.Transaction) []DealerActivityView
 			ID:              tx.ID.String(),
 			Type:            eventType,
 			Chain:           chainLabel(tx.ChainID),
+			ChainLogoURL:    asset.ChainLogoURL(tx.ChainID),
 			Symbol:          tx.Symbol,
+			LogoURL:         asset.CoinLogoURL(tx.Symbol),
 			AmountRaw:       tx.Amount,
 			AmountDisplay:   formatTokenAmount(tx.Amount, tx.Decimals),
 			Status:          tx.Status,
@@ -2725,4 +3225,22 @@ func parseQueryInt(s string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func buildDepositFilterURL(from, to, hash string) string {
+	base := "/admin/deposits"
+	params := []string{}
+	if from != "" {
+		params = append(params, "from="+url.QueryEscape(from))
+	}
+	if to != "" {
+		params = append(params, "to="+url.QueryEscape(to))
+	}
+	if hash != "" {
+		params = append(params, "hash="+url.QueryEscape(hash))
+	}
+	if len(params) > 0 {
+		return base + "?" + strings.Join(params, "&")
+	}
+	return base
 }

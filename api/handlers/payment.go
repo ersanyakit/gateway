@@ -58,6 +58,7 @@ func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, product
 type CheckoutAssetOption struct {
 	ChainID       int64
 	ChainName     string
+	ChainLogoURL  string
 	Symbol        string
 	Name          string
 	Token         string
@@ -66,6 +67,7 @@ type CheckoutAssetOption struct {
 	AmountDisplay string
 	Native        bool
 	Available     bool
+	LogoURL       string
 }
 
 type CheckoutAssetGroup struct {
@@ -74,6 +76,7 @@ type CheckoutAssetGroup struct {
 	AmountDisplay string
 	ChainCount    int
 	URL           string
+	LogoURL       string
 }
 
 // HandlePaymentCreate creates a merchant payment checkout session.
@@ -407,18 +410,24 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		lang := checkoutLanguage(c)
 		qrURL := "/checkout/" + session.SessionToken + "/qr.png"
 		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
+		selectedLogoURL := ""
+		if deps.AssetRegistry != nil {
+			selectedLogoURL = deps.AssetRegistry.LogoURL(session.SelectedSymbol)
+		}
 		return c.Render("gateway/pay", fiber.Map{
-			"Session":            session,
-			"Lang":               lang,
-			"IsEnglish":          lang == "en",
-			"QRCodeURL":          qrURL,
-			"PaymentURI":         paymentURI(*session),
-			"ChainName":          constants.ChainName(*session.SelectedChainID),
-			"AmountDisplay":      amountDisplay,
-			"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
-			"ProductName":        productName,
-			"ProductDescription": productDesc,
-			"ProductLogoURL":     productLogo,
+			"Session":              session,
+			"Lang":                 lang,
+			"IsEnglish":            lang == "en",
+			"QRCodeURL":            qrURL,
+			"PaymentURI":           paymentURI(*session),
+			"ChainName":            constants.ChainName(*session.SelectedChainID),
+			"ChainLogoURL":         asset.ChainLogoURL(*session.SelectedChainID),
+			"AmountDisplay":        amountDisplay,
+			"ExpiresAtUnix":        checkoutExpiresAtUnix(session),
+			"ProductName":          productName,
+			"ProductDescription":   productDesc,
+			"ProductLogoURL":       productLogo,
+			"SelectedAssetLogoURL": selectedLogoURL,
 		})
 	}
 }
@@ -638,7 +647,7 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
 			continue
 		}
-		symbol := checkoutCanonicalSymbol(assetInfo.GetSymbol())
+		symbol := canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol())
 		group, ok := bySymbol[symbol]
 		if !ok {
 			group = CheckoutAssetGroup{
@@ -646,6 +655,7 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 				Name:          checkoutGroupName(symbol),
 				AmountDisplay: formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), symbol),
 				URL:           "/checkout/" + session.SessionToken + "?asset=" + url.QueryEscape(symbol),
+				LogoURL:       deps.AssetRegistry.LogoURL(symbol),
 			}
 			seenChains[symbol] = make(map[constants.ChainID]struct{})
 		}
@@ -667,11 +677,11 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 	if deps.AssetRegistry == nil {
 		return nil
 	}
-	selectedSymbol = checkoutCanonicalSymbol(selectedSymbol)
+	selectedSymbol = canonicalSymbol(deps.AssetRegistry, selectedSymbol)
 	assets := deps.AssetRegistry.ListAll()
 	options := make([]CheckoutAssetOption, 0, len(assets))
 	for _, assetInfo := range assets {
-		if selectedSymbol != "" && !strings.EqualFold(checkoutCanonicalSymbol(assetInfo.GetSymbol()), selectedSymbol) {
+		if selectedSymbol != "" && !strings.EqualFold(canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol()), selectedSymbol) {
 			continue
 		}
 		amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
@@ -685,6 +695,7 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 		options = append(options, CheckoutAssetOption{
 			ChainID:       int64(assetInfo.GetChainID()),
 			ChainName:     constants.ChainName(assetInfo.GetChainID()),
+			ChainLogoURL:  asset.ChainLogoURL(assetInfo.GetChainID()),
 			Symbol:        assetInfo.GetSymbol(),
 			Name:          assetInfo.GetName(),
 			Token:         token,
@@ -693,6 +704,7 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 			AmountDisplay: formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), assetInfo.GetSymbol()),
 			Native:        assetInfo.IsNative(),
 			Available:     paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) != "",
+			LogoURL:       deps.AssetRegistry.LogoURL(assetInfo.GetSymbol()),
 		})
 	}
 	sort.Slice(options, func(i, j int) bool {
@@ -717,6 +729,8 @@ func findCheckoutAsset(registry *asset.Registry, chainID constants.ChainID, symb
 	return nil, errors.New("Selected asset is not available.")
 }
 
+// checkoutCanonicalSymbol is the registry-unaware fallback used only in contexts without a Registry.
+// Prefer registry.CanonicalSymbol() wherever deps.AssetRegistry is available.
 func checkoutCanonicalSymbol(symbol string) string {
 	switch strings.ToUpper(strings.TrimSpace(symbol)) {
 	case "WBTC":
@@ -725,9 +739,19 @@ func checkoutCanonicalSymbol(symbol string) string {
 		return "ETH"
 	case "WCHZ":
 		return "CHZ"
+	case "WBNB":
+		return "BNB"
 	default:
 		return strings.ToUpper(strings.TrimSpace(symbol))
 	}
+}
+
+// canonicalSymbol resolves via the registry when available, falling back to the static map.
+func canonicalSymbol(registry interface{ CanonicalSymbol(string) string }, symbol string) string {
+	if registry != nil {
+		return registry.CanonicalSymbol(symbol)
+	}
+	return checkoutCanonicalSymbol(symbol)
 }
 
 func checkoutGroupName(symbol string) string {
@@ -988,4 +1012,53 @@ func uuidString(id uuid.UUID) string {
 
 func isRecordNotFound(err error) bool {
 	return errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+type InvoicePageData struct {
+	Title        string
+	OrderID      string
+	MerchantName string
+	DomainURL    string
+	Amount       string
+	Currency     string
+	Status       string
+	IsPaid       bool
+	Symbol       string
+	TxHash       string
+	CreatedAt    string
+	PaidAt       string
+	CheckoutURL  string
+}
+
+// HandlePaymentInvoice renders a print-friendly invoice/receipt for a payment session.
+func HandlePaymentInvoice(deps PaymentHandlerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		token := c.Params("token")
+		session, err := deps.PaymentRepo.FindByToken(c.Context(), token)
+		if err != nil {
+			return c.Status(fiber.StatusNotFound).SendString("Ödeme bulunamadı")
+		}
+
+		isPaid := session.Status == models.PaymentStatusPaid
+		data := InvoicePageData{
+			Title:       "Fatura #" + session.OrderID,
+			OrderID:     session.OrderID,
+			DomainURL:   session.Domain.DomainURL,
+			Amount:      session.Amount,
+			Currency:    session.Currency,
+			Status:      session.Status,
+			IsPaid:      isPaid,
+			Symbol:      session.SelectedSymbol,
+			CreatedAt:   session.CreatedAt.Format("02.01.2006 15:04"),
+			CheckoutURL: "/checkout/" + session.SessionToken,
+		}
+		if session.TxHash != nil {
+			data.TxHash = *session.TxHash
+		}
+		if session.PaidAt != nil {
+			data.PaidAt = session.PaidAt.Format("02.01.2006 15:04")
+		}
+
+		return c.Render("invoice", data)
+	}
 }

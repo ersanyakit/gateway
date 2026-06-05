@@ -1,4 +1,45 @@
 document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('[data-test-webhook]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var domainID = btn.getAttribute('data-test-webhook');
+      var resultEl = document.getElementById('webhook-result-' + domainID);
+      if (!resultEl) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Gönderiliyor…';
+      resultEl.className = 'mt-2 rounded-2xl border p-3 text-xs font-semibold';
+      resultEl.textContent = '';
+
+      fetch('/dealer/domains/' + domainID + '/test-webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          resultEl.classList.remove('hidden');
+          if (data.success) {
+            resultEl.classList.add('border-green-200', 'bg-green-50', 'text-green-800');
+            resultEl.textContent = '✓ HTTP ' + data.status_code + ' — webhook başarıyla iletildi.';
+          } else {
+            resultEl.classList.add('border-red-200', 'bg-red-50', 'text-red-800');
+            resultEl.textContent = '✗ ' + (data.error || ('HTTP ' + data.status_code));
+            if (data.response) resultEl.textContent += ' — ' + data.response.slice(0, 200);
+          }
+        })
+        .catch(function (err) {
+          resultEl.classList.remove('hidden');
+          resultEl.classList.add('border-red-200', 'bg-red-50', 'text-red-800');
+          resultEl.textContent = '✗ İstek başarısız: ' + err.message;
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = 'Webhook Test Et';
+        });
+    });
+  });
+
+
   document.querySelectorAll('[data-copy-target], [data-copy-value]').forEach(function (button) {
     button.addEventListener('click', function () {
       var value = button.getAttribute('data-copy-value') || '';

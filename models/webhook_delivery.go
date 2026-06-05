@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	WebhookDeliveryStatusPending   = "pending"
-	WebhookDeliveryStatusSucceeded = "succeeded"
-	WebhookDeliveryStatusFailed    = "failed"
+	WebhookDeliveryStatusPending    = "pending"
+	WebhookDeliveryStatusSucceeded  = "succeeded"
+	WebhookDeliveryStatusFailed     = "failed"
+	WebhookDeliveryStatusDeadLetter = "dead_letter"
 )
 
 type WebhookDelivery struct {

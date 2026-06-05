@@ -14,14 +14,18 @@
     {{if .Error}}<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
 
     <div class="flex flex-col items-center gap-4">
-      <div id="qr-container" class="rounded-2xl border border-line bg-wash p-4 text-center">
-        <canvas id="qr-canvas" width="200" height="200"></canvas>
-        <p class="mt-2 text-xs font-semibold text-muted">Google Authenticator ile tarat</p>
-      </div>
+      {{if .TOTPQRDataURL}}
+        <div class="rounded-2xl border border-line bg-wash p-4 text-center">
+          <img src="{{.TOTPQRDataURL}}" alt="2FA QR Code" width="200" height="200" style="display:block;width:200px;height:200px;">
+          <p class="mt-2 text-xs font-semibold text-muted">Google Authenticator ile tarat</p>
+        </div>
+      {{end}}
+      {{if .TOTPSecret}}
       <details class="w-full">
         <summary class="cursor-pointer text-xs font-bold text-muted">Manuel giriş kodu göster</summary>
-        <code class="mt-2 block break-all rounded-xl border border-line bg-wash p-3 text-xs text-ink" id="totp-secret-display"></code>
+        <code class="mt-2 block break-all rounded-xl border border-line bg-wash p-3 text-xs text-ink">{{.TOTPSecret}}</code>
       </details>
+      {{end}}
     </div>
 
     <form class="grid gap-3" method="post" action="/admin/2fa/setup">
@@ -34,38 +38,3 @@
     </form>
   </section>
 </section>
-
-<script>
-(function() {
-  const otpauth = {{.Success | js}};
-  if (!otpauth) return;
-
-  // Extract secret from otpauth URL
-  try {
-    const url = new URL(otpauth);
-    const secret = url.searchParams.get('secret') || '';
-    document.getElementById('totp-secret-display').textContent = secret;
-  } catch(e) {}
-
-  // Simple QR code using qrcode.js CDN
-  const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-  script.onload = function() {
-    const container = document.getElementById('qr-container');
-    container.innerHTML = '';
-    new QRCode(container, {
-      text: otpauth,
-      width: 200,
-      height: 200,
-      colorDark: '#131313',
-      colorLight: '#ffffff',
-      correctLevel: QRCode.CorrectLevel.M
-    });
-    const p = document.createElement('p');
-    p.className = 'mt-2 text-xs font-semibold text-muted';
-    p.textContent = 'Google Authenticator ile tarat';
-    container.appendChild(p);
-  };
-  document.head.appendChild(script);
-})();
-</script>

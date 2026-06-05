@@ -129,6 +129,60 @@ func (r *PaymentRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, 
 	return sessions, err
 }
 
+func (r *PaymentRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, status string, page, limit int) ([]models.PaymentSession, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 20
+	}
+	base := r.db.WithContext(ctx).Where("merchant_id = ?", merchantID)
+	if status != "" {
+		base = base.Where("status = ?", status)
+	}
+	var total int64
+	if err := base.Model(&models.PaymentSession{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var sessions []models.PaymentSession
+	err := base.Order("created_at DESC").Limit(limit).Offset((page - 1) * limit).Find(&sessions).Error
+	return sessions, total, err
+}
+
+func (r *PaymentRepo) FindByOrderID(ctx context.Context, merchantID uuid.UUID, orderID string) (*models.PaymentSession, error) {
+	var session models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Where("merchant_id = ? AND order_id = ?", merchantID, orderID).
+		Order("created_at DESC").
+		First(&session).Error
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *PaymentRepo) StatsByMerchant(ctx context.Context, merchantID uuid.UUID) (map[string]int64, error) {
+	type row struct {
+		Status string
+		Count  int64
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).
+		Model(&models.PaymentSession{}).
+		Select("status, COUNT(*) as count").
+		Where("merchant_id = ?", merchantID).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int64)
+	for _, r := range rows {
+		result[r.Status] = r.Count
+	}
+	return result, nil
+}
+
 func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID constants.ChainID, symbol string, assetToken *string, decimals uint8, amountRaw string, depositAddress string) (*models.PaymentSession, error) {
 	updates := map[string]interface{}{
 		"selected_chain_id":   &chainID,

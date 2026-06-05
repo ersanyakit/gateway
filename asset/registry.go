@@ -7,16 +7,56 @@ import (
 )
 
 type Registry struct {
-	mu      sync.RWMutex
-	assets  map[constants.ChainID]map[string]Asset // chainID -> identifier -> asset
-	natives map[constants.ChainID]Asset
+	mu            sync.RWMutex
+	assets        map[constants.ChainID]map[string]Asset // chainID -> identifier -> asset
+	natives       map[constants.ChainID]Asset
+	symbolAliases map[string]string // lower(alias) → lower(canonical)
 }
 
 func NewRegistry() *Registry {
 	return &Registry{
-		assets:  make(map[constants.ChainID]map[string]Asset),
-		natives: make(map[constants.ChainID]Asset),
+		assets:        make(map[constants.ChainID]map[string]Asset),
+		natives:       make(map[constants.ChainID]Asset),
+		symbolAliases: make(map[string]string),
 	}
+}
+
+// RegisterAlias declares alias as equivalent to canonical for grouping, logo, and name resolution.
+// e.g. RegisterAlias("WBTC", "BTC") — WBTC is treated as a BTC variant.
+func (r *Registry) RegisterAlias(alias, canonical string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.symbolAliases[r.Normalize(alias)] = r.Normalize(canonical)
+}
+
+// CanonicalSymbol resolves a symbol through its alias chain and returns the canonical form.
+// If the symbol has no alias it returns the symbol uppercased unchanged.
+func (r *Registry) CanonicalSymbol(symbol string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if canon, ok := r.symbolAliases[r.Normalize(symbol)]; ok {
+		return strings.ToUpper(canon)
+	}
+	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+// IsAlias reports whether symbol is registered as an alias of another symbol.
+func (r *Registry) IsAlias(symbol string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.symbolAliases[r.Normalize(symbol)]
+	return ok
+}
+
+// LogoURL returns the coin logo URL for a symbol, resolving aliases first.
+// WBTC → CanonicalSymbol("WBTC") = "BTC" → CoinLogoURL("BTC") = "/static/coins/btc.svg"
+func (r *Registry) LogoURL(symbol string) string {
+	return CoinLogoURL(r.CanonicalSymbol(symbol))
+}
+
+// ChainLogoURL returns the chain icon URL for a chain ID.
+func (r *Registry) ChainLogoURL(chainID constants.ChainID) string {
+	return ChainLogoURL(chainID)
 }
 
 func (r *Registry) Normalize(id string) string {

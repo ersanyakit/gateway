@@ -274,6 +274,27 @@ func (r *WalletRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUI
 	return wallets, total, err
 }
 
+func (r *WalletRepo) SearchByMerchantPage(ctx context.Context, merchantID uuid.UUID, search string, limit int, offset int) ([]models.Wallet, int64, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	base := r.DB().WithContext(ctx).Where("merchant_id = ?", merchantID)
+	if search != "" {
+		like := "%" + search + "%"
+		base = base.Where("user_id ILIKE ? OR label ILIKE ?", like, like)
+	}
+	var total int64
+	if err := base.Model(&models.Wallet{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var wallets []models.Wallet
+	err := base.Order("created_at DESC").Limit(limit).Offset(offset).Find(&wallets).Error
+	return wallets, total, err
+}
+
 func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.ChainID, address string) (*models.Wallet, error) {
 	address = strings.TrimSpace(address)
 	if address == "" {

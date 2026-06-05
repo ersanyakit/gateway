@@ -50,5 +50,11 @@ func NewAssetRegistry() *asset.Registry {
 	// Chiliz Spicy Testnet
 	registry.Register(asset.NewEVMNative(constants.ChilizSpicy, "CHZ", "Chiliz Spicy (Testnet)", 18))
 
+	// Wrapped token aliases — share logo, price group, and display name with the underlying asset.
+	registry.RegisterAlias("WBTC", "BTC")
+	registry.RegisterAlias("WETH", "ETH")
+	registry.RegisterAlias("WBNB", "BNB")
+	registry.RegisterAlias("WCHZ", "CHZ")
+
 	return registry
 }

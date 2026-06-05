@@ -52,8 +52,10 @@
       <a class="dash-tab" href="{{.AdminPaymentsURL}}"    aria-selected="{{if eq .AdminPanel "payments"}}true{{else}}false{{end}}">Payments</a>
       <a class="dash-tab" href="{{.AdminDepositsURL}}"    aria-selected="{{if eq .AdminPanel "deposits"}}true{{else}}false{{end}}">Deposits</a>
       <a class="dash-tab" href="{{.AdminWithdrawalsURL}}" aria-selected="{{if eq .AdminPanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals</a>
+      <a class="dash-tab" href="{{.AdminRefundsURL}}"     aria-selected="{{if eq .AdminPanel "refunds"}}true{{else}}false{{end}}">Refunds</a>
       <a class="dash-tab" href="{{.AdminWalletsURL}}"     aria-selected="{{if eq .AdminPanel "wallets"}}true{{else}}false{{end}}">Wallets</a>
       <a class="dash-tab" href="{{.AdminActivityURL}}"    aria-selected="{{if eq .AdminPanel "activity"}}true{{else}}false{{end}}">Activity</a>
+      <a class="dash-tab" href="{{.AdminWebhooksURL}}"    aria-selected="{{if eq .AdminPanel "webhooks"}}true{{else}}false{{end}}">Webhooks</a>
       <a class="dash-tab" href="{{.AdminSweepURL}}"       aria-selected="{{if eq .AdminPanel "sweep"}}true{{else}}false{{end}}">Sweep</a>
       <a class="dash-tab" href="{{.AdminLinksURL}}"         aria-selected="{{if eq .AdminPanel "links"}}true{{else}}false{{end}}">Pay Links</a>
       <a class="dash-tab" href="/admin/admins"             aria-selected="{{if eq .AdminPanel "admins"}}true{{else}}false{{end}}">Adminler</a>
@@ -86,7 +88,13 @@
         <tr>
           <td><code class="max-w-[240px] block truncate">{{.Hash}}</code></td>
           <td>{{.Chain}}</td>
-          <td><strong>{{.AmountDisplay}}</strong> <span class="text-xs text-muted">{{.Symbol}}</span></td>
+          <td>
+            <strong>{{.AmountDisplay}}</strong>
+            <span class="inline-flex items-center gap-1 text-xs text-muted">
+              {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="inline-block h-3.5 w-3.5 object-contain">{{end}}
+              {{.Symbol}}
+            </span>
+          </td>
           <td><span class="badge {{if eq .Status "confirmed"}}badge-green{{else if eq .Status "pending"}}badge-amber{{else}}badge-gray{{end}}">{{.Status}}</span></td>
           <td class="text-muted">{{.CreatedAt}}</td>
         </tr>
@@ -172,24 +180,67 @@
   {{/* ══════ DEPOSITS ══════ */}}
   {{if eq .AdminPanel "deposits"}}
   <div class="rounded-3xl border border-line bg-white">
-    <div class="border-b border-line px-5 py-4">
-      <h2 class="m-0 text-lg font-black text-ink">On-chain deposits <span class="ml-1 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.DepositCount}}</span></h2>
+    <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
+      <div>
+        <h2 class="m-0 text-base font-black text-ink">On-chain deposits <span class="ml-1 rounded-full bg-wash px-2 py-0.5 text-xs font-bold text-muted">{{.DepositCount}}</span></h2>
+        {{if or .AdminDepositFromFilter .AdminDepositToFilter .AdminDepositHashFilter}}
+        <p class="m-0 mt-0.5 text-xs font-semibold text-muted">Filtreli sonuçlar · <a class="text-accent hover:underline" href="/admin/deposits">Temizle</a></p>
+        {{end}}
+      </div>
+      {{/* Filter form */}}
+      <form class="flex flex-wrap items-end gap-2" method="get" action="/admin/deposits">
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">From adresi</span>
+          <input class="min-h-9 w-48 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="from" type="text" value="{{.AdminDepositFromFilter}}" placeholder="0x... veya adres">
+        </label>
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">To adresi</span>
+          <input class="min-h-9 w-48 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="to" type="text" value="{{.AdminDepositToFilter}}" placeholder="0x... veya adres">
+        </label>
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">TX Hash</span>
+          <input class="min-h-9 w-52 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="hash" type="text" value="{{.AdminDepositHashFilter}}" placeholder="0x tam hash">
+        </label>
+        <div class="flex gap-1.5">
+          <button class="inline-flex min-h-9 items-center rounded-xl bg-ink px-4 text-xs font-extrabold text-white hover:opacity-80" type="submit">Ara</button>
+          {{if or .AdminDepositFromFilter .AdminDepositToFilter .AdminDepositHashFilter}}
+          <a class="inline-flex min-h-9 items-center rounded-xl border border-line bg-wash px-3 text-xs font-extrabold text-muted hover:bg-white" href="/admin/deposits">Sıfırla</a>
+          {{end}}
+        </div>
+      </form>
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table">
-        <thead><tr><th>Hash</th><th>Chain</th><th>Symbol</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead>
+        <thead><tr><th>TX Hash</th><th>From → To</th><th>Chain</th><th>Symbol</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead>
         <tbody>
         {{range .AdminDeposits}}
         <tr>
-          <td><code class="max-w-[220px] block truncate">{{.Hash}}</code>
-            {{if .UserID}}<small class="block text-xs text-muted">User: {{.UserID}}</small>{{end}}
+          <td>
+            <code class="block max-w-[180px] truncate text-[11px]" title="{{.Hash}}">{{.Hash}}</code>
+            {{if .UserID}}<span class="block text-[10px] text-muted">User: {{.UserID}}</span>{{end}}
           </td>
-          <td class="font-semibold">{{.Chain}}</td>
-          <td>{{.Symbol}}</td>
-          <td><strong>{{.AmountDisplay}}</strong></td>
+          <td class="text-[11px]">
+            {{if .FromAddress}}<span class="block truncate max-w-[130px] text-muted font-mono" title="{{.FromAddress}}">{{.FromAddress}}</span>{{end}}
+            {{if .ToAddress}}<span class="block truncate max-w-[130px] font-mono text-ink" title="{{.ToAddress}}">{{.ToAddress}}</span>{{end}}
+          </td>
+          <td class="text-xs font-semibold whitespace-nowrap">
+            <span class="inline-flex items-center gap-1.5">
+              {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="inline-block h-4 w-4 rounded object-contain">{{end}}
+              {{.Chain}}
+            </span>
+          </td>
+          <td class="text-xs">
+            <span class="inline-flex items-center gap-1.5">
+              {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="inline-block h-4 w-4 object-contain">{{end}}
+              {{.Symbol}}
+            </span>
+          </td>
+          <td class="font-mono font-semibold text-sm whitespace-nowrap">{{.AmountDisplay}}</td>
           <td><span class="badge {{if eq .Status "confirmed"}}badge-green{{else if eq .Status "pending"}}badge-amber{{else}}badge-gray{{end}}">{{.Status}}</span></td>
-          <td class="text-muted">{{.CreatedAt}}</td>
+          <td class="text-xs text-muted whitespace-nowrap">{{.CreatedAt}}</td>
         </tr>
+        {{else}}
+        <tr><td colspan="7" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
         {{end}}
         </tbody>
       </table>
@@ -249,6 +300,69 @@
   </div>
   {{end}}
 
+  {{/* ══════ REFUNDS ══════ */}}
+  {{if eq .AdminPanel "refunds"}}
+  <div class="rounded-3xl border border-line bg-white">
+    <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
+      <div>
+        <h2 class="m-0 text-lg font-black text-ink">Refund talepleri</h2>
+        {{if .AdminRefundStatusFilter}}<p class="m-0 mt-0.5 text-xs font-semibold text-muted">Filtreli: {{.AdminRefundStatusFilter}} · <a class="text-accent hover:underline" href="/admin/refunds">Temizle</a></p>{{end}}
+      </div>
+      <form class="flex flex-wrap items-end gap-2" method="get" action="/admin/refunds">
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Status</span>
+          <select class="min-h-9 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent" name="status">
+            <option value="">Tümü</option>
+            <option value="pending"{{if eq .AdminRefundStatusFilter "pending"}} selected{{end}}>pending</option>
+            <option value="succeeded"{{if eq .AdminRefundStatusFilter "succeeded"}} selected{{end}}>succeeded</option>
+            <option value="failed"{{if eq .AdminRefundStatusFilter "failed"}} selected{{end}}>failed</option>
+            <option value="rejected"{{if eq .AdminRefundStatusFilter "rejected"}} selected{{end}}>rejected</option>
+          </select>
+        </label>
+        <button class="inline-flex min-h-9 items-center rounded-xl bg-ink px-4 text-xs font-extrabold text-white hover:opacity-80" type="submit">Filtrele</button>
+      </form>
+    </div>
+    <div class="adm-wrap rounded-none border-0 border-t-0">
+      <table class="adm-table">
+        <thead><tr><th>Refund</th><th>Payment</th><th>Merchant</th><th>Tutar</th><th>Durum</th><th>Not / Hata</th><th>Tarih</th><th>İşlem</th></tr></thead>
+        <tbody>
+        {{range .AdminRefunds}}
+        <tr>
+          <td><code class="block max-w-[180px] truncate">{{.ID}}</code>{{if .RequestedBy}}<span class="block text-xs text-muted">{{.RequestedBy}}</span>{{end}}</td>
+          <td><code class="block max-w-[180px] truncate">{{.PaymentID}}</code></td>
+          <td><code class="block max-w-[180px] truncate">{{.MerchantID}}</code></td>
+          <td class="font-mono font-black text-ink">{{.AmountRaw}}</td>
+          <td><span class="badge {{if eq .Status "succeeded"}}badge-green{{else if eq .Status "pending"}}badge-amber{{else if eq .Status "failed"}}badge-red{{else}}badge-gray{{end}}">{{.Status}}</span></td>
+          <td>
+            {{if .Reason}}<span class="block max-w-[220px] truncate text-xs text-muted">{{.Reason}}</span>{{end}}
+            {{if .TxHash}}<code class="mt-0.5 block max-w-[220px] truncate text-emerald-700">Tx: {{.TxHash}}</code>{{end}}
+            {{if .Error}}<code class="mt-0.5 block max-w-[220px] truncate text-red-700">{{.Error}}</code>{{end}}
+          </td>
+          <td class="text-muted">{{.CreatedAt}}</td>
+          <td>
+            {{if eq .Status "pending"}}
+            <div class="grid gap-1.5">
+              <form method="post" action="/admin/refunds/{{.ID}}/approve">
+                <button class="inline-flex min-h-7 w-full items-center justify-center rounded-full bg-accent px-3 text-xs font-extrabold text-white hover:bg-accentHover" type="submit">Onayla</button>
+              </form>
+              <form method="post" action="/admin/refunds/{{.ID}}/reject" class="grid gap-1">
+                <input class="min-h-7 rounded-xl border border-line bg-wash px-2 text-xs font-semibold outline-none focus:border-accent" name="reason" type="text" placeholder="Red sebebi">
+                <button class="inline-flex min-h-7 w-full items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink hover:bg-wash" type="submit">Reddet</button>
+              </form>
+            </div>
+            {{else}}<span class="text-xs text-muted">—</span>{{end}}
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="8" class="py-8 text-center text-sm text-muted">Refund talebi yok.</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{template "pg" .AdminPagination}}
+  </div>
+  {{end}}
+
   {{/* ══════ WALLETS ══════ */}}
   {{if eq .AdminPanel "wallets"}}
   <div class="rounded-3xl border border-line bg-white">
@@ -284,9 +398,10 @@
           <td class="whitespace-nowrap">
             {{if .Balances}}
             {{range .Balances}}
-            <div class="text-xs leading-snug">
+            <div class="flex items-center gap-1 text-xs leading-snug">
+              {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="inline-block h-3.5 w-3.5 object-contain">{{end}}
               <span class="font-black text-ink">{{.Deposited}}</span>
-              <span class="text-muted"> {{.Symbol}}</span>
+              <span class="text-muted">{{.Symbol}}</span>
               <span class="text-[10px] text-muted">({{.Chain}})</span>
             </div>
             {{end}}
@@ -307,18 +422,24 @@
   <div class="rounded-3xl border border-line bg-white">
     <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
       <div>
-        <h2 class="m-0 text-lg font-black text-ink">Activity logs <span class="ml-1 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.ActivityCount}}</span></h2>
+        <h2 class="m-0 text-base font-black text-ink">Activity logs <span class="ml-1 rounded-full bg-wash px-2 py-0.5 text-xs font-bold text-muted">{{.ActivityCount}}</span></h2>
+        {{if .AdminMerchantFilter}}<p class="m-0 mt-0.5 text-xs font-semibold text-muted">Bayi filtreli · <a class="text-accent hover:underline" href="/admin/activity">Temizle</a></p>{{end}}
       </div>
       {{/* Merchant filter */}}
-      <form class="flex items-center gap-2" method="get" action="/admin/activity">
-        <select class="min-h-9 rounded-2xl border border-line bg-wash px-3 text-xs font-bold text-ink outline-none focus:border-accent" name="merchant_id">
-          <option value="">Tüm bayiler</option>
-          {{range .AdminMerchants}}
-          <option value="{{.ID}}"{{if eq $.AdminMerchantFilter .ID}} selected{{end}}>{{.Name}} ({{.Email}})</option>
-          {{end}}
-        </select>
-        <button class="inline-flex min-h-9 items-center rounded-full bg-ink px-4 text-xs font-extrabold text-white hover:opacity-80" type="submit">Filtrele</button>
-        {{if .AdminMerchantFilter}}<a class="text-xs font-bold text-muted hover:underline" href="/admin/activity">Temizle</a>{{end}}
+      <form class="flex flex-wrap items-end gap-2" method="get" action="/admin/activity">
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Bayi filtrele</span>
+          <select class="min-h-9 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="merchant_id">
+            <option value="">Tüm bayiler</option>
+            {{range .AdminMerchants}}
+            <option value="{{.ID}}"{{if eq $.AdminMerchantFilter .ID}} selected{{end}}>{{.Name}} — {{.Email}}</option>
+            {{end}}
+          </select>
+        </label>
+        <div class="flex gap-1.5">
+          <button class="inline-flex min-h-9 items-center rounded-xl bg-ink px-4 text-xs font-extrabold text-white hover:opacity-80" type="submit">Filtrele</button>
+          {{if .AdminMerchantFilter}}<a class="inline-flex min-h-9 items-center rounded-xl border border-line bg-wash px-3 text-xs font-extrabold text-muted hover:bg-white" href="/admin/activity">Sıfırla</a>{{end}}
+        </div>
       </form>
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
@@ -339,6 +460,58 @@
           <td><span class="badge {{if eq .Status "success"}}badge-green{{else if eq .Status "failed"}}badge-red{{else}}badge-gray{{end}}">{{.Status}}</span></td>
           <td class="text-muted" title="{{.CreatedISO}}">{{.CreatedAt}}</td>
         </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{template "pg" .AdminPagination}}
+  </div>
+  {{end}}
+
+  {{/* ══════ WEBHOOKS ══════ */}}
+  {{if eq .AdminPanel "webhooks"}}
+  <div class="rounded-3xl border border-line bg-white">
+    <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
+      <div>
+        <h2 class="m-0 text-base font-black text-ink">Webhook deliveries</h2>
+        {{if .AdminWebhookStatusFilter}}<p class="m-0 mt-0.5 text-xs font-semibold text-muted">Filtreli: {{.AdminWebhookStatusFilter}} · <a class="text-accent hover:underline" href="/admin/webhooks">Temizle</a></p>{{end}}
+      </div>
+      <form class="flex flex-wrap items-end gap-2" method="get" action="/admin/webhooks">
+        <label class="grid gap-1">
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Status</span>
+          <select class="min-h-9 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent" name="status">
+            <option value="">Tümü</option>
+            <option value="pending"{{if eq .AdminWebhookStatusFilter "pending"}} selected{{end}}>pending</option>
+            <option value="failed"{{if eq .AdminWebhookStatusFilter "failed"}} selected{{end}}>failed</option>
+            <option value="dead_letter"{{if eq .AdminWebhookStatusFilter "dead_letter"}} selected{{end}}>dead_letter</option>
+            <option value="succeeded"{{if eq .AdminWebhookStatusFilter "succeeded"}} selected{{end}}>succeeded</option>
+          </select>
+        </label>
+        <button class="inline-flex min-h-9 items-center rounded-xl bg-ink px-4 text-xs font-extrabold text-white hover:opacity-80" type="submit">Filtrele</button>
+      </form>
+    </div>
+    <div class="adm-wrap rounded-none border-0 border-t-0">
+      <table class="adm-table">
+        <thead><tr><th>Event</th><th>Target</th><th>Status</th><th>Attempts</th><th>Error</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody>
+        {{range .AdminWebhooks}}
+        <tr>
+          <td><strong class="block font-black text-ink">{{.EventType}}</strong><code class="block max-w-[220px] truncate">{{.EventID}}</code></td>
+          <td><code class="block max-w-[260px] truncate">{{.TargetURL}}</code></td>
+          <td><span class="badge {{if eq .Status "succeeded"}}badge-green{{else if eq .Status "failed"}}badge-red{{else if eq .Status "dead_letter"}}badge-violet{{else}}badge-amber{{end}}">{{.Status}}</span></td>
+          <td class="font-black">{{.Attempts}}</td>
+          <td><code class="block max-w-[260px] truncate text-red-700">{{.LastError}}</code></td>
+          <td class="text-muted">{{.UpdatedAt}}</td>
+          <td>
+            {{if ne .Status "succeeded"}}
+            <form method="post" action="/admin/webhooks/{{.ID}}/replay">
+              <button class="inline-flex min-h-7 items-center rounded-full border border-line bg-wash px-3 text-xs font-extrabold text-ink hover:bg-white" type="submit">Replay</button>
+            </form>
+            {{else}}<span class="text-xs text-muted">—</span>{{end}}
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="7" class="py-8 text-center text-sm text-muted">Webhook delivery yok.</td></tr>
         {{end}}
         </tbody>
       </table>

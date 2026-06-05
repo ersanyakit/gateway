@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -8,15 +10,15 @@ import (
 )
 
 type bucket struct {
-	count    int
-	resetAt  time.Time
+	count   int
+	resetAt time.Time
 }
 
 type rateLimiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*bucket
-	limit    int
-	window   time.Duration
+	mu      sync.Mutex
+	buckets map[string]*bucket
+	limit   int
+	window  time.Duration
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
@@ -64,14 +66,49 @@ func (rl *rateLimiter) cleanupLoop() {
 var (
 	paymentCreateLimiter = newRateLimiter(20, time.Minute)
 	checkoutLimiter      = newRateLimiter(60, time.Minute)
+	apiKeyLimiter        = newRateLimiter(envInt("API_KEY_RATE_LIMIT_PER_MINUTE", 120), time.Minute)
 )
+
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func rateKey(c fiber.Ctx) string {
+	if key := c.Get("X-API-Key"); key != "" {
+		return "api:" + key
+	}
+	if auth := c.Get("Authorization"); auth != "" {
+		return "auth:" + auth
+	}
+	return "ip:" + c.IP()
+}
 
 func RateLimitPaymentCreate() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		key := c.IP()
+		key := rateKey(c)
 		if !paymentCreateLimiter.allow(key) {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error": "rate limit exceeded",
+			})
+		}
+		return c.Next()
+	}
+}
+
+func RateLimitAPIKey() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if !apiKeyLimiter.allow(rateKey(c)) {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"success": false,
+				"error":   "rate limit exceeded",
 			})
 		}
 		return c.Next()

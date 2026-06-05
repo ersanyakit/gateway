@@ -111,6 +111,27 @@ func (r *DomainRepo) IsDomainExists(ctx context.Context, merchantID uuid.UUID, d
 	return count > 0, nil
 }
 
+func (r *DomainRepo) UpdateWebhook(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID, webhookURL string, plainSecret string) error {
+	encryptedSecret, err := helpers.EncryptSecret(plainSecret)
+	if err != nil {
+		return err
+	}
+	result := r.DB().WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("id = ? AND merchant_id = ?", domainID, merchantID).
+		Updates(map[string]interface{}{
+			"webhook_url":    webhookURL,
+			"webhook_secret": encryptedSecret,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("domain not found")
+	}
+	return nil
+}
+
 func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 
 	tx := r.merchantRepo.DB().WithContext(params.Context).Begin()

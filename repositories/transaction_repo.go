@@ -121,6 +121,15 @@ func (r *TransactionRepo) FindByUniqueHash(ctx context.Context, uniqueHash strin
 	return &txModel, nil
 }
 
+func (r *TransactionRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Transaction, error) {
+	var txModel models.Transaction
+	err := r.DB().WithContext(ctx).First(&txModel, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &txModel, nil
+}
+
 func (r *TransactionRepo) BindWallet(ctx context.Context, uniqueHash, eventType string, wallet *models.Wallet) (*models.Transaction, error) {
 	merchantID := wallet.MerchantID
 	domainID := wallet.DomainID

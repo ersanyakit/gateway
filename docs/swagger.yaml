@@ -189,6 +189,619 @@ info:
   title: Gateway API
   version: "1.0"
 paths:
+  /api/v1/common/balance:
+    get:
+      description: Returns the ledger balance for each asset held by the authenticated
+        merchant.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Account balance
+      tags:
+      - Common
+  /api/v1/common/currencies:
+    get:
+      description: Lists all supported crypto assets with chain, decimals, and logo
+        URLs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported crypto currencies
+      tags:
+      - Common
+  /api/v1/common/fiat-currencies:
+    get:
+      description: Lists all fiat currencies accepted as payment amount denomination.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported fiat currencies
+      tags:
+      - Common
+  /api/v1/common/networks:
+    get:
+      description: Lists all supported blockchain networks with chain IDs and logo
+        URLs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported blockchain networks
+      tags:
+      - Common
+  /api/v1/common/prices:
+    get:
+      description: Returns current prices for all supported crypto assets in the requested
+        fiat currency.
+      parameters:
+      - description: 'Fiat currency (default: USD)'
+        in: query
+        name: currency
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Asset prices
+      tags:
+      - Common
+  /api/v1/common/status:
+    get:
+      description: Returns current operational status of the gateway.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: System status
+      tags:
+      - Common
+  /api/v1/payment/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a hosted checkout payment session. Returns a checkout URL
+        the customer visits to complete payment.
+      parameters:
+      - description: Payment creation parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.PaymentCreateParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate invoice
+      tags:
+      - Payment
+  /api/v1/payment/currencies:
+    get:
+      description: Lists all crypto currencies that can be accepted as payment.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Accepted currencies
+      tags:
+      - Payment
+  /api/v1/payment/history:
+    get:
+      description: Returns paginated payment session history for the authenticated
+        merchant.
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (max: 100, default: 20)'
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status (pending, awaiting_payment, paid, expired, canceled,
+          failed)
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment history
+      tags:
+      - Payment
+  /api/v1/payment/info:
+    get:
+      description: Retrieves detailed payment session info by track_id (session token)
+        or order_id.
+      parameters:
+      - description: Session token
+        in: query
+        name: track_id
+        type: string
+      - description: Order ID
+        in: query
+        name: order_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment information
+      tags:
+      - Payment
+  /api/v1/payment/static-address:
+    post:
+      consumes:
+      - application/json
+      description: Creates or returns a permanent multi-chain deposit wallet for a
+        given user_id. Subsequent calls with the same user_id return the same addresses.
+      parameters:
+      - description: user_id (required), product_id (optional)
+        in: body
+        name: payload
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate static address
+      tags:
+      - Payment
+  /api/v1/payment/static-addresses:
+    get:
+      description: Lists all static deposit wallets for the merchant, optionally filtered
+        by user_id.
+      parameters:
+      - description: Filter by user_id
+        in: query
+        name: user_id
+        type: string
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (max: 100, default: 20)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Static address list
+      tags:
+      - Payment
+  /api/v1/payment/statistics:
+    get:
+      description: Returns count of payments grouped by status for the authenticated
+        merchant.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment statistics
+      tags:
+      - Payment
+  /api/v1/payment/status-table:
+    get:
+      description: Returns all possible payment statuses with descriptions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment status table
+      tags:
+      - Payment
+  /api/v1/payment/white-label:
+    post:
+      consumes:
+      - application/json
+      description: Creates a white label hosted checkout session. Identical to create
+        invoice but labeled for white-label integrations.
+      parameters:
+      - description: Payment creation parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.PaymentCreateParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate white label payment
+      tags:
+      - Payment
+  /api/v1/payout/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a withdrawal (payout) request from the merchant's wallet
+        to the specified address. Requires admin approval before execution.
+      parameters:
+      - description: chain, to_address, amount (decimal), note (optional)
+        in: body
+        name: payload
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate payout
+      tags:
+      - Payout
+  /api/v1/payout/history:
+    get:
+      description: Returns paginated payout (withdrawal) history for the authenticated
+        merchant.
+      parameters:
+      - description: 'Page number (default: 1)'
+        in: query
+        name: page
+        type: integer
+      - description: 'Items per page (max: 100, default: 20)'
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout history
+      tags:
+      - Payout
+  /api/v1/payout/info:
+    get:
+      description: Returns details of a specific payout request by payout_id.
+      parameters:
+      - description: Payout UUID
+        in: query
+        name: payout_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout information
+      tags:
+      - Payout
+  /api/v1/payout/status-table:
+    get:
+      description: Returns all possible payout statuses with descriptions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout status table
+      tags:
+      - Payout
+  /api/v1/refund/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a refund request for a paid payment. Admin approval broadcasts
+        the refund transfer.
+      parameters:
+      - description: payment_id or order_id or track_id, amount_raw optional, reason
+          optional
+        in: body
+        name: payload
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create refund request
+      tags:
+      - Refund
+  /api/v1/refund/history:
+    get:
+      description: Returns paginated refund requests for the authenticated merchant.
+      parameters:
+      - description: Page number
+        in: query
+        name: page
+        type: integer
+      - description: Page size
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund history
+      tags:
+      - Refund
+  /api/v1/refund/info:
+    get:
+      description: Returns a refund request owned by the authenticated merchant.
+      parameters:
+      - description: Refund ID
+        in: query
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund info
+      tags:
+      - Refund
   /auth/oidc/callback:
     get:
       description: Exchanges the OIDC authorization code for tokens, fetches userinfo,

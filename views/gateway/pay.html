@@ -56,9 +56,18 @@
         <section class="crypto-qr-wrap">
           <div class="crypto-qr-outer">
             <img src="{{.QRCodeURL}}" alt="Payment QR">
-            <span class="crypto-qr-logo">{{.Session.SelectedSymbol}}</span>
+            {{if .SelectedAssetLogoURL}}
+              <span class="crypto-qr-logo" style="background:#fff;padding:4px;">
+                <img src="{{.SelectedAssetLogoURL}}" alt="{{.Session.SelectedSymbol}}" style="width:26px;height:26px;object-fit:contain;">
+              </span>
+            {{else}}
+              <span class="crypto-qr-logo">{{.Session.SelectedSymbol}}</span>
+            {{end}}
           </div>
-          <span class="crypto-net-pill"><i></i>{{.ChainName}}</span>
+          <span class="crypto-net-pill">
+            {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.ChainName}}" style="width:14px;height:14px;object-fit:contain;border-radius:3px;margin-right:4px;">{{else}}<i></i>{{end}}
+            {{.ChainName}}
+          </span>
           <p>{{if .IsEnglish}}Scan with your wallet app to pay{{else}}Ödeme için wallet uygulamanla QR kodu tara{{end}}</p>
         </section>
 

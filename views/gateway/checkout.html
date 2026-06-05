@@ -77,7 +77,13 @@
               <input type="hidden" name="token" value="{{.Token}}">
               <button class="crypto-network-option" type="submit" {{if not .Available}}disabled{{end}}>
                 <span class="crypto-network-left">
-                  <span class="crypto-network-dot"></span>
+                  {{if .ChainLogoURL}}
+                    <img src="{{.ChainLogoURL}}" alt="{{.ChainName}}" style="width:20px;height:20px;object-fit:contain;flex-shrink:0;border-radius:4px;">
+                  {{else if .LogoURL}}
+                    <img src="{{.LogoURL}}" alt="{{.Symbol}}" style="width:20px;height:20px;object-fit:contain;flex-shrink:0;">
+                  {{else}}
+                    <span class="crypto-network-dot"></span>
+                  {{end}}
                   <span>
                     <strong>{{.ChainName}}</strong>
                     <small>{{.Name}} · {{if .Native}}Native{{else}}Token{{end}}</small>
@@ -98,7 +104,11 @@
           <div class="crypto-grid">
             {{range .AssetGroups}}
             <a class="crypto-btn" href="{{.URL}}">
-              <span class="crypto-circle">{{.Symbol}}</span>
+              {{if .LogoURL}}
+                <img class="crypto-circle" src="{{.LogoURL}}" alt="{{.Symbol}}" style="padding:5px;background:#f9fafb;object-fit:contain;">
+              {{else}}
+                <span class="crypto-circle">{{.Symbol}}</span>
+              {{end}}
               <span class="crypto-symbol">{{.Symbol}}</span>
               <span class="crypto-name">{{.Name}}</span>
               <span class="crypto-amount">{{.AmountDisplay}}</span>

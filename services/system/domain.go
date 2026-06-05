@@ -44,3 +44,7 @@ func (s *DomainService) FindBySecret(params types.DomainParams) (*models.Domain,
 func (s *DomainService) FindByURL(params types.DomainParams) (*models.Domain, error) {
 	return s.domainRepo.FindByURL(params)
 }
+
+func (s *DomainService) UpdateWebhook(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID, webhookURL string, plainSecret string) error {
+	return s.domainRepo.UpdateWebhook(ctx, domainID, merchantID, webhookURL, plainSecret)
+}
