@@ -16,6 +16,8 @@ func NewActivityLogRepo(db *gorm.DB) *ActivityLogRepo {
 	return &ActivityLogRepo{db: db}
 }
 
+func (r *ActivityLogRepo) DB() *gorm.DB { return r.db }
+
 func (r *ActivityLogRepo) Create(ctx context.Context, log *models.ActivityLog) error {
 	if log == nil {
 		return nil

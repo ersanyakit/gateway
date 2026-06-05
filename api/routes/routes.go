@@ -48,6 +48,7 @@ type Router struct {
 	ProductRepo     *repositories.ProductRepo
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
+	AdminRepo       *repositories.AdminRepo
 	MerchantService *services.MerchantService
 	WalletService   *services.WalletService
 	DomainService   *services.DomainService
@@ -119,6 +120,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.ProductRepo = repositories.NewProductRepo(r.db)
 	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
+	r.AdminRepo = repositories.NewAdminRepo(r.db)
 	r.PaymentHub = realtime.NewPaymentHub()
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
 	r.MerchantService = services.NewMerchantService(r.MerchantRepo)
@@ -161,6 +163,7 @@ func NewRouter(db *gorm.DB) *Router {
 		WithdrawalRepo:  r.WithdrawalRepo,
 		TransactionRepo: r.TransactionRepo,
 		ActivityLogRepo: r.ActivityLogRepo,
+		AdminRepo:       r.AdminRepo,
 		AssetRegistry:   r.assetRegistry,
 		Blockchains:     r.blockchains,
 	}
@@ -177,8 +180,17 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
 	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo))
 	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())
-	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit())
+	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit(r.AdminRepo))
 	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())
+	r.fiber.Get("/admin/2fa/setup", handlers.HandleAdminTOTPSetup(r.AdminRepo))
+	r.fiber.Post("/admin/2fa/setup", handlers.HandleAdminTOTPSetupSubmit(r.AdminRepo))
+	r.fiber.Get("/admin/2fa/verify", handlers.HandleAdminTOTPVerify(r.AdminRepo))
+	r.fiber.Post("/admin/2fa/verify", handlers.HandleAdminTOTPVerifySubmit(r.AdminRepo))
+	r.fiber.Get("/admin/admins", handlers.HandleAdminManageAdmins(dealerDeps))
+	r.fiber.Post("/admin/admins", handlers.HandleAdminCreateAdmin(dealerDeps))
+	r.fiber.Post("/admin/admins/:id/toggle", handlers.HandleAdminToggleAdmin(dealerDeps))
+	r.fiber.Post("/admin/admins/:id/reset-totp", handlers.HandleAdminResetTOTP(dealerDeps))
+	r.fiber.Post("/admin/merchants/:id/toggle", handlers.HandleAdminMerchantToggle(dealerDeps))
 	r.fiber.Post("/admin/withdrawals/:id/approve", handlers.HandleAdminWithdrawalApprove(dealerDeps))
 	r.fiber.Post("/admin/withdrawals/:id/reject", handlers.HandleAdminWithdrawalReject(dealerDeps))
 	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))

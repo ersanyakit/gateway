@@ -24,6 +24,10 @@ func (s *MerchantService) ServiceName() string {
 	return "MerchantService"
 }
 
+func (s *MerchantService) Repo() *repositories.MerchantRepo {
+	return s.merchantRepo
+}
+
 func (s *MerchantService) Create(params types.MerchantParams) (*models.Merchant, error) {
 	return s.merchantRepo.Create(params)
 }

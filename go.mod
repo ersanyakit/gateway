@@ -39,6 +39,7 @@ require (
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
 	github.com/blendle/zapdriver v1.3.1 // indirect
 	github.com/blocto/solana-go-sdk v1.27.0 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.1 // indirect
@@ -96,6 +97,7 @@ require (
 	github.com/mr-tron/base58 v1.2.0 // indirect
 	github.com/okx/go-wallet-sdk/util v0.0.6 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
+	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/redis/go-redis/v9 v9.0.2 // indirect
 	github.com/savsgio/gotils v0.0.0-20230208104028-c358bd845dee // indirect
 	github.com/shirou/gopsutil v3.21.4-0.20210419000835-c7a38de76ee5+incompatible // indirect

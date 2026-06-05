@@ -18,6 +18,8 @@ func NewWithdrawalRequestRepo(db *gorm.DB) *WithdrawalRequestRepo {
 	return &WithdrawalRequestRepo{db: db}
 }
 
+func (r *WithdrawalRequestRepo) DB() *gorm.DB { return r.db }
+
 func (r *WithdrawalRequestRepo) Create(ctx context.Context, request *models.WithdrawalRequest) error {
 	return r.db.WithContext(ctx).Create(request).Error
 }

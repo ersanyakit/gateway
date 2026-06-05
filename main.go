@@ -22,6 +22,7 @@ import (
 	"math/big"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -224,6 +225,29 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 	}
 }
 
+func bootstrapAdminAccount(ctx context.Context) {
+	email := strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))
+	password := os.Getenv("ADMIN_PASSWORD")
+	name := strings.TrimSpace(os.Getenv("ADMIN_NAME"))
+	if email == "" {
+		email = "admin@gateway.local"
+	}
+	if password == "" {
+		password = "admin123"
+	}
+	if name == "" {
+		name = "Admin"
+	}
+	created, err := coreApplication.CORE.Router.AdminRepo.EnsureBootstrapAdmin(ctx, email, name, password)
+	if err != nil {
+		log.Printf("Bootstrap admin error: %v\n", err)
+		return
+	}
+	if created != nil {
+		log.Printf("Bootstrap admin created: %s (2FA not yet configured — login to set up)\n", email)
+	}
+}
+
 func backfillMissingAddresses(ctx context.Context) {
 	wallets, err := coreApplication.CORE.Router.WalletRepo.List(ctx, 10000)
 	if err != nil {
@@ -373,6 +397,7 @@ func main() {
 	}
 
 	go backfillMissingAddresses(mainCtx)
+	go bootstrapAdminAccount(mainCtx)
 
 	bus := dispatcher.NewDispatcher()
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()

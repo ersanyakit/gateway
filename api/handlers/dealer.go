@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"core/asset"
 	"core/blockchain"
 	"core/constants"
@@ -25,10 +26,13 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/pquerna/otp/totp"
 )
 
 const dealerSessionCookie = "dealer_session"
 const adminSessionCookie = "admin_session"
+const adminPendingTOTPCookie = "admin_totp_pending" // temp: holds admin ID awaiting 2FA
+const adminSetupTOTPCookie = "admin_totp_setup"    // temp: holds admin ID during TOTP setup
 const oidcStateCookie = "oidc_state"
 const oidcNonceCookie = "oidc_nonce"
 const flashSuccessCookie = "flash_success"
@@ -43,6 +47,7 @@ type DealerDeps struct {
 	WithdrawalRepo  *repositories.WithdrawalRequestRepo
 	TransactionRepo *repositories.TransactionRepo
 	ActivityLogRepo *repositories.ActivityLogRepo
+	AdminRepo       *repositories.AdminRepo
 	AssetRegistry   *asset.Registry
 	Blockchains     *blockchain.ChainFactory
 }
@@ -193,6 +198,13 @@ type DealerAdminMerchantView struct {
 	CreatedAt string
 }
 
+type DealerPageURL struct {
+	Page    int
+	URL     string
+	Active  bool
+	Ellipsis bool
+}
+
 type DealerPaginationView struct {
 	Page       int
 	Limit      int
@@ -204,6 +216,7 @@ type DealerPaginationView struct {
 	NextURL    string
 	HasPrev    bool
 	HasNext    bool
+	PageURLs   []DealerPageURL
 }
 
 type DealerAddressView struct {
@@ -858,18 +871,252 @@ func HandleAdminLogin() fiber.Handler {
 	}
 }
 
-func HandleAdminLoginSubmit() fiber.Handler {
+func HandleAdminLoginSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		email := strings.TrimSpace(c.FormValue("email"))
 		password := c.FormValue("password")
-		if !verifyAdminCredentials(email, password) {
+
+		renderErr := func(msg string) error {
 			data := dealerPageData("Admin girişi", "admin-login")
-			data.Error = "Admin bilgileri hatalı."
+			data.Error = msg
 			return c.Status(fiber.StatusUnauthorized).Render("dealer/admin_login", data, "dealer/layout")
 		}
-		setAdminSessionCookie(c, email)
-		return c.Redirect().To("/admin/withdrawals")
+
+		admin, err := adminRepo.Authenticate(c.Context(), email, password)
+		if err != nil {
+			// Fallback to env-based credentials for backward compat.
+			if !verifyAdminCredentials(email, password) {
+				return renderErr("Admin bilgileri hatalı.")
+			}
+			// Env-based login — no 2FA, issue session directly.
+			setAdminSessionCookie(c, email)
+			return c.Redirect().To("/admin")
+		}
+
+		if admin.TOTPEnabled {
+			// TOTP required — store pending admin ID, redirect to verify page.
+			val := signedDealerSessionValue(admin.ID.String())
+			c.Cookie(&fiber.Cookie{
+				Name:     adminPendingTOTPCookie,
+				Value:    val,
+				HTTPOnly: true,
+				SameSite: "Lax",
+				MaxAge:   300,
+			})
+			return c.Redirect().To("/admin/2fa/verify")
+		}
+
+		// TOTP not set up yet — redirect to setup.
+		val := signedDealerSessionValue(admin.ID.String())
+		c.Cookie(&fiber.Cookie{
+			Name:     adminSetupTOTPCookie,
+			Value:    val,
+			HTTPOnly: true,
+			SameSite: "Lax",
+			MaxAge:   600,
+		})
+		return c.Redirect().To("/admin/2fa/setup")
 	}
+}
+
+func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminID, ok := verifyAdminTempCookie(c, adminSetupTOTPCookie)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
+		}
+		admin, err := adminRepo.FindByID(c.Context(), adminID)
+		if err != nil {
+			return redirectWithError(c, "/admin/login", "Admin bulunamadı.")
+		}
+
+		// Generate a new TOTP secret if one doesn't exist.
+		secret := admin.TOTPSecret
+		if secret == "" {
+			key, err := totp.Generate(totp.GenerateOpts{
+				Issuer:      "Gateway Admin",
+				AccountName: admin.Email,
+			})
+			if err != nil {
+				return redirectWithError(c, "/admin/login", "2FA anahtar oluşturulamadı.")
+			}
+			secret = key.Secret()
+			// Save provisionally (not enabled yet until user confirms code).
+			_ = adminRepo.SaveTOTPSecret(c.Context(), adminID, secret)
+		}
+
+		qrURL := fmt.Sprintf(
+			"otpauth://totp/Gateway%%20Admin:%s?secret=%s&issuer=Gateway%%20Admin",
+			url.QueryEscape(admin.Email), secret,
+		)
+		data := dealerPageData("2FA kurulum", "admin-2fa-setup")
+		data.Success = qrURL
+		data.MerchantEmail = admin.Email
+		return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
+	}
+}
+
+func HandleAdminTOTPSetupSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminID, ok := verifyAdminTempCookie(c, adminSetupTOTPCookie)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
+		}
+		code := strings.TrimSpace(c.FormValue("code"))
+		admin, err := adminRepo.FindByID(c.Context(), adminID)
+		if err != nil {
+			return redirectWithError(c, "/admin/login", "Admin bulunamadı.")
+		}
+		if !totp.Validate(code, admin.TOTPSecret) {
+			data := dealerPageData("2FA kurulum", "admin-2fa-setup")
+			data.Error = "Kod hatalı. Lütfen tekrar deneyin."
+			data.MerchantEmail = admin.Email
+			qrURL := fmt.Sprintf(
+				"otpauth://totp/Gateway%%20Admin:%s?secret=%s&issuer=Gateway%%20Admin",
+				url.QueryEscape(admin.Email), admin.TOTPSecret,
+			)
+			data.Success = qrURL
+			return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
+		}
+		// Enable TOTP.
+		_ = adminRepo.SaveTOTPSecret(c.Context(), adminID, admin.TOTPSecret)
+		// Clear setup cookie, issue full session.
+		c.Cookie(&fiber.Cookie{Name: adminSetupTOTPCookie, Value: "", MaxAge: -1, HTTPOnly: true})
+		setAdminSessionCookie(c, admin.Email)
+		return redirectWithSuccess(c, "/admin", "2FA başarıyla etkinleştirildi.")
+	}
+}
+
+func HandleAdminTOTPVerify(adminRepo *repositories.AdminRepo) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := verifyAdminTempCookie(c, adminPendingTOTPCookie)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
+		}
+		data := dealerPageData("2FA doğrulama", "admin-2fa-verify")
+		applyFlash(c, &data)
+		return c.Render("dealer/admin_2fa_verify", data, "dealer/layout")
+	}
+}
+
+func HandleAdminTOTPVerifySubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminID, ok := verifyAdminTempCookie(c, adminPendingTOTPCookie)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
+		}
+		code := strings.TrimSpace(c.FormValue("code"))
+		admin, err := adminRepo.FindByID(c.Context(), adminID)
+		if err != nil {
+			return redirectWithError(c, "/admin/login", "Admin bulunamadı.")
+		}
+		if !totp.Validate(code, admin.TOTPSecret) {
+			return redirectWithError(c, "/admin/2fa/verify", "Kod hatalı. Lütfen tekrar deneyin.")
+		}
+		c.Cookie(&fiber.Cookie{Name: adminPendingTOTPCookie, Value: "", MaxAge: -1, HTTPOnly: true})
+		setAdminSessionCookie(c, admin.Email)
+		return c.Redirect().To("/admin")
+	}
+}
+
+// HandleAdminManageAdmins shows admin list and create form.
+func HandleAdminManageAdmins(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		admins, _ := deps.AdminRepo.List(c.Context())
+		data := adminPageData("", "admins")
+		data.AdminPanel = "admins"
+		data.AdminMerchants = adminListToMerchantViews(admins)
+		applyFlash(c, &data)
+		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
+	}
+}
+
+func HandleAdminCreateAdmin(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		email := strings.TrimSpace(c.FormValue("email"))
+		name := strings.TrimSpace(c.FormValue("name"))
+		password := c.FormValue("password")
+		if email == "" || password == "" {
+			return redirectWithError(c, "/admin/admins", "E-posta ve şifre zorunlu.")
+		}
+		if _, err := deps.AdminRepo.Create(c.Context(), email, name, password); err != nil {
+			return redirectWithError(c, "/admin/admins", "Admin oluşturulamadı: "+err.Error())
+		}
+		return redirectWithSuccess(c, "/admin/admins", "Admin hesabı oluşturuldu.")
+	}
+}
+
+func HandleAdminToggleAdmin(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/admins", "Geçersiz ID.")
+		}
+		admin, err := deps.AdminRepo.FindByID(c.Context(), id)
+		if err != nil {
+			return redirectWithError(c, "/admin/admins", "Admin bulunamadı.")
+		}
+		_ = deps.AdminRepo.SetActive(c.Context(), id, !admin.IsActive)
+		return redirectWithSuccess(c, "/admin/admins", "Admin durumu güncellendi.")
+	}
+}
+
+func HandleAdminResetTOTP(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		_, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			return redirectWithError(c, "/admin/admins", "Geçersiz ID.")
+		}
+		// Clear TOTP so next login triggers re-setup.
+		deps.AdminRepo.DB().WithContext(c.Context()).Model(&models.Admin{}).
+			Where("id = ?", id).
+			Updates(map[string]any{"totp_secret": "", "totp_enabled": false})
+		return redirectWithSuccess(c, "/admin/admins", "2FA sıfırlandı. Sonraki girişte yeniden kurulacak.")
+	}
+}
+
+// verifyAdminTempCookie decrypts a temporary admin cookie returning the admin UUID.
+func verifyAdminTempCookie(c fiber.Ctx, cookieName string) (uuid.UUID, bool) {
+	val, err := verifyDealerSessionValue(c.Cookies(cookieName))
+	if err != nil || val == "" {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(val)
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
+// adminListToMerchantViews repurposes DealerAdminMerchantView for the admin accounts list.
+func adminListToMerchantViews(admins []models.Admin) []DealerAdminMerchantView {
+	views := make([]DealerAdminMerchantView, 0, len(admins))
+	for _, a := range admins {
+		views = append(views, DealerAdminMerchantView{
+			ID:        a.ID.String(),
+			Name:      a.Name,
+			Email:     a.Email,
+			IsActive:  a.IsActive,
+			CreatedAt: formatPanelTime(a.CreatedAt),
+		})
+	}
+	return views
 }
 
 func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
@@ -883,23 +1130,23 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		data := adminPageData(adminEmail, panel)
 		applyFlash(c, &data)
 
-		page := queryInt(c, "page", 1)
-		limit := queryInt(c, "limit", 50)
+		page := parseQueryInt(c.Query("page"), 1)
+		limit := parseQueryInt(c.Query("limit"), 50)
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 200 {
+			limit = 50
+		}
 
-		// Always load total counts for the header stats (lightweight count queries).
+		// Total counts for header stats.
 		var merchantTotal, paymentTotal, depositTotal, withdrawalTotal, walletTotal, activityTotal int64
-		if deps.MerchantService != nil {
-			deps.MerchantService.Repo().DB().WithContext(c.Context()).Model(&models.Merchant{}).Where("deleted_at IS NULL").Count(&merchantTotal)
-		}
-		if deps.PaymentRepo != nil {
-			deps.PaymentRepo.CountAll(c.Context(), &paymentTotal)
-		}
+		deps.MerchantService.Repo().DB().WithContext(c.Context()).Model(&models.Merchant{}).Where("deleted_at IS NULL").Count(&merchantTotal)
+		deps.PaymentRepo.CountAll(c.Context(), &paymentTotal)
 		deps.TransactionRepo.DB().WithContext(c.Context()).Model(&models.Transaction{}).Count(&depositTotal)
 		deps.WithdrawalRepo.DB().WithContext(c.Context()).Model(&models.WithdrawalRequest{}).Count(&withdrawalTotal)
 		deps.WalletRepo.DB().WithContext(c.Context()).Model(&models.Wallet{}).Count(&walletTotal)
-		if deps.ActivityLogRepo != nil {
-			deps.ActivityLogRepo.DB().WithContext(c.Context()).Model(&models.ActivityLog{}).Count(&activityTotal)
-		}
+		deps.ActivityLogRepo.DB().WithContext(c.Context()).Model(&models.ActivityLog{}).Count(&activityTotal)
 		data.MerchantCount = int(merchantTotal)
 		data.PaymentCount = int(paymentTotal)
 		data.DepositCount = int(depositTotal)
@@ -945,25 +1192,21 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			}
 			rows, total, _ := deps.ActivityLogRepo.ListPage(c.Context(), page, limit, mID)
 			data.AdminActivityLogs = dealerAuditLogViews(rows)
-			// Also load merchants list for the filter dropdown.
 			merchants, _ := deps.MerchantService.List(c.Context(), 500)
 			data.AdminMerchants = dealerAdminMerchantViews(merchants)
-			baseURL := "/admin/activity"
+			activityBase := "/admin/activity"
 			if merchantFilter != "" {
-				baseURL += "?merchant_id=" + merchantFilter + "&"
-			} else {
-				baseURL += "?"
+				activityBase += "?merchant_id=" + merchantFilter
 			}
-			data.AdminPagination = dealerPaginationView(page, limit, total, baseURL[:len(baseURL)-1])
+			data.AdminPagination = dealerPaginationView(page, limit, total, activityBase)
 
 		case "sweep":
 			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
 			data.WithdrawalWallets = dealerWalletViews(wallets)
 
 		default: // overview
-			rows, total, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
-			data.AdminDeposits = dealerActivityViews(rows)
-			_ = total
+			recentRows, _, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
+			data.AdminDeposits = dealerActivityViews(recentRows)
 		}
 
 		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
@@ -1601,6 +1844,8 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "activity"
 	case "/admin/sweep":
 		return "sweep"
+	case "/admin/admins":
+		return "admins"
 	default:
 		return "overview"
 	}
@@ -1712,6 +1957,7 @@ func dealerAdminMerchantViews(merchants []models.Merchant) []DealerAdminMerchant
 			ID:        merchant.ID.String(),
 			Name:      merchant.Name,
 			Email:     merchant.Email,
+			IsActive:  merchant.IsActive,
 			CreatedAt: formatPanelTime(merchant.CreatedAt),
 		})
 	}
@@ -1747,6 +1993,36 @@ func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 			Addresses:     walletAddressViews(wallet),
 			MissingChains: missing,
 		})
+	}
+	return views
+}
+
+// buildWalletBalanceMap returns a map of walletID -> balance rows (one per chain+symbol).
+func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.TransactionRepo) map[uuid.UUID][]DealerWalletBalanceRow {
+	rows, err := txRepo.AllWalletDeposits(ctx)
+	result := make(map[uuid.UUID][]DealerWalletBalanceRow)
+	if err != nil {
+		return result
+	}
+	for _, r := range rows {
+		display := formatTokenAmount(r.Deposited, r.Decimals)
+		result[r.WalletID] = append(result[r.WalletID], DealerWalletBalanceRow{
+			Chain:     chainLabel(constants.ChainID(r.ChainID)),
+			Symbol:    r.Symbol,
+			Deposited: display,
+		})
+	}
+	return result
+}
+
+func dealerWalletViewsWithBalances(wallets []models.Wallet, balanceMap map[uuid.UUID][]DealerWalletBalanceRow) []DealerWalletView {
+	views := dealerWalletViews(wallets)
+	for i, v := range views {
+		if id, err := uuid.Parse(v.ID); err == nil {
+			if bals, ok := balanceMap[id]; ok {
+				views[i].Balances = bals
+			}
+		}
 	}
 	return views
 }
@@ -1787,7 +2063,46 @@ func dealerPaginationView(page int, limit int, total int64, basePath string) Dea
 	if view.HasNext {
 		view.NextURL = fmt.Sprintf("%s?page=%d&limit=%d", basePath, page+1, limit)
 	}
+
+	// Build page link list (show at most ~7 items with ellipsis).
+	if totalPages > 1 {
+		seen := make(map[int]bool)
+		addPage := func(p int) {
+			if p < 1 || p > totalPages || seen[p] {
+				return
+			}
+			seen[p] = true
+			view.PageURLs = append(view.PageURLs, DealerPageURL{
+				Page:   p,
+				URL:    fmt.Sprintf("%s?page=%d&limit=%d", basePath, p, limit),
+				Active: p == page,
+			})
+		}
+		for p := 1; p <= min(3, totalPages); p++ {
+			addPage(p)
+		}
+		for p := max(1, page-1); p <= min(totalPages, page+1); p++ {
+			addPage(p)
+		}
+		for p := max(1, totalPages-2); p <= totalPages; p++ {
+			addPage(p)
+		}
+	}
 	return view
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 type walletChainDef struct {
@@ -2084,6 +2399,8 @@ func chainLabel(chainID constants.ChainID) string {
 		return "Solana"
 	case constants.TRON:
 		return "TRON"
+	case constants.ChilizSpicy:
+		return "Chiliz Spicy"
 	default:
 		return fmt.Sprintf("chain-%d", chainID)
 	}
@@ -2275,4 +2592,15 @@ func validAbsoluteURL(value string) bool {
 
 func stringPtr(value string) *string {
 	return &value
+}
+
+func parseQueryInt(s string, defaultVal int) int {
+	if s == "" {
+		return defaultVal
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return defaultVal
+	}
+	return v
 }

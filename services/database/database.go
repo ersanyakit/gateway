@@ -100,6 +100,7 @@ func Migrate(app *application.App) error {
 		&models.PaymentSession{},
 		&models.WithdrawalRequest{},
 		&models.ActivityLog{},
+		&models.Admin{},
 	)
 
 	return err

@@ -29,6 +29,10 @@ func (r *PaymentRepo) DB() *gorm.DB {
 	return r.db
 }
 
+func (r *PaymentRepo) CountAll(ctx context.Context, out *int64) {
+	r.db.WithContext(ctx).Model(&models.PaymentSession{}).Count(out)
+}
+
 func (r *PaymentRepo) Create(ctx context.Context, session *models.PaymentSession) error {
 	if session.ID == uuid.Nil {
 		session.ID = uuid.New()
