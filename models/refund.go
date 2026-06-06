@@ -7,11 +7,12 @@ import (
 )
 
 const (
-	RefundStatusPending   = "pending"
-	RefundStatusApproved  = "approved"
-	RefundStatusRejected  = "rejected"
-	RefundStatusSucceeded = "succeeded"
-	RefundStatusFailed    = "failed"
+	RefundStatusPending    = "pending"
+	RefundStatusProcessing = "processing"
+	RefundStatusApproved   = "approved"
+	RefundStatusRejected   = "rejected"
+	RefundStatusSucceeded  = "succeeded"
+	RefundStatusFailed     = "failed"
 )
 
 type Refund struct {

@@ -79,7 +79,7 @@ func HandleAdminTxRescan(deps DealerDeps) fiber.Handler {
 // @Router /api/v1/transaction/rescan [post]
 func HandleV1TransactionRescan(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
 		if err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}

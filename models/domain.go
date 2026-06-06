@@ -14,9 +14,10 @@ type Domain struct {
 
 	DomainURL string `gorm:"size:255;not null"`
 
-	KeyID     string `gorm:"size:32;index"`
-	APIKey    string `gorm:"size:128;uniqueIndex;not null"`
-	APISecret string `gorm:"size:256;not null" json:"-"`
+	KeyID          string `gorm:"size:32;index"`
+	APIKey         string `gorm:"size:128;uniqueIndex;not null"`
+	APISecret      string `gorm:"size:256;not null" json:"-"`
+	APISecretPlain string `gorm:"-" json:"api_secret,omitempty"`
 
 	HDAccountID uint32 `gorm:"not null;uniqueIndex"`
 

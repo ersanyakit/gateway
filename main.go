@@ -569,7 +569,12 @@ func bootstrapAdminAccount(ctx context.Context) {
 			return
 		}
 		password = rnd
-		log.Printf("[BOOTSTRAP] ADMIN_PASSWORD not set in .env — generated first-run password: %s\n", password)
+		passwordFile := ".bootstrap_admin_password"
+		if err := os.WriteFile(passwordFile, []byte(password+"\n"), 0600); err != nil {
+			log.Printf("[BOOTSTRAP] ADMIN_PASSWORD not set and generated password file could not be written: %v\n", err)
+			return
+		}
+		log.Printf("[BOOTSTRAP] ADMIN_PASSWORD not set in .env; generated first-run password file: %s\n", passwordFile)
 		log.Printf("[BOOTSTRAP] Set ADMIN_PASSWORD in .env before restarting to use a fixed password.\n")
 	}
 	created, err := coreApplication.CORE.Router.AdminRepo.EnsureBootstrapAdmin(ctx, email, name, password)

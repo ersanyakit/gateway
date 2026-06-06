@@ -23,6 +23,7 @@ type DomainCreateResponse struct {
 	DomainURL   string `json:"domain_url"`
 	KeyID       string `json:"key_id"`
 	APIKey      string `json:"api_key"`
+	APISecret   string `json:"api_secret,omitempty"`
 	HDAccountID uint32 `json:"hd_account_id"`
 	WebhookURL  string `json:"webhook_url"`
 	IsEnabled   bool   `json:"is_enabled"`

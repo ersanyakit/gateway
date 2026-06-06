@@ -130,11 +130,14 @@ func ValidateTimestamp(ts string) error {
 func ExtractKeyID(apiKey string) (string, error) {
 
 	parts := strings.Split(apiKey, "_")
-	if len(parts) < 3 {
+	if len(parts) < 4 {
+		return "", errors.New("invalid api key format")
+	}
+	if parts[0] != "gw" || (parts[1] != "live" && parts[1] != "test") || parts[2] == "" {
 		return "", errors.New("invalid api key format")
 	}
 
-	return parts[1], nil
+	return parts[2], nil
 }
 
 func EncryptSecret(secret string) (string, error) {

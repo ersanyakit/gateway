@@ -216,6 +216,8 @@ func walletAddressForChain(wallet models.Wallet, chainID constants.ChainID) stri
 		return wallet.SolanaAddress
 	case constants.Chiliz:
 		return wallet.ChilizAddress
+	case constants.ChilizSpicy:
+		return wallet.ChilizSpicyAddress
 	default:
 		return ""
 	}

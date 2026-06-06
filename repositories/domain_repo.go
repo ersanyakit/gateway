@@ -210,6 +210,7 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 
 	masterKey := os.Getenv("MASTER_KEY")
 	if masterKey == "" {
+		tx.Rollback()
 		return nil, errors.New("MASTER_KEY not set")
 	}
 
@@ -258,5 +259,6 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		return nil, err
 	}
 
+	domain.APISecretPlain = apiSecretPlain
 	return domain, nil
 }

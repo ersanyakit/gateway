@@ -1868,7 +1868,7 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			return result.TxHash, nil
 		})
 		if err != nil {
-			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusApproved {
+			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
 				return redirectWithError(c, "/admin/withdrawals", "Transfer gönderildi ancak ledger güncellenemedi: "+err.Error())
 			}
 			return redirectWithError(c, "/admin/withdrawals", "Transfer başarısız: "+err.Error())
@@ -1942,7 +1942,11 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 
 		walletID := session.WalletID.String()
 		chain := constants.ChainName(*session.SelectedChainID)
-		amountRaw := refund.AmountRaw
+		claimedRefund, err := deps.RefundRepo.ClaimPending(c.Context(), id, adminEmail)
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Refund başka bir işlem tarafından alınmış veya artık pending değil.")
+		}
+		amountRaw := claimedRefund.AmountRaw
 		params := types.TransferParams{
 			Context:   c.Context(),
 			WalletID:  &walletID,
@@ -1962,13 +1966,9 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
 		}
-		if err := deps.RefundRepo.MarkSucceeded(c.Context(), id, adminEmail, result.TxHash); err != nil {
-			return redirectWithError(c, "/admin/refunds", "Refund güncellenemedi: "+err.Error())
-		}
-		if deps.LedgerRepo != nil {
-			if err := deps.LedgerRepo.PostRefundDebit(c.Context(), *refund, *session, result.TxHash); err != nil {
-				return redirectWithError(c, "/admin/refunds", "Refund ledger güncellenemedi: "+err.Error())
-			}
+		if err := deps.RefundRepo.MarkSucceededWithLedger(c.Context(), id, adminEmail, result.TxHash, *session, deps.LedgerRepo); err != nil {
+			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, "ledger/finalize failed: "+err.Error())
+			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+result.TxHash)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")

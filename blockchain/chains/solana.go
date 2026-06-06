@@ -7,42 +7,22 @@ import (
 	"core/constants"
 	"core/models"
 	"crypto/ed25519"
-	"crypto/hmac"
-	"crypto/sha512"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil/base58"
 	"github.com/gagliardetto/solana-go"
-	solanaGO "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
-	"golang.org/x/crypto/pbkdf2"
 
 	solanaSDK "github.com/okx/go-wallet-sdk/coins/solana"
 )
-
-const hardened uint32 = 0x80000000
-
-func derive(key []byte, chainCode []byte, segment uint32) ([]byte, []byte) {
-	buf := []byte{0}
-	buf = append(buf, key...)
-	buf = append(buf, big.NewInt(int64(segment)).Bytes()...)
-	h := hmac.New(sha512.New, chainCode)
-	h.Write(buf)
-	I := h.Sum(nil)
-	IL := I[:32]
-	IR := I[32:]
-
-	return IL, IR
-}
 
 type SolanaChain struct {
 	blockchain.BaseChain
@@ -92,7 +72,7 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 		return nil, err
 	}
 
-	wallet, err := s.GenerateWalletFromMnemonicSeed(mnemonic, "")
+	wallet, err := s.GenerateWalletFromMnemonic(mnemonic, "m/44'/501'/0'/1'")
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +99,8 @@ func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletI
 		return nil, err
 	}
 
-	wallet, err := s.GenerateHDWalletFromMnemonicSeed(mnemonic, "", hdAccountId, hdWalletId)
+	hdPath := fmt.Sprintf("m/44'/501'/%d'/%d'", hdAccountId, hdWalletId)
+	wallet, err := s.GenerateWalletFromMnemonic(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
@@ -138,62 +119,25 @@ func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletI
 	}, nil
 }
 
-func (s *SolanaChain) GenerateWalletFromMnemonicSeed(mnemonic, password string) (*solana.Wallet, error) {
-	pass := []byte("mnemonic")
-	if password != "" {
-		pass = []byte(password)
-	}
-	seed := pbkdf2.Key([]byte(mnemonic), pass, 2048, 64, sha512.New)
-	h := hmac.New(sha512.New, []byte("ed25519 seed"))
-	h.Write(seed)
-	sum := h.Sum(nil)
-
-	derivedSeed := sum[:32]
-	chain := sum[32:]
-
-	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(0), hardened + uint32(1)}
-
-	for _, segment := range path {
-		derivedSeed, chain = derive(derivedSeed, chain, segment)
-	}
-
-	key := ed25519.NewKeyFromSeed(derivedSeed)
-
-	wallet, err := solanaGO.WalletFromPrivateKeyBase58(base58.Encode(key))
+func (s *SolanaChain) GenerateWalletFromMnemonic(mnemonic, hdPath string) (*solana.Wallet, error) {
+	privateKeyHex, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	return wallet, nil
-}
-
-func (s *SolanaChain) GenerateHDWalletFromMnemonicSeed(mnemonic, password string, hdAccountId, hdWalletId int) (*solana.Wallet, error) {
-	pass := []byte("mnemonic")
-	if password != "" {
-		pass = []byte(password)
-	}
-	seed := pbkdf2.Key([]byte(mnemonic), pass, 2048, 64, sha512.New)
-	h := hmac.New(sha512.New, []byte("ed25519 seed"))
-	h.Write(seed)
-	sum := h.Sum(nil)
-
-	derivedSeed := sum[:32]
-	chain := sum[32:]
-
-	path := []uint32{hardened + uint32(44), hardened + uint32(501), hardened + uint32(hdAccountId), hardened + uint32(hdWalletId)}
-
-	for _, segment := range path {
-		derivedSeed, chain = derive(derivedSeed, chain, segment)
-	}
-
-	key := ed25519.NewKeyFromSeed(derivedSeed)
-
-	wallet, err := solanaGO.WalletFromPrivateKeyBase58(base58.Encode(key))
+	raw, err := hex.DecodeString(privateKeyHex)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid solana private key hex: %w", err)
+	}
+	switch len(raw) {
+	case ed25519.SeedSize:
+		raw = ed25519.NewKeyFromSeed(raw)
+	case ed25519.PrivateKeySize:
+	default:
+		return nil, fmt.Errorf("invalid solana private key size: %d", len(raw))
 	}
 
-	return wallet, nil
+	return solana.WalletFromPrivateKeyBase58(solana.PrivateKey(raw).String())
 }
 
 func (s *SolanaChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {

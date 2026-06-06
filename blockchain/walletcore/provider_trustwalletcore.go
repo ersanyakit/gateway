@@ -49,10 +49,8 @@ func (trustWalletCoreProvider) ValidateMnemonic(mnemonic string) bool {
 func (trustWalletCoreProvider) DerivePrivateKey(mnemonic, derivationPath string, chainID constants.ChainID) (string, error) {
 	mn := twString(mnemonic)
 	empty := twString("")
-	path := twString(derivationPath)
 	defer C.TWStringDelete(mn)
 	defer C.TWStringDelete(empty)
-	defer C.TWStringDelete(path)
 
 	wallet := C.TWHDWalletCreateWithMnemonic(mn, empty)
 	if wallet == nil {
@@ -60,7 +58,15 @@ func (trustWalletCoreProvider) DerivePrivateKey(mnemonic, derivationPath string,
 	}
 	defer C.TWHDWalletDelete(wallet)
 
-	key := C.TWHDWalletGetKey(wallet, coinTypeForChain(chainID), path)
+	coin := coinTypeForChain(chainID)
+	var key *C.struct_TWPrivateKey
+	if derivationPath == "" {
+		key = C.TWHDWalletGetKeyForCoin(wallet, coin)
+	} else {
+		path := twString(derivationPath)
+		defer C.TWStringDelete(path)
+		key = C.TWHDWalletGetKey(wallet, coin, path)
+	}
 	if key == nil {
 		return "", errors.New("trustwalletcore: key derivation failed")
 	}
@@ -74,7 +80,7 @@ func (trustWalletCoreProvider) DerivePrivateKey(mnemonic, derivationPath string,
 	return hex.EncodeToString(raw), nil
 }
 
-func twString(value string) *C.TWString {
+func twString(value string) unsafe.Pointer {
 	cstr := C.CString(value)
 	defer C.free(unsafe.Pointer(cstr))
 	return C.TWStringCreateWithUTF8Bytes(cstr)
@@ -83,12 +89,12 @@ func twString(value string) *C.TWString {
 func coinTypeForChain(chainID constants.ChainID) C.enum_TWCoinType {
 	switch chainID {
 	case constants.Bitcoin:
-		return C.TWCoinTypeBitcoin
+		return C.enum_TWCoinType(C.TWCoinTypeBitcoin)
 	case constants.Solana:
-		return C.TWCoinTypeSolana
+		return C.enum_TWCoinType(C.TWCoinTypeSolana)
 	case constants.TRON:
-		return C.TWCoinTypeTron
+		return C.enum_TWCoinType(C.TWCoinTypeTron)
 	default:
-		return C.TWCoinTypeEthereum
+		return C.enum_TWCoinType(C.TWCoinTypeEthereum)
 	}
 }

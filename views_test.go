@@ -14,18 +14,22 @@ func TestDealerViewsRender(t *testing.T) {
 	engine := html.New("./views", ".html")
 
 	data := handlers.DealerPageData{
-		Title:         "Bayi girişi",
-		Active:        "login",
-		OIDCLoginURL:  "/auth/oidc/login",
-		OIDCProvider:  "Kurumsal hesap",
-		RegisterURL:   "/dealer/register",
-		LoginURL:      "/dealer/login",
-		OnboardingURL: "/dealer/onboarding",
-		MerchantID:    "merchant-id",
-		MerchantName:  "Demo Merchant",
-		MerchantEmail: "demo@example.com",
-		AssetCount:    1,
-		NetworkCount:  3,
+		Title:           "Bayi girişi",
+		Active:          "login",
+		OIDCLoginURL:    "/auth/oidc/login",
+		OIDCProvider:    "Kurumsal hesap",
+		RegisterURL:     "/dealer/register",
+		LoginURL:        "/dealer/login",
+		OnboardingURL:   "/dealer/onboarding",
+		RescanURL:       "/dealer/dashboard/rescan",
+		MerchantID:      "merchant-id",
+		MerchantName:    "Demo Merchant",
+		MerchantEmail:   "demo@example.com",
+		AdminPanel:      "rescan",
+		AdminRescanURL:  "/admin/rescan",
+		AdminRefundsURL: "/admin/refunds",
+		AssetCount:      1,
+		NetworkCount:    3,
 		Balances: []handlers.DealerBalanceView{
 			{
 				Chain:         "Solana",
@@ -76,7 +80,15 @@ func TestDealerViewsRender(t *testing.T) {
 		}
 		if view == "dealer/dashboard" {
 			output := buf.String()
-			for _, expected := range []string{"Bitcoin", "TRON", "Solana üzerinde SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC"} {
+			for _, expected := range []string{"Bitcoin", "TRON", "Solana üzerinde SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/dealer/dashboard/rescan", "/dealer/rescan"} {
+				if !strings.Contains(output, expected) {
+					t.Fatalf("%s output missing %q", view, expected)
+				}
+			}
+		}
+		if view == "dealer/admin_dashboard" {
+			output := buf.String()
+			for _, expected := range []string{"Refunds", "Rescan", "/admin/refunds", "/admin/rescan", "Transaction rescan"} {
 				if !strings.Contains(output, expected) {
 					t.Fatalf("%s output missing %q", view, expected)
 				}

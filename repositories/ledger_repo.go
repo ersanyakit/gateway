@@ -397,8 +397,12 @@ func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, me
 }
 
 func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
+	return r.PostRefundDebitWithDB(ctx, r.db, refund, session, txHash)
+}
+
+func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession, txHash string) error {
 	key := "refund-debit:" + refund.ID.String()
-	exists, err := r.exists(ctx, key)
+	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
 	}
@@ -461,7 +465,7 @@ func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, 
 			UpdatedAt:       now,
 		},
 	}
-	return r.db.WithContext(ctx).Create(&entries).Error
+	return tx.WithContext(ctx).Create(&entries).Error
 }
 
 func ledgerChainIDFromName(name string) (constants.ChainID, bool) {

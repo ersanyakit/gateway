@@ -49,7 +49,7 @@ func (r *WalletRepo) getNextHDIndex(ctx context.Context, db *gorm.DB, merchantID
 }
 
 func (r *WalletRepo) CreateEx(params types.WalletParams) (*models.Wallet, error) {
-	return nil, errors.New("CreateEx is not implemented")
+	return r.Create(params)
 }
 
 func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
@@ -185,7 +185,9 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 
 	// Fill any chain addresses not covered by the initial HD wallet map
 	// (e.g. chains added after this wallet was first created).
-	_ = r.EnsureAllAddresses(params.Context, wallet.ID, r.domainRepo.MerchantRepo().blockchains)
+	if err := r.EnsureAllAddresses(params.Context, wallet.ID, r.domainRepo.MerchantRepo().blockchains); err != nil {
+		return nil, fmt.Errorf("wallet created but address backfill failed: %w", err)
+	}
 
 	return r.FindByID(params.Context, wallet.ID)
 }

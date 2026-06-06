@@ -9,6 +9,7 @@ import (
 
 	"core/asset"
 	"core/constants"
+	"core/helpers"
 	"core/models"
 	"core/repositories"
 	"core/services/pricing"
@@ -54,6 +55,40 @@ func v1ResolveDomain(c fiber.Ctx, domainRepo *repositories.DomainRepo) (*models.
 		return nil, fmt.Errorf("X-API-Key header or Authorization: Bearer <key> is required")
 	}
 	return domainRepo.FindByAPIKey(types.DomainParams{Context: c.Context(), APIKey: &key})
+}
+
+func v1ResolveSignedDomain(c fiber.Ctx, domainRepo *repositories.DomainRepo) (*models.Domain, error) {
+	domain, err := v1ResolveDomain(c, domainRepo)
+	if err != nil {
+		return nil, err
+	}
+	apiSecret := strings.TrimSpace(c.Get("X-API-Secret"))
+	if apiSecret == "" {
+		return nil, fmt.Errorf("X-API-Secret header is required")
+	}
+	secretDomain, err := domainRepo.FindByAPISecret(types.DomainParams{Context: c.Context(), APISecret: &apiSecret})
+	if err != nil {
+		return nil, fmt.Errorf("invalid API secret")
+	}
+	if secretDomain.ID != domain.ID {
+		return nil, fmt.Errorf("API key and secret do not match")
+	}
+	timestamp := strings.TrimSpace(c.Get("X-Gateway-Timestamp"))
+	if timestamp == "" {
+		return nil, fmt.Errorf("X-Gateway-Timestamp header is required")
+	}
+	if err := helpers.ValidateTimestamp(timestamp); err != nil {
+		return nil, err
+	}
+	signature := strings.TrimSpace(c.Get("X-Gateway-Signature"))
+	signature = strings.TrimPrefix(signature, "sha256=")
+	if signature == "" {
+		return nil, fmt.Errorf("X-Gateway-Signature header is required")
+	}
+	if !helpers.VerifySignature(apiSecret, timestamp, c.Body(), signature) {
+		return nil, fmt.Errorf("invalid request signature")
+	}
+	return domain, nil
 }
 
 func v1OK(c fiber.Ctx, data interface{}) error {
@@ -362,7 +397,12 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 		PaymentHub:      deps.PaymentHub,
 		IdempotencyRepo: deps.IdempotencyRepo,
 	})
-	return inner
+	return func(c fiber.Ctx) error {
+		if _, err := v1ResolveSignedDomain(c, deps.DomainRepo); err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		return inner(c)
+	}
 }
 
 // HandleV1PaymentWhiteLabel godoc
@@ -395,15 +435,12 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/payment/static-address [post]
 func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
 		if err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
 
-		var body struct {
-			UserID    string `json:"user_id"`
-			ProductID string `json:"product_id"`
-		}
+		var body types.V1StaticAddressRequest
 		if err := c.Bind().Body(&body); err != nil {
 			return v1Err(c, fiber.StatusBadRequest, "invalid request body")
 		}
@@ -411,7 +448,30 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 		if userID == "" {
 			return v1Err(c, fiber.StatusBadRequest, "user_id is required")
 		}
-		productID := strings.TrimSpace(body.ProductID)
+		if body.ChainID == 0 {
+			return v1Err(c, fiber.StatusBadRequest, "chain_id is required")
+		}
+		chainID := constants.ChainID(body.ChainID)
+		if !constants.IsSupportedChainID(chainID) {
+			return v1Err(c, fiber.StatusBadRequest, "unsupported chain_id")
+		}
+		symbol := strings.TrimSpace(body.Symbol)
+		if symbol == "" {
+			if deps.AssetRegistry != nil {
+				if native, ok := deps.AssetRegistry.GetNative(chainID); ok {
+					symbol = native.GetSymbol()
+				}
+			}
+		}
+		if symbol == "" {
+			return v1Err(c, fiber.StatusBadRequest, "symbol is required")
+		}
+		if deps.AssetRegistry != nil {
+			if _, ok := deps.AssetRegistry.GetBySymbol(chainID, symbol); !ok {
+				return v1Err(c, fiber.StatusBadRequest, "unsupported asset for chain_id")
+			}
+		}
+		productID := "static:" + strconv.FormatInt(body.ChainID, 10) + ":" + strings.ToUpper(symbol)
 
 		merchantIDStr := domain.MerchantID.String()
 		domainIDStr := domain.ID.String()
@@ -427,7 +487,7 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusInternalServerError, "wallet creation failed: "+err.Error())
 		}
 
-		return v1OK(c, v1WalletResponse(wallet))
+		return v1OK(c, v1StaticAddressResponse(wallet, chainID, symbol, body.Label))
 	}
 }
 
@@ -671,7 +731,7 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/payout/create [post]
 func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
 		if err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
@@ -840,7 +900,8 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 
 		table := []fiber.Map{
 			{"status": "pending", "description": "Payout request received, awaiting admin approval."},
-			{"status": "approved", "description": "Approved by admin. On-chain broadcast initiated."},
+			{"status": "processing", "description": "Approved by admin. On-chain broadcast or ledger finalization is in progress."},
+			{"status": "approved", "description": "Approved by admin and on-chain broadcast completed."},
 			{"status": "rejected", "description": "Rejected by admin. Funds not moved."},
 			{"status": "failed", "description": "Broadcast failed due to on-chain error."},
 		}
@@ -862,7 +923,7 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/refund/create [post]
 func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
 		if err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
@@ -1161,6 +1222,18 @@ func v1WalletResponse(w *models.Wallet) fiber.Map {
 		"product_id": item.ProductID,
 		"addresses":  item.Addresses,
 		"created_at": item.CreatedAt,
+	}
+}
+
+func v1StaticAddressResponse(w *models.Wallet, chainID constants.ChainID, symbol string, label string) fiber.Map {
+	chain := constants.ChainName(chainID)
+	return fiber.Map{
+		"wallet_id": w.ID.String(),
+		"user_id":   w.UserID,
+		"chain":     chain,
+		"symbol":    strings.ToUpper(strings.TrimSpace(symbol)),
+		"address":   walletAddressForChain(*w, chainID),
+		"label":     strings.TrimSpace(label),
 	}
 }
 

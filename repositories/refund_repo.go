@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type RefundRepo struct {
@@ -85,39 +86,138 @@ func (r *RefundRepo) Find(ctx context.Context, id uuid.UUID) (*models.Refund, er
 	return &refund, nil
 }
 
+func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy string) (*models.Refund, error) {
+	var claimed models.Refund
+	now := time.Now()
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, "id = ? AND status = ?", id, models.RefundStatusPending).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status = ?", id, models.RefundStatusPending).
+			Updates(map[string]any{
+				"status":      models.RefundStatusProcessing,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		refund.Status = models.RefundStatusProcessing
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.Error = ""
+		claimed = refund
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &claimed, nil
+}
+
 func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ? AND status = ?", id, models.RefundStatusPending).
+	result := r.db.WithContext(ctx).Model(&models.Refund{}).
+		Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
 		Updates(map[string]any{
 			"status":      models.RefundStatusSucceeded,
 			"reviewed_by": reviewedBy,
 			"reviewed_at": &now,
 			"tx_hash":     txHash,
 			"error":       "",
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string, session models.PaymentSession, ledger *LedgerRepo) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
+			Updates(map[string]any{
+				"status":      models.RefundStatusSucceeded,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"tx_hash":     txHash,
+				"error":       "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if ledger == nil {
+			return nil
+		}
+		var refund models.Refund
+		if err := tx.First(&refund, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return NewLedgerRepo(tx).PostRefundDebitWithDB(ctx, tx, refund, session, txHash)
+	})
 }
 
 func (r *RefundRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).Model(&models.Refund{}).
+	result := r.db.WithContext(ctx).Model(&models.Refund{}).
 		Where("id = ? AND status = ?", id, models.RefundStatusPending).
 		Updates(map[string]any{
 			"status":      models.RefundStatusRejected,
 			"reviewed_by": reviewedBy,
 			"reviewed_at": &now,
 			"error":       reason,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *RefundRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy string, errText string) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ?", id).
+	result := r.db.WithContext(ctx).Model(&models.Refund{}).
+		Where("id = ? AND status IN ?", id, []string{models.RefundStatusPending, models.RefundStatusProcessing, models.RefundStatusApproved}).
 		Updates(map[string]any{
 			"status":      models.RefundStatusFailed,
 			"reviewed_by": reviewedBy,
 			"reviewed_at": &now,
 			"error":       errText,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *RefundRepo) SetProcessingError(ctx context.Context, id uuid.UUID, errText string) error {
+	result := r.db.WithContext(ctx).Model(&models.Refund{}).
+		Where("id = ? AND status = ?", id, models.RefundStatusProcessing).
+		Update("error", errText)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }

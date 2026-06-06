@@ -110,7 +110,7 @@ func NewRouter(db *gorm.DB) *Router {
 		AllowMethods: []string{"POST", "GET", "OPTIONS", "PUT", "DELETE"},
 		AllowHeaders: []string{
 			"Accept", "Authorization", "Content-Type", "Content-Length",
-			"X-API-Key", "X-Gateway-Signature", "X-Gateway-Timestamp", "X-Gateway-Event",
+			"X-API-Key", "X-API-Secret", "X-Gateway-Signature", "X-Gateway-Timestamp", "X-Gateway-Event",
 			"X-CSRF-Token", "Token", "session", "Origin", "Host", "Connection",
 			"Accept-Encoding", "Accept-Language", "X-Requested-With",
 			"AMP-Redirect-To", "__amp_source_origin", "Access-Control-Allow-Origin",
@@ -235,15 +235,16 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 
 	paymentDeps := handlers.PaymentHandlerDeps{
-		DomainRepo:      r.DomainRepo,
-		WalletRepo:      r.WalletRepo,
-		PaymentRepo:     r.PaymentRepo,
-		ProductRepo:     r.ProductRepo,
-		AssetRegistry:   r.assetRegistry,
-		PriceOracle:     pricing.NewCoinGecko(),
-		Notifier:        webhooksvc.NewNotifier(),
-		PaymentHub:      r.PaymentHub,
-		IdempotencyRepo: r.IdempotencyRepo,
+		DomainRepo:       r.DomainRepo,
+		WalletRepo:       r.WalletRepo,
+		PaymentRepo:      r.PaymentRepo,
+		ProductRepo:      r.ProductRepo,
+		AssetRegistry:    r.assetRegistry,
+		PriceOracle:      pricing.NewCoinGecko(),
+		Notifier:         webhooksvc.NewNotifier(),
+		PaymentHub:       r.PaymentHub,
+		IdempotencyRepo:  r.IdempotencyRepo,
+		RequireSignature: true,
 	}
 	r.fiber.Post("/payments/create", middleware.RateLimitPaymentCreate(), handlers.HandlePaymentCreate(paymentDeps))
 	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))

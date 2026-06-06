@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"strconv"
 	"sync"
@@ -83,12 +85,17 @@ func envInt(key string, fallback int) int {
 
 func rateKey(c fiber.Ctx) string {
 	if key := c.Get("X-API-Key"); key != "" {
-		return "api:" + key
+		return "api:" + hashRateLimitSecret(key)
 	}
 	if auth := c.Get("Authorization"); auth != "" {
-		return "auth:" + auth
+		return "auth:" + hashRateLimitSecret(auth)
 	}
 	return "ip:" + c.IP()
+}
+
+func hashRateLimitSecret(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func RateLimitPaymentCreate() fiber.Handler {

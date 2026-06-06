@@ -29,15 +29,16 @@ import (
 )
 
 type PaymentHandlerDeps struct {
-	DomainRepo      *repositories.DomainRepo
-	WalletRepo      *repositories.WalletRepo
-	PaymentRepo     *repositories.PaymentRepo
-	ProductRepo     *repositories.ProductRepo
-	IdempotencyRepo *repositories.IdempotencyRepo
-	AssetRegistry   *asset.Registry
-	PriceOracle     pricing.PriceOracle
-	Notifier        *webhooksvc.Notifier
-	PaymentHub      *realtime.PaymentHub
+	DomainRepo       *repositories.DomainRepo
+	WalletRepo       *repositories.WalletRepo
+	PaymentRepo      *repositories.PaymentRepo
+	ProductRepo      *repositories.ProductRepo
+	IdempotencyRepo  *repositories.IdempotencyRepo
+	AssetRegistry    *asset.Registry
+	PriceOracle      pricing.PriceOracle
+	Notifier         *webhooksvc.Notifier
+	PaymentHub       *realtime.PaymentHub
+	RequireSignature bool
 }
 
 func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, productID string) (name, description, logoURL string) {
@@ -96,6 +97,15 @@ type CheckoutAssetGroup struct {
 // @Router /payments/create [post]
 func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		if deps.RequireSignature {
+			if _, err := v1ResolveSignedDomain(c, deps.DomainRepo); err != nil {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"success": false,
+					"error":   err.Error(),
+				})
+			}
+		}
+
 		var params types.PaymentCreateParams
 		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -605,20 +615,7 @@ func resolvePaymentDomain(c fiber.Ctx, repo *repositories.DomainRepo, params typ
 			APIKey:  &apiKey,
 		})
 	}
-	if params.DomainID != nil {
-		domain, err := repo.FindByID(types.DomainParams{
-			Context:  params.Context,
-			DomainID: params.DomainID,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if params.MerchantID != nil && domain.MerchantID.String() != *params.MerchantID {
-			return nil, errors.New("domain does not belong to merchant")
-		}
-		return domain, nil
-	}
-	return nil, errors.New("X-API-Key or DomainID is required")
+	return nil, errors.New("X-API-Key header or Authorization: Bearer <key> is required")
 }
 
 func paymentIdempotencyKey(c fiber.Ctx, params types.PaymentCreateParams) string {

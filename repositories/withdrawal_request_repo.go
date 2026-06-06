@@ -115,30 +115,41 @@ func (r *WithdrawalRequestRepo) Find(ctx context.Context, id uuid.UUID) (*models
 
 func (r *WithdrawalRequestRepo) MarkApproved(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
 	now := time.Now()
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Model(&models.WithdrawalRequest{}).
-		Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
+		Where("id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).
 		Updates(map[string]any{
 			"status":      models.WithdrawalStatusApproved,
 			"reviewed_by": reviewedBy,
 			"reviewed_at": &now,
 			"tx_hash":     txHash,
 			"error":       "",
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.WithdrawalRequest{}).
+		result := tx.Model(&models.WithdrawalRequest{}).
 			Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
 			Updates(map[string]any{
 				"status":      models.WithdrawalStatusRejected,
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"error":       reason,
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
 	})
@@ -147,15 +158,19 @@ func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, 
 func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy string, errText string) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&models.WithdrawalRequest{}).
-			Where("id = ? AND status <> ?", id, models.WithdrawalStatusApproved).
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).
 			Updates(map[string]any{
 				"status":      models.WithdrawalStatusFailed,
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"error":       errText,
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
 	})
@@ -179,11 +194,8 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		return nil, errors.New("transfer callback is required")
 	}
 
-	var approved models.WithdrawalRequest
-	var transferErr error
-	var ledgerErr error
+	var request models.WithdrawalRequest
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var request models.WithdrawalRequest
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Preload("Merchant").
 			Preload("Wallet").
@@ -191,39 +203,55 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 			return err
 		}
 
-		txHash, err := transfer(&request)
-		if err != nil {
-			now := time.Now()
-			if markErr := tx.Model(&models.WithdrawalRequest{}).
-				Where("id = ?", id).
-				Updates(map[string]any{
-					"status":      models.WithdrawalStatusFailed,
-					"reviewed_by": reviewedBy,
-					"reviewed_at": &now,
-					"error":       err.Error(),
-				}).Error; markErr != nil {
-				return markErr
-			}
-			if ledger != nil {
-				if voidErr := ledger.VoidWithdrawalHoldWithDB(ctx, tx, id); voidErr != nil {
-					return voidErr
-				}
-			}
-			transferErr = err
-			return nil
-		}
-
 		now := time.Now()
-		if err := tx.Model(&models.WithdrawalRequest{}).
+		result := tx.Model(&models.WithdrawalRequest{}).
 			Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
+			Updates(map[string]any{
+				"status":      models.WithdrawalStatusProcessing,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		request.Status = models.WithdrawalStatusProcessing
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.Error = ""
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	txHash, transferErr := transfer(&request)
+	if transferErr != nil {
+		_ = r.MarkFailed(ctx, id, reviewedBy, transferErr.Error())
+		request.Status = models.WithdrawalStatusFailed
+		request.Error = transferErr.Error()
+		return &request, transferErr
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
 			Updates(map[string]any{
 				"status":      models.WithdrawalStatusApproved,
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"tx_hash":     txHash,
 				"error":       "",
-			}).Error; err != nil {
-			return err
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		request.Status = models.WithdrawalStatusApproved
 		request.ReviewedBy = reviewedBy
@@ -231,26 +259,18 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		request.TxHash = txHash
 		request.Error = ""
 		if ledger != nil {
-			if err := ledger.PostWithdrawalDebitWithDB(ctx, tx, request, txHash); err != nil {
-				ledgerErr = err
-				if markErr := tx.Model(&models.WithdrawalRequest{}).
-					Where("id = ?", id).
-					Update("error", "ledger update failed: "+err.Error()).Error; markErr != nil {
-					return markErr
-				}
-			}
+			return ledger.PostWithdrawalDebitWithDB(ctx, tx, request, txHash)
 		}
-		approved = request
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		msg := "ledger/finalize failed: " + err.Error()
+		_ = r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+			Update("error", msg).Error
+		request.Status = models.WithdrawalStatusProcessing
+		request.Error = msg
+		return &request, err
 	}
-	if transferErr != nil {
-		return nil, transferErr
-	}
-	if ledgerErr != nil {
-		return &approved, ledgerErr
-	}
-	return &approved, nil
+	return &request, nil
 }

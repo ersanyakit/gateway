@@ -60,7 +60,7 @@ func (r *Registry) ChainLogoURL(chainID constants.ChainID) string {
 }
 
 func (r *Registry) Normalize(id string) string {
-	return strings.ToLower(id)
+	return strings.ToLower(strings.TrimSpace(id))
 }
 
 func (r *Registry) Register(a Asset) {

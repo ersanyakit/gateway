@@ -7,10 +7,11 @@ import (
 )
 
 const (
-	WithdrawalStatusPending  = "pending"
-	WithdrawalStatusApproved = "approved"
-	WithdrawalStatusRejected = "rejected"
-	WithdrawalStatusFailed   = "failed"
+	WithdrawalStatusPending    = "pending"
+	WithdrawalStatusProcessing = "processing"
+	WithdrawalStatusApproved   = "approved"
+	WithdrawalStatusRejected   = "rejected"
+	WithdrawalStatusFailed     = "failed"
 )
 
 type WithdrawalRequest struct {
