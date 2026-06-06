@@ -225,16 +225,27 @@ Legacy/internal command endpoint örnekleri:
 
 ## V1 Merchant API
 
-`/api/v1` endpoint'leri API key veya Bearer token ile kullanılır. API key header'ları:
+Detaylı entegrasyon rehberi: [`docs/integration-guide.md`](docs/integration-guide.md)
+
+`/api/v1` okuma endpoint'leri API key veya Bearer token ile kullanılır:
 
 ```http
-X-API-Key: <domain-api-secret>
+X-API-Key: <domain-api-key>
 ```
 
 veya:
 
 ```http
-Authorization: Bearer <domain-api-secret>
+Authorization: Bearer <domain-api-key>
+```
+
+Para hareketi veya işlem oluşturan POST endpoint'leri ayrıca HMAC imzası ister:
+
+```http
+X-API-Key: <domain-api-key>
+X-API-Secret: <domain-api-secret>
+X-Gateway-Timestamp: <unix_seconds>
+X-Gateway-Signature: sha256=<hmac_sha256(timestamp + raw_body)>
 ```
 
 Common endpoint'ler:
