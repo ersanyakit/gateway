@@ -29,6 +29,7 @@ import (
 
 	coreApplication "core/application"
 	coreHelpers "core/helpers"
+	"core/repositories"
 	coreDB "core/services/database"
 
 	"github.com/google/uuid"
@@ -111,38 +112,81 @@ func transactionConfirmations(blockNumber string, state *models.ChainState) uint
 
 var addrIndex *addressindex.AddressIndex
 
+func walletForAddress(ctx context.Context, chainID constants.ChainID, address string) (*models.Wallet, bool, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil, false, nil
+	}
+
+	if addrIndex != nil {
+		if info, ok := addrIndex.Get(chainID, address); ok {
+			wallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, info.WalletID)
+			if err == nil {
+				return wallet, true, nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, false, err
+			}
+		}
+	}
+
+	wallet, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, chainID, address)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if addrIndex != nil {
+		addrIndex.Add(chainID, address, addressindex.WalletInfo{
+			WalletID:   wallet.ID,
+			MerchantID: wallet.MerchantID,
+			DomainID:   wallet.DomainID,
+			ProductID:  wallet.ProductID,
+			UserID:     wallet.UserID,
+		})
+	}
+	return wallet, true, nil
+}
+
+func transactionWalletMatch(ctx context.Context, txParam types.TransactionParam) (*models.Wallet, bool, bool, error) {
+	if txParam.To != nil {
+		wallet, ok, err := walletForAddress(ctx, txParam.ChainID, *txParam.To)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if ok {
+			return wallet, true, true, nil
+		}
+	}
+	if txParam.From != nil {
+		wallet, ok, err := walletForAddress(ctx, txParam.ChainID, *txParam.From)
+		if err != nil {
+			return nil, false, false, err
+		}
+		if ok {
+			return wallet, false, true, nil
+		}
+	}
+	return nil, false, false, nil
+}
+
+func bindTransactionWallet(ctx context.Context, eventType string, txParam types.TransactionParam, wallet *models.Wallet) (*models.Transaction, error) {
+	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
+	if err != nil {
+		return nil, err
+	}
+	return coreApplication.CORE.Router.TransactionRepo.BindWallet(ctx, uniqueHash, eventType, wallet)
+}
+
 func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, eventType string, txParam types.TransactionParam) (*models.Transaction, error) {
 	if txParam.To == nil || txParam.Amount == nil || !isPositiveAmount(*txParam.Amount) {
 		return nil, nil
 	}
 
-	var wallet *models.Wallet
-	if addrIndex != nil {
-		if info, ok := addrIndex.Get(txParam.ChainID, *txParam.To); ok {
-			w, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, info.WalletID)
-			if err == nil {
-				wallet = w
-			}
-		}
-	}
-	if wallet == nil {
-		w, err := coreApplication.CORE.Router.WalletRepo.FindByChainAddress(ctx, txParam.ChainID, *txParam.To)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		wallet = w
-		if addrIndex != nil {
-			addrIndex.Add(txParam.ChainID, *txParam.To, addressindex.WalletInfo{
-				WalletID:   wallet.ID,
-				MerchantID: wallet.MerchantID,
-				DomainID:   wallet.DomainID,
-				ProductID:  wallet.ProductID,
-				UserID:     wallet.UserID,
-			})
-		}
+	wallet, ok, err := walletForAddress(ctx, txParam.ChainID, *txParam.To)
+	if err != nil || !ok {
+		return nil, err
 	}
 
 	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
@@ -180,6 +224,8 @@ func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, ev
 			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(context.Background(), uniqueHash, true, nil)
 		}
 	}()
+
+	go autoSweepDeposit(txModel)
 
 	return txModel, nil
 }
@@ -233,7 +279,105 @@ func finalizePendingTransactions(ctx context.Context, notifier *webhooksvc.Notif
 			continue
 		}
 		handlePaymentDeposit(ctx, notifier, finalized)
+		go autoSweepDeposit(finalized)
 	}
+}
+
+func ensureMerchantReserveWallet(ctx context.Context, merchantID uuid.UUID) (*models.Wallet, error) {
+	wallet, err := coreApplication.CORE.Router.WalletRepo.FindReserveWallet(ctx, merchantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		domain, createErr := coreApplication.CORE.Router.DomainService.CreateReserve(ctx, merchantID)
+		if createErr != nil {
+			return nil, fmt.Errorf("reserve domain: %w", createErr)
+		}
+		wallet, err = coreApplication.CORE.Router.WalletRepo.CreateReserveWallet(ctx, merchantID, domain.ID, domain.HDAccountID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := coreApplication.CORE.Router.WalletRepo.EnsureAllAddresses(ctx, wallet.ID, coreApplication.CORE.Router.Blockchains()); err != nil {
+		return nil, err
+	}
+	return coreApplication.CORE.Router.WalletRepo.FindByID(ctx, wallet.ID)
+}
+
+// autoSweepDeposit moves funds from a user wallet (HDAddressId > 0) to the merchant's reserve wallet.
+// For ERC-20 deposits it prefunds gas from the reserve wallet first if the user wallet is low on native balance.
+// Runs asynchronously — errors are logged, not propagated.
+func autoSweepDeposit(txModel *models.Transaction) {
+	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	userWallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
+	if err != nil || userWallet == nil {
+		log.Printf("auto-sweep: wallet %s not found: %v", txModel.WalletID, err)
+		return
+	}
+	if userWallet.HDAddressId == 0 {
+		return // reserve wallet — never sweep from it
+	}
+
+	chain, err := coreApplication.CORE.Router.Blockchains().GetChainByID(txModel.ChainID)
+	if err != nil {
+		log.Printf("auto-sweep: chain %d not found: %v", txModel.ChainID, err)
+		return
+	}
+
+	reserveWallet, err := ensureMerchantReserveWallet(ctx, *txModel.MerchantID)
+	if err != nil {
+		log.Printf("auto-sweep: no reserve wallet for merchant %s: %v", txModel.MerchantID, err)
+		return
+	}
+
+	reserveAddr := repositories.WalletAddressForChainID(*reserveWallet, txModel.ChainID)
+	if reserveAddr == "" {
+		log.Printf("auto-sweep: reserve wallet has no address for chain %d", txModel.ChainID)
+		return
+	}
+
+	// Re-derive user wallet private key from mnemonic
+	userDetails, err := chain.CreateHDWallet(ctx, int(userWallet.HDAccountID), int(userWallet.HDAddressId))
+	if err != nil {
+		log.Printf("auto-sweep: re-derive wallet [acct=%d idx=%d] failed: %v", userWallet.HDAccountID, userWallet.HDAddressId, err)
+		return
+	}
+
+	if txModel.Token != nil && *txModel.Token != "" {
+		// ERC-20 deposit: ensure user wallet has enough native gas first
+		reserveDetails, err := chain.CreateHDWallet(ctx, int(reserveWallet.HDAccountID), int(reserveWallet.HDAddressId))
+		if err != nil {
+			log.Printf("auto-sweep: re-derive reserve wallet failed: %v", err)
+			return
+		}
+		prefunded, err := chain.PrefundGas(ctx, *reserveDetails, userDetails.Address)
+		if err != nil {
+			log.Printf("auto-sweep: gas prefund [chain=%d addr=%s]: %v", txModel.ChainID, userDetails.Address, err)
+			// Continue anyway — maybe there's already enough gas
+		} else if prefunded {
+			log.Printf("auto-sweep: gas prefunded to %s on chain %d", userDetails.Address, txModel.ChainID)
+			// Brief pause for the prefund tx to be picked up before sweeping
+			time.Sleep(5 * time.Second)
+		}
+		result, err := chain.SweepERC20To(ctx, *userDetails, *txModel.Token, reserveAddr)
+		if err != nil {
+			log.Printf("auto-sweep ERC-20 [chain=%d token=%s]: %v", txModel.ChainID, *txModel.Token, err)
+			return
+		}
+		log.Printf("auto-sweep ERC-20 [chain=%d token=%s]: swept to reserve tx=%s", txModel.ChainID, *txModel.Token, result.TxHash)
+		return
+	}
+
+	// Native deposit sweep
+	result, err := chain.SweepTo(ctx, *userDetails, reserveAddr)
+	if err != nil {
+		log.Printf("auto-sweep native [chain=%d]: %v", txModel.ChainID, err)
+		return
+	}
+	log.Printf("auto-sweep native [chain=%d]: swept to reserve tx=%s", txModel.ChainID, result.TxHash)
 }
 
 func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, txModel *models.Transaction) {
@@ -617,6 +761,7 @@ func main() {
 		"solana",
 		"tron",
 		"base",
+		"arbitrum",
 		"unichain",
 		"avalanche",
 		"bnbchain",
@@ -658,7 +803,22 @@ func main() {
 							ptrValue(tx.LogIndex),
 						)
 
-						err := coreApplication.CORE.Router.TransactionRepo.Create(*tx)
+						wallet, inbound, matched, err := transactionWalletMatch(mainCtx, *tx)
+						if err != nil {
+							fmt.Println("Wallet match error:", err)
+							if event.Ack != nil {
+								event.Ack <- err
+							}
+							continue
+						}
+						if !matched {
+							if event.Ack != nil {
+								event.Ack <- nil
+							}
+							continue
+						}
+
+						err = coreApplication.CORE.Router.TransactionRepo.Create(*tx)
 						if err != nil {
 							fmt.Println("Transaction save error:", err)
 						} else {
@@ -666,12 +826,30 @@ func main() {
 								err = finalityErr
 								fmt.Println("Transaction finality error:", finalityErr)
 							}
-							txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
-							if webhookErr != nil {
-								err = webhookErr
-								fmt.Println("Deposit processing error:", webhookErr)
+							if err == nil {
+								if inbound {
+									txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
+									if webhookErr != nil {
+										err = webhookErr
+										fmt.Println("Deposit processing error:", webhookErr)
+									}
+									if err == nil {
+										if txModel == nil {
+											if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
+												err = bindErr
+												fmt.Println("Transaction wallet bind error:", bindErr)
+											}
+										} else {
+											handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
+										}
+									}
+								} else {
+									if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
+										err = bindErr
+										fmt.Println("Transaction wallet bind error:", bindErr)
+									}
+								}
 							}
-							handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
 						}
 						if event.Ack != nil {
 							event.Ack <- err

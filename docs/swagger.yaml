@@ -133,6 +133,587 @@ definitions:
       success_path:
         type: string
     type: object
+  types.V1AssetItem:
+    properties:
+      balance:
+        example: "1250.00"
+        type: string
+      balance_raw:
+        example: "1250000000"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1BalanceResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1AssetItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1CurrenciesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1CurrencyItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1CurrencyItem:
+    properties:
+      chain:
+        example: ethereum
+        type: string
+      chain_id:
+        example: 1
+        type: integer
+      decimals:
+        example: 6
+        type: integer
+      logo_url:
+        example: https://assets.coingecko.com/coins/images/325/large/Tether.png
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1ErrorResponse:
+    properties:
+      message:
+        example: X-API-Key header is required
+        type: string
+      result:
+        example: error
+        type: string
+    type: object
+  types.V1FiatCurrenciesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1FiatCurrencyItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1FiatCurrencyItem:
+    properties:
+      code:
+        example: USD
+        type: string
+      name:
+        example: US Dollar
+        type: string
+      symbol:
+        example: $
+        type: string
+    type: object
+  types.V1InvoiceRequest:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      cancel_url:
+        example: https://example.com/cancel
+        type: string
+      currency:
+        example: USD
+        type: string
+      description:
+        example: Product purchase
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      success_url:
+        example: https://example.com/success
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1NetworkItem:
+    properties:
+      chain_id:
+        example: 1
+        type: integer
+      explorer:
+        example: https://etherscan.io
+        type: string
+      logo_url:
+        example: https://assets.coingecko.com/coins/images/279/large/ethereum.png
+        type: string
+      name:
+        example: Ethereum
+        type: string
+      slug:
+        example: ethereum
+        type: string
+    type: object
+  types.V1NetworksResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1NetworkItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentCreatedData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentCreatedData:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      checkout_url:
+        example: https://pay.example.com/checkout/eyJhbGci
+        type: string
+      currency:
+        example: USD
+        type: string
+      expires_at:
+        example: "2024-06-01T12:30:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      session_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+        type: string
+      status:
+        example: pending
+        type: string
+      track_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  types.V1PaymentDetail:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      checkout_url:
+        example: https://pay.example.com/checkout/eyJhbGci
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      currency:
+        example: USD
+        type: string
+      deposit_wallet:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      expires_at:
+        example: "2024-06-01T12:30:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      paid_at:
+        example: "2024-06-01T12:15:00Z"
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      selected_asset:
+        example: USDT
+        type: string
+      selected_chain:
+        example: ethereum
+        type: string
+      status:
+        example: paid
+        type: string
+      track_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      tx_hash:
+        example: 0xabc123...
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1PaymentHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PaymentDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 48
+        type: integer
+    type: object
+  types.V1PaymentInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentStatisticsData:
+    properties:
+      awaiting_payment:
+        example: 8
+        type: integer
+      expired:
+        example: 5
+        type: integer
+      paid:
+        example: 95
+        type: integer
+      pending:
+        example: 12
+        type: integer
+      total:
+        example: 120
+        type: integer
+      total_volume_usd:
+        example: "48320.00"
+        type: string
+    type: object
+  types.V1PaymentStatisticsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentStatisticsData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentStatusTableResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1StatusTableItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PayoutDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutDetail:
+    properties:
+      amount:
+        example: "0.05"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      note:
+        example: Monthly settlement
+        type: string
+      payout_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      status:
+        example: pending
+        type: string
+      to_address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      tx_hash:
+        example: ""
+        type: string
+    type: object
+  types.V1PayoutHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PayoutDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 12
+        type: integer
+    type: object
+  types.V1PayoutInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PayoutDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutRequest:
+    properties:
+      amount:
+        example: "0.05"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      note:
+        example: Monthly settlement
+        type: string
+      to_address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+    type: object
+  types.V1PayoutStatusTableItem:
+    properties:
+      description:
+        example: Awaiting admin approval
+        type: string
+      is_final:
+        example: false
+        type: boolean
+      status:
+        example: pending
+        type: string
+    type: object
+  types.V1PayoutStatusTableResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PayoutStatusTableItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PriceItem:
+    properties:
+      price:
+        example: "67430.21"
+        type: string
+      symbol:
+        example: BTC
+        type: string
+    type: object
+  types.V1PricesResponse:
+    properties:
+      currency:
+        example: USD
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/types.V1PriceItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1RefundDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundDetail:
+    properties:
+      amount_raw:
+        example: "25000000"
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+      reason:
+        example: Customer requested refund
+        type: string
+      refund_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      status:
+        example: pending
+        type: string
+      tx_hash:
+        example: ""
+        type: string
+    type: object
+  types.V1RefundHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1RefundDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 3
+        type: integer
+    type: object
+  types.V1RefundInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1RefundDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundRequest:
+    properties:
+      amount_raw:
+        example: "25000000"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      reason:
+        example: Customer requested refund
+        type: string
+    type: object
+  types.V1StaticAddressDetail:
+    properties:
+      address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      label:
+        example: Main wallet
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  types.V1StaticAddressListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1StaticAddressDetail'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StaticAddressRequest:
+    properties:
+      chain_id:
+        example: 1
+        type: integer
+      label:
+        example: Main wallet
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1StaticAddressResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1StaticAddressDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StatusData:
+    properties:
+      status:
+        example: operational
+        type: string
+      version:
+        example: 1.0.0
+        type: string
+    type: object
+  types.V1StatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1StatusData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StatusTableItem:
+    properties:
+      description:
+        example: Payment confirmed on-chain
+        type: string
+      is_final:
+        example: true
+        type: boolean
+      status:
+        example: paid
+        type: string
+    type: object
   types.WalletCreateResponse:
     properties:
       avalanche:
@@ -199,12 +780,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1BalanceResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Account balance
@@ -220,12 +800,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1CurrenciesResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Supported crypto currencies
@@ -240,12 +819,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1FiatCurrenciesResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Supported fiat currencies
@@ -261,12 +839,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1NetworksResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Supported blockchain networks
@@ -277,7 +854,13 @@ paths:
       description: Returns current prices for all supported crypto assets in the requested
         fiat currency.
       parameters:
-      - description: 'Fiat currency (default: USD)'
+      - default: USD
+        description: Fiat currency code
+        enum:
+        - USD
+        - EUR
+        - TRY
+        - GBP
         in: query
         name: currency
         type: string
@@ -287,12 +870,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PricesResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Asset prices
@@ -307,12 +889,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1StatusResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: System status
@@ -325,27 +906,27 @@ paths:
       description: Creates a hosted checkout payment session. Returns a checkout URL
         the customer visits to complete payment.
       parameters:
-      - description: Payment creation parameters
+      - description: Invoice parameters
         in: body
         name: payload
         required: true
         schema:
-          $ref: '#/definitions/types.PaymentCreateParams'
+          $ref: '#/definitions/types.V1InvoiceRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/types.PaymentCreateResponse'
+            $ref: '#/definitions/types.V1PaymentCreateResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Generate invoice
@@ -360,12 +941,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1CurrenciesResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Accepted currencies
@@ -376,16 +956,24 @@ paths:
       description: Returns paginated payment session history for the authenticated
         merchant.
       parameters:
-      - description: 'Page number (default: 1)'
+      - default: 1
+        description: Page number
         in: query
         name: page
         type: integer
-      - description: 'Items per page (max: 100, default: 20)'
+      - default: 20
+        description: Items per page (max 100)
         in: query
         name: limit
         type: integer
-      - description: Filter by status (pending, awaiting_payment, paid, expired, canceled,
-          failed)
+      - description: Filter by status
+        enum:
+        - pending
+        - awaiting_payment
+        - paid
+        - expired
+        - canceled
+        - failed
         in: query
         name: status
         type: string
@@ -395,12 +983,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PaymentHistoryResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payment history
@@ -411,11 +998,13 @@ paths:
       description: Retrieves detailed payment session info by track_id (session token)
         or order_id.
       parameters:
-      - description: Session token
+      - description: Session token (UUID)
+        example: 550e8400-e29b-41d4-a716-446655440000
         in: query
         name: track_id
         type: string
-      - description: Order ID
+      - description: Merchant order ID
+        example: ORD-2024-001
         in: query
         name: order_id
         type: string
@@ -425,20 +1014,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PaymentInfoResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payment information
@@ -448,31 +1036,30 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates or returns a permanent multi-chain deposit wallet for a
-        given user_id. Subsequent calls with the same user_id return the same addresses.
+      description: Creates a permanent deposit wallet for a user. Subsequent calls
+        with the same user_id and chain return the existing address.
       parameters:
-      - description: user_id (required), product_id (optional)
+      - description: Static address parameters
         in: body
         name: payload
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.V1StaticAddressRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1StaticAddressResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Generate static address
@@ -483,15 +1070,18 @@ paths:
       description: Lists all static deposit wallets for the merchant, optionally filtered
         by user_id.
       parameters:
-      - description: Filter by user_id
+      - description: Filter by user ID
+        example: customer_42
         in: query
         name: user_id
         type: string
-      - description: 'Page number (default: 1)'
+      - default: 1
+        description: Page number
         in: query
         name: page
         type: integer
-      - description: 'Items per page (max: 100, default: 20)'
+      - default: 20
+        description: Items per page (max 100)
         in: query
         name: limit
         type: integer
@@ -501,12 +1091,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1StaticAddressListResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Static address list
@@ -522,12 +1111,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PaymentStatisticsResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payment statistics
@@ -535,19 +1123,19 @@ paths:
       - Payment
   /api/v1/payment/status-table:
     get:
-      description: Returns all possible payment statuses with descriptions.
+      description: Returns all possible payment statuses with descriptions and whether
+        each is a terminal state.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PaymentStatusTableResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payment status table
@@ -557,30 +1145,30 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a white label hosted checkout session. Identical to create
-        invoice but labeled for white-label integrations.
+      description: Creates a white label hosted checkout session. Identical to Generate
+        Invoice but returns a branded URL.
       parameters:
-      - description: Payment creation parameters
+      - description: Invoice parameters
         in: body
         name: payload
         required: true
         schema:
-          $ref: '#/definitions/types.PaymentCreateParams'
+          $ref: '#/definitions/types.V1InvoiceRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            $ref: '#/definitions/types.PaymentCreateResponse'
+            $ref: '#/definitions/types.V1PaymentCreateResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Generate white label payment
@@ -593,28 +1181,27 @@ paths:
       description: Creates a withdrawal (payout) request from the merchant's wallet
         to the specified address. Requires admin approval before execution.
       parameters:
-      - description: chain, to_address, amount (decimal), note (optional)
+      - description: Payout parameters
         in: body
         name: payload
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.V1PayoutRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PayoutCreateResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Generate payout
@@ -625,11 +1212,13 @@ paths:
       description: Returns paginated payout (withdrawal) history for the authenticated
         merchant.
       parameters:
-      - description: 'Page number (default: 1)'
+      - default: 1
+        description: Page number
         in: query
         name: page
         type: integer
-      - description: 'Items per page (max: 100, default: 20)'
+      - default: 20
+        description: Items per page (max 100)
         in: query
         name: limit
         type: integer
@@ -639,12 +1228,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PayoutHistoryResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payout history
@@ -655,6 +1243,7 @@ paths:
       description: Returns details of a specific payout request by payout_id.
       parameters:
       - description: Payout UUID
+        example: 550e8400-e29b-41d4-a716-446655440000
         in: query
         name: payout_id
         required: true
@@ -665,20 +1254,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PayoutInfoResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payout information
@@ -686,19 +1274,19 @@ paths:
       - Payout
   /api/v1/payout/status-table:
     get:
-      description: Returns all possible payout statuses with descriptions.
+      description: Returns all possible payout statuses with descriptions and whether
+        each is a terminal state.
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1PayoutStatusTableResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Payout status table
@@ -708,32 +1296,31 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a refund request for a paid payment. Admin approval broadcasts
-        the refund transfer.
+      description: Creates a refund request for a paid payment. Provide payment_id
+        OR order_id to identify the payment. Admin approval broadcasts the on-chain
+        refund.
       parameters:
-      - description: payment_id or order_id or track_id, amount_raw optional, reason
-          optional
+      - description: Refund parameters
         in: body
         name: payload
         required: true
         schema:
-          type: object
+          $ref: '#/definitions/types.V1RefundRequest'
       produces:
       - application/json
       responses:
         "201":
           description: Created
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1RefundCreateResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Create refund request
@@ -743,11 +1330,13 @@ paths:
     get:
       description: Returns paginated refund requests for the authenticated merchant.
       parameters:
-      - description: Page number
+      - default: 1
+        description: Page number
         in: query
         name: page
         type: integer
-      - description: Page size
+      - default: 20
+        description: Items per page (max 100)
         in: query
         name: limit
         type: integer
@@ -757,12 +1346,11 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1RefundHistoryResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Get refund history
@@ -772,7 +1360,8 @@ paths:
     get:
       description: Returns a refund request owned by the authenticated merchant.
       parameters:
-      - description: Refund ID
+      - description: Refund UUID
+        example: 550e8400-e29b-41d4-a716-446655440000
         in: query
         name: refund_id
         required: true
@@ -783,20 +1372,19 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/types.V1RefundInfoResponse'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
         "404":
           description: Not Found
           schema:
-            $ref: '#/definitions/types.ErrorResponse'
+            $ref: '#/definitions/types.V1ErrorResponse'
       security:
       - ApiKeyAuth: []
       summary: Get refund info

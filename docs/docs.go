@@ -34,14 +34,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1BalanceResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -66,14 +65,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1CurrenciesResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -98,14 +96,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1FiatCurrenciesResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -130,14 +127,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1NetworksResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -160,8 +156,15 @@ const docTemplate = `{
                 "summary": "Asset prices",
                 "parameters": [
                     {
+                        "enum": [
+                            "USD",
+                            "EUR",
+                            "TRY",
+                            "GBP"
+                        ],
                         "type": "string",
-                        "description": "Fiat currency (default: USD)",
+                        "default": "USD",
+                        "description": "Fiat currency code",
                         "name": "currency",
                         "in": "query"
                     }
@@ -170,14 +173,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PricesResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -202,14 +204,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1StatusResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -235,12 +236,12 @@ const docTemplate = `{
                 "summary": "Generate invoice",
                 "parameters": [
                     {
-                        "description": "Payment creation parameters",
+                        "description": "Invoice parameters",
                         "name": "payload",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.PaymentCreateParams"
+                            "$ref": "#/definitions/types.V1InvoiceRequest"
                         }
                     }
                 ],
@@ -248,19 +249,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/types.PaymentCreateResponse"
+                            "$ref": "#/definitions/types.V1PaymentCreateResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -285,14 +286,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1CurrenciesResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -316,19 +316,29 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "Page number (default: 1)",
+                        "default": 1,
+                        "description": "Page number",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Items per page (max: 100, default: 20)",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
                         "name": "limit",
                         "in": "query"
                     },
                     {
+                        "enum": [
+                            "pending",
+                            "awaiting_payment",
+                            "paid",
+                            "expired",
+                            "canceled",
+                            "failed"
+                        ],
                         "type": "string",
-                        "description": "Filter by status (pending, awaiting_payment, paid, expired, canceled, failed)",
+                        "description": "Filter by status",
                         "name": "status",
                         "in": "query"
                     }
@@ -337,14 +347,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PaymentHistoryResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -368,13 +377,15 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Session token",
+                        "example": "550e8400-e29b-41d4-a716-446655440000",
+                        "description": "Session token (UUID)",
                         "name": "track_id",
                         "in": "query"
                     },
                     {
                         "type": "string",
-                        "description": "Order ID",
+                        "example": "ORD-2024-001",
+                        "description": "Merchant order ID",
                         "name": "order_id",
                         "in": "query"
                     }
@@ -383,26 +394,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PaymentInfoResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -415,7 +425,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates or returns a permanent multi-chain deposit wallet for a given user_id. Subsequent calls with the same user_id return the same addresses.",
+                "description": "Creates a permanent deposit wallet for a user. Subsequent calls with the same user_id and chain return the existing address.",
                 "consumes": [
                     "application/json"
                 ],
@@ -428,12 +438,12 @@ const docTemplate = `{
                 "summary": "Generate static address",
                 "parameters": [
                     {
-                        "description": "user_id (required), product_id (optional)",
+                        "description": "Static address parameters",
                         "name": "payload",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.V1StaticAddressRequest"
                         }
                     }
                 ],
@@ -441,20 +451,19 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1StaticAddressResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -478,19 +487,22 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by user_id",
+                        "example": "customer_42",
+                        "description": "Filter by user ID",
                         "name": "user_id",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page number (default: 1)",
+                        "default": 1,
+                        "description": "Page number",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Items per page (max: 100, default: 20)",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
                         "name": "limit",
                         "in": "query"
                     }
@@ -499,14 +511,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1StaticAddressListResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -531,14 +542,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PaymentStatisticsResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -551,7 +561,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns all possible payment statuses with descriptions.",
+                "description": "Returns all possible payment statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
                 ],
@@ -563,14 +573,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PaymentStatusTableResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -583,7 +592,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates a white label hosted checkout session. Identical to create invoice but labeled for white-label integrations.",
+                "description": "Creates a white label hosted checkout session. Identical to Generate Invoice but returns a branded URL.",
                 "consumes": [
                     "application/json"
                 ],
@@ -596,12 +605,12 @@ const docTemplate = `{
                 "summary": "Generate white label payment",
                 "parameters": [
                     {
-                        "description": "Payment creation parameters",
+                        "description": "Invoice parameters",
                         "name": "payload",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/types.PaymentCreateParams"
+                            "$ref": "#/definitions/types.V1InvoiceRequest"
                         }
                     }
                 ],
@@ -609,19 +618,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/types.PaymentCreateResponse"
+                            "$ref": "#/definitions/types.V1PaymentCreateResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -647,12 +656,12 @@ const docTemplate = `{
                 "summary": "Generate payout",
                 "parameters": [
                     {
-                        "description": "chain, to_address, amount (decimal), note (optional)",
+                        "description": "Payout parameters",
                         "name": "payload",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.V1PayoutRequest"
                         }
                     }
                 ],
@@ -660,20 +669,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PayoutCreateResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -697,13 +705,15 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
-                        "description": "Page number (default: 1)",
+                        "default": 1,
+                        "description": "Page number",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Items per page (max: 100, default: 20)",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
                         "name": "limit",
                         "in": "query"
                     }
@@ -712,14 +722,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PayoutHistoryResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -743,6 +752,7 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "example": "550e8400-e29b-41d4-a716-446655440000",
                         "description": "Payout UUID",
                         "name": "payout_id",
                         "in": "query",
@@ -753,26 +763,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PayoutInfoResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -785,7 +794,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns all possible payout statuses with descriptions.",
+                "description": "Returns all possible payout statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
                 ],
@@ -797,14 +806,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1PayoutStatusTableResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -817,7 +825,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Creates a refund request for a paid payment. Admin approval broadcasts the refund transfer.",
+                "description": "Creates a refund request for a paid payment. Provide payment_id OR order_id to identify the payment. Admin approval broadcasts the on-chain refund.",
                 "consumes": [
                     "application/json"
                 ],
@@ -830,12 +838,12 @@ const docTemplate = `{
                 "summary": "Create refund request",
                 "parameters": [
                     {
-                        "description": "payment_id or order_id or track_id, amount_raw optional, reason optional",
+                        "description": "Refund parameters",
                         "name": "payload",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "type": "object"
+                            "$ref": "#/definitions/types.V1RefundRequest"
                         }
                     }
                 ],
@@ -843,20 +851,19 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1RefundCreateResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -880,13 +887,15 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "integer",
+                        "default": 1,
                         "description": "Page number",
                         "name": "page",
                         "in": "query"
                     },
                     {
                         "type": "integer",
-                        "description": "Page size",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
                         "name": "limit",
                         "in": "query"
                     }
@@ -895,14 +904,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1RefundHistoryResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -926,7 +934,8 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Refund ID",
+                        "example": "550e8400-e29b-41d4-a716-446655440000",
+                        "description": "Refund UUID",
                         "name": "refund_id",
                         "in": "query",
                         "required": true
@@ -936,26 +945,25 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/types.V1RefundInfoResponse"
                         }
                     },
                     "400": {
                         "description": "Bad Request",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "Unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
+                            "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
                 }
@@ -2064,6 +2072,830 @@ const docTemplate = `{
                 },
                 "success_path": {
                     "type": "string"
+                }
+            }
+        },
+        "types.V1AssetItem": {
+            "type": "object",
+            "properties": {
+                "balance": {
+                    "type": "string",
+                    "example": "1250.00"
+                },
+                "balance_raw": {
+                    "type": "string",
+                    "example": "1250000000"
+                },
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "token_address": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+                }
+            }
+        },
+        "types.V1BalanceResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1AssetItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1CurrenciesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1CurrencyItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1CurrencyItem": {
+            "type": "object",
+            "properties": {
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "logo_url": {
+                    "type": "string",
+                    "example": "https://assets.coingecko.com/coins/images/325/large/Tether.png"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Tether USD"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "token_address": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+                }
+            }
+        },
+        "types.V1ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "example": "X-API-Key header is required"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "error"
+                }
+            }
+        },
+        "types.V1FiatCurrenciesResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1FiatCurrencyItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1FiatCurrencyItem": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "US Dollar"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "$"
+                }
+            }
+        },
+        "types.V1InvoiceRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "25.00"
+                },
+                "cancel_url": {
+                    "type": "string",
+                    "example": "https://example.com/cancel"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "description": {
+                    "type": "string",
+                    "example": "Product purchase"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "ORD-2024-001"
+                },
+                "success_url": {
+                    "type": "string",
+                    "example": "https://example.com/success"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                }
+            }
+        },
+        "types.V1NetworkItem": {
+            "type": "object",
+            "properties": {
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "explorer": {
+                    "type": "string",
+                    "example": "https://etherscan.io"
+                },
+                "logo_url": {
+                    "type": "string",
+                    "example": "https://assets.coingecko.com/coins/images/279/large/ethereum.png"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Ethereum"
+                },
+                "slug": {
+                    "type": "string",
+                    "example": "ethereum"
+                }
+            }
+        },
+        "types.V1NetworksResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1NetworkItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PaymentCreateResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PaymentCreatedData"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PaymentCreatedData": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "25.00"
+                },
+                "checkout_url": {
+                    "type": "string",
+                    "example": "https://pay.example.com/checkout/eyJhbGci"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "expires_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:30:00Z"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "ORD-2024-001"
+                },
+                "payment_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "session_token": {
+                    "type": "string",
+                    "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "track_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "types.V1PaymentDetail": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "25.00"
+                },
+                "checkout_url": {
+                    "type": "string",
+                    "example": "https://pay.example.com/checkout/eyJhbGci"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:00:00Z"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "deposit_wallet": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "expires_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:30:00Z"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "ORD-2024-001"
+                },
+                "paid_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:15:00Z"
+                },
+                "payment_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "selected_asset": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "selected_chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "paid"
+                },
+                "track_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "tx_hash": {
+                    "type": "string",
+                    "example": "0xabc123..."
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                }
+            }
+        },
+        "types.V1PaymentHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1PaymentDetail"
+                    }
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 48
+                }
+            }
+        },
+        "types.V1PaymentInfoResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PaymentDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PaymentStatisticsData": {
+            "type": "object",
+            "properties": {
+                "awaiting_payment": {
+                    "type": "integer",
+                    "example": 8
+                },
+                "expired": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "paid": {
+                    "type": "integer",
+                    "example": 95
+                },
+                "pending": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 120
+                },
+                "total_volume_usd": {
+                    "type": "string",
+                    "example": "48320.00"
+                }
+            }
+        },
+        "types.V1PaymentStatisticsResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PaymentStatisticsData"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PaymentStatusTableResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1StatusTableItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PayoutCreateResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PayoutDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PayoutDetail": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "0.05"
+                },
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:00:00Z"
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Monthly settlement"
+                },
+                "payout_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "to_address": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "tx_hash": {
+                    "type": "string",
+                    "example": ""
+                }
+            }
+        },
+        "types.V1PayoutHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1PayoutDetail"
+                    }
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 12
+                }
+            }
+        },
+        "types.V1PayoutInfoResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PayoutDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PayoutRequest": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string",
+                    "example": "0.05"
+                },
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "note": {
+                    "type": "string",
+                    "example": "Monthly settlement"
+                },
+                "to_address": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                }
+            }
+        },
+        "types.V1PayoutStatusTableItem": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Awaiting admin approval"
+                },
+                "is_final": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                }
+            }
+        },
+        "types.V1PayoutStatusTableResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1PayoutStatusTableItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1PriceItem": {
+            "type": "object",
+            "properties": {
+                "price": {
+                    "type": "string",
+                    "example": "67430.21"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "BTC"
+                }
+            }
+        },
+        "types.V1PricesResponse": {
+            "type": "object",
+            "properties": {
+                "currency": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1PriceItem"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1RefundCreateResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1RefundDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1RefundDetail": {
+            "type": "object",
+            "properties": {
+                "amount_raw": {
+                    "type": "string",
+                    "example": "25000000"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:00:00Z"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "ORD-2024-001"
+                },
+                "payment_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440001"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Customer requested refund"
+                },
+                "refund_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "pending"
+                },
+                "tx_hash": {
+                    "type": "string",
+                    "example": ""
+                }
+            }
+        },
+        "types.V1RefundHistoryResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1RefundDetail"
+                    }
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "types.V1RefundInfoResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1RefundDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1RefundRequest": {
+            "type": "object",
+            "properties": {
+                "amount_raw": {
+                    "type": "string",
+                    "example": "25000000"
+                },
+                "order_id": {
+                    "type": "string",
+                    "example": "ORD-2024-001"
+                },
+                "payment_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Customer requested refund"
+                }
+            }
+        },
+        "types.V1StaticAddressDetail": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "label": {
+                    "type": "string",
+                    "example": "Main wallet"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "types.V1StaticAddressListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1StaticAddressDetail"
+                    }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1StaticAddressRequest": {
+            "type": "object",
+            "properties": {
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "label": {
+                    "type": "string",
+                    "example": "Main wallet"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                }
+            }
+        },
+        "types.V1StaticAddressResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1StaticAddressDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1StatusData": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "operational"
+                },
+                "version": {
+                    "type": "string",
+                    "example": "1.0.0"
+                }
+            }
+        },
+        "types.V1StatusResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1StatusData"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1StatusTableItem": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "example": "Payment confirmed on-chain"
+                },
+                "is_final": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "status": {
+                    "type": "string",
+                    "example": "paid"
                 }
             }
         },

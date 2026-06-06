@@ -111,7 +111,7 @@ func (s *AvalancheChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWall
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 60, int(s.ChainID()), hdAccountId, hdWalletId)
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
 	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -145,6 +145,18 @@ func (s *AvalancheChain) Withdraw(ctx context.Context, wallet blockchain.WalletD
 
 func (s *AvalancheChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
+}
+
+func (s *AvalancheChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepNativeTo(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, toAddress)
+}
+
+func (s *AvalancheChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepERC20To(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, contractAddr, toAddress)
+}
+
+func (s *AvalancheChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {
+	return evmPrefundGas(ctx, s.Name(), s.ChainID(), s.RPCs(), reserveWallet, userAddress, evmGasThreshold(), evmGasPrefundAmount())
 }
 
 const AVALANCHE_SYMBOL = "AVAX"

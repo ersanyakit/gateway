@@ -31,6 +31,8 @@ func chainLogoFilename(chainID constants.ChainID) string {
 		return "bitcoinchain"
 	case constants.Base:
 		return "basechain"
+	case constants.Arbitrum:
+		return "arbitrumchain"
 	case constants.Ethereum:
 		return "ethereumchain"
 	case constants.Binance:

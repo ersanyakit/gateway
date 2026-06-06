@@ -27,6 +27,11 @@ func NewAssetRegistry() *asset.Registry {
 	registry.Register(asset.NewERC20(constants.Base, "0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18))
 	registry.Register(asset.NewERC20(constants.Base, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "USDC", "USDC", 6))
 
+	// Arbitrum One
+	registry.Register(asset.NewEVMNative(constants.Arbitrum, "ETH", "Arbitrum Ether", 18))
+	registry.Register(asset.NewERC20(constants.Arbitrum, "0x82aF49447D8a07e3bd95BDd56f35241523fBab1", "WETH", "Wrapped Ether", 18))
+	registry.Register(asset.NewERC20(constants.Arbitrum, "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", "USDC", "USDC", 6))
+
 	// Unichain
 	registry.Register(asset.NewEVMNative(constants.Unichain, "ETH", "Unichain Ether", 18))
 	registry.Register(asset.NewERC20(constants.Unichain, "0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18))

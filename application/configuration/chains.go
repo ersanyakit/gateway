@@ -20,6 +20,9 @@ func NewChainFactory() *blockchain.ChainFactory {
 	factory.RegisterChain("chiliz-spicy", chains.NewChilizSpicyChain())
 	factory.RegisterAlias("spicy", "chiliz-spicy")
 	factory.RegisterChain("base", chains.NewBaseChain())
+	factory.RegisterChain("arbitrum", chains.NewArbitrumChain())
+	factory.RegisterAlias("arb", "arbitrum")
+	factory.RegisterAlias("arbitrum-one", "arbitrum")
 	factory.RegisterChain("unichain", chains.NewUnichainChain())
 	return factory
 }

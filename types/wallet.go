@@ -29,6 +29,7 @@ type WalletCreateResponse struct {
 	AvalancheAddress string `json:"avalanche"`
 	BinanceAddress   string `json:"bnbchain"`
 	BaseAddress      string `json:"base"`
+	ArbitrumAddress  string `json:"arbitrum"`
 	UnichainAddress  string `json:"unichain"`
 	TronAddress      string `json:"tron"`
 	SolanaAddress    string `json:"solana"`

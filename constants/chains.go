@@ -3,22 +3,24 @@ package constants
 type ChainID int64
 
 const (
-	Bitcoin      ChainID = 0 // Non-EVM
-	Ethereum     ChainID = 1
-	Base         ChainID = 8453
-	Binance      ChainID = 56
-	Unichain     ChainID = 130
-	Avalanche    ChainID = 43114
-	Chiliz       ChainID = 88888
-	ChilizSpicy  ChainID = 88882
-	Solana       ChainID = 99999999
-	TRON         ChainID = 99999998
+	Bitcoin     ChainID = 0 // Non-EVM
+	Ethereum    ChainID = 1
+	Base        ChainID = 8453
+	Arbitrum    ChainID = 42161
+	Binance     ChainID = 56
+	Unichain    ChainID = 130
+	Avalanche   ChainID = 43114
+	Chiliz      ChainID = 88888
+	ChilizSpicy ChainID = 88882
+	Solana      ChainID = 99999999
+	TRON        ChainID = 99999998
 )
 
 var chainNames = map[ChainID]string{
 	Bitcoin:     "bitcoin",
 	Ethereum:    "ethereum",
 	Base:        "base",
+	Arbitrum:    "arbitrum",
 	Binance:     "bnbchain",
 	Unichain:    "unichain",
 	Avalanche:   "avalanche",
@@ -37,10 +39,19 @@ func AllChainIDs() []ChainID {
 		Solana,
 		TRON,
 		Base,
+		Arbitrum,
 		Unichain,
 		Avalanche,
 		Binance,
 	}
+}
+
+var testnetChains = map[ChainID]bool{
+	ChilizSpicy: true,
+}
+
+func IsTestnet(chainID ChainID) bool {
+	return testnetChains[chainID]
 }
 
 func IsSupportedChainID(chainID ChainID) bool {

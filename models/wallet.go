@@ -21,16 +21,17 @@ type Wallet struct {
 	ProductID string `gorm:"size:128;index;uniqueIndex:ux_wallet_owner" json:"product_id"`
 	UserID    string `gorm:"size:128;index;uniqueIndex:ux_wallet_owner" json:"user_id"`
 
-	BitcoinAddress      string `gorm:"size:128;uniqueIndex" json:"bitcoin"`
-	EthereumAddress     string `gorm:"size:128;uniqueIndex" json:"ethereum"`
-	AvalancheAddress    string `gorm:"size:128;uniqueIndex" json:"avalanche"`
-	BinanceAddress      string `gorm:"size:128;uniqueIndex" json:"bnbchain"`
-	BaseAddress         string `gorm:"size:128;uniqueIndex" json:"base"`
-	UnichainAddress     string `gorm:"size:128;uniqueIndex" json:"unichain"`
-	TronAddress         string `gorm:"size:128;uniqueIndex" json:"tron"`
-	SolanaAddress       string `gorm:"size:128;uniqueIndex" json:"solana"`
-	ChilizAddress       string `gorm:"size:128;uniqueIndex" json:"chiliz"`
-	ChilizSpicyAddress  string `gorm:"size:128;uniqueIndex" json:"chiliz_spicy"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	BitcoinAddress     string    `gorm:"size:128;uniqueIndex" json:"bitcoin"`
+	EthereumAddress    string    `gorm:"size:128;uniqueIndex" json:"ethereum"`
+	AvalancheAddress   string    `gorm:"size:128;uniqueIndex" json:"avalanche"`
+	BinanceAddress     string    `gorm:"size:128;uniqueIndex" json:"bnbchain"`
+	BaseAddress        string    `gorm:"size:128;uniqueIndex" json:"base"`
+	ArbitrumAddress    string    `gorm:"size:128;uniqueIndex" json:"arbitrum"`
+	UnichainAddress    string    `gorm:"size:128;uniqueIndex" json:"unichain"`
+	TronAddress        string    `gorm:"size:128;uniqueIndex" json:"tron"`
+	SolanaAddress      string    `gorm:"size:128;uniqueIndex" json:"solana"`
+	ChilizAddress      string    `gorm:"size:128;uniqueIndex" json:"chiliz"`
+	ChilizSpicyAddress string    `gorm:"size:128;uniqueIndex" json:"chiliz_spicy"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }

@@ -44,6 +44,9 @@ type Chain interface {
 	Deposit(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
 	Withdraw(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
 	Sweep(ctx context.Context, wallet WalletDetails) (*TransactionResult, error)
+	SweepTo(ctx context.Context, wallet WalletDetails, toAddress string) (*TransactionResult, error)
+	SweepERC20To(ctx context.Context, wallet WalletDetails, contractAddr, toAddress string) (*TransactionResult, error)
+	PrefundGas(ctx context.Context, reserveWallet WalletDetails, userAddress string) (bool, error)
 	ValidateAddress(address string) bool
 
 	AddWorker(listener Worker) error
@@ -148,6 +151,18 @@ func (b *BaseChain) Withdraw(ctx context.Context, wallet WalletDetails, amountRa
 
 func (b *BaseChain) Sweep(ctx context.Context, wallet WalletDetails) (*TransactionResult, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (b *BaseChain) SweepTo(ctx context.Context, wallet WalletDetails, toAddress string) (*TransactionResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *BaseChain) SweepERC20To(ctx context.Context, wallet WalletDetails, contractAddr, toAddress string) (*TransactionResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *BaseChain) PrefundGas(ctx context.Context, reserveWallet WalletDetails, userAddress string) (bool, error) {
+	return false, errors.New("not implemented")
 }
 
 func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {

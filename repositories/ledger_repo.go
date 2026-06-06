@@ -355,6 +355,8 @@ func ledgerChainIDFromName(name string) (constants.ChainID, bool) {
 		return constants.Ethereum, true
 	case "base":
 		return constants.Base, true
+	case "arbitrum", "arb", "arbitrum-one":
+		return constants.Arbitrum, true
 	case "bnbchain", "bsc", "binance":
 		return constants.Binance, true
 	case "unichain":

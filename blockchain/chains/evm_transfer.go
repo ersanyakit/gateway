@@ -11,7 +11,9 @@ import (
 
 	"core/blockchain"
 	"core/constants"
+	"core/contracts/erc20"
 
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -183,6 +185,153 @@ func nativeAmountRaw(value string) (*big.Int, error) {
 		return nil, errors.New("invalid amount_raw")
 	}
 	return amount, nil
+}
+
+// evmSweepNativeTo sweeps all native balance from wallet to a specific address.
+func evmSweepNativeTo(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	if !common.IsHexAddress(toAddress) {
+		return nil, fmt.Errorf("invalid sweep-to address for %s: %s", chainName, toAddress)
+	}
+
+	client, err := dialFirstEVMRPC(ctx, rpcs)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	balance, err := client.BalanceAt(ctx, from, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%s balance fetch failed: %w", chainName, err)
+	}
+
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
+	}
+
+	gasCost := new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(evmNativeTransferGasLimit))
+	amountWei := new(big.Int).Sub(balance, gasCost)
+	if amountWei.Sign() <= 0 {
+		return nil, fmt.Errorf("%s sweep balance not enough for gas: balance=%s gas_cost=%s", chainName, balance.String(), gasCost.String())
+	}
+
+	return evmSendNativeWithClient(ctx, client, privateKey, from, chainName, chainID, amountWei, toAddress, gasPrice)
+}
+
+// evmNativeBalance returns the current native balance (in wei) for address.
+func evmNativeBalance(ctx context.Context, rpcs []string, address string) (*big.Int, error) {
+	client, err := dialFirstEVMRPC(ctx, rpcs)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	return client.BalanceAt(ctx, common.HexToAddress(address), nil)
+}
+
+const erc20TransferGasLimit uint64 = 65000
+
+// evmSweepERC20To transfers the full ERC-20 token balance from wallet to toAddress.
+// The caller must ensure wallet has enough native balance for gas before calling this.
+func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	if !common.IsHexAddress(contractAddr) {
+		return nil, fmt.Errorf("invalid token contract address: %s", contractAddr)
+	}
+	if !common.IsHexAddress(toAddress) {
+		return nil, fmt.Errorf("invalid sweep-to address for %s: %s", chainName, toAddress)
+	}
+
+	client, err := dialFirstEVMRPC(ctx, rpcs)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	tokenContract := common.HexToAddress(contractAddr)
+	caller, err := erc20.NewERC20Caller(tokenContract, client)
+	if err != nil {
+		return nil, fmt.Errorf("%s ERC-20 caller init: %w", chainName, err)
+	}
+
+	balance, err := caller.BalanceOf(&bind.CallOpts{Context: ctx}, from)
+	if err != nil {
+		return nil, fmt.Errorf("%s ERC-20 balanceOf failed: %w", chainName, err)
+	}
+	if balance == nil || balance.Sign() <= 0 {
+		return nil, fmt.Errorf("%s ERC-20 balance is zero for %s", chainName, from.Hex())
+	}
+
+	nonce, err := client.PendingNonceAt(ctx, from)
+	if err != nil {
+		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
+	}
+	gasPrice, err := client.SuggestGasPrice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
+	}
+
+	tokenABI, err := erc20.ERC20MetaData.GetAbi()
+	if err != nil {
+		return nil, fmt.Errorf("parse erc20 abi: %w", err)
+	}
+	data, err := tokenABI.Pack("transfer", common.HexToAddress(toAddress), balance)
+	if err != nil {
+		return nil, fmt.Errorf("pack transfer call: %w", err)
+	}
+
+	tx := types.NewTransaction(nonce, tokenContract, big.NewInt(0), erc20TransferGasLimit, gasPrice, data)
+	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(chainID))), privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("%s ERC-20 tx signing failed: %w", chainName, err)
+	}
+	if err := client.SendTransaction(ctx, signedTx); err != nil {
+		return nil, fmt.Errorf("%s ERC-20 tx broadcast failed: %w", chainName, err)
+	}
+	return &blockchain.TransactionResult{TxHash: signedTx.Hash().Hex(), Success: true}, nil
+}
+
+// evmPrefundGas sends minGas wei from reserveWallet to userAddress if the user's native balance is below threshold.
+// Returns true if a prefund transfer was actually sent.
+func evmPrefundGas(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, reserveWallet blockchain.WalletDetails, userAddress string, threshold, prefundAmount *big.Int) (bool, error) {
+	balance, err := evmNativeBalance(ctx, rpcs, userAddress)
+	if err != nil {
+		return false, fmt.Errorf("%s native balance check: %w", chainName, err)
+	}
+	if balance.Cmp(threshold) >= 0 {
+		return false, nil // already has enough gas
+	}
+	_, err = evmSendNative(ctx, chainName, chainID, rpcs, reserveWallet, prefundAmount, userAddress)
+	if err != nil {
+		return false, fmt.Errorf("%s gas prefund failed: %w", chainName, err)
+	}
+	return true, nil
+}
+
+func evmGasThreshold() *big.Int {
+	if raw := strings.TrimSpace(os.Getenv("EVM_GAS_THRESHOLD_WEI")); raw != "" {
+		if v, ok := new(big.Int).SetString(raw, 10); ok && v.Sign() > 0 {
+			return v
+		}
+	}
+	return new(big.Int).SetInt64(500_000_000_000_000) // 0.0005 ETH default
+}
+
+func evmGasPrefundAmount() *big.Int {
+	if raw := strings.TrimSpace(os.Getenv("EVM_GAS_PREFUND_WEI")); raw != "" {
+		if v, ok := new(big.Int).SetString(raw, 10); ok && v.Sign() > 0 {
+			return v
+		}
+	}
+	return new(big.Int).SetInt64(2_000_000_000_000_000) // 0.002 ETH default
 }
 
 func evmSweepDestination(chainName string) (string, error) {

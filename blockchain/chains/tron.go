@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,7 +133,12 @@ func (s *TronChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetail
 }
 
 func (s *TronChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(s.Name())
+	for _, key := range []string{"TRON_SWEEP_ADDRESS", "TRX_SWEEP_ADDRESS", "SWEEP_ADDRESS"} {
+		if addr := strings.TrimSpace(os.Getenv(key)); addr != "" {
+			return s.SweepTo(ctx, wallet, addr)
+		}
+	}
+	return nil, fmt.Errorf("sweep destination required: set TRON_SWEEP_ADDRESS or SWEEP_ADDRESS")
 }
 
 func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {

@@ -28,6 +28,47 @@ func NewDomainRepo(merchantRepo *MerchantRepo) *DomainRepo {
 	return &DomainRepo{merchantRepo: merchantRepo}
 }
 
+// CreateReserveDomain creates a system-internal domain (no real URL, no webhook) used as the
+// home for the merchant's reserve wallet (HD address index 0). Called once at merchant registration.
+func (r *DomainRepo) CreateReserveDomain(ctx context.Context, merchantID uuid.UUID) (*models.Domain, error) {
+	// Idempotent: if a reserve domain already exists, return it.
+	var existing models.Domain
+	if err := r.DB().WithContext(ctx).
+		Where("merchant_id = ? AND domain_url = ?", merchantID, "_reserve_").
+		First(&existing).Error; err == nil {
+		return &existing, nil
+	}
+
+	keyID, apiKey, err := helpers.GenerateAPIKey("live")
+	if err != nil {
+		return nil, err
+	}
+	apiSecretPlain, err := helpers.GenerateSecret()
+	if err != nil {
+		return nil, err
+	}
+	hashedAPISecret, err := helpers.HMACSecret(apiSecretPlain)
+	if err != nil {
+		return nil, err
+	}
+	hdIndex, err := r.GetNextDomainHDIndex(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	domain := &models.Domain{
+		MerchantID:  merchantID,
+		DomainURL:   "_reserve_",
+		KeyID:       keyID,
+		APIKey:      apiKey,
+		APISecret:   hashedAPISecret,
+		HDAccountID: hdIndex,
+	}
+	if err := r.DB().WithContext(ctx).Create(domain).Error; err != nil {
+		return nil, err
+	}
+	return domain, nil
+}
+
 func (r *DomainRepo) GetNextDomainHDIndex(ctx context.Context, merchantID uuid.UUID) (uint32, error) {
 	var maxIndex uint32
 	err := r.DB().WithContext(ctx).

@@ -138,7 +138,7 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		}
 		return nil, fmt.Errorf("failed to create wallets: %s", strings.Join(errStrings, "; "))
 	}
-	requiredChains := []string{"bitcoin", "ethereum", "avalanche", "bnbchain", "base", "unichain", "tron", "solana", "chiliz"}
+	requiredChains := []string{"bitcoin", "ethereum", "avalanche", "bnbchain", "base", "arbitrum", "unichain", "tron", "solana", "chiliz"}
 	for _, chainName := range requiredChains {
 		if walletsMap[chainName] == nil {
 			tx.Rollback()
@@ -164,6 +164,7 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		AvalancheAddress:   walletsMap["avalanche"].Address,
 		BinanceAddress:     walletsMap["bnbchain"].Address,
 		BaseAddress:        walletsMap["base"].Address,
+		ArbitrumAddress:    walletsMap["arbitrum"].Address,
 		UnichainAddress:    walletsMap["unichain"].Address,
 		TronAddress:        walletsMap["tron"].Address,
 		SolanaAddress:      walletsMap["solana"].Address,
@@ -209,6 +210,87 @@ func (r *WalletRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, l
 		Where("merchant_id = ?", merchantID).
 		Order("created_at DESC").
 		Limit(limit).
+		Find(&wallets).Error
+	return wallets, err
+}
+
+// CreateReserveWallet creates HD index-0 wallet for the given domain. Idempotent.
+func (r *WalletRepo) CreateReserveWallet(ctx context.Context, merchantID, domainID uuid.UUID, hdAccountID uint32) (*models.Wallet, error) {
+	var existing models.Wallet
+	if err := r.DB().WithContext(ctx).
+		Where("merchant_id = ? AND domain_id = ? AND hd_address_id = 0", merchantID, domainID).
+		First(&existing).Error; err == nil {
+		return &existing, nil
+	}
+
+	walletsMap, errorsMap := r.domainRepo.MerchantRepo().blockchains.CreateHDWallets(ctx, int(hdAccountID), 0)
+	if len(errorsMap) > 0 {
+		errs := make([]string, 0, len(errorsMap))
+		for chain, e := range errorsMap {
+			errs = append(errs, chain+": "+e.Error())
+		}
+		return nil, fmt.Errorf("reserve wallet derivation failed: %s", strings.Join(errs, "; "))
+	}
+
+	chilizSpicyAddr := ""
+	if walletsMap["chiliz-spicy"] != nil {
+		chilizSpicyAddr = walletsMap["chiliz-spicy"].Address
+	}
+
+	wallet := &models.Wallet{
+		ID:                 uuid.New(),
+		HDAddressId:        0,
+		HDAccountID:        hdAccountID,
+		MerchantID:         merchantID,
+		DomainID:           domainID,
+		ProductID:          "",
+		UserID:             "",
+		BitcoinAddress:     safeAddr(walletsMap, "bitcoin"),
+		EthereumAddress:    safeAddr(walletsMap, "ethereum"),
+		AvalancheAddress:   safeAddr(walletsMap, "avalanche"),
+		BinanceAddress:     safeAddr(walletsMap, "bnbchain"),
+		BaseAddress:        safeAddr(walletsMap, "base"),
+		ArbitrumAddress:    safeAddr(walletsMap, "arbitrum"),
+		UnichainAddress:    safeAddr(walletsMap, "unichain"),
+		TronAddress:        safeAddr(walletsMap, "tron"),
+		SolanaAddress:      safeAddr(walletsMap, "solana"),
+		ChilizAddress:      safeAddr(walletsMap, "chiliz"),
+		ChilizSpicyAddress: chilizSpicyAddr,
+	}
+	if err := r.DB().WithContext(ctx).Create(wallet).Error; err != nil {
+		return nil, err
+	}
+	return wallet, nil
+}
+
+func safeAddr(m map[string]*blockchain.WalletDetails, key string) string {
+	if v, ok := m[key]; ok && v != nil {
+		return v.Address
+	}
+	return ""
+}
+
+// FindReserveWallet returns the single system reserve wallet for a merchant (_reserve_ domain, hd_address_id = 0).
+func (r *WalletRepo) FindReserveWallet(ctx context.Context, merchantID uuid.UUID) (*models.Wallet, error) {
+	var wallet models.Wallet
+	err := r.DB().WithContext(ctx).
+		Joins("JOIN domains ON domains.id = wallets.domain_id").
+		Where("wallets.merchant_id = ? AND wallets.hd_address_id = 0 AND domains.domain_url = ?", merchantID, "_reserve_").
+		Preload("Domain").
+		First(&wallet).Error
+	if err != nil {
+		return nil, err
+	}
+	return &wallet, nil
+}
+
+// ListReserveByMerchant returns wallets with hd_address_id = 0 (merchant reserve wallets, one per domain).
+func (r *WalletRepo) ListReserveByMerchant(ctx context.Context, merchantID uuid.UUID) ([]models.Wallet, error) {
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Preload("Domain").
+		Where("merchant_id = ? AND hd_address_id = 0", merchantID).
+		Order("created_at ASC").
 		Find(&wallets).Error
 	return wallets, err
 }
@@ -316,6 +398,8 @@ func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.C
 		err = db.First(&wallet, "LOWER(binance_address) = LOWER(?)", address).Error
 	case constants.Base:
 		err = db.First(&wallet, "LOWER(base_address) = LOWER(?)", address).Error
+	case constants.Arbitrum:
+		err = db.First(&wallet, "LOWER(arbitrum_address) = LOWER(?)", address).Error
 	case constants.Unichain:
 		err = db.First(&wallet, "LOWER(unichain_address) = LOWER(?)", address).Error
 	case constants.TRON:
@@ -345,6 +429,8 @@ func chainToFieldName(chainName string) (string, error) {
 		return "ethereum_address", nil
 	case "base":
 		return "base_address", nil
+	case "arbitrum", "arb", "arbitrum-one":
+		return "arbitrum_address", nil
 	case "unichain":
 		return "unichain_address", nil
 	case "avalanche":
@@ -364,6 +450,35 @@ func chainToFieldName(chainName string) (string, error) {
 	}
 }
 
+// WalletAddressForChainID returns the address field matching a given chain ID.
+func WalletAddressForChainID(wallet models.Wallet, chainID constants.ChainID) string {
+	switch chainID {
+	case constants.Bitcoin:
+		return wallet.BitcoinAddress
+	case constants.Ethereum:
+		return wallet.EthereumAddress
+	case constants.Avalanche:
+		return wallet.AvalancheAddress
+	case constants.Binance:
+		return wallet.BinanceAddress
+	case constants.Base:
+		return wallet.BaseAddress
+	case constants.Arbitrum:
+		return wallet.ArbitrumAddress
+	case constants.Unichain:
+		return wallet.UnichainAddress
+	case constants.Chiliz:
+		return wallet.ChilizAddress
+	case constants.ChilizSpicy:
+		return wallet.ChilizSpicyAddress
+	case constants.TRON:
+		return wallet.TronAddress
+	case constants.Solana:
+		return wallet.SolanaAddress
+	}
+	return ""
+}
+
 func walletAddressForChain(wallet models.Wallet, chainName string) string {
 	switch strings.ToLower(strings.TrimSpace(chainName)) {
 	case "bitcoin":
@@ -372,6 +487,8 @@ func walletAddressForChain(wallet models.Wallet, chainName string) string {
 		return wallet.EthereumAddress
 	case "base":
 		return wallet.BaseAddress
+	case "arbitrum", "arb", "arbitrum-one":
+		return wallet.ArbitrumAddress
 	case "unichain":
 		return wallet.UnichainAddress
 	case "avalanche":

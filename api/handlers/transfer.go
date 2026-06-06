@@ -106,7 +106,7 @@ func ExecuteWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockcha
 	}
 
 	if sweep {
-		return chain.Sweep(params.Context, *derivedWallet)
+		return chain.SweepTo(params.Context, *derivedWallet, *params.ToAddress)
 	}
 
 	return chain.Withdraw(params.Context, *derivedWallet, *params.AmountRaw, *params.ToAddress)
@@ -143,6 +143,8 @@ func walletAddressForChain(wallet models.Wallet, chainID constants.ChainID) stri
 		return wallet.BinanceAddress
 	case constants.Base:
 		return wallet.BaseAddress
+	case constants.Arbitrum:
+		return wallet.ArbitrumAddress
 	case constants.Unichain:
 		return wallet.UnichainAddress
 	case constants.TRON:
@@ -158,7 +160,7 @@ func walletAddressForChain(wallet models.Wallet, chainID constants.ChainID) stri
 
 func isEVMChain(chainID constants.ChainID) bool {
 	switch chainID {
-	case constants.Ethereum, constants.Avalanche, constants.Binance, constants.Base, constants.Unichain, constants.Chiliz:
+	case constants.Ethereum, constants.Avalanche, constants.Binance, constants.Base, constants.Arbitrum, constants.Unichain, constants.Chiliz:
 		return true
 	default:
 		return false

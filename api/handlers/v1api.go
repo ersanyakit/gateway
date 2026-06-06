@@ -84,8 +84,8 @@ func v1QueryInt(c fiber.Ctx, key string, def int) int {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1StatusResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/status [get]
 func HandleV1CommonStatus(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -105,8 +105,8 @@ func HandleV1CommonStatus(deps V1APIDeps) fiber.Handler {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1BalanceResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/balance [get]
 func HandleV1CommonBalance(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -153,9 +153,9 @@ func HandleV1CommonBalance(deps V1APIDeps) fiber.Handler {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Param currency query string false "Fiat currency (default: USD)"
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Param currency query string false "Fiat currency code" Enums(USD,EUR,TRY,GBP) default(USD)
+// @Success 200 {object} types.V1PricesResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/prices [get]
 func HandleV1CommonPrices(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -211,8 +211,8 @@ func HandleV1CommonPrices(deps V1APIDeps) fiber.Handler {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1CurrenciesResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/currencies [get]
 func HandleV1CommonCurrencies(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -254,8 +254,8 @@ func HandleV1CommonCurrencies(deps V1APIDeps) fiber.Handler {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1FiatCurrenciesResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/fiat-currencies [get]
 func HandleV1CommonFiatCurrencies(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -289,8 +289,8 @@ func HandleV1CommonFiatCurrencies(deps V1APIDeps) fiber.Handler {
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1NetworksResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/common/networks [get]
 func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -304,6 +304,7 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 			constants.Binance,
 			constants.Avalanche,
 			constants.Base,
+			constants.Arbitrum,
 			constants.Unichain,
 			constants.Solana,
 			constants.TRON,
@@ -342,10 +343,10 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payload body types.PaymentCreateParams true "Payment creation parameters"
-// @Success 201 {object} types.PaymentCreateResponse
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
+// @Param payload body types.V1InvoiceRequest true "Invoice parameters"
+// @Success 201 {object} types.V1PaymentCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/create [post]
 func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 	// Delegate to the existing payment create handler logic
@@ -364,15 +365,15 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentWhiteLabel godoc
 // @Summary Generate white label payment
-// @Description Creates a white label hosted checkout session. Identical to create invoice but labeled for white-label integrations.
+// @Description Creates a white label hosted checkout session. Identical to Generate Invoice but returns a branded URL.
 // @Tags Payment
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payload body types.PaymentCreateParams true "Payment creation parameters"
-// @Success 201 {object} types.PaymentCreateResponse
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
+// @Param payload body types.V1InvoiceRequest true "Invoice parameters"
+// @Success 201 {object} types.V1PaymentCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/white-label [post]
 func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 	return HandleV1PaymentCreate(deps)
@@ -380,15 +381,15 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentStaticAddressCreate godoc
 // @Summary Generate static address
-// @Description Creates or returns a permanent multi-chain deposit wallet for a given user_id. Subsequent calls with the same user_id return the same addresses.
+// @Description Creates a permanent deposit wallet for a user. Subsequent calls with the same user_id and chain return the existing address.
 // @Tags Payment
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payload body object true "user_id (required), product_id (optional)"
-// @Success 200 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
+// @Param payload body types.V1StaticAddressRequest true "Static address parameters"
+// @Success 200 {object} types.V1StaticAddressResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/static-address [post]
 func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -434,11 +435,11 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Param user_id query string false "Filter by user_id"
-// @Param page query int false "Page number (default: 1)"
-// @Param limit query int false "Items per page (max: 100, default: 20)"
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Param user_id query string false "Filter by user ID" example(customer_42)
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page (max 100)" default(20)
+// @Success 200 {object} types.V1StaticAddressListResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/static-addresses [get]
 func HandleV1PaymentStaticAddressList(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -482,12 +483,12 @@ func HandleV1PaymentStaticAddressList(deps V1APIDeps) fiber.Handler {
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Param track_id query string false "Session token"
-// @Param order_id query string false "Order ID"
-// @Success 200 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
-// @Failure 404 {object} types.ErrorResponse
+// @Param track_id query string false "Session token (UUID)" example(550e8400-e29b-41d4-a716-446655440000)
+// @Param order_id query string false "Merchant order ID" example(ORD-2024-001)
+// @Success 200 {object} types.V1PaymentInfoResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Failure 404 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/info [get]
 func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -524,11 +525,11 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (default: 1)"
-// @Param limit query int false "Items per page (max: 100, default: 20)"
-// @Param status query string false "Filter by status (pending, awaiting_payment, paid, expired, canceled, failed)"
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page (max 100)" default(20)
+// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed)
+// @Success 200 {object} types.V1PaymentHistoryResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/history [get]
 func HandleV1PaymentHistory(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -571,8 +572,8 @@ func HandleV1PaymentHistory(deps V1APIDeps) fiber.Handler {
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1PaymentStatisticsResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/statistics [get]
 func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -616,8 +617,8 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1CurrenciesResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/currencies [get]
 func HandleV1PaymentCurrencies(deps V1APIDeps) fiber.Handler {
 	return HandleV1CommonCurrencies(deps)
@@ -625,12 +626,12 @@ func HandleV1PaymentCurrencies(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentStatusTable godoc
 // @Summary Payment status table
-// @Description Returns all possible payment statuses with descriptions.
+// @Description Returns all possible payment statuses with descriptions and whether each is a terminal state.
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1PaymentStatusTableResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/status-table [get]
 func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -661,10 +662,10 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payload body object true "chain, to_address, amount (decimal), note (optional)"
-// @Success 201 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
+// @Param payload body types.V1PayoutRequest true "Payout parameters"
+// @Success 201 {object} types.V1PayoutCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payout/create [post]
 func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -700,9 +701,9 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusBadRequest, "invalid amount: "+err.Error())
 		}
 
-		wallets, err := deps.WalletRepo.ListByMerchant(c.Context(), domain.MerchantID, 1)
+		wallets, err := deps.WalletRepo.ListReserveByMerchant(c.Context(), domain.MerchantID)
 		if err != nil || len(wallets) == 0 {
-			return v1Err(c, fiber.StatusBadRequest, "no wallets found for this merchant — create a wallet first")
+			return v1Err(c, fiber.StatusBadRequest, "no reserve wallet found — create a static address first to initialize the reserve wallet")
 		}
 		wallet := wallets[0]
 
@@ -742,11 +743,11 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 // @Tags Payout
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payout_id query string true "Payout UUID"
-// @Success 200 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
-// @Failure 404 {object} types.ErrorResponse
+// @Param payout_id query string true "Payout UUID" example(550e8400-e29b-41d4-a716-446655440000)
+// @Success 200 {object} types.V1PayoutInfoResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Failure 404 {object} types.V1ErrorResponse
 // @Router /api/v1/payout/info [get]
 func HandleV1PayoutInfo(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -781,10 +782,10 @@ func HandleV1PayoutInfo(deps V1APIDeps) fiber.Handler {
 // @Tags Payout
 // @Produce json
 // @Security ApiKeyAuth
-// @Param page query int false "Page number (default: 1)"
-// @Param limit query int false "Items per page (max: 100, default: 20)"
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page (max 100)" default(20)
+// @Success 200 {object} types.V1PayoutHistoryResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payout/history [get]
 func HandleV1PayoutHistory(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -822,12 +823,12 @@ func HandleV1PayoutHistory(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PayoutStatusTable godoc
 // @Summary Payout status table
-// @Description Returns all possible payout statuses with descriptions.
+// @Description Returns all possible payout statuses with descriptions and whether each is a terminal state.
 // @Tags Payout
 // @Produce json
 // @Security ApiKeyAuth
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Success 200 {object} types.V1PayoutStatusTableResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payout/status-table [get]
 func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -847,15 +848,15 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 
 // HandleV1RefundCreate godoc
 // @Summary Create refund request
-// @Description Creates a refund request for a paid payment. Admin approval broadcasts the refund transfer.
+// @Description Creates a refund request for a paid payment. Provide payment_id OR order_id to identify the payment. Admin approval broadcasts the on-chain refund.
 // @Tags Refund
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
-// @Param payload body object true "payment_id or order_id or track_id, amount_raw optional, reason optional"
-// @Success 201 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
+// @Param payload body types.V1RefundRequest true "Refund parameters"
+// @Success 201 {object} types.V1RefundCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/refund/create [post]
 func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -909,11 +910,11 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 // @Tags Refund
 // @Produce json
 // @Security ApiKeyAuth
-// @Param refund_id query string true "Refund ID"
-// @Success 200 {object} map[string]interface{}
-// @Failure 400 {object} types.ErrorResponse
-// @Failure 401 {object} types.ErrorResponse
-// @Failure 404 {object} types.ErrorResponse
+// @Param refund_id query string true "Refund UUID" example(550e8400-e29b-41d4-a716-446655440000)
+// @Success 200 {object} types.V1RefundInfoResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Failure 404 {object} types.V1ErrorResponse
 // @Router /api/v1/refund/info [get]
 func HandleV1RefundInfo(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -939,10 +940,10 @@ func HandleV1RefundInfo(deps V1APIDeps) fiber.Handler {
 // @Tags Refund
 // @Produce json
 // @Security ApiKeyAuth
-// @Param page query int false "Page number"
-// @Param limit query int false "Page size"
-// @Success 200 {object} map[string]interface{}
-// @Failure 401 {object} types.ErrorResponse
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page (max 100)" default(20)
+// @Success 200 {object} types.V1RefundHistoryResponse
+// @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/refund/history [get]
 func HandleV1RefundHistory(deps V1APIDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -1115,6 +1116,9 @@ func v1WalletItem(w models.Wallet) v1WalletItemType {
 	}
 	if w.BaseAddress != "" {
 		addrs["base"] = w.BaseAddress
+	}
+	if w.ArbitrumAddress != "" {
+		addrs["arbitrum"] = w.ArbitrumAddress
 	}
 	if w.UnichainAddress != "" {
 		addrs["unichain"] = w.UnichainAddress

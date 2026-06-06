@@ -48,3 +48,7 @@ func (s *DomainService) FindByURL(params types.DomainParams) (*models.Domain, er
 func (s *DomainService) UpdateWebhook(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID, webhookURL string, plainSecret string) error {
 	return s.domainRepo.UpdateWebhook(ctx, domainID, merchantID, webhookURL, plainSecret)
 }
+
+func (s *DomainService) CreateReserve(ctx context.Context, merchantID uuid.UUID) (*models.Domain, error) {
+	return s.domainRepo.CreateReserveDomain(ctx, merchantID)
+}

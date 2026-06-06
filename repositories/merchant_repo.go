@@ -283,3 +283,12 @@ func (r *MerchantRepo) CreateDomain() (*models.Domain, error) {
 	return domain, nil
 
 }
+
+func (r *MerchantRepo) UpdateSettings(ctx context.Context, merchantID uuid.UUID, hideTestnets bool, hiddenChains string) error {
+	return r.db.WithContext(ctx).Model(&models.Merchant{}).
+		Where("id = ?", merchantID).
+		Updates(map[string]interface{}{
+			"hide_testnets": hideTestnets,
+			"hidden_chains": hiddenChains,
+		}).Error
+}

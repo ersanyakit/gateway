@@ -111,7 +111,7 @@ func (s *BinanceChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWallet
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 60, int(s.ChainID()), hdAccountId, hdWalletId)
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
 	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -144,6 +144,18 @@ func (s *BinanceChain) Withdraw(ctx context.Context, wallet blockchain.WalletDet
 
 func (s *BinanceChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
+}
+
+func (s *BinanceChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepNativeTo(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, toAddress)
+}
+
+func (s *BinanceChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepERC20To(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, contractAddr, toAddress)
+}
+
+func (s *BinanceChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {
+	return evmPrefundGas(ctx, s.Name(), s.ChainID(), s.RPCs(), reserveWallet, userAddress, evmGasThreshold(), evmGasPrefundAmount())
 }
 
 const BINANCE_SYMBOL = "BNB"

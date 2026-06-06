@@ -48,6 +48,17 @@ func (f *ChainFactory) GetChain(name string) (Chain, error) {
 	return chain, nil
 }
 
+func (f *ChainFactory) GetChainByID(chainID constants.ChainID) (Chain, error) {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	for _, chain := range f.chains {
+		if chain.ChainID() == chainID {
+			return chain, nil
+		}
+	}
+	return nil, ErrChainNotFound
+}
+
 func (f *ChainFactory) UnregisterChain(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

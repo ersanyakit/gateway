@@ -15,6 +15,9 @@ type Merchant struct {
 	Domains  []Domain  `gorm:"foreignKey:MerchantID" json:"domains,omitempty"`
 	IsActive bool      `gorm:"not null;default:true;index" json:"is_active"`
 
+	HideTestnets bool   `gorm:"not null;default:false" json:"hide_testnets"`
+	HiddenChains string `gorm:"size:1024;default:''" json:"hidden_chains"`
+
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index"`

@@ -12,6 +12,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -188,7 +189,12 @@ func (b *BitcoinChain) Withdraw(ctx context.Context, wallet blockchain.WalletDet
 }
 
 func (b *BitcoinChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(b.Name())
+	for _, key := range []string{"BITCOIN_SWEEP_ADDRESS", "BTC_SWEEP_ADDRESS", "SWEEP_ADDRESS"} {
+		if addr := strings.TrimSpace(os.Getenv(key)); addr != "" {
+			return b.SweepTo(ctx, wallet, addr)
+		}
+	}
+	return nil, fmt.Errorf("sweep destination required: set BITCOIN_SWEEP_ADDRESS or SWEEP_ADDRESS")
 }
 
 func (e *BitcoinChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {

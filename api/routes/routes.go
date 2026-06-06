@@ -168,7 +168,6 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/dealer/login", handlers.HandleDealerLogin())
 	r.fiber.Post("/dealer/login", handlers.HandleDealerLoginSubmit(r.MerchantService, r.ActivityLogRepo))
 	r.fiber.Get("/dealer/register", handlers.HandleDealerRegister())
-	r.fiber.Post("/dealer/register", handlers.HandleDealerRegisterSubmit(r.MerchantService, r.ActivityLogRepo))
 	dealerDeps := handlers.DealerDeps{
 		MerchantService:     r.MerchantService,
 		DomainService:       r.DomainService,
@@ -187,20 +186,23 @@ func NewRouter(db *gorm.DB) *Router {
 		Notifier:            webhooksvc.NewNotifier(),
 		PriceOracle:         pricing.NewCoinGecko(),
 	}
+	r.fiber.Post("/dealer/register", handlers.HandleDealerRegisterSubmit(dealerDeps))
 	r.fiber.Get("/dealer", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/dashboard", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Get("/dealer/domains", handlers.HandleDealerDashboard(dealerDeps))
 	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
 	r.fiber.Post("/dealer/products", handlers.HandleDealerProductCreate(dealerDeps))
+	r.fiber.Post("/dealer/invoices", handlers.HandleDealerInvoiceCreate(dealerDeps))
 	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
 	r.fiber.Post("/dealer/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
+	r.fiber.Post("/dealer/settings", handlers.HandleDealerSettingsUpdate(dealerDeps))
 	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
 	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
 	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
-	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo))
+	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo, dealerDeps))
 	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())
 	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit(r.AdminRepo))
 	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())

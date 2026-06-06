@@ -43,6 +43,21 @@ func NewBaseChain() *EVMCompatibleChain {
 	}
 }
 
+func NewArbitrumChain() *EVMCompatibleChain {
+	return &EVMCompatibleChain{
+		BaseChain: blockchain.BaseChain{
+			ID:          constants.Arbitrum,
+			ChainName:   "arbitrum",
+			ExplorerURL: "https://arbiscan.io",
+			RPCHttp:     []string{"https://arb1.arbitrum.io/rpc", "https://arbitrum-one-rpc.publicnode.com", "https://arbitrum.drpc.org"},
+			WebSockets:  []string{"wss://arbitrum-one-rpc.publicnode.com"},
+		},
+		NativeSymbol: "ETH",
+		TokenSymbol:  "WETH",
+		TokenAddress: "0x82aF49447D8a07e3bd95BDd56f35241523fBab1",
+	}
+}
+
 func NewUnichainChain() *EVMCompatibleChain {
 	return &EVMCompatibleChain{
 		BaseChain: blockchain.BaseChain{
@@ -113,7 +128,7 @@ func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hd
 		return nil, err
 	}
 
-	hdPath := e.BaseChain.GetDerivedPath(44, 60, int(e.ChainID()), hdAccountId, hdWalletId)
+	hdPath := e.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
 	privateKey, err := e.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -148,6 +163,18 @@ func (e *EVMCompatibleChain) Withdraw(ctx context.Context, wallet blockchain.Wal
 
 func (e *EVMCompatibleChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	return evmSweepNative(ctx, e.Name(), e.ChainID(), e.RPCs(), wallet)
+}
+
+func (e *EVMCompatibleChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepNativeTo(ctx, e.Name(), e.ChainID(), e.RPCs(), wallet, toAddress)
+}
+
+func (e *EVMCompatibleChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmSweepERC20To(ctx, e.Name(), e.ChainID(), e.RPCs(), wallet, contractAddr, toAddress)
+}
+
+func (e *EVMCompatibleChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {
+	return evmPrefundGas(ctx, e.Name(), e.ChainID(), e.RPCs(), reserveWallet, userAddress, evmGasThreshold(), evmGasPrefundAmount())
 }
 
 type evmCompatibleBalance struct {
