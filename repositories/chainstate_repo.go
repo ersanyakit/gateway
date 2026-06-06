@@ -29,13 +29,17 @@ func (r *ChainStateRepo) Get(ctx context.Context, chainID constants.ChainID) (*m
 	var state models.ChainState
 	if err := r.db.WithContext(ctx).First(&state, "chain_id = ?", chainID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			state = models.ChainState{
-				ChainID:            chainID,
-				LastProcessedBlock: 0,
-				LastConfirmedBlock: 0,
-				UpdatedAt:          time.Now(),
+			now := time.Now()
+			if err := r.db.WithContext(ctx).Exec(
+				`INSERT INTO chain_states (chain_id, last_processed_block, last_confirmed_block, updated_at)
+				 VALUES (?, 0, 0, ?)
+				 ON CONFLICT (chain_id) DO NOTHING`,
+				int64(chainID),
+				now,
+			).Error; err != nil {
+				return nil, err
 			}
-			if err := r.db.WithContext(ctx).Create(&state).Error; err != nil {
+			if err := r.db.WithContext(ctx).First(&state, "chain_id = ?", chainID).Error; err != nil {
 				return nil, err
 			}
 			return &state, nil

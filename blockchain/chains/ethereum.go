@@ -142,6 +142,10 @@ func (s *EthereumChain) Withdraw(ctx context.Context, wallet blockchain.WalletDe
 	return evmWithdrawNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
 }
 
+func (s *EthereumChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmWithdrawERC20(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, tokenAddr, amountRaw, toAddress)
+}
+
 func (s *EthereumChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	return evmSweepNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet)
 }

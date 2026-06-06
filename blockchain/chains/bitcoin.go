@@ -181,11 +181,22 @@ func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWallet
 }
 
 func (b *BitcoinChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(b.Name())
+	return b.Withdraw(ctx, wallet, amountRaw, toAddress)
 }
 
 func (b *BitcoinChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(b.Name())
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !amount.IsInt64() {
+		return nil, fmt.Errorf("bitcoin amount_raw exceeds int64 satoshis")
+	}
+	return b.sendTo(ctx, wallet, toAddress, amount.Int64())
+}
+
+func (b *BitcoinChain) WithdrawToken(_ context.Context, _ blockchain.WalletDetails, _ string, _ string, _ string) (*blockchain.TransactionResult, error) {
+	return nil, fmt.Errorf("bitcoin does not support token withdrawal")
 }
 
 func (b *BitcoinChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {

@@ -43,6 +43,7 @@ type Chain interface {
 
 	Deposit(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
 	Withdraw(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error)
+	WithdrawToken(ctx context.Context, wallet WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*TransactionResult, error)
 	Sweep(ctx context.Context, wallet WalletDetails) (*TransactionResult, error)
 	SweepTo(ctx context.Context, wallet WalletDetails, toAddress string) (*TransactionResult, error)
 	SweepERC20To(ctx context.Context, wallet WalletDetails, contractAddr, toAddress string) (*TransactionResult, error)
@@ -146,6 +147,10 @@ func (b *BaseChain) Deposit(ctx context.Context, wallet WalletDetails, amountRaw
 }
 
 func (b *BaseChain) Withdraw(ctx context.Context, wallet WalletDetails, amountRaw string, toAddress string) (*TransactionResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (b *BaseChain) WithdrawToken(ctx context.Context, wallet WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*TransactionResult, error) {
 	return nil, errors.New("not implemented")
 }
 

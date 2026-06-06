@@ -3,10 +3,12 @@ package database
 import (
 	"context"
 	"core/application"
+	"core/constants"
 	"core/models"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -109,7 +111,38 @@ func Migrate(app *application.App) error {
 		&models.Admin{},
 	)
 
-	return err
+	if err != nil {
+		return err
+	}
+
+	return ReconcileChainStates(context.Background(), app.DB)
+}
+
+func ReconcileChainStates(ctx context.Context, db *gorm.DB) error {
+	ids := constants.AllChainIDs()
+	values := make([]int64, 0, len(ids))
+	checkValues := make([]string, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, int64(id))
+		checkValues = append(checkValues, fmt.Sprintf("%d", id))
+	}
+
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("chain_id NOT IN ?", values).Delete(&models.ChainState{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`ALTER TABLE chain_states ALTER COLUMN chain_id DROP DEFAULT`).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`ALTER TABLE chain_states DROP CONSTRAINT IF EXISTS chain_states_supported_chain_id_check`).Error; err != nil {
+			return err
+		}
+		checkSQL := fmt.Sprintf(
+			`ALTER TABLE chain_states ADD CONSTRAINT chain_states_supported_chain_id_check CHECK (chain_id IN (%s))`,
+			strings.Join(checkValues, ","),
+		)
+		return tx.Exec(checkSQL).Error
+	})
 }
 
 func Seed(app *application.App) error {

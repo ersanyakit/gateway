@@ -20,11 +20,14 @@ type WithdrawalRequest struct {
 	WalletID   uuid.UUID `gorm:"type:uuid;not null;index" json:"wallet_id"`
 	Wallet     Wallet    `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
 
-	Chain     string `gorm:"size:40;not null;index" json:"chain"`
-	ToAddress string `gorm:"size:160;not null" json:"to_address"`
-	AmountRaw string `gorm:"type:text;not null" json:"amount_raw"`
-	Note      string `gorm:"size:500" json:"note,omitempty"`
-	Status    string `gorm:"size:32;not null;index" json:"status"`
+	Chain     string  `gorm:"size:40;not null;index" json:"chain"`
+	Token     *string `gorm:"type:varchar(128);index" json:"token,omitempty"`
+	Symbol    string  `gorm:"size:20;not null;default:'';index" json:"symbol,omitempty"`
+	Decimals  uint8   `json:"decimals,omitempty"`
+	ToAddress string  `gorm:"size:160;not null" json:"to_address"`
+	AmountRaw string  `gorm:"type:text;not null" json:"amount_raw"`
+	Note      string  `gorm:"size:500" json:"note,omitempty"`
+	Status    string  `gorm:"size:32;not null;index" json:"status"`
 
 	RequestedBy string     `gorm:"size:255" json:"requested_by,omitempty"`
 	ReviewedBy  string     `gorm:"size:255" json:"reviewed_by,omitempty"`

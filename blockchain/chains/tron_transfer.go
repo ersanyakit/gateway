@@ -263,6 +263,99 @@ func tronGasPrefundSUN() int64 {
 	return 30_000_000 // 30 TRX in SUN
 }
 
+func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	if !s.ValidateAddress(toAddress) {
+		return nil, fmt.Errorf("invalid tron address: %s", toAddress)
+	}
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !amount.IsInt64() {
+		return nil, fmt.Errorf("tron amount_raw exceeds int64 SUN")
+	}
+	sendAmount := amount.Int64()
+
+	rpcs := s.RPCs()
+	if len(rpcs) == 0 {
+		return nil, fmt.Errorf("no tron RPC endpoint configured")
+	}
+	apiBase := tronAPIBase(rpcs)
+
+	blockRef, err := tronGetBlockRef(ctx, apiBase)
+	if err != nil {
+		return nil, err
+	}
+	rawTx, err := tronSDK.NewTransfer(wallet.Address, toAddress, sendAmount,
+		blockRef.refBlockBytes, blockRef.refBlockHash,
+		blockRef.expiration, blockRef.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("tron build transfer tx: %w", err)
+	}
+	privKey, err := tronPrivateKey(wallet)
+	if err != nil {
+		return nil, err
+	}
+	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	if err != nil {
+		return nil, err
+	}
+	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
+}
+
+func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, amountRaw, toAddress string) (*blockchain.TransactionResult, error) {
+	if !s.ValidateAddress(contractAddr) {
+		return nil, fmt.Errorf("invalid TRC-20 contract address: %s", contractAddr)
+	}
+	if !s.ValidateAddress(toAddress) {
+		return nil, fmt.Errorf("invalid tron destination address: %s", toAddress)
+	}
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	rpcs := s.RPCs()
+	if len(rpcs) == 0 {
+		return nil, fmt.Errorf("no tron RPC endpoint configured")
+	}
+	rpcURL := rpcs[0]
+	apiBase := tronAPIBase(rpcs)
+
+	balance, err := tronGetTRC20Balance(ctx, rpcURL, contractAddr, wallet.Address)
+	if err != nil {
+		return nil, fmt.Errorf("tron TRC-20 balance: %w", err)
+	}
+	if balance == nil || balance.Cmp(amount) < 0 {
+		return nil, fmt.Errorf("tron TRC-20 balance is not enough: balance=%s amount=%s", balance.String(), amount.String())
+	}
+
+	blockRef, err := tronGetBlockRef(ctx, apiBase)
+	if err != nil {
+		return nil, err
+	}
+
+	const trc20FeeLimit int64 = 50_000_000
+	rawTx, err := tronSDK.NewTRC20TokenTransfer(
+		wallet.Address, toAddress, contractAddr,
+		amount, trc20FeeLimit,
+		blockRef.refBlockBytes, blockRef.refBlockHash,
+		blockRef.expiration, blockRef.timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("tron build TRC-20 tx: %w", err)
+	}
+
+	privKey, err := tronPrivateKey(wallet)
+	if err != nil {
+		return nil, err
+	}
+	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	if err != nil {
+		return nil, err
+	}
+	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
+}
+
 func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
 	if !s.ValidateAddress(toAddress) {
 		return nil, fmt.Errorf("invalid tron address: %s", toAddress)

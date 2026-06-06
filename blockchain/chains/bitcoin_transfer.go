@@ -100,6 +100,130 @@ func btcEstimateFee(inputCount, outputCount int) int64 {
 	return vsize * satPerVbyte
 }
 
+func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string, sendSat int64) (*blockchain.TransactionResult, error) {
+	if sendSat <= 0 {
+		return nil, fmt.Errorf("bitcoin amount must be greater than zero")
+	}
+
+	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
+	if err != nil {
+		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
+	}
+	privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+
+	utxos, err := btcFetchUTXOs(ctx, b.RPCs(), wallet.Address)
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin UTXO fetch: %w", err)
+	}
+
+	selected := make([]btcUTXO, 0, len(utxos))
+	var totalSat int64
+	for _, u := range utxos {
+		if !u.Status.Confirmed || u.Value <= 0 {
+			continue
+		}
+		selected = append(selected, u)
+		totalSat += u.Value
+		if totalSat >= sendSat+btcEstimateFee(len(selected), 2) {
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return nil, fmt.Errorf("bitcoin no confirmed UTXOs for %s", wallet.Address)
+	}
+
+	const dustSat int64 = 546
+	fee := btcEstimateFee(len(selected), 2)
+	changeSat := totalSat - sendSat - fee
+	if changeSat < 0 {
+		return nil, fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, fee)
+	}
+	includeChange := changeSat >= dustSat
+	if !includeChange {
+		fee = totalSat - sendSat
+		if fee < btcEstimateFee(len(selected), 1) {
+			return nil, fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, btcEstimateFee(len(selected), 1))
+		}
+		changeSat = 0
+	}
+
+	destAddr, err := btcutil.DecodeAddress(toAddress, b.Params)
+	if err != nil {
+		return nil, fmt.Errorf("invalid bitcoin destination address: %w", err)
+	}
+	destScript, err := txscript.PayToAddrScript(destAddr)
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin dest pkScript: %w", err)
+	}
+
+	changeScript := []byte(nil)
+	if includeChange {
+		changeAddr, err := btcutil.DecodeAddress(wallet.Address, b.Params)
+		if err != nil {
+			return nil, fmt.Errorf("invalid bitcoin change address: %w", err)
+		}
+		changeScript, err = txscript.PayToAddrScript(changeAddr)
+		if err != nil {
+			return nil, fmt.Errorf("bitcoin change pkScript: %w", err)
+		}
+	}
+
+	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
+	fromScript, err := txscript.NewScriptBuilder().
+		AddOp(txscript.OP_0).
+		AddData(pubKeyHash).
+		Script()
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin p2wpkh script build: %w", err)
+	}
+
+	msgTx := wire.NewMsgTx(wire.TxVersion)
+	msgTx.LockTime = 0
+	for _, u := range selected {
+		hash, err := chainhash.NewHashFromStr(u.Txid)
+		if err != nil {
+			return nil, fmt.Errorf("bitcoin txid parse: %w", err)
+		}
+		msgTx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: u.Vout},
+			Sequence:         math.MaxUint32 - 2,
+		})
+	}
+	msgTx.AddTxOut(&wire.TxOut{Value: sendSat, PkScript: destScript})
+	if includeChange {
+		msgTx.AddTxOut(&wire.TxOut{Value: changeSat, PkScript: changeScript})
+	}
+
+	prevOutMap := make(map[wire.OutPoint]*wire.TxOut, len(selected))
+	for _, u := range selected {
+		hash, _ := chainhash.NewHashFromStr(u.Txid)
+		op := wire.OutPoint{Hash: *hash, Index: u.Vout}
+		prevOutMap[op] = &wire.TxOut{Value: u.Value, PkScript: fromScript}
+	}
+	fetcher := txscript.NewMultiPrevOutFetcher(prevOutMap)
+	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
+	for i, u := range selected {
+		sig, err := txscript.RawTxInWitnessSignature(
+			msgTx, sigHashes, i, u.Value, fromScript,
+			txscript.SigHashAll, privKey,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("bitcoin sign input %d: %w", i, err)
+		}
+		msgTx.TxIn[i].Witness = wire.TxWitness{sig, pubKey.SerializeCompressed()}
+	}
+
+	var buf bytes.Buffer
+	if err := msgTx.Serialize(&buf); err != nil {
+		return nil, fmt.Errorf("bitcoin tx serialize: %w", err)
+	}
+	txID, err := btcBroadcast(ctx, b.RPCs(), hex.EncodeToString(buf.Bytes()))
+	if err != nil {
+		return nil, err
+	}
+	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
+}
+
 func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
 	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
 	if err != nil {

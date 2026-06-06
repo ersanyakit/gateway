@@ -4,6 +4,7 @@ import (
 	"context"
 	"core/constants"
 	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"time"
@@ -164,8 +165,18 @@ func (r *LedgerRepo) PostDepositAvailable(ctx context.Context, session models.Pa
 }
 
 func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.WithdrawalRequest) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.createWithdrawalHold(ctx, tx, request)
+	})
+}
+
+func (r *LedgerRepo) CreateWithdrawalHoldWithDB(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest) error {
+	return r.createWithdrawalHold(ctx, tx, request)
+}
+
+func (r *LedgerRepo) createWithdrawalHold(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest) error {
 	key := "withdrawal-hold:" + request.ID.String()
-	exists, err := r.exists(ctx, key)
+	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
 	}
@@ -179,6 +190,16 @@ func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.Wi
 	if !ok {
 		return errors.New("unsupported withdrawal chain")
 	}
+	symbol := strings.ToUpper(strings.TrimSpace(request.Symbol))
+	if symbol == "" {
+		symbol = strings.ToUpper(strings.TrimSpace(request.Chain))
+	}
+	if err := r.lockLedgerAsset(ctx, tx, request.MerchantID, chainID, request.Token); err != nil {
+		return err
+	}
+	if err := r.ensureAvailableBalance(ctx, tx, request.MerchantID, chainID, request.Token, request.AmountRaw); err != nil {
+		return err
+	}
 	entries := []models.LedgerEntry{
 		{
 			ID:             uuid.New(),
@@ -186,7 +207,9 @@ func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.Wi
 			WalletID:       &walletID,
 			WithdrawalID:   &withdrawalID,
 			ChainID:        chainID,
-			Symbol:         request.Chain,
+			Token:          request.Token,
+			Symbol:         symbol,
+			Decimals:       request.Decimals,
 			EntryType:      models.LedgerEntryTypeWithdrawalHold,
 			Account:        models.LedgerAccountMerchantAvailable,
 			Direction:      models.LedgerDirectionDebit,
@@ -204,7 +227,9 @@ func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.Wi
 			WalletID:       &walletID,
 			WithdrawalID:   &withdrawalID,
 			ChainID:        chainID,
-			Symbol:         request.Chain,
+			Token:          request.Token,
+			Symbol:         symbol,
+			Decimals:       request.Decimals,
 			EntryType:      models.LedgerEntryTypeWithdrawalHold,
 			Account:        models.LedgerAccountWithdrawalTransit,
 			Direction:      models.LedgerDirectionCredit,
@@ -217,12 +242,22 @@ func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.Wi
 			UpdatedAt:      now,
 		},
 	}
-	return r.db.WithContext(ctx).Create(&entries).Error
+	return tx.WithContext(ctx).Create(&entries).Error
 }
 
 func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.WithdrawalRequest, txHash string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.postWithdrawalDebit(ctx, tx, request, txHash)
+	})
+}
+
+func (r *LedgerRepo) PostWithdrawalDebitWithDB(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest, txHash string) error {
+	return r.postWithdrawalDebit(ctx, tx, request, txHash)
+}
+
+func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest, txHash string) error {
 	key := "withdrawal-debit:" + request.ID.String()
-	exists, err := r.exists(ctx, key)
+	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
 	}
@@ -236,6 +271,10 @@ func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.Wit
 	if !ok {
 		return errors.New("unsupported withdrawal chain")
 	}
+	symbol := strings.ToUpper(strings.TrimSpace(request.Symbol))
+	if symbol == "" {
+		symbol = strings.ToUpper(strings.TrimSpace(request.Chain))
+	}
 	entries := []models.LedgerEntry{
 		{
 			ID:              uuid.New(),
@@ -244,7 +283,9 @@ func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.Wit
 			WithdrawalID:    &withdrawalID,
 			TransactionHash: txHash,
 			ChainID:         chainID,
-			Symbol:          request.Chain,
+			Token:           request.Token,
+			Symbol:          symbol,
+			Decimals:        request.Decimals,
 			EntryType:       models.LedgerEntryTypeWithdrawalDebit,
 			Account:         models.LedgerAccountWithdrawalTransit,
 			Direction:       models.LedgerDirectionDebit,
@@ -263,7 +304,9 @@ func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.Wit
 			WithdrawalID:    &withdrawalID,
 			TransactionHash: txHash,
 			ChainID:         chainID,
-			Symbol:          request.Chain,
+			Token:           request.Token,
+			Symbol:          symbol,
+			Decimals:        request.Decimals,
 			EntryType:       models.LedgerEntryTypeWithdrawalDebit,
 			Account:         models.LedgerAccountPlatformClearing,
 			Direction:       models.LedgerDirectionCredit,
@@ -276,7 +319,81 @@ func (r *LedgerRepo) PostWithdrawalDebit(ctx context.Context, request models.Wit
 			UpdatedAt:       now,
 		},
 	}
-	return r.db.WithContext(ctx).Create(&entries).Error
+	return tx.WithContext(ctx).Create(&entries).Error
+}
+
+func (r *LedgerRepo) VoidWithdrawalHold(ctx context.Context, withdrawalID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.voidWithdrawalHold(ctx, tx, withdrawalID)
+	})
+}
+
+func (r *LedgerRepo) VoidWithdrawalHoldWithDB(ctx context.Context, tx *gorm.DB, withdrawalID uuid.UUID) error {
+	return r.voidWithdrawalHold(ctx, tx, withdrawalID)
+}
+
+func (r *LedgerRepo) voidWithdrawalHold(ctx context.Context, tx *gorm.DB, withdrawalID uuid.UUID) error {
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("withdrawal_id = ? AND entry_type = ? AND status = ?", withdrawalID, models.LedgerEntryTypeWithdrawalHold, models.LedgerStatusPending).
+		Updates(map[string]any{
+			"status":     models.LedgerStatusVoided,
+			"voided_at":  &now,
+			"updated_at": now,
+		}).Error
+}
+
+func (r *LedgerRepo) existsWithDB(ctx context.Context, tx *gorm.DB, key string) (bool, error) {
+	var count int64
+	err := tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("idempotency_key = ?", key).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *LedgerRepo) lockLedgerAsset(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, chainID constants.ChainID, token *string) error {
+	tokenKey := "native"
+	if token != nil && strings.TrimSpace(*token) != "" {
+		tokenKey = strings.ToLower(strings.TrimSpace(*token))
+	}
+	lockKey := fmt.Sprintf("ledger-balance:%s:%d:%s", merchantID.String(), chainID, tokenKey)
+	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error
+}
+
+func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, chainID constants.ChainID, token *string, amountRaw string) error {
+	requested, ok := new(big.Int).SetString(amountRaw, 10)
+	if !ok || requested.Sign() <= 0 {
+		return errors.New("withdrawal amount must be positive")
+	}
+
+	query := tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Select("COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END), 0)::text").
+		Where("merchant_id = ? AND chain_id = ? AND account = ? AND status IN ?", merchantID, chainID, models.LedgerAccountMerchantAvailable, []string{models.LedgerStatusPending, models.LedgerStatusPosted}).
+		Where("amount_raw ~ '^[0-9]+$'")
+	if token == nil || strings.TrimSpace(*token) == "" {
+		query = query.Where("token IS NULL OR token = ''")
+	} else {
+		query = query.Where("LOWER(token) = LOWER(?)", strings.TrimSpace(*token))
+	}
+
+	var raw string
+	if err := query.Scan(&raw).Error; err != nil {
+		return err
+	}
+	if raw == "" {
+		raw = "0"
+	}
+	available, ok := new(big.Int).SetString(raw, 10)
+	if !ok {
+		return fmt.Errorf("invalid available balance: %s", raw)
+	}
+	if available.Cmp(requested) < 0 {
+		return fmt.Errorf("insufficient available balance: available=%s amount=%s", available.String(), requested.String())
+	}
+	return nil
 }
 
 func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {

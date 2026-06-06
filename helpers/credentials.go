@@ -64,6 +64,14 @@ func GenerateSecret() (string, error) {
 	return SecretPref + "_" + r, nil
 }
 
+func GenerateBcryptSafeSecret() (string, error) {
+	r, err := randomHex(24)
+	if err != nil {
+		return "", err
+	}
+	return SecretPref + "_" + r, nil
+}
+
 func HashSHA256(value string) string {
 	h := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(h[:])

@@ -10,9 +10,9 @@ import (
 
 	blockchain "core/blockchain"
 
+	solana "github.com/gagliardetto/solana-go"
 	associatedtokenaccount "github.com/gagliardetto/solana-go/programs/associated-token-account"
 	spltoken "github.com/gagliardetto/solana-go/programs/token"
-	solana "github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
@@ -149,6 +149,95 @@ func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.Wallet
 		return nil, fmt.Errorf("solana SPL tx broadcast failed: %w", err)
 	}
 
+	return &blockchain.TransactionResult{TxHash: signature.String(), Success: true}, nil
+}
+
+func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, amountRaw, toAddress string) (*blockchain.TransactionResult, error) {
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !amount.IsUint64() {
+		return nil, fmt.Errorf("solana SPL amount_raw exceeds uint64")
+	}
+
+	rpcClient, err := s.solanaRPCClient()
+	if err != nil {
+		return nil, err
+	}
+
+	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	mint, err := solana.PublicKeyFromBase58(strings.TrimSpace(contractAddr))
+	if err != nil {
+		return nil, fmt.Errorf("invalid SPL mint address: %w", err)
+	}
+	toOwner, err := solana.PublicKeyFromBase58(strings.TrimSpace(toAddress))
+	if err != nil {
+		return nil, fmt.Errorf("invalid destination address: %w", err)
+	}
+
+	srcATA, _, err := solana.FindAssociatedTokenAddress(from, mint)
+	if err != nil {
+		return nil, fmt.Errorf("derive source ATA: %w", err)
+	}
+	dstATA, _, err := solana.FindAssociatedTokenAddress(toOwner, mint)
+	if err != nil {
+		return nil, fmt.Errorf("derive destination ATA: %w", err)
+	}
+
+	balResult, err := rpcClient.GetTokenAccountBalance(ctx, srcATA, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("solana SPL balanceOf %s failed: %w", srcATA, err)
+	}
+	if balResult == nil || balResult.Value == nil {
+		return nil, fmt.Errorf("solana SPL balance is unavailable for mint %s", contractAddr)
+	}
+	balance, ok := new(big.Int).SetString(balResult.Value.Amount, 10)
+	if !ok || balance.Cmp(amount) < 0 {
+		return nil, fmt.Errorf("solana SPL balance is not enough: balance=%s amount=%s", balResult.Value.Amount, amount.String())
+	}
+
+	instructions := make([]solana.Instruction, 0, 2)
+	dstAccInfo, err := rpcClient.GetAccountInfo(ctx, dstATA)
+	if err != nil || dstAccInfo == nil || dstAccInfo.Value == nil {
+		instructions = append(instructions,
+			associatedtokenaccount.NewCreateInstruction(from, toOwner, mint).Build(),
+		)
+	}
+	instructions = append(instructions,
+		spltoken.NewTransferInstruction(
+			amount.Uint64(),
+			srcATA,
+			dstATA,
+			from,
+			nil,
+		).Build(),
+	)
+
+	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("solana blockhash fetch failed: %w", err)
+	}
+	tx, err := solana.NewTransaction(instructions, recent.Value.Blockhash, solana.TransactionPayer(from))
+	if err != nil {
+		return nil, fmt.Errorf("solana SPL tx build failed: %w", err)
+	}
+	if _, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+		if key.Equals(from) {
+			return &privateKey
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("solana SPL tx signing failed: %w", err)
+	}
+	signature, err := rpcClient.SendTransaction(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("solana SPL tx broadcast failed: %w", err)
+	}
 	return &blockchain.TransactionResult{TxHash: signature.String(), Success: true}, nil
 }
 

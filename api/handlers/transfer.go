@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"core/asset"
 	"core/blockchain"
 	"core/constants"
 	"core/models"
@@ -17,6 +18,13 @@ import (
 
 func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		if _, ok := requireAdmin(c); !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"success": false,
+				"error":   "admin authentication required",
+			})
+		}
+
 		var params requesttypes.TransferParams
 		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -48,8 +56,59 @@ func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.Chai
 	}
 }
 
+func resolveWithdrawalAsset(registry *asset.Registry, chainName string, symbol string, tokenAddress string) (string, *string, string, uint8, error) {
+	chain := strings.ToLower(strings.TrimSpace(chainName))
+	if chain == "" {
+		return "", nil, "", 0, errors.New("chain is required")
+	}
+	chainID := chainSlugToID(chain)
+	if !constants.IsSupportedChainID(chainID) {
+		return "", nil, "", 0, fmt.Errorf("unsupported chain: %s", chainName)
+	}
+	chain = constants.ChainName(chainID)
+	if registry == nil {
+		return chain, nil, strings.ToUpper(chain), 0, nil
+	}
+
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	tokenAddress = strings.TrimSpace(tokenAddress)
+
+	var assetInfo asset.Asset
+	var ok bool
+	if tokenAddress != "" {
+		assetInfo, ok = registry.Get(chainID, tokenAddress)
+		if !ok {
+			return "", nil, "", 0, fmt.Errorf("unsupported token for %s: %s", chain, tokenAddress)
+		}
+	} else if symbol != "" {
+		assetInfo, ok = registry.GetBySymbol(chainID, symbol)
+		if !ok {
+			return "", nil, "", 0, fmt.Errorf("unsupported asset for %s: %s", chain, symbol)
+		}
+	} else {
+		assetInfo, ok = registry.GetNative(chainID)
+		if !ok {
+			return "", nil, "", 0, fmt.Errorf("native asset is not registered for %s", chain)
+		}
+	}
+
+	var token *string
+	if !assetInfo.IsNative() {
+		value := assetInfo.GetIdentifier()
+		token = &value
+	}
+	return chain, token, assetInfo.GetSymbol(), assetInfo.GetDecimals(), nil
+}
+
 func HandleSweep(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		if _, ok := requireAdmin(c); !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"success": false,
+				"error":   "admin authentication required",
+			})
+		}
+
 		var params requesttypes.TransferParams
 		if err := c.Bind().Body(&params); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -107,6 +166,10 @@ func ExecuteWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockcha
 
 	if sweep {
 		return chain.SweepTo(params.Context, *derivedWallet, *params.ToAddress)
+	}
+
+	if params.Token != nil && strings.TrimSpace(*params.Token) != "" {
+		return chain.WithdrawToken(params.Context, *derivedWallet, strings.TrimSpace(*params.Token), *params.AmountRaw, *params.ToAddress)
 	}
 
 	return chain.Withdraw(params.Context, *derivedWallet, *params.AmountRaw, *params.ToAddress)

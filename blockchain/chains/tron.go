@@ -125,11 +125,15 @@ func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId 
 }
 
 func (s *TronChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(s.Name())
+	return s.Withdraw(ctx, wallet, amountRaw, toAddress)
 }
 
 func (s *TronChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
-	return unsupportedTransfer(s.Name())
+	return s.sendTRX(ctx, wallet, amountRaw, toAddress)
+}
+
+func (s *TronChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return s.sendTRC20(ctx, wallet, tokenAddr, amountRaw, toAddress)
 }
 
 func (s *TronChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {

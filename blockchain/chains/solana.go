@@ -204,6 +204,10 @@ func (s *SolanaChain) Withdraw(ctx context.Context, wallet blockchain.WalletDeta
 	return s.sendLamports(ctx, wallet, amountRaw, toAddress)
 }
 
+func (s *SolanaChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return s.sendSPL(ctx, wallet, tokenAddr, amountRaw, toAddress)
+}
+
 func (s *SolanaChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	toAddress, err := solanaSweepDestination()
 	if err != nil {

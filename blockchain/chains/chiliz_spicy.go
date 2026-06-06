@@ -12,8 +12,8 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	ethSDK "github.com/okx/go-wallet-sdk/coins/ethereum"
 )
 
@@ -125,6 +125,10 @@ func (s *ChilizSpicyChain) Deposit(ctx context.Context, wallet blockchain.Wallet
 
 func (s *ChilizSpicyChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
 	return evmWithdrawNative(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, amountRaw, toAddress)
+}
+
+func (s *ChilizSpicyChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return evmWithdrawERC20(ctx, s.Name(), s.ChainID(), s.RPCs(), wallet, tokenAddr, amountRaw, toAddress)
 }
 
 func (s *ChilizSpicyChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {

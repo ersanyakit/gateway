@@ -1006,13 +1006,21 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		}
 
 		chain := strings.ToLower(strings.TrimSpace(c.FormValue("chain")))
+		symbol := strings.TrimSpace(c.FormValue("symbol"))
+		tokenAddress := strings.TrimSpace(c.FormValue("token_address"))
 		toAddress := strings.TrimSpace(c.FormValue("to_address"))
 		amountRaw := strings.TrimSpace(c.FormValue("amount_raw"))
 		note := strings.TrimSpace(c.FormValue("note"))
+		chain, token, symbol, decimals, err := resolveWithdrawalAsset(deps.AssetRegistry, chain, symbol, tokenAddress)
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
+			return redirectWithError(c, "/dealer/dashboard", err.Error())
+		}
 		params := types.TransferParams{
 			Context:   c.Context(),
 			WalletID:  &walletIDRaw,
 			Chain:     &chain,
+			Token:     token,
 			ToAddress: &toAddress,
 			AmountRaw: &amountRaw,
 		}
@@ -1025,21 +1033,18 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 			MerchantID:  merchant.ID,
 			WalletID:    wallet.ID,
 			Chain:       *params.Chain,
+			Token:       token,
+			Symbol:      symbol,
+			Decimals:    decimals,
 			ToAddress:   *params.ToAddress,
 			AmountRaw:   *params.AmountRaw,
 			Note:        note,
 			Status:      models.WithdrawalStatusPending,
 			RequestedBy: merchant.Email,
 		}
-		if err := deps.WithdrawalRepo.Create(c.Context(), request); err != nil {
+		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
 			return redirectWithError(c, "/dealer/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
-		}
-		if deps.LedgerRepo != nil {
-			if err := deps.LedgerRepo.CreateWithdrawalHold(c.Context(), *request); err != nil {
-				logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", request.ID.String(), err.Error())
-				return redirectWithError(c, "/dealer/dashboard", "Çekim bakiyesi kilitlenemedi: "+err.Error())
-			}
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "success", "withdrawal", request.ID.String(), "Çekim talebi admin onayına gönderildi.")
 		return redirectWithSuccess(c, "/dealer/dashboard", "Çekim talebi admin onayına gönderildi.")
@@ -1835,31 +1840,30 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if err != nil || request.Status != models.WithdrawalStatusPending {
 			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
 		}
-		walletID := request.WalletID.String()
-		params := types.TransferParams{
-			Context:   c.Context(),
-			WalletID:  &walletID,
-			Chain:     &request.Chain,
-			ToAddress: &request.ToAddress,
-			AmountRaw: &request.AmountRaw,
-		}
-		if err := params.ValidateWithdraw(); err != nil {
-			_ = deps.WithdrawalRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
-			return redirectWithError(c, "/admin/withdrawals", err.Error())
-		}
-		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
-		if err != nil {
-			_ = deps.WithdrawalRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
-			return redirectWithError(c, "/admin/withdrawals", "Transfer başarısız: "+err.Error())
-		}
-		if err := deps.WithdrawalRepo.MarkApproved(c.Context(), id, adminEmail, result.TxHash); err != nil {
-			return redirectWithError(c, "/admin/withdrawals", "Talep güncellenemedi: "+err.Error())
-		}
-		if deps.LedgerRepo != nil {
-			request.TxHash = result.TxHash
-			if err := deps.LedgerRepo.PostWithdrawalDebit(c.Context(), *request, result.TxHash); err != nil {
-				return redirectWithError(c, "/admin/withdrawals", "Ledger güncellenemedi: "+err.Error())
+		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), id, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
+			walletID := locked.WalletID.String()
+			params := types.TransferParams{
+				Context:   c.Context(),
+				WalletID:  &walletID,
+				Chain:     &locked.Chain,
+				Token:     locked.Token,
+				ToAddress: &locked.ToAddress,
+				AmountRaw: &locked.AmountRaw,
 			}
+			if err := params.ValidateWithdraw(); err != nil {
+				return "", err
+			}
+			result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
+			if err != nil {
+				return "", err
+			}
+			return result.TxHash, nil
+		})
+		if err != nil {
+			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusApproved {
+				return redirectWithError(c, "/admin/withdrawals", "Transfer gönderildi ancak ledger güncellenemedi: "+err.Error())
+			}
+			return redirectWithError(c, "/admin/withdrawals", "Transfer başarısız: "+err.Error())
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
 	}
@@ -3035,20 +3039,26 @@ func parseHiddenChains(s string) map[string]bool {
 
 func chainSlugToID(slug string) constants.ChainID {
 	slug = strings.ToLower(strings.TrimSpace(slug))
-	for id, name := range map[constants.ChainID]string{
-		constants.Bitcoin:     "bitcoin",
-		constants.Ethereum:    "ethereum",
-		constants.Base:        "base",
-		constants.Arbitrum:    "arbitrum",
-		constants.Binance:     "bnb chain",
-		constants.Unichain:    "unichain",
-		constants.Avalanche:   "avalanche",
-		constants.Chiliz:      "chiliz",
-		constants.ChilizSpicy: "chiliz spicy",
-		constants.Solana:      "solana",
-		constants.TRON:        "tron",
-	} {
-		if strings.EqualFold(name, slug) {
+	aliases := map[constants.ChainID][]string{
+		constants.Bitcoin:     {"bitcoin", "btc"},
+		constants.Ethereum:    {"ethereum", "eth"},
+		constants.Base:        {"base"},
+		constants.Arbitrum:    {"arbitrum", "arb", "arbitrum-one"},
+		constants.Binance:     {"bnbchain", "bnb chain", "bsc", "binance", "bnb"},
+		constants.Unichain:    {"unichain", "uni"},
+		constants.Avalanche:   {"avalanche", "avax"},
+		constants.Chiliz:      {"chiliz", "chz"},
+		constants.ChilizSpicy: {"chiliz-spicy", "chiliz spicy", "spicy"},
+		constants.Solana:      {"solana", "sol"},
+		constants.TRON:        {"tron", "trx"},
+	}
+	for id, values := range aliases {
+		for _, value := range values {
+			if value == slug {
+				return id
+			}
+		}
+		if strings.EqualFold(constants.ChainName(id), slug) {
 			return id
 		}
 	}

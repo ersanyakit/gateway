@@ -562,7 +562,7 @@ func bootstrapAdminAccount(ctx context.Context) {
 	}
 	if password == "" {
 		// No hardcoded default — generate a strong one-time random password.
-		rnd, err := coreHelpers.GenerateSecret()
+		rnd, err := coreHelpers.GenerateBcryptSafeSecret()
 		if err != nil {
 			log.Printf("Bootstrap admin: failed to generate random password: %v\n", err)
 			return

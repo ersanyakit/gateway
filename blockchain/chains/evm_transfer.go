@@ -34,6 +34,14 @@ func evmWithdrawNative(ctx context.Context, chainName string, chainID constants.
 	return evmSendNative(ctx, chainName, chainID, rpcs, wallet, amountWei, toAddress)
 }
 
+func evmWithdrawERC20(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, contractAddr, amountRaw, toAddress string) (*blockchain.TransactionResult, error) {
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+	return evmSendERC20(ctx, chainName, chainID, rpcs, wallet, contractAddr, amount, toAddress)
+}
+
 func evmSweepNative(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	toAddress, err := evmSweepDestination(chainName)
 	if err != nil {
@@ -270,6 +278,64 @@ func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.Ch
 		return nil, fmt.Errorf("%s ERC-20 balance is zero for %s", chainName, from.Hex())
 	}
 
+	return evmSendERC20WithClient(ctx, client, privateKey, from, chainName, chainID, contractAddr, balance, toAddress)
+}
+
+func evmSendERC20(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, contractAddr string, amount *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
+	if !common.IsHexAddress(contractAddr) {
+		return nil, fmt.Errorf("invalid token contract address: %s", contractAddr)
+	}
+	if !common.IsHexAddress(toAddress) {
+		return nil, fmt.Errorf("invalid token recipient for %s: %s", chainName, toAddress)
+	}
+
+	client, err := dialFirstEVMRPC(ctx, rpcs)
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+
+	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	return evmSendERC20WithClient(ctx, client, privateKey, from, chainName, chainID, contractAddr, amount, toAddress)
+}
+
+func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, privateKey *ecdsa.PrivateKey, from common.Address, chainName string, chainID constants.ChainID, contractAddr string, amount *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
+	if amount == nil || amount.Sign() <= 0 {
+		return nil, errors.New("amount must be greater than zero")
+	}
+	if !common.IsHexAddress(contractAddr) {
+		return nil, fmt.Errorf("invalid token contract address: %s", contractAddr)
+	}
+	if !common.IsHexAddress(toAddress) {
+		return nil, fmt.Errorf("invalid token recipient for %s: %s", chainName, toAddress)
+	}
+
+	tokenContract := common.HexToAddress(contractAddr)
+	caller, err := erc20.NewERC20Caller(tokenContract, client)
+	if err != nil {
+		return nil, fmt.Errorf("%s ERC-20 caller init: %w", chainName, err)
+	}
+	balance, err := caller.BalanceOf(&bind.CallOpts{Context: ctx}, from)
+	if err != nil {
+		return nil, fmt.Errorf("%s ERC-20 balanceOf failed: %w", chainName, err)
+	}
+	if balance == nil || balance.Cmp(amount) < 0 {
+		return nil, fmt.Errorf("%s ERC-20 balance is not enough: balance=%s amount=%s", chainName, balance.String(), amount.String())
+	}
+
+	tokenABI, err := erc20.ERC20MetaData.GetAbi()
+	if err != nil {
+		return nil, fmt.Errorf("parse erc20 abi: %w", err)
+	}
+	data, err := tokenABI.Pack("transfer", common.HexToAddress(toAddress), amount)
+	if err != nil {
+		return nil, fmt.Errorf("pack transfer call: %w", err)
+	}
+
 	nonce, err := client.PendingNonceAt(ctx, from)
 	if err != nil {
 		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
@@ -277,15 +343,6 @@ func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.Ch
 	gasPrice, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
-	}
-
-	tokenABI, err := erc20.ERC20MetaData.GetAbi()
-	if err != nil {
-		return nil, fmt.Errorf("parse erc20 abi: %w", err)
-	}
-	data, err := tokenABI.Pack("transfer", common.HexToAddress(toAddress), balance)
-	if err != nil {
-		return nil, fmt.Errorf("pack transfer call: %w", err)
 	}
 
 	tx := types.NewTransaction(nonce, tokenContract, big.NewInt(0), erc20TransferGasLimit, gasPrice, data)

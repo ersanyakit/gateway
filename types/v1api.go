@@ -23,10 +23,12 @@ type V1StaticAddressRequest struct {
 
 // V1PayoutRequest is the request body for POST /api/v1/payout/create.
 type V1PayoutRequest struct {
-	Chain     string `json:"chain"             example:"ethereum"                                        swaggertype:"string"`
-	ToAddress string `json:"to_address"        example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"  swaggertype:"string"`
-	Amount    string `json:"amount"            example:"0.05"                                             swaggertype:"string"`
-	Note      string `json:"note,omitempty"    example:"Monthly settlement"                              swaggertype:"string"`
+	Chain        string `json:"chain"                  example:"ethereum"                                      swaggertype:"string"`
+	Symbol       string `json:"symbol,omitempty"       example:"USDT"                                          swaggertype:"string"`
+	TokenAddress string `json:"token_address,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7" swaggertype:"string"`
+	ToAddress    string `json:"to_address"             example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12" swaggertype:"string"`
+	Amount       string `json:"amount"                 example:"0.05"                                          swaggertype:"string"`
+	Note         string `json:"note,omitempty"         example:"Monthly settlement"                           swaggertype:"string"`
 }
 
 // V1RefundRequest is the request body for POST /api/v1/refund/create.
@@ -41,8 +43,8 @@ type V1RefundRequest struct {
 
 // V1StatusResponse is returned by GET /api/v1/common/status.
 type V1StatusResponse struct {
-	Result string         `json:"result" example:"ok"`
-	Data   V1StatusData   `json:"data"`
+	Result string       `json:"result" example:"ok"`
+	Data   V1StatusData `json:"data"`
 }
 
 type V1StatusData struct {
@@ -57,19 +59,19 @@ type V1BalanceResponse struct {
 }
 
 type V1AssetItem struct {
-	Chain         string `json:"chain"           example:"ethereum"`
-	Symbol        string `json:"symbol"          example:"USDT"`
-	TokenAddress  string `json:"token_address"   example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
-	Balance       string `json:"balance"         example:"1250.00"`
-	BalanceRaw    string `json:"balance_raw"     example:"1250000000"`
-	Decimals      int    `json:"decimals"        example:"6"`
+	Chain        string `json:"chain"           example:"ethereum"`
+	Symbol       string `json:"symbol"          example:"USDT"`
+	TokenAddress string `json:"token_address"   example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	Balance      string `json:"balance"         example:"1250.00"`
+	BalanceRaw   string `json:"balance_raw"     example:"1250000000"`
+	Decimals     int    `json:"decimals"        example:"6"`
 }
 
 // V1PricesResponse is returned by GET /api/v1/common/prices.
 type V1PricesResponse struct {
-	Result   string            `json:"result"    example:"ok"`
-	Currency string            `json:"currency"  example:"USD"`
-	Data     []V1PriceItem     `json:"data"`
+	Result   string        `json:"result"    example:"ok"`
+	Currency string        `json:"currency"  example:"USD"`
+	Data     []V1PriceItem `json:"data"`
 }
 
 type V1PriceItem struct {
@@ -126,7 +128,7 @@ type V1NetworksResponse struct {
 
 // V1PaymentCreateResponse is returned by POST /api/v1/payment/create and /white-label.
 type V1PaymentCreateResponse struct {
-	Result string              `json:"result" example:"ok"`
+	Result string               `json:"result" example:"ok"`
 	Data   V1PaymentCreatedData `json:"data"`
 }
 
@@ -228,19 +230,21 @@ type V1StaticAddressListResponse struct {
 
 // V1PayoutCreateResponse is returned by POST /api/v1/payout/create.
 type V1PayoutCreateResponse struct {
-	Result string          `json:"result" example:"ok"`
-	Data   V1PayoutDetail  `json:"data"`
+	Result string         `json:"result" example:"ok"`
+	Data   V1PayoutDetail `json:"data"`
 }
 
 type V1PayoutDetail struct {
-	PayoutID  string `json:"payout_id"   example:"550e8400-e29b-41d4-a716-446655440000"`
-	Chain     string `json:"chain"       example:"ethereum"`
-	ToAddress string `json:"to_address"  example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	Amount    string `json:"amount"      example:"0.05"`
-	Status    string `json:"status"      example:"pending"`
-	Note      string `json:"note"        example:"Monthly settlement"`
-	TxHash    string `json:"tx_hash"     example:""`
-	CreatedAt string `json:"created_at"  example:"2024-06-01T12:00:00Z"`
+	PayoutID     string `json:"payout_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
+	Chain        string `json:"chain"         example:"ethereum"`
+	Symbol       string `json:"symbol"        example:"USDT"`
+	TokenAddress string `json:"token_address" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	ToAddress    string `json:"to_address"    example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	AmountRaw    string `json:"amount_raw"    example:"50000000"`
+	Status       string `json:"status"        example:"pending"`
+	Note         string `json:"note"          example:"Monthly settlement"`
+	TxHash       string `json:"tx_hash"       example:""`
+	CreatedAt    string `json:"created_at"    example:"2024-06-01T12:00:00Z"`
 }
 
 // V1PayoutInfoResponse is returned by GET /api/v1/payout/info.
@@ -251,10 +255,10 @@ type V1PayoutInfoResponse struct {
 
 // V1PayoutHistoryResponse is returned by GET /api/v1/payout/history.
 type V1PayoutHistoryResponse struct {
-	Result string          `json:"result" example:"ok"`
-	Total  int64           `json:"total"  example:"12"`
-	Page   int             `json:"page"   example:"1"`
-	Limit  int             `json:"limit"  example:"20"`
+	Result string           `json:"result" example:"ok"`
+	Total  int64            `json:"total"  example:"12"`
+	Page   int              `json:"page"   example:"1"`
+	Limit  int              `json:"limit"  example:"20"`
 	Data   []V1PayoutDetail `json:"data"`
 }
 
@@ -299,10 +303,10 @@ type V1RefundInfoResponse struct {
 
 // V1RefundHistoryResponse is returned by GET /api/v1/refund/history.
 type V1RefundHistoryResponse struct {
-	Result string          `json:"result" example:"ok"`
-	Total  int64           `json:"total"  example:"3"`
-	Page   int             `json:"page"   example:"1"`
-	Limit  int             `json:"limit"  example:"20"`
+	Result string           `json:"result" example:"ok"`
+	Total  int64            `json:"total"  example:"3"`
+	Page   int              `json:"page"   example:"1"`
+	Limit  int              `json:"limit"  example:"20"`
 	Data   []V1RefundDetail `json:"data"`
 }
 

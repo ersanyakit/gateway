@@ -14,6 +14,7 @@ type TransferParams struct {
 
 	WalletID  *string `json:"wallet_id,omitempty"`
 	Chain     *string `json:"chain,omitempty"`
+	Token     *string `json:"token,omitempty"`
 	ToAddress *string `json:"to_address,omitempty"`
 	AmountRaw *string `json:"amount_raw,omitempty"`
 }
@@ -38,6 +39,14 @@ func (p *TransferParams) ValidateWithdraw() error {
 	}
 
 	toAddress := strings.TrimSpace(*p.ToAddress)
+	if p.Token != nil {
+		token := strings.TrimSpace(*p.Token)
+		if token == "" {
+			p.Token = nil
+		} else {
+			p.Token = &token
+		}
+	}
 	p.ToAddress = &toAddress
 	p.AmountRaw = &amountRaw
 	return nil

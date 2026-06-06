@@ -674,17 +674,14 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
 
-		var body struct {
-			Chain     string `json:"chain"`
-			ToAddress string `json:"to_address"`
-			Amount    string `json:"amount"`
-			Note      string `json:"note"`
-		}
+		var body types.V1PayoutRequest
 		if err := c.Bind().Body(&body); err != nil {
 			return v1Err(c, fiber.StatusBadRequest, "invalid request body")
 		}
 
 		chain := strings.TrimSpace(body.Chain)
+		symbol := strings.TrimSpace(body.Symbol)
+		tokenAddress := strings.TrimSpace(body.TokenAddress)
 		toAddress := strings.TrimSpace(body.ToAddress)
 		amount := strings.TrimSpace(body.Amount)
 
@@ -700,6 +697,10 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 		if err := types.ValidatePositiveDecimal(amount); err != nil {
 			return v1Err(c, fiber.StatusBadRequest, "invalid amount: "+err.Error())
 		}
+		chain, token, symbol, decimals, err := resolveWithdrawalAsset(deps.AssetRegistry, chain, symbol, tokenAddress)
+		if err != nil {
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
 
 		wallets, err := deps.WalletRepo.ListReserveByMerchant(c.Context(), domain.MerchantID)
 		if err != nil || len(wallets) == 0 {
@@ -707,26 +708,25 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 		}
 		wallet := wallets[0]
 
-		assetInfo := findAssetByChain(deps.AssetRegistry, chain)
-		amountRaw := amount
-		if assetInfo != nil {
-			raw, err := types.DecimalToRaw(amount, assetInfo.GetDecimals())
-			if err == nil {
-				amountRaw = raw
-			}
+		amountRaw, err := types.DecimalToRaw(amount, decimals)
+		if err != nil {
+			return v1Err(c, fiber.StatusBadRequest, "invalid amount: "+err.Error())
 		}
 
 		req := &models.WithdrawalRequest{
 			MerchantID:  domain.MerchantID,
 			WalletID:    wallet.ID,
 			Chain:       chain,
+			Token:       token,
+			Symbol:      symbol,
+			Decimals:    decimals,
 			ToAddress:   toAddress,
 			AmountRaw:   amountRaw,
 			Note:        strings.TrimSpace(body.Note),
 			Status:      models.WithdrawalStatusPending,
 			RequestedBy: "api",
 		}
-		if err := deps.WithdrawalRepo.Create(c.Context(), req); err != nil {
+		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), req, deps.LedgerRepo); err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "payout creation failed: "+err.Error())
 		}
 
@@ -1078,17 +1078,24 @@ func v1PayoutResponse(r models.WithdrawalRequest) fiber.Map {
 	if r.ReviewedAt != nil {
 		reviewedAt = r.ReviewedAt.UTC().Format(time.RFC3339)
 	}
+	token := ""
+	if r.Token != nil {
+		token = *r.Token
+	}
 	return fiber.Map{
-		"payout_id":   r.ID.String(),
-		"chain":       r.Chain,
-		"to_address":  r.ToAddress,
-		"amount_raw":  r.AmountRaw,
-		"note":        r.Note,
-		"status":      r.Status,
-		"tx_hash":     r.TxHash,
-		"error":       r.Error,
-		"reviewed_at": reviewedAt,
-		"created_at":  r.CreatedAt.UTC().Format(time.RFC3339),
+		"payout_id":     r.ID.String(),
+		"chain":         r.Chain,
+		"symbol":        r.Symbol,
+		"token_address": token,
+		"to_address":    r.ToAddress,
+		"amount_raw":    r.AmountRaw,
+		"decimals":      r.Decimals,
+		"note":          r.Note,
+		"status":        r.Status,
+		"tx_hash":       r.TxHash,
+		"error":         r.Error,
+		"reviewed_at":   reviewedAt,
+		"created_at":    r.CreatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
