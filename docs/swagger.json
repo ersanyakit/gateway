@@ -1869,6 +1869,32 @@
                 }
             }
         },
+        "/docs/integration-guide.md": {
+            "get": {
+                "description": "Returns the payment gateway integration guide as plain Markdown for developers and AI agents.",
+                "produces": [
+                    "text/markdown"
+                ],
+                "tags": [
+                    "Documentation"
+                ],
+                "summary": "Integration guide",
+                "responses": {
+                    "200": {
+                        "description": "Markdown integration guide",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "integration guide not found",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
         "/merchant.create": {
             "post": {
                 "description": "Creates a merchant/dealer account for self-service onboarding.",

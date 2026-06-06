@@ -317,6 +317,7 @@ func NewRouter(db *gorm.DB) *Router {
 		WithCredentials:      false,
 	}
 	r.fiber.Get("/swagger/*", swaggo.New(swaggerCfg))
+	r.fiber.Get("/docs/integration-guide.md", handlers.HandleIntegrationGuide())
 	r.fiber.Get("/docs/*", swaggo.New(swaggerCfg))
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
