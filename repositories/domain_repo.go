@@ -7,6 +7,7 @@ import (
 	"core/types"
 	"errors"
 	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -171,6 +172,31 @@ func (r *DomainRepo) UpdateWebhook(ctx context.Context, domainID uuid.UUID, merc
 		return errors.New("domain not found")
 	}
 	return nil
+}
+
+func (r *DomainRepo) RotateAPISecret(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID) (string, error) {
+	apiSecretPlain, err := helpers.GenerateSecret()
+	if err != nil {
+		return "", err
+	}
+	hashedAPISecret, err := helpers.HMACSecret(apiSecretPlain)
+	if err != nil {
+		return "", err
+	}
+	result := r.DB().WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("id = ? AND merchant_id = ?", domainID, merchantID).
+		Updates(map[string]any{
+			"api_secret": hashedAPISecret,
+			"updated_at": time.Now(),
+		})
+	if result.Error != nil {
+		return "", result.Error
+	}
+	if result.RowsAffected == 0 {
+		return "", errors.New("domain not found")
+	}
+	return apiSecretPlain, nil
 }
 
 func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {

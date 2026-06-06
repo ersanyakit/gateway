@@ -380,6 +380,9 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -428,6 +431,9 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1StaticAddressRequest true "Static address parameters"
 // @Success 200 {object} types.V1StaticAddressResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -724,6 +730,9 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1PayoutRequest true "Payout parameters"
 // @Success 201 {object} types.V1PayoutCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -916,6 +925,9 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1RefundRequest true "Refund parameters"
 // @Success 201 {object} types.V1RefundCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse

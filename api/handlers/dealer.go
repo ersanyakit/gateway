@@ -1186,6 +1186,40 @@ func HandleDealerDomainUpdateWebhook(deps DealerDeps) fiber.Handler {
 	}
 }
 
+// HandleDealerDomainRotateAPISecret rotates the API secret for a dealer-owned domain.
+// @Summary Rotate domain API secret
+// @Description Rotates the API secret for an authenticated dealer domain. The new secret is returned once in the response.
+// @Tags Dealers
+// @Produce json
+// @Param id path string true "Domain ID"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} types.ErrorResponse
+// @Failure 401 {object} types.ErrorResponse
+// @Router /dealer/domains/{id}/rotate-api-secret [post]
+func HandleDealerDomainRotateAPISecret(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Oturum gerekli"})
+		}
+		domainIDStr := c.Params("id")
+		domainUUID, err := uuid.Parse(domainIDStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Geçersiz domain ID"})
+		}
+		apiSecret, err := deps.DomainService.RotateAPISecret(c.Context(), domainUUID, merchant.ID)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.rotate_api_secret", "success", "domain", domainIDStr, "API secret rotated.")
+		return c.JSON(fiber.Map{
+			"result":     "ok",
+			"domain_id":  domainIDStr,
+			"api_secret": apiSecret,
+		})
+	}
+}
+
 func HandleDealerSettingsUpdate(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
@@ -1965,6 +1999,9 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
+		}
+		if err := deps.RefundRepo.RecordBroadcast(c.Context(), id, adminEmail, result.TxHash); err != nil {
+			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak tx hash kaydedilemedi: "+err.Error())
 		}
 		if err := deps.RefundRepo.MarkSucceededWithLedger(c.Context(), id, adminEmail, result.TxHash, *session, deps.LedgerRepo); err != nil {
 			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, "ledger/finalize failed: "+err.Error())

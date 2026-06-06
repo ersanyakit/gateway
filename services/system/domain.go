@@ -49,6 +49,10 @@ func (s *DomainService) UpdateWebhook(ctx context.Context, domainID uuid.UUID, m
 	return s.domainRepo.UpdateWebhook(ctx, domainID, merchantID, webhookURL, plainSecret)
 }
 
+func (s *DomainService) RotateAPISecret(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID) (string, error) {
+	return s.domainRepo.RotateAPISecret(ctx, domainID, merchantID)
+}
+
 func (s *DomainService) CreateReserve(ctx context.Context, merchantID uuid.UUID) (*models.Domain, error) {
 	return s.domainRepo.CreateReserveDomain(ctx, merchantID)
 }

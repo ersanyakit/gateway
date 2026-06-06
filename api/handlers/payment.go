@@ -88,6 +88,9 @@ type CheckoutAssetGroup struct {
 // @Produce json
 // @Security ApiKeyAuth
 // @Security BearerAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
 // @Param Idempotency-Key header string false "Idempotency key. If omitted, order_id is used within the domain scope."
 // @Param payload body types.PaymentCreateParams true "Payment create payload"
 // @Success 201 {object} types.PaymentCreateResponse

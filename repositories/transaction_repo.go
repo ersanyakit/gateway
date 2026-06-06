@@ -157,8 +157,9 @@ func (r *TransactionRepo) BindWallet(ctx context.Context, uniqueHash, eventType 
 
 func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash string, delivered bool, lastErr error) error {
 	updates := map[string]interface{}{
-		"webhook_attempts": gorm.Expr("webhook_attempts + 1"),
-		"updated_at":       time.Now(),
+		"webhook_attempts":     gorm.Expr("webhook_attempts + 1"),
+		"webhook_locked_until": nil,
+		"updated_at":           time.Now(),
 	}
 
 	if delivered {
@@ -230,13 +231,30 @@ func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([
 	}
 
 	var transactions []models.Transaction
-	err := r.DB().WithContext(ctx).
-		Where("wallet_id IS NOT NULL").
-		Where("status = ?", models.TransactionStatusConfirmed).
-		Where("webhook_sent_at IS NULL").
-		Order("created_at ASC").
-		Limit(limit).
-		Find(&transactions).Error
+	now := time.Now()
+	lockUntil := now.Add(2 * time.Minute)
+	err := r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where("wallet_id IS NOT NULL").
+			Where("status = ?", models.TransactionStatusConfirmed).
+			Where("webhook_sent_at IS NULL").
+			Where("webhook_locked_until IS NULL OR webhook_locked_until < ?", now).
+			Order("created_at ASC").
+			Limit(limit).
+			Find(&transactions).Error; err != nil {
+			return err
+		}
+		if len(transactions) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(transactions))
+		for _, row := range transactions {
+			ids = append(ids, row.ID)
+		}
+		return tx.Model(&models.Transaction{}).
+			Where("id IN ?", ids).
+			Update("webhook_locked_until", &lockUntil).Error
+	})
 	return transactions, err
 }
 

@@ -86,6 +86,20 @@ func (r *RefundRepo) Find(ctx context.Context, id uuid.UUID) (*models.Refund, er
 	return &refund, nil
 }
 
+func (r *RefundRepo) ListProcessingWithTxHash(ctx context.Context, limit int) ([]models.Refund, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var refunds []models.Refund
+	err := r.db.WithContext(ctx).
+		Where("status = ?", models.RefundStatusProcessing).
+		Where("tx_hash <> ''").
+		Order("updated_at ASC").
+		Limit(limit).
+		Find(&refunds).Error
+	return refunds, err
+}
+
 func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy string) (*models.Refund, error) {
 	var claimed models.Refund
 	now := time.Now()
@@ -122,6 +136,25 @@ func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy 
 	return &claimed, nil
 }
 
+func (r *RefundRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Model(&models.Refund{}).
+		Where("id = ? AND status = ?", id, models.RefundStatusProcessing).
+		Updates(map[string]any{
+			"reviewed_by": reviewedBy,
+			"reviewed_at": &now,
+			"tx_hash":     txHash,
+			"error":       "finalizing ledger",
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
 	now := time.Now()
 	result := r.db.WithContext(ctx).Model(&models.Refund{}).
@@ -145,6 +178,16 @@ func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy
 func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string, session models.PaymentSession, ledger *LedgerRepo) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			First(&refund, "id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).Error; err != nil {
+			return err
+		}
+		if ledger != nil {
+			if err := NewLedgerRepo(tx).PostRefundDebitWithDB(ctx, tx, refund, session, txHash); err != nil {
+				return err
+			}
+		}
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
 			Updates(map[string]any{
@@ -160,14 +203,7 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if ledger == nil {
-			return nil
-		}
-		var refund models.Refund
-		if err := tx.First(&refund, "id = ?", id).Error; err != nil {
-			return err
-		}
-		return NewLedgerRepo(tx).PostRefundDebitWithDB(ctx, tx, refund, session, txHash)
+		return nil
 	})
 }
 

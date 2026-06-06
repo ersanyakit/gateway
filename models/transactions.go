@@ -45,9 +45,10 @@ type Transaction struct {
 	ProductID  string     `gorm:"size:128;index" json:"product_id,omitempty"`
 	UserID     string     `gorm:"size:128;index" json:"user_id,omitempty"`
 
-	WebhookSentAt    *time.Time `json:"webhook_sent_at,omitempty"`
-	WebhookAttempts  uint       `gorm:"not null;default:0" json:"webhook_attempts"`
-	WebhookLastError string     `gorm:"type:text" json:"webhook_last_error,omitempty"`
+	WebhookSentAt      *time.Time `json:"webhook_sent_at,omitempty"`
+	WebhookAttempts    uint       `gorm:"not null;default:0" json:"webhook_attempts"`
+	WebhookLastError   string     `gorm:"type:text" json:"webhook_last_error,omitempty"`
+	WebhookLockedUntil *time.Time `gorm:"index" json:"webhook_locked_until,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

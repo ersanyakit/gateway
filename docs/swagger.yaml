@@ -4,6 +4,8 @@ definitions:
     properties:
       api_key:
         type: string
+      api_secret:
+        type: string
       created_at:
         type: string
       domain_url:
@@ -443,8 +445,8 @@ definitions:
     type: object
   types.V1PayoutDetail:
     properties:
-      amount:
-        example: "0.05"
+      amount_raw:
+        example: "50000000"
         type: string
       chain:
         example: ethereum
@@ -461,8 +463,14 @@ definitions:
       status:
         example: pending
         type: string
+      symbol:
+        example: USDT
+        type: string
       to_address:
         example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
         type: string
       tx_hash:
         example: ""
@@ -506,8 +514,14 @@ definitions:
       note:
         example: Monthly settlement
         type: string
+      symbol:
+        example: USDT
+        type: string
       to_address:
         example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
         type: string
     type: object
   types.V1PayoutStatusTableItem:
@@ -716,6 +730,8 @@ definitions:
     type: object
   types.WalletCreateResponse:
     properties:
+      arbitrum:
+        type: string
       avalanche:
         type: string
       base:
@@ -906,6 +922,22 @@ paths:
       description: Creates a hosted checkout payment session. Returns a checkout URL
         the customer visits to complete payment.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Invoice parameters
         in: body
         name: payload
@@ -1039,6 +1071,22 @@ paths:
       description: Creates a permanent deposit wallet for a user. Subsequent calls
         with the same user_id and chain return the existing address.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Static address parameters
         in: body
         name: payload
@@ -1181,6 +1229,22 @@ paths:
       description: Creates a withdrawal (payout) request from the merchant's wallet
         to the specified address. Requires admin approval before execution.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Payout parameters
         in: body
         name: payload
@@ -1300,6 +1364,22 @@ paths:
         OR order_id to identify the payment. Admin approval broadcasts the on-chain
         refund.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Refund parameters
         in: body
         name: payload
@@ -1390,6 +1470,62 @@ paths:
       summary: Get refund info
       tags:
       - Refund
+  /api/v1/transaction/rescan:
+    post:
+      consumes:
+      - application/json
+      description: Re-fetches a transaction from the selected blockchain and replays
+        it through wallet matching, payment, ledger, and webhook processing.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: chain and tx_hash
+        in: body
+        name: payload
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Rescan transaction
+      tags:
+      - Transaction
   /auth/oidc/callback:
     get:
       description: Exchanges the OIDC authorization code for tokens, fetches userinfo,
@@ -1730,6 +1866,36 @@ paths:
       summary: Create dealer domain from panel
       tags:
       - Dealers
+  /dealer/domains/{id}/rotate-api-secret:
+    post:
+      description: Rotates the API secret for an authenticated dealer domain. The
+        new secret is returned once in the response.
+      parameters:
+      - description: Domain ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Rotate domain API secret
+      tags:
+      - Dealers
   /dealer/login:
     get:
       description: Renders the hosted dealer login page with the OIDC sign-in action.
@@ -1964,6 +2130,22 @@ paths:
       description: Creates a checkout session for a merchant order and returns a hosted
         checkout URL.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Idempotency key. If omitted, order_id is used within the domain
           scope.
         in: header

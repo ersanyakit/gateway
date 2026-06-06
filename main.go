@@ -659,6 +659,53 @@ func startTransactionFinalityWorker(ctx context.Context, notifier *webhooksvc.No
 	}
 }
 
+func finalizeProcessingTransfers(ctx context.Context) {
+	router := coreApplication.CORE.Router
+	if router.WithdrawalRepo != nil {
+		withdrawals, err := router.WithdrawalRepo.ListProcessingWithTxHash(ctx, 100)
+		if err != nil {
+			log.Println("Processing withdrawal query error:", err)
+		} else {
+			for _, request := range withdrawals {
+				if err := router.WithdrawalRepo.FinalizeProcessingWithLedger(ctx, request.ID, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					log.Printf("Processing withdrawal finalize error %s: %v\n", request.ID, err)
+				}
+			}
+		}
+	}
+	if router.RefundRepo != nil && router.PaymentRepo != nil {
+		refunds, err := router.RefundRepo.ListProcessingWithTxHash(ctx, 100)
+		if err != nil {
+			log.Println("Processing refund query error:", err)
+		} else {
+			for _, refund := range refunds {
+				session, err := router.PaymentRepo.FindByID(ctx, refund.PaymentID)
+				if err != nil {
+					log.Printf("Processing refund payment lookup error %s: %v\n", refund.ID, err)
+					continue
+				}
+				if err := router.RefundRepo.MarkSucceededWithLedger(ctx, refund.ID, refund.ReviewedBy, refund.TxHash, *session, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					log.Printf("Processing refund finalize error %s: %v\n", refund.ID, err)
+				}
+			}
+		}
+	}
+}
+
+func startTransferFinalizationWorker(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	finalizeProcessingTransfers(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			finalizeProcessingTransfers(ctx)
+		}
+	}
+}
+
 func NewApp() (*coreApplication.App, error) {
 	if coreApplication.CORE == nil {
 
@@ -765,6 +812,7 @@ func main() {
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)
 	go startTransactionFinalityWorker(mainCtx, webhookNotifier)
+	go startTransferFinalizationWorker(mainCtx)
 
 	chainNames := []string{
 		"bitcoin",

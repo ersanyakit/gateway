@@ -236,6 +236,27 @@ const docTemplate = `{
                 "summary": "Generate invoice",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Invoice parameters",
                         "name": "payload",
                         "in": "body",
@@ -437,6 +458,27 @@ const docTemplate = `{
                 ],
                 "summary": "Generate static address",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
                     {
                         "description": "Static address parameters",
                         "name": "payload",
@@ -656,6 +698,27 @@ const docTemplate = `{
                 "summary": "Generate payout",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Payout parameters",
                         "name": "payload",
                         "in": "body",
@@ -838,6 +901,27 @@ const docTemplate = `{
                 "summary": "Create refund request",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Refund parameters",
                         "name": "payload",
                         "in": "body",
@@ -946,6 +1030,88 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/types.V1RefundInfoResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/transaction/rescan": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Re-fetches a transaction from the selected blockchain and replays it through wallet matching, payment, ledger, and webhook processing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Transaction"
+                ],
+                "summary": "Rescan transaction",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "chain and tx_hash",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "400": {
@@ -1467,6 +1633,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/dealer/domains/{id}/rotate-api-secret": {
+            "post": {
+                "description": "Rotates the API secret for an authenticated dealer domain. The new secret is returned once in the response.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Dealers"
+                ],
+                "summary": "Rotate domain API secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Domain ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/dealer/login": {
             "get": {
                 "description": "Renders the hosted dealer login page with the OIDC sign-in action.",
@@ -1828,6 +2038,27 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
                         "description": "Idempotency key. If omitted, order_id is used within the domain scope.",
                         "name": "Idempotency-Key",
                         "in": "header"
@@ -1876,6 +2107,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "api_key": {
+                    "type": "string"
+                },
+                "api_secret": {
                     "type": "string"
                 },
                 "created_at": {
@@ -2513,9 +2747,9 @@ const docTemplate = `{
         "types.V1PayoutDetail": {
             "type": "object",
             "properties": {
-                "amount": {
+                "amount_raw": {
                     "type": "string",
-                    "example": "0.05"
+                    "example": "50000000"
                 },
                 "chain": {
                     "type": "string",
@@ -2537,9 +2771,17 @@ const docTemplate = `{
                     "type": "string",
                     "example": "pending"
                 },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
                 "to_address": {
                     "type": "string",
                     "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "token_address": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 },
                 "tx_hash": {
                     "type": "string",
@@ -2601,9 +2843,17 @@ const docTemplate = `{
                     "type": "string",
                     "example": "Monthly settlement"
                 },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
                 "to_address": {
                     "type": "string",
                     "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "token_address": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 }
             }
         },
@@ -2902,6 +3152,9 @@ const docTemplate = `{
         "types.WalletCreateResponse": {
             "type": "object",
             "properties": {
+                "arbitrum": {
+                    "type": "string"
+                },
                 "avalanche": {
                     "type": "string"
                 },

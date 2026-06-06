@@ -52,10 +52,11 @@ type PaymentSession struct {
 	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
 	ConfirmedAt           *time.Time `json:"confirmed_at,omitempty"`
 
-	WebhookEvent     string     `gorm:"size:64;index" json:"webhook_event,omitempty"`
-	WebhookSentAt    *time.Time `json:"webhook_sent_at,omitempty"`
-	WebhookAttempts  uint       `gorm:"not null;default:0" json:"webhook_attempts"`
-	WebhookLastError string     `gorm:"type:text" json:"webhook_last_error,omitempty"`
+	WebhookEvent       string     `gorm:"size:64;index" json:"webhook_event,omitempty"`
+	WebhookSentAt      *time.Time `json:"webhook_sent_at,omitempty"`
+	WebhookAttempts    uint       `gorm:"not null;default:0" json:"webhook_attempts"`
+	WebhookLastError   string     `gorm:"type:text" json:"webhook_last_error,omitempty"`
+	WebhookLockedUntil *time.Time `gorm:"index" json:"webhook_locked_until,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

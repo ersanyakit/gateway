@@ -338,8 +338,9 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 
 func (r *PaymentRepo) MarkWebhookAttempt(ctx context.Context, sessionID uuid.UUID, delivered bool, lastErr error) error {
 	updates := map[string]interface{}{
-		"webhook_attempts": gorm.Expr("webhook_attempts + 1"),
-		"updated_at":       time.Now(),
+		"webhook_attempts":     gorm.Expr("webhook_attempts + 1"),
+		"webhook_locked_until": nil,
+		"updated_at":           time.Now(),
 	}
 	if delivered {
 		now := time.Now()
@@ -361,13 +362,30 @@ func (r *PaymentRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]mod
 	}
 
 	var sessions []models.PaymentSession
-	err := r.db.WithContext(ctx).
-		Preload("Domain").
-		Where("webhook_event <> ''").
-		Where("webhook_sent_at IS NULL").
-		Order("updated_at ASC").
-		Limit(limit).
-		Find(&sessions).Error
+	now := time.Now()
+	lockUntil := now.Add(2 * time.Minute)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Preload("Domain").
+			Where("webhook_event <> ''").
+			Where("webhook_sent_at IS NULL").
+			Where("webhook_locked_until IS NULL OR webhook_locked_until < ?", now).
+			Order("updated_at ASC").
+			Limit(limit).
+			Find(&sessions).Error; err != nil {
+			return err
+		}
+		if len(sessions) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(sessions))
+		for _, row := range sessions {
+			ids = append(ids, row.ID)
+		}
+		return tx.Model(&models.PaymentSession{}).
+			Where("id IN ?", ids).
+			Update("webhook_locked_until", &lockUntil).Error
+	})
 	return sessions, err
 }
 

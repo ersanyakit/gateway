@@ -179,6 +179,21 @@ func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
 }
 
 func (f *BaseChain) GetMnemonic() (string, error) {
+	signerMode := strings.ToLower(strings.TrimSpace(os.Getenv("SIGNER_MODE")))
+	if signerMode == "" {
+		signerMode = "software"
+	}
+	switch signerMode {
+	case "software":
+		env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+		if env == "production" && strings.TrimSpace(os.Getenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION")) != "true" {
+			return "", errors.New("software signer is disabled in production; configure SIGNER_MODE=kms/hsm/mpc or set ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=true")
+		}
+	case "kms", "hsm", "mpc":
+		return "", fmt.Errorf("SIGNER_MODE=%s requires an external signer integration", signerMode)
+	default:
+		return "", fmt.Errorf("unsupported SIGNER_MODE: %s", signerMode)
+	}
 	mnemonic := os.Getenv("MNEMONIC_PHRASE")
 	if !walletcore.ValidateMnemonic(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")

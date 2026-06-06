@@ -202,6 +202,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/dealer/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
+	r.fiber.Post("/dealer/domains/:id/rotate-api-secret", handlers.HandleDealerDomainRotateAPISecret(dealerDeps))
 	r.fiber.Post("/dealer/settings", handlers.HandleDealerSettingsUpdate(dealerDeps))
 	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
 	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))

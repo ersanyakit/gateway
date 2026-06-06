@@ -104,6 +104,21 @@ func (r *WithdrawalRequestRepo) ListPage(ctx context.Context, page, limit int) (
 	return requests, total, err
 }
 
+func (r *WithdrawalRequestRepo) ListProcessingWithTxHash(ctx context.Context, limit int) ([]models.WithdrawalRequest, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var requests []models.WithdrawalRequest
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").Preload("Wallet").
+		Where("status = ?", models.WithdrawalStatusProcessing).
+		Where("tx_hash <> ''").
+		Order("updated_at ASC").
+		Limit(limit).
+		Find(&requests).Error
+	return requests, err
+}
+
 func (r *WithdrawalRequestRepo) Find(ctx context.Context, id uuid.UUID) (*models.WithdrawalRequest, error) {
 	var request models.WithdrawalRequest
 	err := r.db.WithContext(ctx).Preload("Merchant").Preload("Wallet").First(&request, "id = ?", id).Error
@@ -111,6 +126,55 @@ func (r *WithdrawalRequestRepo) Find(ctx context.Context, id uuid.UUID) (*models
 		return nil, err
 	}
 	return &request, nil
+}
+
+func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
+		Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+		Updates(map[string]any{
+			"reviewed_by": reviewedBy,
+			"reviewed_at": &now,
+			"tx_hash":     txHash,
+			"error":       "finalizing ledger",
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context, id uuid.UUID, ledger *LedgerRepo) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			First(&request, "id = ? AND status = ? AND tx_hash <> ''", id, models.WithdrawalStatusProcessing).Error; err != nil {
+			return err
+		}
+		if ledger != nil {
+			if err := ledger.PostWithdrawalDebitWithDB(ctx, tx, request, request.TxHash); err != nil {
+				return err
+			}
+		}
+		now := time.Now()
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+			Updates(map[string]any{
+				"status":      models.WithdrawalStatusApproved,
+				"reviewed_at": &now,
+				"error":       "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func (r *WithdrawalRequestRepo) MarkApproved(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
@@ -235,6 +299,12 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		request.Error = transferErr.Error()
 		return &request, transferErr
 	}
+	if err := r.RecordBroadcast(ctx, id, reviewedBy, txHash); err != nil {
+		request.TxHash = txHash
+		request.Error = "broadcast sent but tx hash persist failed: " + err.Error()
+		return &request, err
+	}
+	request.TxHash = txHash
 
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()

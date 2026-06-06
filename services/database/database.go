@@ -77,6 +77,10 @@ func InitDB() error {
 }
 
 func Migrate(app *application.App) error {
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") &&
+		strings.TrimSpace(os.Getenv("ALLOW_AUTO_MIGRATE_IN_PRODUCTION")) != "true" {
+		return fmt.Errorf("AutoMigrate is disabled in production; run versioned SQL migrations or set ALLOW_AUTO_MIGRATE_IN_PRODUCTION=true explicitly")
+	}
 
 	fmt.Println("EnableExtensions:Begin")
 
