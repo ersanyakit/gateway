@@ -13,6 +13,7 @@ import (
 	"core/services/pricing"
 	"core/services/realtime"
 	services "core/services/system"
+	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"fmt"
 	"strings"
@@ -57,6 +58,7 @@ type Router struct {
 	WalletService       *services.WalletService
 	DomainService       *services.DomainService
 	PaymentHub          *realtime.PaymentHub
+	TxRescanService     *txrescan.Service
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -183,6 +185,7 @@ func NewRouter(db *gorm.DB) *Router {
 		AdminRepo:           r.AdminRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
+		TxRescanService:     func() *txrescan.Service { return r.TxRescanService },
 		Notifier:            webhooksvc.NewNotifier(),
 		PriceOracle:         pricing.NewCoinGecko(),
 	}
@@ -195,6 +198,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/dealer/products", handlers.HandleDealerProductCreate(dealerDeps))
 	r.fiber.Post("/dealer/invoices", handlers.HandleDealerInvoiceCreate(dealerDeps))
 	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
+	r.fiber.Post("/dealer/rescan", handlers.HandleDealerTxRescan(dealerDeps))
 	r.fiber.Post("/dealer/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
 	r.fiber.Post("/dealer/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
@@ -224,6 +228,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/withdrawals/:id/reject", handlers.HandleAdminWithdrawalReject(dealerDeps))
 	r.fiber.Post("/admin/refunds/:id/approve", handlers.HandleAdminRefundApprove(dealerDeps))
 	r.fiber.Post("/admin/refunds/:id/reject", handlers.HandleAdminRefundReject(dealerDeps))
+	r.fiber.Post("/admin/rescan", handlers.HandleAdminTxRescan(dealerDeps))
 	r.fiber.Post("/admin/webhooks/:id/replay", handlers.HandleAdminWebhookReplay(dealerDeps))
 	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))
 	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
@@ -266,6 +271,7 @@ func NewRouter(db *gorm.DB) *Router {
 		Notifier:        webhooksvc.NewNotifier(),
 		PaymentHub:      r.PaymentHub,
 		IdempotencyRepo: r.IdempotencyRepo,
+		TxRescanService: func() *txrescan.Service { return r.TxRescanService },
 	}
 
 	// ── Common API ───────────────────────────────────────────────────────────
@@ -286,6 +292,9 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/api/v1/payment/statistics", handlers.HandleV1PaymentStatistics(v1Deps))
 	r.fiber.Get("/api/v1/payment/currencies", handlers.HandleV1PaymentCurrencies(v1Deps))
 	r.fiber.Get("/api/v1/payment/status-table", handlers.HandleV1PaymentStatusTable(v1Deps))
+
+	// ── Transaction API ──────────────────────────────────────────────────────
+	r.fiber.Post("/api/v1/transaction/rescan", handlers.HandleV1TransactionRescan(v1Deps))
 
 	// ── Payout API ───────────────────────────────────────────────────────────
 	r.fiber.Post("/api/v1/payout/create", handlers.HandleV1PayoutCreate(v1Deps))

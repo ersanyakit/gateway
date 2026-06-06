@@ -13,6 +13,7 @@ import (
 	"core/repositories"
 	"core/services/pricing"
 	"core/services/realtime"
+	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"core/types"
 
@@ -34,6 +35,7 @@ type V1APIDeps struct {
 	Notifier        *webhooksvc.Notifier
 	PaymentHub      *realtime.PaymentHub
 	IdempotencyRepo *repositories.IdempotencyRepo
+	TxRescanService func() *txrescan.Service
 }
 
 // ────────────────────────────────────────────────────────────────────────────

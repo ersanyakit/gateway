@@ -58,6 +58,7 @@
       <a class="dash-tab" href="{{.UsersURL}}" aria-selected="{{if eq .ActivePanel "users"}}true{{else}}false{{end}}">Users</a>
       <a class="dash-tab" href="{{.ProductsPanelURL}}" aria-selected="{{if eq .ActivePanel "products"}}true{{else}}false{{end}}">Products</a>
       <a class="dash-tab" href="{{.WithdrawalsURL}}" aria-selected="{{if eq .ActivePanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals{{if gt .WithdrawalCount 0}} <span class="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-extrabold text-accent">{{.WithdrawalCount}}</span>{{end}}</a>
+      <a class="dash-tab" href="{{.RescanURL}}" aria-selected="{{if eq .ActivePanel "rescan"}}true{{else}}false{{end}}">Rescan</a>
       <a class="dash-tab" href="{{.DomainsPanelURL}}" aria-selected="{{if eq .ActivePanel "domains"}}true{{else}}false{{end}}">Domains</a>
       <a class="dash-tab" href="{{.SettingsPanelURL}}" aria-selected="{{if eq .ActivePanel "settings"}}true{{else}}false{{end}}">Settings</a>
     </div>
@@ -195,6 +196,37 @@
       {{else}}
       <p class="text-sm text-muted">Henüz wallet yok.</p>
       {{end}}
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "rescan"}} hidden{{end}} gap-4">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4">
+        <h2 class="m-0 text-xl font-black text-ink">Transaction yeniden işleme</h2>
+        <p class="m-0 mt-1 text-sm leading-6 text-muted">Bayi wallet adreslerine ait zincirde var olan tx'i tekrar tarar; ödeme, ledger ve webhook akışı idempotent şekilde yeniden denenir.</p>
+      </div>
+      <form class="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-end" method="post" action="/dealer/rescan">
+        <label class="grid gap-2 text-sm font-bold text-muted">Blockchain
+          <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="chain" required>
+            <option value="">— seçin —</option>
+            <option value="bitcoin">Bitcoin</option>
+            <option value="ethereum">Ethereum</option>
+            <option value="bnbchain">BNB Chain</option>
+            <option value="base">Base</option>
+            <option value="arbitrum">Arbitrum</option>
+            <option value="avalanche">Avalanche</option>
+            <option value="unichain">Unichain</option>
+            <option value="solana">Solana</option>
+            <option value="tron">TRON</option>
+            <option value="chiliz">Chiliz</option>
+            <option value="chiliz-spicy">Chiliz Spicy</option>
+          </select>
+        </label>
+        <label class="grid gap-2 text-sm font-bold text-muted">Tx hash
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="tx_hash" type="text" placeholder="0x... / signature / txid" required>
+        </label>
+        <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Yeniden işle</button>
+      </form>
     </section>
   </section>
 

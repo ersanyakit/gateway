@@ -11,6 +11,7 @@ import (
 	"core/repositories"
 	"core/services/pricing"
 	services "core/services/system"
+	"core/services/txrescan"
 	"core/types"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -58,6 +59,7 @@ type DealerDeps struct {
 	AdminRepo           *repositories.AdminRepo
 	AssetRegistry       *asset.Registry
 	Blockchains         *blockchain.ChainFactory
+	TxRescanService     func() *txrescan.Service
 	Notifier            WebhookNotifier
 	PriceOracle         pricing.PriceOracle
 }
@@ -90,6 +92,7 @@ type DealerPageData struct {
 	TransactionsURL   string
 	UsersURL          string
 	WithdrawalsURL    string
+	RescanURL         string
 	DomainsPanelURL   string
 	ProductsURL       string
 	InvoicesURL       string
@@ -138,6 +141,7 @@ type DealerPageData struct {
 	AdminLinksURL       string
 	AdminWebhooksURL    string
 	AdminRefundsURL     string
+	AdminRescanURL      string
 	DepositCount        int
 	WithdrawalCount     int
 
@@ -158,6 +162,7 @@ type DealerPageData struct {
 	AdminDepositHashFilter   string
 	AdminWebhookStatusFilter string
 	AdminRefundStatusFilter  string
+	AdminRescanResult        string
 }
 
 type DealerDomainView struct {
@@ -1666,6 +1671,9 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
 			data.WithdrawalWallets = dealerWalletViews(wallets)
 
+		case "rescan":
+			// Form-only panel.
+
 		case "links":
 			rows, total, _ := deps.ProductRepo.ListPage(c.Context(), page, limit)
 			data.Products = dealerProductViews(c, rows)
@@ -2447,6 +2455,7 @@ func dealerPageData(title string, active string) DealerPageData {
 		TransactionsURL:  "/dealer/dashboard/transactions",
 		UsersURL:         "/dealer/dashboard/users",
 		WithdrawalsURL:   "/dealer/dashboard/withdrawals",
+		RescanURL:        "/dealer/dashboard/rescan",
 		DomainsPanelURL:  "/dealer/dashboard/domains",
 		ProductsURL:      "/dealer/products",
 		InvoicesURL:      "/dealer/invoices",
@@ -2484,6 +2493,8 @@ func dashboardPanel(raw string) string {
 		return "transactions"
 	case "withdrawals":
 		return "withdrawals"
+	case "rescan":
+		return "rescan"
 	case "domains":
 		return "domains"
 	case "products":
@@ -2527,6 +2538,8 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "webhooks"
 	case "/admin/refunds":
 		return "refunds"
+	case "/admin/rescan":
+		return "rescan"
 	case "/admin/sweep":
 		return "sweep"
 	case "/admin/admins":
@@ -2561,6 +2574,7 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminLinksURL:       "/admin/links",
 		AdminWebhooksURL:    "/admin/webhooks",
 		AdminRefundsURL:     "/admin/refunds",
+		AdminRescanURL:      "/admin/rescan",
 	}
 	return data
 }

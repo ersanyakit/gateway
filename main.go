@@ -7,6 +7,7 @@ import (
 	"core/constants"
 	"core/models"
 	"core/services/realtime"
+	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"core/types"
 	"core/workers/dispatcher"
@@ -748,6 +749,13 @@ func main() {
 
 	bus := dispatcher.NewDispatcher()
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
+	coreApplication.CORE.Router.TxRescanService = txrescan.New(
+		coreApplication.CORE.Router.Blockchains(),
+		assetRegistry,
+		bus,
+		coreApplication.CORE.Router.TransactionRepo,
+		coreApplication.CORE.Router.WalletRepo,
+	)
 	webhookNotifier := webhooksvc.NewNotifier()
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)

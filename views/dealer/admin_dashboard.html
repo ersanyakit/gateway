@@ -57,6 +57,7 @@
       <a class="dash-tab" href="{{.AdminActivityURL}}"    aria-selected="{{if eq .AdminPanel "activity"}}true{{else}}false{{end}}">Activity</a>
       <a class="dash-tab" href="{{.AdminWebhooksURL}}"    aria-selected="{{if eq .AdminPanel "webhooks"}}true{{else}}false{{end}}">Webhooks</a>
       <a class="dash-tab" href="{{.AdminSweepURL}}"       aria-selected="{{if eq .AdminPanel "sweep"}}true{{else}}false{{end}}">Sweep</a>
+      <a class="dash-tab" href="{{.AdminRescanURL}}"      aria-selected="{{if eq .AdminPanel "rescan"}}true{{else}}false{{end}}">Rescan</a>
       <a class="dash-tab" href="{{.AdminLinksURL}}"         aria-selected="{{if eq .AdminPanel "links"}}true{{else}}false{{end}}">Pay Links</a>
       <a class="dash-tab" href="/admin/admins"             aria-selected="{{if eq .AdminPanel "admins"}}true{{else}}false{{end}}">Adminler</a>
       <a class="dash-tab" href="{{.AdminSecurityURL}}"    aria-selected="{{if eq .AdminPanel "security"}}true{{else}}false{{end}}">Güvenlik</a>
@@ -104,6 +105,38 @@
     </div>
   </div>
   {{end}}
+  {{end}}
+
+  {{/* ══════ RESCAN ══════ */}}
+  {{if eq .AdminPanel "rescan"}}
+  <div class="rounded-3xl border border-line bg-white p-5">
+    <div class="mb-4">
+      <h2 class="m-0 text-lg font-black text-ink">Transaction rescan</h2>
+      <p class="m-0 mt-1 text-sm leading-6 text-muted">Blockchain'den tx'i tekrar okuyup wallet match, payment, ledger ve webhook akışına yeniden gönderir.</p>
+    </div>
+    <form class="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-end" method="post" action="/admin/rescan">
+      <label class="grid gap-2 text-sm font-bold text-muted">Blockchain
+        <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent" name="chain" required>
+          <option value="">— seçin —</option>
+          <option value="bitcoin">Bitcoin</option>
+          <option value="ethereum">Ethereum</option>
+          <option value="bnbchain">BNB Chain</option>
+          <option value="base">Base</option>
+          <option value="arbitrum">Arbitrum</option>
+          <option value="avalanche">Avalanche</option>
+          <option value="unichain">Unichain</option>
+          <option value="solana">Solana</option>
+          <option value="tron">TRON</option>
+          <option value="chiliz">Chiliz</option>
+          <option value="chiliz-spicy">Chiliz Spicy</option>
+        </select>
+      </label>
+      <label class="grid gap-2 text-sm font-bold text-muted">Tx hash
+        <input class="min-h-11 rounded-2xl border border-line bg-white px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent" name="tx_hash" type="text" placeholder="0x... / signature / txid" required>
+      </label>
+      <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white hover:bg-accentHover" type="submit">Yeniden işle</button>
+    </form>
+  </div>
   {{end}}
 
   {{/* ══════ MERCHANTS ══════ */}}

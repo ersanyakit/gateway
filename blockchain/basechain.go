@@ -2,17 +2,14 @@ package blockchain
 
 import (
 	"context"
+	"core/blockchain/walletcore"
 	"core/constants"
 	"core/models"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/okx/go-wallet-sdk/crypto/go-bip32"
-	"github.com/okx/go-wallet-sdk/crypto/go-bip39"
 )
 
 type WalletDetails struct {
@@ -171,12 +168,11 @@ func (b *BaseChain) PrefundGas(ctx context.Context, reserveWallet WalletDetails,
 }
 
 func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
-	entropy, err := bip39.NewEntropy(256)
+	mnemonic, err := walletcore.GenerateMnemonic(256)
 	if err != nil {
 		return "", err
 	}
-	mnemonic, err := bip39.NewMnemonic(entropy)
-	if !bip39.IsMnemonicValid(mnemonic) {
+	if !walletcore.ValidateMnemonic(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")
 	}
 	return mnemonic, err
@@ -184,7 +180,7 @@ func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
 
 func (f *BaseChain) GetMnemonic() (string, error) {
 	mnemonic := os.Getenv("MNEMONIC_PHRASE")
-	if !bip39.IsMnemonicValid(mnemonic) {
+	if !walletcore.ValidateMnemonic(mnemonic) {
 		return "", errors.New("Invalid Mnemonic")
 	}
 	return mnemonic, nil
@@ -195,17 +191,7 @@ func (f *BaseChain) GetDerivedPath(purpose, coin, account, change, index int) st
 }
 
 func (f *BaseChain) GetDerivedPrivateKey(mnemonic string, hdPath string) (string, error) {
-	seed := bip39.NewSeed(mnemonic, "")
-	rp, err := bip32.NewMasterKey(seed)
-	if err != nil {
-		return "", err
-	}
-	c, err := rp.NewChildKeyByPathString(hdPath)
-	if err != nil {
-		return "", err
-	}
-	childPrivateKey := hex.EncodeToString(c.Key)
-	return childPrivateKey, nil
+	return walletcore.DerivePrivateKey(mnemonic, hdPath, f.ID)
 }
 
 func (b *BaseChain) AddWorker(listener Worker) error {
