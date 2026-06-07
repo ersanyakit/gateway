@@ -37,10 +37,7 @@ func (r *Registry) RegisterAlias(alias, canonical string) {
 func (r *Registry) CanonicalSymbol(symbol string) string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	if canon, ok := r.symbolAliases[r.Normalize(symbol)]; ok {
-		return strings.ToUpper(canon)
-	}
-	return strings.ToUpper(strings.TrimSpace(symbol))
+	return strings.ToUpper(r.canonicalKeyLocked(symbol))
 }
 
 // IsAlias reports whether symbol is registered as an alias of another symbol.
@@ -51,10 +48,16 @@ func (r *Registry) IsAlias(symbol string) bool {
 	return ok
 }
 
-// LogoURL returns the coin logo URL for a symbol, resolving aliases first.
-// WBTC → CanonicalSymbol("WBTC") = "BTC" → CoinLogoURL("BTC") = "/static/coins/btc.svg"
+// LogoURL returns the configured coin logo URL for a symbol, resolving aliases first.
 func (r *Registry) LogoURL(symbol string) string {
-	return CoinLogoURL(r.CanonicalSymbol(symbol))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.definitions[r.canonicalKeyLocked(symbol)]
+	if !ok {
+		return ""
+	}
+	return CoinLogoURLFromSlug(def.LogoSlug)
 }
 
 // ChainLogoURL returns the chain icon URL for a chain ID.
@@ -64,6 +67,14 @@ func (r *Registry) ChainLogoURL(chainID constants.ChainID) string {
 
 func (r *Registry) Normalize(id string) string {
 	return strings.ToLower(strings.TrimSpace(id))
+}
+
+func (r *Registry) canonicalKeyLocked(symbol string) string {
+	key := r.Normalize(symbol)
+	if canon, ok := r.symbolAliases[key]; ok {
+		return canon
+	}
+	return key
 }
 
 func (r *Registry) Register(a Asset) {

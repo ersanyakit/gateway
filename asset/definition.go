@@ -10,6 +10,7 @@ type AssetDefinition struct {
 	Name        string
 	Type        AssetType
 	Decimals    uint8
+	LogoSlug    string
 	Deployments []Deployment
 }
 

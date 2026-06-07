@@ -5,84 +5,21 @@ import (
 	"strings"
 )
 
-// CoinLogoURL returns the /static/coins URL for a given coin symbol.
-// Returns empty string for unknown symbols so templates can conditionally render.
-func CoinLogoURL(symbol string) string {
-	name := logoFilename(strings.ToUpper(strings.TrimSpace(symbol)))
-	if name == "" {
-		return ""
-	}
-	return "/static/coins/" + name + ".svg"
+// CoinLogoURLFromSlug returns the /static/coins URL for a configured coin logo slug.
+func CoinLogoURLFromSlug(logoSlug string) string {
+	return staticSVGURL("/static/coins", logoSlug)
 }
 
 // ChainLogoURL returns the /static/chains URL for a given chain ID.
 // Returns empty string for chains without an icon.
 func ChainLogoURL(chainID constants.ChainID) string {
-	name := chainLogoFilename(chainID)
-	if name == "" {
-		return ""
-	}
-	return "/static/chains/" + name + ".svg"
+	return staticSVGURL("/static/chains", constants.ChainLogoSlug(chainID))
 }
 
-func chainLogoFilename(chainID constants.ChainID) string {
-	switch chainID {
-	case constants.Bitcoin:
-		return "bitcoinchain"
-	case constants.Base:
-		return "basechain"
-	case constants.Arbitrum:
-		return "arbitrumchain"
-	case constants.Ethereum:
-		return "ethereumchain"
-	case constants.Binance:
-		return "bnbchain"
-	case constants.Unichain:
-		return "unichain"
-	case constants.Avalanche:
-		return "avalanchechain"
-	case constants.Solana:
-		return "solanachain"
-	case constants.TRON:
-		return "tronchain"
-	case constants.Chiliz, constants.ChilizSpicy:
-		return "chilizchain"
-	default:
+func staticSVGURL(prefix, slug string) string {
+	slug = strings.ToLower(strings.TrimSpace(slug))
+	if slug == "" {
 		return ""
 	}
-}
-
-func logoFilename(sym string) string {
-	switch sym {
-	case "ETH":
-		return "eth"
-	case "BTC":
-		return "btc"
-	case "USDT":
-		return "usdt"
-	case "USDC":
-		return "usdc"
-	case "BNB":
-		return "bnb"
-	case "AVAX":
-		return "avax"
-	case "SOL":
-		return "sol"
-	case "TRX":
-		return "trx"
-	case "MATIC", "POL":
-		return "matic"
-	case "CHZ":
-		return "chz"
-	case "TBT":
-		return "tbt"
-	case "LGBT":
-		return "lgbt"
-	case "PEPPER":
-		return "pepper"
-	case "CHZINU":
-		return "chzinu"
-	default:
-		return ""
-	}
+	return prefix + "/" + slug + ".svg"
 }

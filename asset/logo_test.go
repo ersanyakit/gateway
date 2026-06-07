@@ -2,18 +2,17 @@ package asset
 
 import "testing"
 
-func TestCoinLogoURLKnownLocalLogos(t *testing.T) {
+func TestCoinLogoURLFromSlugFormatsConfiguredSlug(t *testing.T) {
 	tests := map[string]string{
-		"TBT":    "/static/coins/tbt.svg",
-		"LGBT":   "/static/coins/lgbt.svg",
-		"PEPPER": "/static/coins/pepper.svg",
-		"CHZINU": "/static/coins/chzinu.svg",
+		"tbt":      "/static/coins/tbt.svg",
+		"LGBT":     "/static/coins/lgbt.svg",
+		" pepper ": "/static/coins/pepper.svg",
 	}
 
-	for symbol, want := range tests {
-		t.Run(symbol, func(t *testing.T) {
-			if got := CoinLogoURL(symbol); got != want {
-				t.Fatalf("CoinLogoURL(%q) = %q, want %q", symbol, got, want)
+	for slug, want := range tests {
+		t.Run(slug, func(t *testing.T) {
+			if got := CoinLogoURLFromSlug(slug); got != want {
+				t.Fatalf("CoinLogoURLFromSlug(%q) = %q, want %q", slug, got, want)
 			}
 		})
 	}

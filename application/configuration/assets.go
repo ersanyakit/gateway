@@ -15,6 +15,7 @@ func NewAssetRegistry() *asset.Registry {
 	registry.RegisterAlias("WBTC", "BTC")
 	registry.RegisterAlias("WETH", "ETH")
 	registry.RegisterAlias("WBNB", "BNB")
+	registry.RegisterAlias("WAVAX", "AVAX")
 	registry.RegisterAlias("WCHZ", "CHZ")
 	registry.RegisterAlias("WSOL", "SOL")
 
@@ -28,6 +29,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Bitcoin",
 			Type:     asset.AssetNative,
 			Decimals: 8,
+			LogoSlug: "btc",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Bitcoin, Native: true, Enabled: true},
 				{ChainID: constants.Ethereum, Symbol: "WBTC", Name: "Wrapped BTC", Address: "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599", Decimals: 8, Enabled: true},
@@ -41,6 +43,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Ether",
 			Type:     asset.AssetNative,
 			Decimals: 18,
+			LogoSlug: "eth",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Ethereum, Native: true, Enabled: true},
 				{ChainID: constants.Ethereum, Symbol: "WETH", Name: "Wrapped Ether", Address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", Decimals: 18, Enabled: true},
@@ -57,6 +60,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Tether USD",
 			Type:     asset.AssetERC20,
 			Decimals: 6,
+			LogoSlug: "usdt",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Ethereum, Address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", Decimals: 6, Enabled: true},
 				{ChainID: constants.Solana, Mint: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", Decimals: 6, Enabled: true},
@@ -68,6 +72,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "USD Coin",
 			Type:     asset.AssetERC20,
 			Decimals: 6,
+			LogoSlug: "usdc",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Ethereum, Address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", Decimals: 6, Enabled: true},
 				{ChainID: constants.Base, Address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", Decimals: 6, Enabled: true},
@@ -82,6 +87,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Solana",
 			Type:     asset.AssetNative,
 			Decimals: 9,
+			LogoSlug: "sol",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Solana, Native: true, Enabled: true},
 				{ChainID: constants.Solana, Symbol: "WSOL", Name: "Wrapped Solana", Mint: "So11111111111111111111111111111111111111112", Decimals: 9, Enabled: true},
@@ -92,6 +98,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Tron",
 			Type:     asset.AssetNative,
 			Decimals: 6,
+			LogoSlug: "trx",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.TRON, Native: true, Enabled: true},
 			},
@@ -101,6 +108,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Avalanche",
 			Type:     asset.AssetNative,
 			Decimals: 18,
+			LogoSlug: "avax",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Avalanche, Native: true, Enabled: true},
 				{ChainID: constants.Avalanche, Symbol: "WAVAX", Name: "Wrapped AVAX", Address: "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7", Decimals: 18, Enabled: true},
@@ -111,6 +119,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Binance Coin",
 			Type:     asset.AssetNative,
 			Decimals: 18,
+			LogoSlug: "bnb",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Binance, Native: true, Enabled: true},
 			},
@@ -120,6 +129,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "Chiliz",
 			Type:     asset.AssetNative,
 			Decimals: 18,
+			LogoSlug: "chz",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Chiliz, Native: true, Enabled: true},
 				{ChainID: constants.ChilizSpicy, Native: true, Name: "Chiliz Spicy (Testnet)", Enabled: true},
@@ -133,6 +143,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "TBT Token",
 			Type:     asset.AssetERC20,
 			Decimals: 18,
+			LogoSlug: "tbt",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Chiliz, Address: "0xfed7A6423cdeBb4c05552DC888de5acC657444F4", Decimals: 18, Enabled: true},
 			},
@@ -142,6 +153,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "PEPPER",
 			Type:     asset.AssetERC20,
 			Decimals: 18,
+			LogoSlug: "pepper",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Solana, Mint: "GozPNCAseytzxCR3d2k8hTsTYkr4SDpuXy2RQAZFVx2g", Decimals: 3, Enabled: true},
 				{ChainID: constants.Base, Address: "0x5e985E4BCa4664E985f3FaF8140EbA25b10E28C2", Decimals: 18, Enabled: true},
@@ -154,6 +166,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			Name:     "COOLVIBES",
 			Type:     asset.AssetSPL,
 			Decimals: 6,
+			LogoSlug: "lgbt",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Solana, Mint: "9qpnNkj8wqecEhnrKwzhNAtzSknizFqDEzxPd1Ajpump", Decimals: 6, Enabled: true},
 			},

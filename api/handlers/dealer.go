@@ -643,14 +643,14 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.Products = dealerProductViews(c, products)
 		data.Payments = dealerPaymentViews(c, payments)
 		if len(ledgerBalances) > 0 {
-			data.Balances = dealerLedgerBalanceViews(ledgerBalances)
+			data.Balances = dealerLedgerBalanceViews(ledgerBalances, deps.AssetRegistry)
 		} else {
-			data.Balances = dealerBalanceViews(balances)
+			data.Balances = dealerBalanceViews(balances, deps.AssetRegistry)
 		}
 		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
 		enrichBalancesWithUSD(c.Context(), data.Balances, deps.PriceOracle)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
-		data.Activities = dealerActivityViews(transactions)
+		data.Activities = dealerActivityViews(transactions, deps.AssetRegistry)
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
 		data.Wallets = dealerWalletViews(wallets)
 		data.WithdrawalWallets = dealerWalletViews(reserveWallets)
@@ -1645,7 +1645,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminDepositToFilter = toFilter
 			data.AdminDepositHashFilter = hashFilter
 			rows, total, _ := deps.TransactionRepo.ListPageFiltered(c.Context(), page, limit, fromFilter, toFilter, hashFilter)
-			data.AdminDeposits = dealerActivityViews(rows)
+			data.AdminDeposits = dealerActivityViews(rows, deps.AssetRegistry)
 			depositBase := buildDepositFilterURL(fromFilter, toFilter, hashFilter)
 			data.AdminPagination = dealerPaginationView(page, limit, total, depositBase)
 
@@ -1656,7 +1656,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 
 		case "wallets":
 			rows, total, _ := deps.WalletRepo.ListPage(c.Context(), page, limit)
-			balanceMap := buildWalletBalanceMap(c.Context(), deps.TransactionRepo)
+			balanceMap := buildWalletBalanceMap(c.Context(), deps.TransactionRepo, deps.AssetRegistry)
 			data.AdminWallets = dealerWalletViewsWithBalances(rows, balanceMap)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/wallets")
 
@@ -1720,7 +1720,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 
 		default: // overview
 			recentRows, _, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
-			data.AdminDeposits = dealerActivityViews(recentRows)
+			data.AdminDeposits = dealerActivityViews(recentRows, deps.AssetRegistry)
 		}
 
 		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
@@ -2793,7 +2793,7 @@ func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 }
 
 // buildWalletBalanceMap returns a map of walletID -> balance rows (one per chain+symbol).
-func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.TransactionRepo) map[uuid.UUID][]DealerWalletBalanceRow {
+func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.TransactionRepo, registry *asset.Registry) map[uuid.UUID][]DealerWalletBalanceRow {
 	rows, err := txRepo.AllWalletDeposits(ctx)
 	result := make(map[uuid.UUID][]DealerWalletBalanceRow)
 	if err != nil {
@@ -2804,7 +2804,7 @@ func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.Transaction
 		result[r.WalletID] = append(result[r.WalletID], DealerWalletBalanceRow{
 			Chain:     chainLabel(constants.ChainID(r.ChainID)),
 			Symbol:    r.Symbol,
-			LogoURL:   asset.CoinLogoURL(r.Symbol),
+			LogoURL:   registryLogoURL(registry, r.Symbol),
 			Deposited: display,
 		})
 	}
@@ -2948,7 +2948,7 @@ func walletLabel(wallet models.Wallet) string {
 	}
 }
 
-func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
+func dealerBalanceViews(summaries []models.DepositSummary, registry *asset.Registry) []DealerBalanceView {
 	views := make([]DealerBalanceView, 0, len(summaries))
 	for _, summary := range summaries {
 		token := ""
@@ -2964,7 +2964,7 @@ func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
 			ChainLogoURL:  asset.ChainLogoURL(summary.ChainID),
 			Symbol:        summary.Symbol,
 			Token:         token,
-			LogoURL:       asset.CoinLogoURL(summary.Symbol),
+			LogoURL:       registryLogoURL(registry, summary.Symbol),
 			AmountRaw:     summary.AmountRaw,
 			AmountDisplay: formatTokenAmount(summary.AmountRaw, summary.Decimals),
 			Decimals:      summary.Decimals,
@@ -2977,7 +2977,7 @@ func dealerBalanceViews(summaries []models.DepositSummary) []DealerBalanceView {
 	return views
 }
 
-func dealerLedgerBalanceViews(rows []repositories.LedgerBalanceRow) []DealerBalanceView {
+func dealerLedgerBalanceViews(rows []repositories.LedgerBalanceRow, registry *asset.Registry) []DealerBalanceView {
 	views := make([]DealerBalanceView, 0, len(rows))
 	for _, row := range rows {
 		if row.Account != models.LedgerAccountMerchantAvailable {
@@ -2992,7 +2992,7 @@ func dealerLedgerBalanceViews(rows []repositories.LedgerBalanceRow) []DealerBala
 			ChainLogoURL:  asset.ChainLogoURL(constants.ChainID(row.ChainID)),
 			Symbol:        row.Symbol,
 			Token:         token,
-			LogoURL:       asset.CoinLogoURL(row.Symbol),
+			LogoURL:       registryLogoURL(registry, row.Symbol),
 			AmountRaw:     row.BalanceRaw,
 			AmountDisplay: formatTokenAmount(row.BalanceRaw, row.Decimals),
 			Decimals:      row.Decimals,
@@ -3158,6 +3158,13 @@ func balanceKey(chain string, symbol string, token string) string {
 	return strings.ToLower(strings.TrimSpace(chain)) + "|" + strings.ToUpper(strings.TrimSpace(symbol)) + "|" + strings.ToLower(strings.TrimSpace(token))
 }
 
+func registryLogoURL(registry *asset.Registry, symbol string) string {
+	if registry == nil {
+		return ""
+	}
+	return registry.LogoURL(symbol)
+}
+
 func dealerChainVaultViews(balances []DealerBalanceView) []DealerChainVaultView {
 	byChain := make(map[string][]DealerBalanceView)
 	for _, balance := range balances {
@@ -3183,7 +3190,7 @@ func dealerChainVaultViews(balances []DealerBalanceView) []DealerChainVaultView 
 	return views
 }
 
-func dealerActivityViews(transactions []models.Transaction) []DealerActivityView {
+func dealerActivityViews(transactions []models.Transaction, registry *asset.Registry) []DealerActivityView {
 	views := make([]DealerActivityView, 0, len(transactions))
 	for _, tx := range transactions {
 		webhookStatus := "bekliyor"
@@ -3202,7 +3209,7 @@ func dealerActivityViews(transactions []models.Transaction) []DealerActivityView
 			Chain:           chainLabel(tx.ChainID),
 			ChainLogoURL:    asset.ChainLogoURL(tx.ChainID),
 			Symbol:          tx.Symbol,
-			LogoURL:         asset.CoinLogoURL(tx.Symbol),
+			LogoURL:         registryLogoURL(registry, tx.Symbol),
 			AmountRaw:       tx.Amount,
 			AmountDisplay:   formatTokenAmount(tx.Amount, tx.Decimals),
 			Status:          tx.Status,

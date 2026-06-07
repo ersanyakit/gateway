@@ -15,6 +15,9 @@ func TestAllChainIDsAreSupportedAndNamed(t *testing.T) {
 		if ChainName(chainID) == "" {
 			t.Fatalf("chain id %d has empty chain name", chainID)
 		}
+		if ChainLogoSlug(chainID) == "" {
+			t.Fatalf("chain id %d has empty chain logo slug", chainID)
+		}
 	}
 
 	for chainID := range chainNames {

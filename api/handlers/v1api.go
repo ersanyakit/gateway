@@ -167,13 +167,17 @@ func HandleV1CommonBalance(deps V1APIDeps) fiber.Handler {
 			rows, err := deps.LedgerRepo.MerchantBalances(c.Context(), domain.MerchantID)
 			if err == nil {
 				for _, row := range rows {
+					logoURL := ""
+					if deps.AssetRegistry != nil {
+						logoURL = deps.AssetRegistry.LogoURL(row.Symbol)
+					}
 					items = append(items, balanceItem{
 						Symbol:   row.Symbol,
 						Chain:    chainLabel(constants.ChainID(row.ChainID)),
 						ChainID:  row.ChainID,
 						Balance:  formatV1Amount(row.BalanceRaw, row.Decimals),
 						Decimals: row.Decimals,
-						LogoURL:  asset.CoinLogoURL(row.Symbol),
+						LogoURL:  logoURL,
 					})
 				}
 			}
@@ -235,7 +239,7 @@ func HandleV1CommonPrices(deps V1APIDeps) fiber.Handler {
 					Name:     a.GetName(),
 					Price:    priceStr,
 					Currency: currency,
-					LogoURL:  asset.CoinLogoURL(canonical),
+					LogoURL:  deps.AssetRegistry.LogoURL(canonical),
 				})
 			}
 		}

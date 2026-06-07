@@ -63,6 +63,12 @@ func TestNewAssetRegistryAliases(t *testing.T) {
 	if got := registry.CanonicalSymbol("WCHZ"); got != "CHZ" {
 		t.Fatalf("WCHZ canonical = %q, want CHZ", got)
 	}
+	if got := registry.CanonicalSymbol("WAVAX"); got != "AVAX" {
+		t.Fatalf("WAVAX canonical = %q, want AVAX", got)
+	}
+	if got := registry.LogoURL("WCHZ"); got != "/static/coins/chz.svg" {
+		t.Fatalf("WCHZ logo = %q, want /static/coins/chz.svg", got)
+	}
 }
 
 func TestNewAssetRegistryGroupsMultiChainAssets(t *testing.T) {
@@ -78,5 +84,14 @@ func TestNewAssetRegistryGroupsMultiChainAssets(t *testing.T) {
 	}
 	if bySymbol["PEPPER"] != 3 {
 		t.Fatalf("PEPPER deployments = %d, want 3", bySymbol["PEPPER"])
+	}
+}
+
+func TestNewAssetRegistryDefinitionsHaveLogos(t *testing.T) {
+	registry := NewAssetRegistry()
+	for _, definition := range registry.ListDefinitions() {
+		if got := registry.LogoURL(definition.Symbol); got == "" {
+			t.Fatalf("missing logo for asset %s", definition.Symbol)
+		}
 	}
 }

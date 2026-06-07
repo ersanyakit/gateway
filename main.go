@@ -814,20 +814,6 @@ func main() {
 	go startTransactionFinalityWorker(mainCtx, webhookNotifier)
 	go startTransferFinalizationWorker(mainCtx)
 
-	chainNames := []string{
-		"bitcoin",
-		"ethereum",
-		"chiliz",
-		"chiliz-spicy",
-		"solana",
-		"tron",
-		"base",
-		"arbitrum",
-		"unichain",
-		"avalanche",
-		"bnbchain",
-	}
-
 	var isEnabled = true
 
 	if isEnabled {
@@ -920,7 +906,7 @@ func main() {
 			}()
 		}
 
-		for _, chainName := range chainNames {
+		for _, chainName := range coreApplication.CORE.Router.Blockchains().ListChains() {
 			chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
 			if err != nil {
 				log.Printf("[%s] chain not found: %v\n", chainName, err)

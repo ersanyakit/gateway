@@ -30,6 +30,20 @@ var chainNames = map[ChainID]string{
 	TRON:        "tron",
 }
 
+var chainLogoSlugs = map[ChainID]string{
+	Bitcoin:     "bitcoinchain",
+	Ethereum:    "ethereumchain",
+	Base:        "basechain",
+	Arbitrum:    "arbitrumchain",
+	Binance:     "bnbchain",
+	Unichain:    "unichain",
+	Avalanche:   "avalanchechain",
+	Chiliz:      "chilizchain",
+	ChilizSpicy: "chilizchain",
+	Solana:      "solanachain",
+	TRON:        "tronchain",
+}
+
 func AllChainIDs() []ChainID {
 	return []ChainID{
 		Bitcoin,
@@ -61,4 +75,8 @@ func IsSupportedChainID(chainID ChainID) bool {
 
 func ChainName(chainID ChainID) string {
 	return chainNames[chainID]
+}
+
+func ChainLogoSlug(chainID ChainID) string {
+	return chainLogoSlugs[chainID]
 }
