@@ -11,7 +11,7 @@
     </div>
 
     <div class="flex flex-wrap gap-3">
-      <a class="inline-flex min-h-12 items-center justify-center rounded-full bg-accent px-6 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{if .HasSession}}{{.DashboardURL}}{{else}}{{.LoginURL}}{{end}}">{{if .HasSession}}Dashboard'a git{{else}}Bayi girişi{{end}}</a>
+      <a class="inline-flex min-h-12 items-center justify-center rounded-full bg-accent px-6 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{if .HasSession}}{{.DashboardURL}}{{else}}{{.LoginURL}}{{end}}">{{if .HasSession}}Dashboard'a git{{else}}Üye işyeri girişi{{end}}</a>
       <a class="inline-flex min-h-12 items-center justify-center rounded-full border border-line bg-white px-6 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="{{.RegisterURL}}">Hesap oluştur</a>
       <a class="inline-flex min-h-12 items-center justify-center rounded-full border border-line bg-white px-6 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="/swagger/index.html">API Docs</a>
     </div>
@@ -89,7 +89,7 @@
   <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
     <div>
       <h2 class="m-0 text-2xl font-black text-ink">Ödeme operasyon akışı</h2>
-      <p class="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted">Satış sitene bağlandığında kullanıcı sadece öder; bayi ise treasury, domain, webhook ve audit kayıtlarını görür.</p>
+      <p class="m-0 mt-2 max-w-2xl text-sm leading-6 text-muted">Satış sitene bağlandığında kullanıcı sadece öder; üye işyeri ise treasury, domain, webhook ve audit kayıtlarını görür.</p>
     </div>
   </div>
   <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">

@@ -17,7 +17,7 @@ auth_write_endpoints:
     X-Gateway-Signature: "sha256=<hmac_sha256_hex(timestamp + raw_body)>"
 webhook:
   callback_model: "single callback URL per domain"
-  configured_in: "dealer domain settings"
+  configured_in: "merchant portal domain settings"
   signature_header: "X-Gateway-Signature"
   signature_payload: "timestamp + raw_body"
   current_events:
@@ -39,10 +39,10 @@ A merchant domain has:
 - `webhook_secret`: secret used by the gateway to sign webhook callbacks.
 - `webhook_url`: single callback URL used for all currently supported webhook events.
 
-If the `api_secret` is lost, rotate it from the dealer panel endpoint:
+If the `api_secret` is lost, rotate it from the merchant portal endpoint:
 
 ```http
-POST /dealer/domains/{domain_id}/rotate-api-secret
+POST /merchant/domains/{domain_id}/rotate-api-secret
 ```
 
 The rotated secret is returned once in the response.
@@ -490,4 +490,3 @@ Webhook delivery behavior:
 - Deduplicate webhook `event_id`.
 - Do not process unsigned callbacks.
 - Do not expose API secret in frontend code.
-

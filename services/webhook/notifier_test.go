@@ -25,6 +25,7 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func TestNotifierDeliverSignsAndPostsTransaction(t *testing.T) {
 	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
 	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +83,7 @@ func TestNotifierDeliverSignsAndPostsTransaction(t *testing.T) {
 	notifier := &Notifier{client: client}
 	err = notifier.Deliver(context.Background(), models.Domain{
 		ID:            domainID,
-		WebhookURL:    "https://merchant.example/webhook",
+		WebhookURL:    "http://127.0.0.1/webhook",
 		WebhookSecret: encryptedSecret,
 	}, tx)
 	if err != nil {

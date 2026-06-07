@@ -94,9 +94,13 @@ func (r *DomainRepo) FindByID(params types.DomainParams) (*models.Domain, error)
 }
 
 func (r *DomainRepo) FindByAPIKey(params types.DomainParams) (*models.Domain, error) {
+	if params.APIKey == nil || *params.APIKey == "" {
+		return nil, errors.New("api key is required")
+	}
 	var domain models.Domain
 	err := r.merchantRepo.DB().WithContext(params.Context).
-		Where("api_key = ?", params.APIKey).
+		Joins("JOIN merchants ON merchants.id = domains.merchant_id").
+		Where("domains.api_key = ? AND merchants.is_active = ? AND merchants.deleted_at IS NULL", *params.APIKey, true).
 		First(&domain).Error
 	if err != nil {
 		return nil, err
@@ -105,13 +109,17 @@ func (r *DomainRepo) FindByAPIKey(params types.DomainParams) (*models.Domain, er
 }
 
 func (r *DomainRepo) FindByAPISecret(params types.DomainParams) (*models.Domain, error) {
+	if params.APISecret == nil || *params.APISecret == "" {
+		return nil, errors.New("api secret is required")
+	}
 	hashed, err := helpers.HMACSecret(*params.APISecret)
 	if err != nil {
 		return nil, err
 	}
 	var domain models.Domain
 	err = r.merchantRepo.DB().WithContext(params.Context).
-		Where("api_secret = ?", hashed).
+		Joins("JOIN merchants ON merchants.id = domains.merchant_id").
+		Where("domains.api_secret = ? AND merchants.is_active = ? AND merchants.deleted_at IS NULL", hashed, true).
 		First(&domain).Error
 	if err != nil {
 		return nil, err

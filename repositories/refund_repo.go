@@ -78,9 +78,36 @@ func (r *RefundRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUI
 	return refunds, total, err
 }
 
+func (r *RefundRepo) ListByDomainPage(ctx context.Context, merchantID, domainID uuid.UUID, page, limit int) ([]models.Refund, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	q := r.db.WithContext(ctx).Model(&models.Refund{}).Where("merchant_id = ? AND domain_id = ?", merchantID, domainID)
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var refunds []models.Refund
+	err := q.Order("created_at DESC").Limit(limit).Offset((page - 1) * limit).Find(&refunds).Error
+	return refunds, total, err
+}
+
 func (r *RefundRepo) Find(ctx context.Context, id uuid.UUID) (*models.Refund, error) {
 	var refund models.Refund
 	if err := r.db.WithContext(ctx).First(&refund, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &refund, nil
+}
+
+func (r *RefundRepo) FindByDomain(ctx context.Context, merchantID, domainID, id uuid.UUID) (*models.Refund, error) {
+	var refund models.Refund
+	if err := r.db.WithContext(ctx).
+		Where("merchant_id = ? AND domain_id = ? AND id = ?", merchantID, domainID, id).
+		First(&refund).Error; err != nil {
 		return nil, err
 	}
 	return &refund, nil

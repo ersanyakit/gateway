@@ -194,16 +194,17 @@ func (r *LedgerRepo) createWithdrawalHold(ctx context.Context, tx *gorm.DB, requ
 	if symbol == "" {
 		symbol = strings.ToUpper(strings.TrimSpace(request.Chain))
 	}
-	if err := r.lockLedgerAsset(ctx, tx, request.MerchantID, chainID, request.Token); err != nil {
+	if err := r.lockLedgerAsset(ctx, tx, request.MerchantID, request.DomainID, chainID, request.Token); err != nil {
 		return err
 	}
-	if err := r.ensureAvailableBalance(ctx, tx, request.MerchantID, chainID, request.Token, request.AmountRaw); err != nil {
+	if err := r.ensureAvailableBalance(ctx, tx, request.MerchantID, request.DomainID, chainID, request.Token, request.AmountRaw); err != nil {
 		return err
 	}
 	entries := []models.LedgerEntry{
 		{
 			ID:             uuid.New(),
 			MerchantID:     request.MerchantID,
+			DomainID:       request.DomainID,
 			WalletID:       &walletID,
 			WithdrawalID:   &withdrawalID,
 			ChainID:        chainID,
@@ -224,6 +225,7 @@ func (r *LedgerRepo) createWithdrawalHold(ctx context.Context, tx *gorm.DB, requ
 		{
 			ID:             uuid.New(),
 			MerchantID:     request.MerchantID,
+			DomainID:       request.DomainID,
 			WalletID:       &walletID,
 			WithdrawalID:   &withdrawalID,
 			ChainID:        chainID,
@@ -279,6 +281,7 @@ func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, reque
 		{
 			ID:              uuid.New(),
 			MerchantID:      request.MerchantID,
+			DomainID:        request.DomainID,
 			WalletID:        &walletID,
 			WithdrawalID:    &withdrawalID,
 			TransactionHash: txHash,
@@ -300,6 +303,7 @@ func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, reque
 		{
 			ID:              uuid.New(),
 			MerchantID:      request.MerchantID,
+			DomainID:        request.DomainID,
 			WalletID:        &walletID,
 			WithdrawalID:    &withdrawalID,
 			TransactionHash: txHash,
@@ -353,16 +357,20 @@ func (r *LedgerRepo) existsWithDB(ctx context.Context, tx *gorm.DB, key string) 
 	return count > 0, err
 }
 
-func (r *LedgerRepo) lockLedgerAsset(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, chainID constants.ChainID, token *string) error {
+func (r *LedgerRepo) lockLedgerAsset(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, domainID *uuid.UUID, chainID constants.ChainID, token *string) error {
 	tokenKey := "native"
 	if token != nil && strings.TrimSpace(*token) != "" {
 		tokenKey = strings.ToLower(strings.TrimSpace(*token))
 	}
-	lockKey := fmt.Sprintf("ledger-balance:%s:%d:%s", merchantID.String(), chainID, tokenKey)
+	scope := "merchant"
+	if domainID != nil {
+		scope = domainID.String()
+	}
+	lockKey := fmt.Sprintf("ledger-balance:%s:%s:%d:%s", merchantID.String(), scope, chainID, tokenKey)
 	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error
 }
 
-func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, chainID constants.ChainID, token *string, amountRaw string) error {
+func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, domainID *uuid.UUID, chainID constants.ChainID, token *string, amountRaw string) error {
 	requested, ok := new(big.Int).SetString(amountRaw, 10)
 	if !ok || requested.Sign() <= 0 {
 		return errors.New("withdrawal amount must be positive")
@@ -373,6 +381,9 @@ func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, me
 		Select("COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END), 0)::text").
 		Where("merchant_id = ? AND chain_id = ? AND account = ? AND status IN ?", merchantID, chainID, models.LedgerAccountMerchantAvailable, []string{models.LedgerStatusPending, models.LedgerStatusPosted}).
 		Where("amount_raw ~ '^[0-9]+$'")
+	if domainID != nil {
+		query = query.Where("domain_id = ?", *domainID)
+	}
 	if token == nil || strings.TrimSpace(*token) == "" {
 		query = query.Where("token IS NULL OR token = ''")
 	} else {
@@ -524,5 +535,26 @@ func (r *LedgerRepo) MerchantBalances(ctx context.Context, merchantID uuid.UUID)
 		GROUP BY merchant_id, chain_id, token, symbol, decimals, account
 		ORDER BY chain_id ASC, symbol ASC, account ASC
 	`, merchantID).Scan(&rows).Error
+	return rows, err
+}
+
+func (r *LedgerRepo) DomainBalances(ctx context.Context, merchantID, domainID uuid.UUID) ([]LedgerBalanceRow, error) {
+	var rows []LedgerBalanceRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT merchant_id,
+		       chain_id,
+		       token,
+		       symbol,
+		       decimals,
+		       account,
+		       SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END)::text AS balance_raw
+		FROM ledger_entries
+		WHERE merchant_id = ?
+		  AND domain_id = ?
+		  AND status IN ('pending', 'posted')
+		  AND amount_raw ~ '^[0-9]+$'
+		GROUP BY merchant_id, chain_id, token, symbol, decimals, account
+		ORDER BY chain_id ASC, symbol ASC, account ASC
+	`, merchantID, domainID).Scan(&rows).Error
 	return rows, err
 }

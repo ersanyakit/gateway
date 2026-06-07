@@ -49,7 +49,7 @@ func TestTxRescanMessages(t *testing.T) {
 	}
 	tests := map[error]string{
 		txrescan.ErrTransactionNotFound: "Tx blockchain üzerinde bulunamadı.",
-		txrescan.ErrUnauthorizedTx:      "Bu tx bayi wallet adresleriyle eşleşmiyor.",
+		txrescan.ErrUnauthorizedTx:      "Bu tx üye işyeri wallet adresleriyle eşleşmiyor.",
 		txrescan.ErrUnsupportedChain:    "Bu blockchain için rescan desteklenmiyor.",
 		errors.New("custom error"):      "custom error",
 	}

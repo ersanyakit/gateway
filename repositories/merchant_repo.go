@@ -99,7 +99,7 @@ func (r *MerchantRepo) FindByEmail(params types.MerchantParams) (*models.Merchan
 	var merchant models.Merchant
 
 	err := r.db.WithContext(params.Context).
-		Where("LOWER(email) = LOWER(?)", *params.Email).
+		Where("LOWER(email) = LOWER(?) AND is_active = ?", *params.Email, true).
 		First(&merchant).Error
 
 	if err != nil {
@@ -118,7 +118,7 @@ func (r *MerchantRepo) FindByID(params types.MerchantParams) (*models.Merchant, 
 	var merchant models.Merchant
 
 	err := r.db.WithContext(params.Context).
-		First(&merchant, "id = ?", *params.ID).Error
+		First(&merchant, "id = ? AND is_active = ?", *params.ID, true).Error
 
 	if err != nil {
 		return nil, err

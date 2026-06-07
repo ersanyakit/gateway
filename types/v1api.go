@@ -272,6 +272,7 @@ type V1PayoutCreateResponse struct {
 
 type V1PayoutDetail struct {
 	PayoutID     string `json:"payout_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
+	DomainID     string `json:"domain_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
 	Chain        string `json:"chain"         example:"ethereum"`
 	Symbol       string `json:"symbol"        example:"USDT"`
 	TokenAddress string `json:"token_address" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`

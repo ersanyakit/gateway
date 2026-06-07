@@ -33,7 +33,7 @@
         <p class="m-0 mt-1.5 text-sm font-semibold text-muted">{{.MerchantEmail}}</p>
       </div>
       <div class="flex shrink-0 flex-wrap gap-2">
-        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center"><span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Bayi</span><strong class="block text-2xl font-black text-ink">{{.MerchantCount}}</strong></div>
+        <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center"><span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri</span><strong class="block text-2xl font-black text-ink">{{.MerchantCount}}</strong></div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center"><span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Checkout</span><strong class="block text-2xl font-black text-ink">{{.PaymentCount}}</strong></div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center"><span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Deposit</span><strong class="block text-2xl font-black text-ink">{{.DepositCount}}</strong></div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-2.5 text-center"><span class="block text-xs font-bold uppercase tracking-[0.08em] text-muted">Wallet</span><strong class="block text-2xl font-black text-ink">{{.WalletCountAll}}</strong></div>
@@ -48,7 +48,7 @@
   <nav class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/85 p-2 shadow-sm backdrop-blur">
     <div class="flex gap-1.5 overflow-x-auto">
       <a class="dash-tab" href="{{.AdminOverviewURL}}"    aria-selected="{{if eq .AdminPanel "overview"}}true{{else}}false{{end}}">Overview</a>
-      <a class="dash-tab" href="{{.AdminMerchantsURL}}"   aria-selected="{{if eq .AdminPanel "merchants"}}true{{else}}false{{end}}">Bayiler</a>
+      <a class="dash-tab" href="{{.AdminMerchantsURL}}"   aria-selected="{{if eq .AdminPanel "merchants"}}true{{else}}false{{end}}">Üye işyerleri</a>
       <a class="dash-tab" href="{{.AdminPaymentsURL}}"    aria-selected="{{if eq .AdminPanel "payments"}}true{{else}}false{{end}}">Payments</a>
       <a class="dash-tab" href="{{.AdminDepositsURL}}"    aria-selected="{{if eq .AdminPanel "deposits"}}true{{else}}false{{end}}">Deposits</a>
       <a class="dash-tab" href="{{.AdminWithdrawalsURL}}" aria-selected="{{if eq .AdminPanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals</a>
@@ -67,7 +67,7 @@
   {{/* ══════ OVERVIEW ══════ */}}
   {{if eq .AdminPanel "overview"}}
   <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-    <div class="rounded-3xl border border-line bg-white p-5"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Toplam bayi</span><strong class="mt-2 block text-4xl font-black text-ink">{{.MerchantCount}}</strong><a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminMerchantsURL}}">Tümünü gör →</a></div>
+    <div class="rounded-3xl border border-line bg-white p-5"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Toplam üye işyeri</span><strong class="mt-2 block text-4xl font-black text-ink">{{.MerchantCount}}</strong><a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminMerchantsURL}}">Tümünü gör →</a></div>
     <div class="rounded-3xl border border-line bg-white p-5"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Checkout session</span><strong class="mt-2 block text-4xl font-black text-ink">{{.PaymentCount}}</strong><a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminPaymentsURL}}">Tümünü gör →</a></div>
     <div class="rounded-3xl border border-line bg-white p-5"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">On-chain deposit</span><strong class="mt-2 block text-4xl font-black text-ink">{{.DepositCount}}</strong><a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminDepositsURL}}">Tümünü gör →</a></div>
     <div class="rounded-3xl border border-line bg-white p-5"><span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Çekim talebi</span><strong class="mt-2 block text-4xl font-black text-ink">{{.WithdrawalCount}}</strong><a class="mt-3 inline-flex text-xs font-bold text-accent hover:underline" href="{{.AdminWithdrawalsURL}}">Tümünü gör →</a></div>
@@ -143,11 +143,11 @@
   {{if eq .AdminPanel "merchants"}}
   <div class="rounded-3xl border border-line bg-white">
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
-      <div><h2 class="m-0 text-lg font-black text-ink">Bayiler <span class="ml-1 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.MerchantCount}}</span></h2></div>
+      <div><h2 class="m-0 text-lg font-black text-ink">Üye işyerleri <span class="ml-1 rounded-full bg-wash px-2.5 py-0.5 text-sm font-bold text-muted">{{.MerchantCount}}</span></h2></div>
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table">
-        <thead><tr><th>Bayi</th><th>E-posta</th><th>ID</th><th>Durum</th><th>Kayıt tarihi</th><th>İşlem</th></tr></thead>
+        <thead><tr><th>Üye işyeri</th><th>E-posta</th><th>ID</th><th>Durum</th><th>Kayıt tarihi</th><th>İşlem</th></tr></thead>
         <tbody>
         {{range .AdminMerchants}}
         <tr>
@@ -187,7 +187,7 @@
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table">
-        <thead><tr><th>Sipariş ID</th><th>Bayi</th><th>Domain</th><th>Asset</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead>
+        <thead><tr><th>Sipariş ID</th><th>Üye işyeri</th><th>Domain</th><th>Asset</th><th>Tutar</th><th>Durum</th><th>Tarih</th></tr></thead>
         <tbody>
         {{range .Payments}}
         <tr>
@@ -456,14 +456,14 @@
     <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
       <div>
         <h2 class="m-0 text-base font-black text-ink">Activity logs <span class="ml-1 rounded-full bg-wash px-2 py-0.5 text-xs font-bold text-muted">{{.ActivityCount}}</span></h2>
-        {{if .AdminMerchantFilter}}<p class="m-0 mt-0.5 text-xs font-semibold text-muted">Bayi filtreli · <a class="text-accent hover:underline" href="/admin/activity">Temizle</a></p>{{end}}
+        {{if .AdminMerchantFilter}}<p class="m-0 mt-0.5 text-xs font-semibold text-muted">Üye işyeri filtreli · <a class="text-accent hover:underline" href="/admin/activity">Temizle</a></p>{{end}}
       </div>
       {{/* Merchant filter */}}
       <form class="flex flex-wrap items-end gap-2" method="get" action="/admin/activity">
         <label class="grid gap-1">
-          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Bayi filtrele</span>
+          <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Üye işyeri filtrele</span>
           <select class="min-h-9 rounded-xl border border-line bg-wash px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="merchant_id">
-            <option value="">Tüm bayiler</option>
+            <option value="">Tüm üye işyerleri</option>
             {{range .AdminMerchants}}
             <option value="{{.ID}}"{{if eq $.AdminMerchantFilter .ID}} selected{{end}}>{{.Name}} — {{.Email}}</option>
             {{end}}
@@ -639,7 +639,7 @@
       <table class="adm-table">
         <thead><tr>
           <th>Ürün Adı</th>
-          <th>Bayi</th>
+          <th>Üye işyeri</th>
           <th>Domain</th>
           <th>Tutar</th>
           <th>Para / Dil</th>

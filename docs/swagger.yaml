@@ -536,6 +536,9 @@ definitions:
       created_at:
         example: "2024-06-01T12:00:00Z"
         type: string
+      domain_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
       note:
         example: Monthly settlement
         type: string
@@ -884,8 +887,8 @@ paths:
       - Common
   /api/v1/common/balance:
     get:
-      description: Returns the ledger balance for each asset held by the authenticated
-        merchant.
+      description: Returns the ledger balance for each asset held under the authenticated
+        API domain.
       produces:
       - application/json
       responses:
@@ -1131,7 +1134,7 @@ paths:
   /api/v1/payment/history:
     get:
       description: Returns paginated payment session history for the authenticated
-        merchant.
+        API domain.
       parameters:
       - default: 1
         description: Page number
@@ -1260,8 +1263,8 @@ paths:
       - Payment
   /api/v1/payment/static-addresses:
     get:
-      description: Lists all static deposit wallets for the merchant, optionally filtered
-        by user_id.
+      description: Lists static deposit wallets under the authenticated API domain,
+        optionally filtered by user_id.
       parameters:
       - description: Filter by user ID
         example: customer_42
@@ -1297,7 +1300,7 @@ paths:
   /api/v1/payment/statistics:
     get:
       description: Returns count of payments grouped by status for the authenticated
-        merchant.
+        API domain.
       produces:
       - application/json
       responses:
@@ -1419,7 +1422,7 @@ paths:
   /api/v1/payout/history:
     get:
       description: Returns paginated payout (withdrawal) history for the authenticated
-        merchant.
+        API domain.
       parameters:
       - default: 1
         description: Page number
@@ -1553,7 +1556,7 @@ paths:
       - Refund
   /api/v1/refund/history:
     get:
-      description: Returns paginated refund requests for the authenticated merchant.
+      description: Returns paginated refund requests for the authenticated API domain.
       parameters:
       - default: 1
         description: Page number
@@ -1583,7 +1586,7 @@ paths:
       - Refund
   /api/v1/refund/info:
     get:
-      description: Returns a refund request owned by the authenticated merchant.
+      description: Returns a refund request owned by the authenticated API domain.
       parameters:
       - description: Refund UUID
         example: 550e8400-e29b-41d4-a716-446655440000
@@ -1674,7 +1677,7 @@ paths:
   /auth/oidc/callback:
     get:
       description: Exchanges the OIDC authorization code for tokens, fetches userinfo,
-        and signs the dealer in.
+        and signs the merchant in.
       parameters:
       - description: Authorization code
         in: query
@@ -1690,19 +1693,19 @@ paths:
       - text/html
       responses:
         "302":
-          description: Redirect to dealer dashboard
+          description: Redirect to merchant dashboard
           schema:
             type: string
         "400":
-          description: Redirect to dealer login with error
+          description: Redirect to merchant login with error
           schema:
             type: string
-      summary: Complete dealer OIDC login
+      summary: Complete merchant OIDC login
       tags:
-      - Dealers
+      - Merchant Portal
   /auth/oidc/login:
     get:
-      description: Redirects the dealer to the configured OIDC authorization URL.
+      description: Redirects the merchant to the configured OIDC authorization URL.
       produces:
       - text/html
       responses:
@@ -1714,9 +1717,9 @@ paths:
           description: HTML page explaining missing OIDC configuration
           schema:
             type: string
-      summary: Start dealer OIDC login
+      summary: Start merchant OIDC login
       tags:
-      - Dealers
+      - Merchant Portal
   /checkout/{token}:
     get:
       description: Renders the hosted checkout page where the payer selects a network
@@ -1961,221 +1964,6 @@ paths:
       summary: Subscribe checkout status
       tags:
       - Payments
-  /dealer/dashboard:
-    get:
-      description: Renders the authenticated dealer panel with merchant info, domain
-        creation form, and current domains.
-      produces:
-      - text/html
-      responses:
-        "200":
-          description: HTML dealer dashboard
-          schema:
-            type: string
-        "302":
-          description: Redirect to dealer login
-          schema:
-            type: string
-      summary: Show dealer dashboard
-      tags:
-      - Dealers
-  /dealer/domains:
-    post:
-      consumes:
-      - application/x-www-form-urlencoded
-      description: Creates a merchant domain using the authenticated dealer session
-        and redirects back to the dashboard.
-      parameters:
-      - description: Domain URL
-        in: formData
-        name: domain_url
-        required: true
-        type: string
-      - description: Webhook URL
-        in: formData
-        name: webhook_url
-        required: true
-        type: string
-      - description: Webhook secret
-        in: formData
-        name: webhook_secret
-        required: true
-        type: string
-      produces:
-      - text/html
-      responses:
-        "302":
-          description: Redirect to dealer login or dashboard with error
-          schema:
-            type: string
-      summary: Create dealer domain from panel
-      tags:
-      - Dealers
-  /dealer/domains/{id}/rotate-api-secret:
-    post:
-      description: Rotates the API secret for an authenticated dealer domain. The
-        new secret is returned once in the response.
-      parameters:
-      - description: Domain ID
-        in: path
-        name: id
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/types.ErrorResponse'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/types.ErrorResponse'
-      summary: Rotate domain API secret
-      tags:
-      - Dealers
-  /dealer/login:
-    get:
-      description: Renders the hosted dealer login page with the OIDC sign-in action.
-      produces:
-      - text/html
-      responses:
-        "200":
-          description: HTML dealer login page
-          schema:
-            type: string
-      summary: Show dealer login
-      tags:
-      - Dealers
-    post:
-      consumes:
-      - application/x-www-form-urlencoded
-      description: Authenticates a dealer with email and password, sets a dealer session
-        cookie, and redirects to onboarding.
-      parameters:
-      - description: Dealer email
-        in: formData
-        name: email
-        required: true
-        type: string
-      - description: Password
-        in: formData
-        name: password
-        required: true
-        type: string
-      produces:
-      - text/html
-      responses:
-        "302":
-          description: Redirect to dealer onboarding
-          schema:
-            type: string
-        "400":
-          description: HTML login page with validation error
-          schema:
-            type: string
-        "401":
-          description: HTML login page with authentication error
-          schema:
-            type: string
-      summary: Dealer email login
-      tags:
-      - Dealers
-  /dealer/onboarding:
-    get:
-      description: Renders the hosted onboarding page after a dealer merchant is created.
-      parameters:
-      - description: Merchant ID
-        in: query
-        name: merchant_id
-        type: string
-      - description: Dealer name
-        in: query
-        name: name
-        type: string
-      - description: Dealer email
-        in: query
-        name: email
-        type: string
-      produces:
-      - text/html
-      responses:
-        "200":
-          description: HTML dealer onboarding page
-          schema:
-            type: string
-      summary: Show dealer onboarding
-      tags:
-      - Dealers
-  /dealer/register:
-    get:
-      description: Renders the hosted self-service dealer registration page.
-      produces:
-      - text/html
-      responses:
-        "200":
-          description: HTML dealer registration page
-          schema:
-            type: string
-      summary: Show dealer registration
-      tags:
-      - Dealers
-    post:
-      consumes:
-      - application/x-www-form-urlencoded
-      description: Creates a merchant/dealer account from the hosted self-service
-        registration page and redirects to onboarding.
-      parameters:
-      - description: Dealer name
-        in: formData
-        name: name
-        required: true
-        type: string
-      - description: Dealer email
-        in: formData
-        name: email
-        required: true
-        type: string
-      - description: Dealer email confirmation
-        in: formData
-        name: email_repeat
-        required: true
-        type: string
-      - description: Password
-        in: formData
-        name: password
-        required: true
-        type: string
-      - description: Password confirmation
-        in: formData
-        name: password_repeat
-        required: true
-        type: string
-      produces:
-      - text/html
-      responses:
-        "302":
-          description: Redirect to dealer onboarding
-          schema:
-            type: string
-        "400":
-          description: HTML registration page with validation error
-          schema:
-            type: string
-        "500":
-          description: HTML registration page with server error
-          schema:
-            type: string
-      summary: Create dealer from form
-      tags:
-      - Dealers
   /docs/integration-guide.md:
     get:
       description: Returns the payment gateway integration guide as plain Markdown
@@ -2198,9 +1986,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a merchant/dealer account for self-service onboarding.
+      description: Creates a merchant account for self-service onboarding.
       parameters:
-      - description: Dealer merchant create payload
+      - description: Merchant create payload
         in: body
         name: payload
         required: true
@@ -2221,9 +2009,9 @@ paths:
           description: Internal Server Error
           schema:
             $ref: '#/definitions/types.ErrorResponse'
-      summary: Create dealer merchant
+      summary: Create merchant
       tags:
-      - Dealers
+      - Merchant Portal
   /merchant.domain.create:
     post:
       consumes:
@@ -2254,7 +2042,7 @@ paths:
             $ref: '#/definitions/types.ErrorResponse'
       summary: Create merchant domain
       tags:
-      - Dealers
+      - Merchant Portal
   /merchant.wallet.create:
     post:
       consumes:
@@ -2286,6 +2074,222 @@ paths:
       summary: Create user wallet
       tags:
       - Users
+  /merchant/dashboard:
+    get:
+      description: Renders the authenticated merchant portal with merchant info, domain
+        creation form, and current domains.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant dashboard
+          schema:
+            type: string
+        "302":
+          description: Redirect to merchant login
+          schema:
+            type: string
+      summary: Show merchant dashboard
+      tags:
+      - Merchant Portal
+  /merchant/domains:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant domain using the authenticated merchant session
+        and redirects back to the dashboard.
+      parameters:
+      - description: Domain URL
+        in: formData
+        name: domain_url
+        required: true
+        type: string
+      - description: Webhook URL
+        in: formData
+        name: webhook_url
+        required: true
+        type: string
+      - description: Webhook secret
+        in: formData
+        name: webhook_secret
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant login or dashboard with error
+          schema:
+            type: string
+      summary: Create merchant domain from panel
+      tags:
+      - Merchant Portal
+  /merchant/domains/{id}/rotate-api-secret:
+    post:
+      description: Rotates the API secret for an authenticated merchant domain. The
+        new secret is returned once in the response.
+      parameters:
+      - description: Domain ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Rotate domain API secret
+      tags:
+      - Merchant Portal
+  /merchant/login:
+    get:
+      description: Renders the hosted merchant portal login page with the OIDC sign-in
+        action.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant login page
+          schema:
+            type: string
+      summary: Show merchant login
+      tags:
+      - Merchant Portal
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Authenticates a merchant with email and password, sets a merchant
+        portal session cookie, and redirects to onboarding.
+      parameters:
+      - description: Merchant email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML login page with validation error
+          schema:
+            type: string
+        "401":
+          description: HTML login page with authentication error
+          schema:
+            type: string
+      summary: Merchant email login
+      tags:
+      - Merchant Portal
+  /merchant/onboarding:
+    get:
+      description: Renders the hosted onboarding page after a merchant is created.
+      parameters:
+      - description: Merchant ID
+        in: query
+        name: merchant_id
+        type: string
+      - description: Merchant name
+        in: query
+        name: name
+        type: string
+      - description: Merchant email
+        in: query
+        name: email
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant onboarding page
+          schema:
+            type: string
+      summary: Show merchant onboarding
+      tags:
+      - Merchant Portal
+  /merchant/register:
+    get:
+      description: Renders the hosted self-service merchant registration page.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant registration page
+          schema:
+            type: string
+      summary: Show merchant registration
+      tags:
+      - Merchant Portal
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant account from the hosted self-service registration
+        page and redirects to onboarding.
+      parameters:
+      - description: Merchant name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: Merchant email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Merchant email confirmation
+        in: formData
+        name: email_repeat
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      - description: Password confirmation
+        in: formData
+        name: password_repeat
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML registration page with validation error
+          schema:
+            type: string
+        "500":
+          description: HTML registration page with server error
+          schema:
+            type: string
+      summary: Create merchant from form
+      tags:
+      - Merchant Portal
   /payments/create:
     post:
       consumes:

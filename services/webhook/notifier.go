@@ -86,6 +86,9 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	if domain.WebhookSecret == "" {
 		return fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String())
 	}
+	if err := helpers.ValidateWebhookURL(domain.WebhookURL); err != nil {
+		return fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err)
+	}
 
 	payload := Payload{
 		EventID:       tx.UniqueHash,
@@ -162,6 +165,9 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	}
 	if domain.WebhookSecret == "" {
 		return fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String())
+	}
+	if err := helpers.ValidateWebhookURL(domain.WebhookURL); err != nil {
+		return fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err)
 	}
 
 	var chainID *int64

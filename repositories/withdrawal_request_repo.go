@@ -71,6 +71,26 @@ func (r *WithdrawalRequestRepo) ListByMerchantPage(ctx context.Context, merchant
 	return requests, total, err
 }
 
+func (r *WithdrawalRequestRepo) ListByDomainPage(ctx context.Context, merchantID, domainID uuid.UUID, page, limit int) ([]models.WithdrawalRequest, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 20
+	}
+	base := r.db.WithContext(ctx).Where("merchant_id = ? AND domain_id = ?", merchantID, domainID)
+	var total int64
+	if err := base.Model(&models.WithdrawalRequest{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var requests []models.WithdrawalRequest
+	err := base.
+		Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&requests).Error
+	return requests, total, err
+}
+
 func (r *WithdrawalRequestRepo) List(ctx context.Context, status string, limit int) ([]models.WithdrawalRequest, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -122,6 +142,19 @@ func (r *WithdrawalRequestRepo) ListProcessingWithTxHash(ctx context.Context, li
 func (r *WithdrawalRequestRepo) Find(ctx context.Context, id uuid.UUID) (*models.WithdrawalRequest, error) {
 	var request models.WithdrawalRequest
 	err := r.db.WithContext(ctx).Preload("Merchant").Preload("Wallet").First(&request, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &request, nil
+}
+
+func (r *WithdrawalRequestRepo) FindByDomain(ctx context.Context, merchantID, domainID, id uuid.UUID) (*models.WithdrawalRequest, error) {
+	var request models.WithdrawalRequest
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").
+		Preload("Wallet").
+		Where("merchant_id = ? AND domain_id = ? AND id = ?", merchantID, domainID, id).
+		First(&request).Error
 	if err != nil {
 		return nil, err
 	}

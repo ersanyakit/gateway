@@ -411,33 +411,33 @@ func HandleDealerHome() fiber.Handler {
 	}
 }
 
-// HandleDealerLogin renders the dealer OIDC login page.
-// @Summary Show dealer login
-// @Description Renders the hosted dealer login page with the OIDC sign-in action.
-// @Tags Dealers
+// HandleDealerLogin renders the merchant portal OIDC login page.
+// @Summary Show merchant login
+// @Description Renders the hosted merchant portal login page with the OIDC sign-in action.
+// @Tags Merchant Portal
 // @Produce html
-// @Success 200 {string} string "HTML dealer login page"
-// @Router /dealer/login [get]
+// @Success 200 {string} string "HTML merchant login page"
+// @Router /merchant/login [get]
 func HandleDealerLogin() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		data := dealerPageData("Bayi girişi", "login")
+		data := dealerPageData("Üye işyeri girişi", "login")
 		applyFlash(c, &data)
 		return c.Render("dealer/login", data, "dealer/layout")
 	}
 }
 
-// HandleDealerLoginSubmit authenticates a dealer with email and password.
-// @Summary Dealer email login
-// @Description Authenticates a dealer with email and password, sets a dealer session cookie, and redirects to onboarding.
-// @Tags Dealers
+// HandleDealerLoginSubmit authenticates a merchant with email and password.
+// @Summary Merchant email login
+// @Description Authenticates a merchant with email and password, sets a merchant portal session cookie, and redirects to onboarding.
+// @Tags Merchant Portal
 // @Accept x-www-form-urlencoded
 // @Produce html
-// @Param email formData string true "Dealer email"
+// @Param email formData string true "Merchant email"
 // @Param password formData string true "Password"
-// @Success 302 {string} string "Redirect to dealer onboarding"
+// @Success 302 {string} string "Redirect to merchant onboarding"
 // @Failure 400 {string} string "HTML login page with validation error"
 // @Failure 401 {string} string "HTML login page with authentication error"
-// @Router /dealer/login [post]
+// @Router /merchant/login [post]
 func HandleDealerLoginSubmit(service *services.MerchantService, activityRepo *repositories.ActivityLogRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		email := strings.TrimSpace(c.FormValue("email"))
@@ -450,7 +450,7 @@ func HandleDealerLoginSubmit(service *services.MerchantService, activityRepo *re
 
 		if email == "" || password == "" {
 			logDealerActivity(c, activityRepo, nil, "dealer", email, "dealer.login", "failed", "auth", "", "E-posta veya şifre boş gönderildi.")
-			data := dealerPageData("Bayi girişi", "login")
+			data := dealerPageData("Üye işyeri girişi", "login")
 			data.Error = "E-posta ve şifre zorunlu."
 			return c.Status(fiber.StatusBadRequest).Render("dealer/login", data, "dealer/layout")
 		}
@@ -458,47 +458,47 @@ func HandleDealerLoginSubmit(service *services.MerchantService, activityRepo *re
 		merchant, err := service.Authenticate(params)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", email, "dealer.login", "failed", "auth", "", "E-posta veya şifre hatalı.")
-			data := dealerPageData("Bayi girişi", "login")
+			data := dealerPageData("Üye işyeri girişi", "login")
 			data.Error = "E-posta veya şifre hatalı."
 			return c.Status(fiber.StatusUnauthorized).Render("dealer/login", data, "dealer/layout")
 		}
 
-		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.login", "success", "merchant", merchant.ID.String(), "Bayi e-posta ile giriş yaptı.")
+		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.login", "success", "merchant", merchant.ID.String(), "Üye işyeri e-posta ile giriş yaptı.")
 		setDealerSessionCookie(c, merchant.ID.String())
-		return c.Redirect().To("/dealer/dashboard")
+		return c.Redirect().To("/merchant/dashboard")
 	}
 }
 
-// HandleDealerRegister renders the dealer self-service registration page.
-// @Summary Show dealer registration
-// @Description Renders the hosted self-service dealer registration page.
-// @Tags Dealers
+// HandleDealerRegister renders the merchant portal self-service registration page.
+// @Summary Show merchant registration
+// @Description Renders the hosted self-service merchant registration page.
+// @Tags Merchant Portal
 // @Produce html
-// @Success 200 {string} string "HTML dealer registration page"
-// @Router /dealer/register [get]
+// @Success 200 {string} string "HTML merchant registration page"
+// @Router /merchant/register [get]
 func HandleDealerRegister() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		data := dealerPageData("Bayi kaydı", "register")
+		data := dealerPageData("Üye işyeri kaydı", "register")
 		applyFlash(c, &data)
 		return c.Render("dealer/register", data, "dealer/layout")
 	}
 }
 
-// HandleDealerRegisterSubmit creates a dealer merchant from the self-service HTML form.
-// @Summary Create dealer from form
-// @Description Creates a merchant/dealer account from the hosted self-service registration page and redirects to onboarding.
-// @Tags Dealers
+// HandleDealerRegisterSubmit creates a merchant from the self-service HTML form.
+// @Summary Create merchant from form
+// @Description Creates a merchant account from the hosted self-service registration page and redirects to onboarding.
+// @Tags Merchant Portal
 // @Accept x-www-form-urlencoded
 // @Produce html
-// @Param name formData string true "Dealer name"
-// @Param email formData string true "Dealer email"
-// @Param email_repeat formData string true "Dealer email confirmation"
+// @Param name formData string true "Merchant name"
+// @Param email formData string true "Merchant email"
+// @Param email_repeat formData string true "Merchant email confirmation"
 // @Param password formData string true "Password"
 // @Param password_repeat formData string true "Password confirmation"
-// @Success 302 {string} string "Redirect to dealer onboarding"
+// @Success 302 {string} string "Redirect to merchant onboarding"
 // @Failure 400 {string} string "HTML registration page with validation error"
 // @Failure 500 {string} string "HTML registration page with server error"
-// @Router /dealer/register [post]
+// @Router /merchant/register [post]
 func HandleDealerRegisterSubmit(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		name := strings.TrimSpace(c.FormValue("name"))
@@ -517,7 +517,7 @@ func HandleDealerRegisterSubmit(deps DealerDeps) fiber.Handler {
 		}
 		if err := params.Validate(); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "dealer", email, "dealer.register", "failed", "merchant", "", err.Error())
-			data := dealerPageData("Bayi kaydı", "register")
+			data := dealerPageData("Üye işyeri kaydı", "register")
 			data.Error = err.Error()
 			return c.Status(fiber.StatusBadRequest).Render("dealer/register", data, "dealer/layout")
 		}
@@ -525,27 +525,27 @@ func HandleDealerRegisterSubmit(deps DealerDeps) fiber.Handler {
 		merchant, err := deps.MerchantService.Create(params)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "dealer", email, "dealer.register", "failed", "merchant", "", err.Error())
-			data := dealerPageData("Bayi kaydı", "register")
-			data.Error = "Bayi kaydı oluşturulamadı: " + err.Error()
+			data := dealerPageData("Üye işyeri kaydı", "register")
+			data.Error = "Üye işyeri kaydı oluşturulamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/register", data, "dealer/layout")
 		}
 
 		_ = provisionMerchantReserve(c.Context(), merchant.ID, deps)
 
-		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "dealer.register", "success", "merchant", merchant.ID.String(), "Bayi hesabı self servis kayıt ile oluşturuldu.")
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "dealer.register", "success", "merchant", merchant.ID.String(), "Üye işyeri hesabı self servis kayıt ile oluşturuldu.")
 		setDealerSessionCookie(c, merchant.ID.String())
-		return redirectWithSuccess(c, "/dealer/dashboard", "Bayi hesabı oluşturuldu.")
+		return redirectWithSuccess(c, "/merchant/dashboard", "Üye işyeri hesabı oluşturuldu.")
 	}
 }
 
-// HandleDealerDashboard renders the authenticated dealer panel.
-// @Summary Show dealer dashboard
-// @Description Renders the authenticated dealer panel with merchant info, domain creation form, and current domains.
-// @Tags Dealers
+// HandleDealerDashboard renders the authenticated merchant portal.
+// @Summary Show merchant dashboard
+// @Description Renders the authenticated merchant portal with merchant info, domain creation form, and current domains.
+// @Tags Merchant Portal
 // @Produce html
-// @Success 200 {string} string "HTML dealer dashboard"
-// @Failure 302 {string} string "Redirect to dealer login"
-// @Router /dealer/dashboard [get]
+// @Success 200 {string} string "HTML merchant dashboard"
+// @Failure 302 {string} string "Redirect to merchant login"
+// @Router /merchant/dashboard [get]
 func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
@@ -555,21 +555,21 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 
 		domains, err := deps.DomainService.ListByMerchant(c.Context(), merchant.ID)
 		if err != nil {
-			data := dealerPageData("Bayi paneli", "dashboard")
+			data := dealerPageData("Üye işyeri paneli", "dashboard")
 			fillDealerMerchant(&data, merchant)
 			data.Error = "Domain listesi okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 		}
 		withdrawals, err := deps.WithdrawalRepo.ListByMerchant(c.Context(), merchant.ID, 100)
 		if err != nil {
-			data := dealerPageData("Bayi paneli", "dashboard")
+			data := dealerPageData("Üye işyeri paneli", "dashboard")
 			fillDealerMerchant(&data, merchant)
 			data.Error = "Çekim talepleri okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 		}
 		transactions, err := deps.TransactionRepo.ListByMerchant(c.Context(), merchant.ID, 100)
 		if err != nil {
-			data := dealerPageData("Bayi paneli", "dashboard")
+			data := dealerPageData("Üye işyeri paneli", "dashboard")
 			fillDealerMerchant(&data, merchant)
 			data.Error = "İşlem geçmişi okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -578,7 +578,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		if deps.ProductRepo != nil {
 			products, err = deps.ProductRepo.ListByMerchant(c.Context(), merchant.ID, 100)
 			if err != nil {
-				data := dealerPageData("Bayi paneli", "dashboard")
+				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Ürün listesi okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -590,7 +590,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		if deps.PaymentRepo != nil {
 			payments, paymentTotal, err = deps.PaymentRepo.ListByMerchantPage(c.Context(), merchant.ID, paymentStatusFilter, 1, 100)
 			if err != nil {
-				data := dealerPageData("Bayi paneli", "dashboard")
+				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Checkout listesi okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -601,7 +601,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		if deps.LedgerRepo != nil {
 			ledgerBalances, err = deps.LedgerRepo.MerchantBalances(c.Context(), merchant.ID)
 			if err != nil {
-				data := dealerPageData("Bayi paneli", "dashboard")
+				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Ledger bakiyesi okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -610,7 +610,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		if len(ledgerBalances) == 0 {
 			balances, err = deps.TransactionRepo.MerchantDepositSummary(c.Context(), merchant.ID)
 			if err != nil {
-				data := dealerPageData("Bayi paneli", "dashboard")
+				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Bakiye özeti okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -620,7 +620,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		if deps.ActivityLogRepo != nil {
 			auditLogs, err = deps.ActivityLogRepo.ListByMerchant(c.Context(), merchant.ID, 100)
 			if err != nil {
-				data := dealerPageData("Bayi paneli", "dashboard")
+				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Activity log okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
@@ -634,7 +634,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		wallets, walletTotal, _ := deps.WalletRepo.SearchByMerchantPage(c.Context(), merchant.ID, walletSearch, walletPageSize, walletOffset)
 		reserveWallets, _ := deps.WalletRepo.ListReserveByMerchant(c.Context(), merchant.ID)
 
-		data := dealerPageData("Bayi paneli", "dashboard")
+		data := dealerPageData("Üye işyeri paneli", "dashboard")
 		fillDealerMerchant(&data, merchant)
 		data.ActivePanel = currentDashboardPanel(c)
 		applyFlash(c, &data)
@@ -654,7 +654,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.AuditLogs = dealerAuditLogViews(auditLogs)
 		data.Wallets = dealerWalletViews(wallets)
 		data.WithdrawalWallets = dealerWalletViews(reserveWallets)
-		usersBaseURL := "/dealer/dashboard/users"
+		usersBaseURL := "/merchant/dashboard/users"
 		if walletSearch != "" {
 			usersBaseURL += "?q=" + walletSearch
 		}
@@ -682,18 +682,18 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 	}
 }
 
-// HandleDealerDomainCreate creates a domain from the authenticated dealer panel.
-// @Summary Create dealer domain from panel
-// @Description Creates a merchant domain using the authenticated dealer session and redirects back to the dashboard.
-// @Tags Dealers
+// HandleDealerDomainCreate creates a domain from the authenticated merchant portal.
+// @Summary Create merchant domain from panel
+// @Description Creates a merchant domain using the authenticated merchant session and redirects back to the dashboard.
+// @Tags Merchant Portal
 // @Accept x-www-form-urlencoded
 // @Produce html
 // @Param domain_url formData string true "Domain URL"
 // @Param webhook_url formData string true "Webhook URL"
 // @Param webhook_secret formData string true "Webhook secret"
-// @Success 302 {string} string "Redirect to dealer dashboard"
-// @Failure 302 {string} string "Redirect to dealer login or dashboard with error"
-// @Router /dealer/domains [post]
+// @Success 302 {string} string "Redirect to merchant dashboard"
+// @Failure 302 {string} string "Redirect to merchant login or dashboard with error"
+// @Router /merchant/domains [post]
 func HandleDealerDomainCreate(merchantService *services.MerchantService, domainService *services.DomainService, activityRepo *repositories.ActivityLogRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		merchant, ok := requireDealerMerchant(c, merchantService)
@@ -714,23 +714,23 @@ func HandleDealerDomainCreate(merchantService *services.MerchantService, domainS
 		}
 		if err := params.Validate(); err != nil {
 			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "failed", "domain", domainURL, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", err.Error())
+			return redirectWithError(c, "/merchant/dashboard", err.Error())
 		}
 		if err := helpers.ValidateWebhookURL(webhookURL); err != nil {
 			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "failed", "domain", domainURL, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", "Geçersiz webhook URL: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard", "Geçersiz webhook URL: "+err.Error())
 		}
 		domain, err := domainService.Create(params)
 		if err != nil {
 			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "failed", "domain", domainURL, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", "Domain eklenemedi: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard", "Domain eklenemedi: "+err.Error())
 		}
 		subjectID := domainURL
 		if domain != nil {
 			subjectID = domain.ID.String()
 		}
 		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "domain.create", "success", "domain", subjectID, "Domain ve webhook endpoint oluşturuldu.")
-		return redirectWithSuccess(c, "/dealer/dashboard", "Domain eklendi.")
+		return redirectWithSuccess(c, "/merchant/dashboard", "Domain eklendi.")
 	}
 }
 
@@ -741,13 +741,13 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			return redirectDealerLogin(c)
 		}
 		if deps.ProductRepo == nil {
-			return redirectWithError(c, "/dealer/dashboard/products", "Product repository hazır değil.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Product repository hazır değil.")
 		}
 
 		domainIDRaw := strings.TrimSpace(c.FormValue("domain_id"))
 		domainID, err := uuid.Parse(domainIDRaw)
 		if err != nil {
-			return redirectWithError(c, "/dealer/dashboard/products", "Geçerli domain seçmelisin.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Geçerli domain seçmelisin.")
 		}
 		domainIDString := domainID.String()
 		domain, err := deps.DomainService.FindByID(types.DomainParams{
@@ -755,7 +755,7 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			DomainID: &domainIDString,
 		})
 		if err != nil || domain.MerchantID != merchant.ID {
-			return redirectWithError(c, "/dealer/dashboard/products", "Domain bulunamadı.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Domain bulunamadı.")
 		}
 
 		name := strings.TrimSpace(c.FormValue("name"))
@@ -767,10 +767,10 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		cancelURL := strings.TrimSpace(c.FormValue("cancel_url"))
 		logoURL := strings.TrimSpace(c.FormValue("logo_url"))
 		if name == "" {
-			return redirectWithError(c, "/dealer/dashboard/products", "Ürün adı zorunlu.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Ürün adı zorunlu.")
 		}
 		if err := types.ValidatePositiveDecimal(amount); err != nil {
-			return redirectWithError(c, "/dealer/dashboard/products", "Tutar pozitif decimal olmalı.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Tutar pozitif decimal olmalı.")
 		}
 		if currency == "" {
 			currency = "USD"
@@ -791,11 +791,11 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		}
 		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "failed", "product", name, err.Error())
-			return redirectWithError(c, "/dealer/dashboard/products", "Ürün oluşturulamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/products", "Ürün oluşturulamadı: "+err.Error())
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "success", "product", product.ID.String(), "Payment link ürünü oluşturuldu.")
 		link := baseURL(c) + "/payment-links/" + product.LinkToken
-		return redirectWithSuccess(c, "/dealer/dashboard/products", "Payment link oluşturuldu: "+link)
+		return redirectWithSuccess(c, "/merchant/dashboard/products", "Payment link oluşturuldu: "+link)
 	}
 }
 
@@ -806,13 +806,13 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 			return redirectDealerLogin(c)
 		}
 		if deps.PaymentRepo == nil || deps.WalletRepo == nil {
-			return redirectWithError(c, "/dealer/dashboard/products", "Invoice altyapısı hazır değil.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Invoice altyapısı hazır değil.")
 		}
 
 		domainIDRaw := strings.TrimSpace(c.FormValue("domain_id"))
 		domainID, err := uuid.Parse(domainIDRaw)
 		if err != nil {
-			return redirectWithError(c, "/dealer/dashboard/products", "Geçerli domain seçmelisin.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Geçerli domain seçmelisin.")
 		}
 		domainIDString := domainID.String()
 		domain, err := deps.DomainService.FindByID(types.DomainParams{
@@ -820,7 +820,7 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 			DomainID: &domainIDString,
 		})
 		if err != nil || domain.MerchantID != merchant.ID {
-			return redirectWithError(c, "/dealer/dashboard/products", "Domain bulunamadı.")
+			return redirectWithError(c, "/merchant/dashboard/products", "Domain bulunamadı.")
 		}
 
 		orderID := strings.TrimSpace(c.FormValue("order_id"))
@@ -849,7 +849,7 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 		}
 		if err := params.Validate(); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "invoice.create", "failed", "payment", orderID, err.Error())
-			return redirectWithError(c, "/dealer/dashboard/products", "Invoice oluşturulamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/products", "Invoice oluşturulamadı: "+err.Error())
 		}
 
 		productIDValue := valueOrDefault(params.ProductID, *params.OrderID)
@@ -864,7 +864,7 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 		})
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "invoice.create", "failed", "payment", orderID, err.Error())
-			return redirectWithError(c, "/dealer/dashboard/products", "Wallet oluşturulamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/products", "Wallet oluşturulamadı: "+err.Error())
 		}
 
 		expiresAt := time.Now().Add(paymentSessionTTL())
@@ -884,13 +884,13 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 		}
 		if err := deps.PaymentRepo.Create(c.Context(), session); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "invoice.create", "failed", "payment", orderID, err.Error())
-			return redirectWithError(c, "/dealer/dashboard/products", "Invoice oluşturulamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/products", "Invoice oluşturulamadı: "+err.Error())
 		}
 
 		checkoutURL := baseURL(c) + "/checkout/" + session.SessionToken
 		invoiceURL := baseURL(c) + "/invoice/" + session.SessionToken
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "invoice.create", "success", "payment", session.ID.String(), "Dashboard invoice oluşturuldu.")
-		return redirectWithSuccess(c, "/dealer/dashboard/products", "Invoice oluşturuldu: "+invoiceURL+" | Checkout: "+checkoutURL)
+		return redirectWithSuccess(c, "/merchant/dashboard/products", "Invoice oluşturuldu: "+invoiceURL+" | Checkout: "+checkoutURL)
 	}
 }
 
@@ -921,12 +921,13 @@ func HandlePaymentLink(deps DealerDeps) fiber.Handler {
 		merchantID := product.MerchantID.String()
 		domainID := product.DomainID.String()
 		productID := product.ID.String()
+		walletUserID := orderID
 		wallet, err := deps.WalletRepo.Create(types.WalletParams{
 			Context:    c.Context(),
 			MerchantId: &merchantID,
 			DomainId:   &domainID,
 			ProductId:  &productID,
-			UserId:     &userID,
+			UserId:     &walletUserID,
 		})
 		if err != nil {
 			return renderPaymentLinkError(c, "Wallet oluşturulamadı: "+err.Error())
@@ -963,27 +964,27 @@ func HandleDealerFillWalletAddress(deps DealerDeps) fiber.Handler {
 
 		walletID, err := uuid.Parse(c.Params("id"))
 		if err != nil {
-			return redirectWithError(c, "/dealer/dashboard/treasury", "Geçersiz wallet.")
+			return redirectWithError(c, "/merchant/dashboard/treasury", "Geçersiz wallet.")
 		}
 
 		chain := strings.ToLower(strings.TrimSpace(c.FormValue("chain")))
 		if chain == "" {
-			return redirectWithError(c, "/dealer/dashboard/treasury", "Chain belirtilmeli.")
+			return redirectWithError(c, "/merchant/dashboard/treasury", "Chain belirtilmeli.")
 		}
 
 		wallet, err := deps.WalletRepo.FindByID(c.Context(), walletID)
 		if err != nil || wallet.MerchantID != merchant.ID {
-			return redirectWithError(c, "/dealer/dashboard/treasury", "Wallet bulunamadı.")
+			return redirectWithError(c, "/merchant/dashboard/treasury", "Wallet bulunamadı.")
 		}
 
 		_, err = deps.WalletRepo.FillChainAddress(c.Context(), walletID, chain, deps.Blockchains)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "wallet.fill_address", "failed", "wallet", walletID.String(), err.Error())
-			return redirectWithError(c, "/dealer/dashboard/treasury", "Adres türetilemedi: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/treasury", "Adres türetilemedi: "+err.Error())
 		}
 
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "wallet.fill_address", "success", "wallet", walletID.String(), chain+" adresi oluşturuldu.")
-		return redirectWithSuccess(c, "/dealer/dashboard/treasury", chain+" adresi oluşturuldu.")
+		return redirectWithSuccess(c, "/merchant/dashboard/treasury", chain+" adresi oluşturuldu.")
 	}
 }
 
@@ -998,16 +999,16 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		walletID, err := uuid.Parse(walletIDRaw)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", "", "Geçersiz wallet ile çekim talebi denendi.")
-			return redirectWithError(c, "/dealer/dashboard", "Geçerli wallet seçmelisin.")
+			return redirectWithError(c, "/merchant/dashboard", "Geçerli wallet seçmelisin.")
 		}
 		wallet, err := deps.WalletRepo.FindByID(c.Context(), walletID)
 		if err != nil || wallet.MerchantID != merchant.ID {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, "Wallet bulunamadı veya merchant ile eşleşmedi.")
-			return redirectWithError(c, "/dealer/dashboard", "Wallet bulunamadı.")
+			return redirectWithError(c, "/merchant/dashboard", "Wallet bulunamadı.")
 		}
 		if wallet.HDAddressId != 0 {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, "Sadece reserve (HD index 0) cüzdandan çekim yapılabilir.")
-			return redirectWithError(c, "/dealer/dashboard/withdrawals", "Çekim sadece bayi reserve cüzdanından yapılabilir.")
+			return redirectWithError(c, "/merchant/dashboard/withdrawals", "Çekim sadece üye işyeri reserve cüzdanından yapılabilir.")
 		}
 
 		chain := strings.ToLower(strings.TrimSpace(c.FormValue("chain")))
@@ -1019,7 +1020,7 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		chain, token, symbol, decimals, err := resolveWithdrawalAsset(deps.AssetRegistry, chain, symbol, tokenAddress)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", err.Error())
+			return redirectWithError(c, "/merchant/dashboard", err.Error())
 		}
 		params := types.TransferParams{
 			Context:   c.Context(),
@@ -1031,7 +1032,7 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		}
 		if err := params.ValidateWithdraw(); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", err.Error())
+			return redirectWithError(c, "/merchant/dashboard", err.Error())
 		}
 
 		request := &models.WithdrawalRequest{
@@ -1049,26 +1050,26 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		}
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
-			return redirectWithError(c, "/dealer/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "success", "withdrawal", request.ID.String(), "Çekim talebi admin onayına gönderildi.")
-		return redirectWithSuccess(c, "/dealer/dashboard", "Çekim talebi admin onayına gönderildi.")
+		return redirectWithSuccess(c, "/merchant/dashboard", "Çekim talebi admin onayına gönderildi.")
 	}
 }
 
-// HandleDealerOnboarding renders the dealer onboarding result page.
-// @Summary Show dealer onboarding
-// @Description Renders the hosted onboarding page after a dealer merchant is created.
-// @Tags Dealers
+// HandleDealerOnboarding renders the merchant onboarding result page.
+// @Summary Show merchant onboarding
+// @Description Renders the hosted onboarding page after a merchant is created.
+// @Tags Merchant Portal
 // @Produce html
 // @Param merchant_id query string false "Merchant ID"
-// @Param name query string false "Dealer name"
-// @Param email query string false "Dealer email"
-// @Success 200 {string} string "HTML dealer onboarding page"
-// @Router /dealer/onboarding [get]
+// @Param name query string false "Merchant name"
+// @Param email query string false "Merchant email"
+// @Success 200 {string} string "HTML merchant onboarding page"
+// @Router /merchant/onboarding [get]
 func HandleDealerOnboarding() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		data := dealerPageData("Bayi hesabı oluşturuldu", "register")
+		data := dealerPageData("Üye işyeri hesabı oluşturuldu", "register")
 		data.MerchantID = c.Query("merchant_id")
 		data.MerchantName = c.Query("name")
 		data.MerchantEmail = c.Query("email")
@@ -1079,10 +1080,10 @@ func HandleDealerOnboarding() fiber.Handler {
 func HandleDealerLogout(service *services.MerchantService, activityRepo *repositories.ActivityLogRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		if merchant, ok := requireDealerMerchant(c, service); ok {
-			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.logout", "success", "merchant", merchant.ID.String(), "Bayi oturumu kapattı.")
+			logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.logout", "success", "merchant", merchant.ID.String(), "Üye işyeri oturumu kapattı.")
 		}
 		clearDealerSessionCookie(c)
-		return redirectWithSuccess(c, "/dealer/login", "Oturum kapatıldı.")
+		return redirectWithSuccess(c, "/merchant/login", "Oturum kapatıldı.")
 	}
 }
 
@@ -1171,31 +1172,31 @@ func HandleDealerDomainUpdateWebhook(deps DealerDeps) fiber.Handler {
 		webhookURL := strings.TrimSpace(c.FormValue("webhook_url"))
 		webhookSecret := strings.TrimSpace(c.FormValue("webhook_secret"))
 		if webhookURL == "" || webhookSecret == "" {
-			return redirectWithError(c, "/dealer/dashboard/domains", "Webhook URL ve secret boş olamaz")
+			return redirectWithError(c, "/merchant/dashboard/domains", "Webhook URL ve secret boş olamaz")
 		}
 		if err := helpers.ValidateWebhookURL(webhookURL); err != nil {
-			return redirectWithError(c, "/dealer/dashboard/domains", "Geçersiz webhook URL: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/domains", "Geçersiz webhook URL: "+err.Error())
 		}
 
 		if err := deps.DomainService.UpdateWebhook(c.Context(), domainUUID, merchant.ID, webhookURL, webhookSecret); err != nil {
-			return redirectWithError(c, "/dealer/dashboard/domains", "Güncelleme hatası: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/domains", "Güncelleme hatası: "+err.Error())
 		}
 
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.update_webhook", "success", "domain", domainIDStr, "Webhook URL ve secret güncellendi.")
-		return redirectWithSuccess(c, "/dealer/dashboard/domains", "Webhook başarıyla güncellendi.")
+		return redirectWithSuccess(c, "/merchant/dashboard/domains", "Webhook başarıyla güncellendi.")
 	}
 }
 
-// HandleDealerDomainRotateAPISecret rotates the API secret for a dealer-owned domain.
+// HandleDealerDomainRotateAPISecret rotates the API secret for a merchant-owned domain.
 // @Summary Rotate domain API secret
-// @Description Rotates the API secret for an authenticated dealer domain. The new secret is returned once in the response.
-// @Tags Dealers
+// @Description Rotates the API secret for an authenticated merchant domain. The new secret is returned once in the response.
+// @Tags Merchant Portal
 // @Produce json
 // @Param id path string true "Domain ID"
 // @Success 200 {object} map[string]string
 // @Failure 400 {object} types.ErrorResponse
 // @Failure 401 {object} types.ErrorResponse
-// @Router /dealer/domains/{id}/rotate-api-secret [post]
+// @Router /merchant/domains/{id}/rotate-api-secret [post]
 func HandleDealerDomainRotateAPISecret(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
@@ -1229,10 +1230,10 @@ func HandleDealerSettingsUpdate(deps DealerDeps) fiber.Handler {
 		hideTestnets := c.FormValue("hide_testnets") == "on"
 		hiddenChains := strings.TrimSpace(c.FormValue("hidden_chains"))
 		if err := deps.MerchantService.Repo().UpdateSettings(c.Context(), merchant.ID, hideTestnets, hiddenChains); err != nil {
-			return redirectWithError(c, "/dealer/dashboard/settings", "Ayarlar kaydedilemedi: "+err.Error())
+			return redirectWithError(c, "/merchant/dashboard/settings", "Ayarlar kaydedilemedi: "+err.Error())
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "settings.update", "success", "merchant", merchant.ID.String(), "Görünüm ayarları güncellendi.")
-		return redirectWithSuccess(c, "/dealer/dashboard/settings", "Ayarlar kaydedildi.")
+		return redirectWithSuccess(c, "/merchant/dashboard/settings", "Ayarlar kaydedildi.")
 	}
 }
 
@@ -1270,13 +1271,7 @@ func HandleAdminLoginSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 
 		admin, err := adminRepo.Authenticate(c.Context(), email, password)
 		if err != nil {
-			// Fallback to env-based credentials for backward compat.
-			if !verifyAdminCredentials(email, password) {
-				return renderErr("Admin bilgileri hatalı.")
-			}
-			// Env-based login — no 2FA, issue session directly.
-			setAdminSessionCookie(c, email)
-			return c.Redirect().To("/admin")
+			return renderErr("Admin bilgileri hatalı.")
 		}
 
 		if admin.TOTPEnabled {
@@ -2045,9 +2040,9 @@ func HandleAdminLogout() fiber.Handler {
 }
 
 // HandleOIDCLogin starts the OIDC authorization-code flow.
-// @Summary Start dealer OIDC login
-// @Description Redirects the dealer to the configured OIDC authorization URL.
-// @Tags Dealers
+// @Summary Start merchant OIDC login
+// @Description Redirects the merchant to the configured OIDC authorization URL.
+// @Tags Merchant Portal
 // @Produce html
 // @Success 302 {string} string "Redirect to OIDC provider"
 // @Failure 501 {string} string "HTML page explaining missing OIDC configuration"
@@ -2076,15 +2071,15 @@ func HandleOIDCLogin() fiber.Handler {
 	}
 }
 
-// HandleOIDCCallback completes the OIDC authorization-code flow and opens a dealer session.
-// @Summary Complete dealer OIDC login
-// @Description Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the dealer in.
-// @Tags Dealers
+// HandleOIDCCallback completes the OIDC authorization-code flow and opens a merchant portal session.
+// @Summary Complete merchant OIDC login
+// @Description Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the merchant in.
+// @Tags Merchant Portal
 // @Produce html
 // @Param code query string true "Authorization code"
 // @Param state query string true "OIDC state"
-// @Success 302 {string} string "Redirect to dealer dashboard"
-// @Failure 400 {string} string "Redirect to dealer login with error"
+// @Success 302 {string} string "Redirect to merchant dashboard"
+// @Failure 400 {string} string "Redirect to merchant login with error"
 // @Router /auth/oidc/callback [get]
 func HandleOIDCCallback(service *services.MerchantService, activityRepo *repositories.ActivityLogRepo, deps ...DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -2096,11 +2091,11 @@ func HandleOIDCCallback(service *services.MerchantService, activityRepo *reposit
 		clearOIDCCookie(c, oidcNonceCookie)
 		if code == "" || state == "" || expectedState == "" || !hmac.Equal([]byte(state), []byte(expectedState)) {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC state doğrulaması başarısız.")
-			return redirectWithError(c, "/dealer/login", "OIDC oturum doğrulaması başarısız.")
+			return redirectWithError(c, "/merchant/login", "OIDC oturum doğrulaması başarısız.")
 		}
 		if expectedNonce == "" {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce cookie bulunamadı.")
-			return redirectWithError(c, "/dealer/login", "OIDC nonce doğrulaması başarısız.")
+			return redirectWithError(c, "/merchant/login", "OIDC nonce doğrulaması başarısız.")
 		}
 
 		ctx, cancel := context.WithTimeout(c.Context(), 20*time.Second)
@@ -2108,58 +2103,58 @@ func HandleOIDCCallback(service *services.MerchantService, activityRepo *reposit
 		oauthConfig, provider, err := oidcOAuthConfig(ctx)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/dealer/login", "OIDC yapılandırması eksik: "+err.Error())
+			return redirectWithError(c, "/merchant/login", "OIDC yapılandırması eksik: "+err.Error())
 		}
 
 		token, err := oauthConfig.Exchange(ctx, code)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/dealer/login", "OIDC token alınamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/login", "OIDC token alınamadı: "+err.Error())
 		}
 		rawIDToken, ok := token.Extra("id_token").(string)
 		if !ok || strings.TrimSpace(rawIDToken) == "" {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC id_token dönmedi.")
-			return redirectWithError(c, "/dealer/login", "OIDC id_token dönmedi.")
+			return redirectWithError(c, "/merchant/login", "OIDC id_token dönmedi.")
 		}
 		idToken, err := provider.Verifier(&oidc.Config{ClientID: oauthConfig.ClientID}).Verify(ctx, rawIDToken)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/dealer/login", "OIDC id_token doğrulanamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/login", "OIDC id_token doğrulanamadı: "+err.Error())
 		}
 		if !hmac.Equal([]byte(idToken.Nonce), []byte(expectedNonce)) {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce doğrulaması başarısız.")
-			return redirectWithError(c, "/dealer/login", "OIDC nonce doğrulaması başarısız.")
+			return redirectWithError(c, "/merchant/login", "OIDC nonce doğrulaması başarısız.")
 		}
 		if idToken.AccessTokenHash != "" && token.AccessToken != "" {
 			if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
 				logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-				return redirectWithError(c, "/dealer/login", "OIDC access token doğrulanamadı: "+err.Error())
+				return redirectWithError(c, "/merchant/login", "OIDC access token doğrulanamadı: "+err.Error())
 			}
 		}
 
 		userInfo, err := oidcUserFromToken(ctx, provider, token, idToken)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/dealer/login", "OIDC kullanıcı bilgisi alınamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/login", "OIDC kullanıcı bilgisi alınamadı: "+err.Error())
 		}
 
 		email := strings.TrimSpace(userInfo.Email)
 		if email == "" {
 			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC email bilgisi dönmedi.")
-			return redirectWithError(c, "/dealer/login", "OIDC email bilgisi dönmedi.")
+			return redirectWithError(c, "/merchant/login", "OIDC email bilgisi dönmedi.")
 		}
 
 		merchant, err := findOrCreateOIDCMerchant(c, service, userInfo)
 		if err != nil {
 			logDealerActivity(c, activityRepo, nil, "dealer", email, "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/dealer/login", "Bayi hesabı açılamadı: "+err.Error())
+			return redirectWithError(c, "/merchant/login", "Üye işyeri hesabı açılamadı: "+err.Error())
 		}
 		if len(deps) > 0 {
 			_ = provisionMerchantReserve(c.Context(), merchant.ID, deps[0])
 		}
-		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.oidc_login", "success", "merchant", merchant.ID.String(), "Bayi OIDC ile giriş yaptı.")
+		logDealerActivity(c, activityRepo, &merchant.ID, "dealer", merchant.Email, "dealer.oidc_login", "success", "merchant", merchant.ID.String(), "Üye işyeri OIDC ile giriş yaptı.")
 		setDealerSessionCookie(c, merchant.ID.String())
-		return redirectWithSuccess(c, "/dealer/dashboard", "OIDC ile giriş yapıldı.")
+		return redirectWithSuccess(c, "/merchant/dashboard", "OIDC ile giriş yapıldı.")
 	}
 }
 
@@ -2423,18 +2418,6 @@ func requireDealerSession(c fiber.Ctx) (string, bool) {
 	return merchantID, true
 }
 
-func verifyAdminCredentials(email string, password string) bool {
-	expectedEmail := strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))
-	expectedPassword := os.Getenv("ADMIN_PASSWORD")
-	if expectedEmail == "" {
-		expectedEmail = "admin@gateway.local"
-	}
-	if expectedPassword == "" {
-		expectedPassword = "admin123"
-	}
-	return strings.EqualFold(strings.TrimSpace(email), expectedEmail) && password == expectedPassword
-}
-
 func requireDealerMerchant(c fiber.Ctx, service *services.MerchantService) (*models.Merchant, bool) {
 	merchantID, err := verifyDealerSessionValue(c.Cookies(dealerSessionCookie))
 	if err != nil {
@@ -2458,7 +2441,7 @@ func requireDealerMerchant(c fiber.Ctx, service *services.MerchantService) (*mod
 }
 
 func redirectDealerLogin(c fiber.Ctx) error {
-	return redirectWithError(c, "/dealer/login", "Devam etmek için giriş yapmalısın.")
+	return redirectWithError(c, "/merchant/login", "Devam etmek için giriş yapmalısın.")
 }
 
 func fillDealerMerchant(data *DealerPageData, merchant *models.Merchant) {
@@ -2483,23 +2466,23 @@ func dealerPageData(title string, active string) DealerPageData {
 		Active:           active,
 		OIDCLoginURL:     oidcURL,
 		OIDCProvider:     provider,
-		RegisterURL:      "/dealer/register",
-		LoginURL:         "/dealer/login",
-		OnboardingURL:    "/dealer/onboarding",
-		DashboardURL:     "/dealer/dashboard",
-		TreasuryURL:      "/dealer/dashboard/treasury",
-		ActivityURL:      "/dealer/dashboard/activity",
-		TransactionsURL:  "/dealer/dashboard/transactions",
-		UsersURL:         "/dealer/dashboard/users",
-		WithdrawalsURL:   "/dealer/dashboard/withdrawals",
-		RescanURL:        "/dealer/dashboard/rescan",
-		DomainsPanelURL:  "/dealer/dashboard/domains",
-		ProductsURL:      "/dealer/products",
-		InvoicesURL:      "/dealer/invoices",
-		ProductsPanelURL: "/dealer/dashboard/products",
-		SettingsPanelURL: "/dealer/dashboard/settings",
-		DomainsURL:       "/dealer/domains",
-		LogoutURL:        "/dealer/logout",
+		RegisterURL:      "/merchant/register",
+		LoginURL:         "/merchant/login",
+		OnboardingURL:    "/merchant/onboarding",
+		DashboardURL:     "/merchant/dashboard",
+		TreasuryURL:      "/merchant/dashboard/treasury",
+		ActivityURL:      "/merchant/dashboard/activity",
+		TransactionsURL:  "/merchant/dashboard/transactions",
+		UsersURL:         "/merchant/dashboard/users",
+		WithdrawalsURL:   "/merchant/dashboard/withdrawals",
+		RescanURL:        "/merchant/dashboard/rescan",
+		DomainsPanelURL:  "/merchant/dashboard/domains",
+		ProductsURL:      "/merchant/products",
+		InvoicesURL:      "/merchant/invoices",
+		ProductsPanelURL: "/merchant/dashboard/products",
+		SettingsPanelURL: "/merchant/dashboard/settings",
+		DomainsURL:       "/merchant/domains",
+		LogoutURL:        "/merchant/logout",
 		ActivePanel:      "treasury",
 	}
 }
@@ -2546,7 +2529,7 @@ func dashboardPanel(raw string) string {
 }
 
 func currentDashboardPanel(c fiber.Ctx) string {
-	if strings.EqualFold(c.Path(), "/dealer/domains") {
+	if strings.EqualFold(c.Path(), "/merchant/domains") {
 		return "domains"
 	}
 	return dashboardPanel(c.Params("section"))

@@ -18,24 +18,24 @@ func HandleDealerTxRescan(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
 		if !ok {
-			return redirectWithError(c, "/dealer/login", "Devam etmek için giriş yapmalısın.")
+			return redirectWithError(c, "/merchant/login", "Devam etmek için giriş yapmalısın.")
 		}
 		chainID, txHash, err := parseTxRescanInput(c)
 		if err != nil {
-			return redirectWithError(c, "/dealer/dashboard/rescan", err.Error())
+			return redirectWithError(c, "/merchant/dashboard/rescan", err.Error())
 		}
 		service := txRescanServiceFromDealerDeps(deps)
 		if service == nil {
-			return redirectWithError(c, "/dealer/dashboard/rescan", "Tx rescan servisi hazır değil.")
+			return redirectWithError(c, "/merchant/dashboard/rescan", "Tx rescan servisi hazır değil.")
 		}
 		ctx, cancel := requestTimeout(c, 45*time.Second)
 		defer cancel()
 		result, err := service.RescanForMerchant(ctx, chainID, txHash, merchant.ID)
 		if err != nil {
-			return redirectWithError(c, "/dealer/dashboard/rescan", txRescanErrorMessage(err))
+			return redirectWithError(c, "/merchant/dashboard/rescan", txRescanErrorMessage(err))
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "tx.rescan", "success", "transaction", txHash, txRescanSuccessMessage(result))
-		return redirectWithSuccess(c, "/dealer/dashboard/rescan", txRescanSuccessMessage(result))
+		return redirectWithSuccess(c, "/merchant/dashboard/rescan", txRescanSuccessMessage(result))
 	}
 }
 
@@ -192,7 +192,7 @@ func txRescanErrorMessage(err error) string {
 	case errors.Is(err, txrescan.ErrTransactionNotFound):
 		return "Tx blockchain üzerinde bulunamadı."
 	case errors.Is(err, txrescan.ErrUnauthorizedTx):
-		return "Bu tx bayi wallet adresleriyle eşleşmiyor."
+		return "Bu tx üye işyeri wallet adresleriyle eşleşmiyor."
 	case errors.Is(err, txrescan.ErrUnsupportedChain):
 		return "Bu blockchain için rescan desteklenmiyor."
 	default:

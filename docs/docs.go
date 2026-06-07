@@ -42,7 +42,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns the ledger balance for each asset held by the authenticated merchant.",
+                "description": "Returns the ledger balance for each asset held under the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -416,7 +416,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns paginated payment session history for the authenticated merchant.",
+                "description": "Returns paginated payment session history for the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -608,7 +608,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Lists all static deposit wallets for the merchant, optionally filtered by user_id.",
+                "description": "Lists static deposit wallets under the authenticated API domain, optionally filtered by user_id.",
                 "produces": [
                     "application/json"
                 ],
@@ -662,7 +662,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns count of payments grouped by status for the authenticated merchant.",
+                "description": "Returns count of payments grouped by status for the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -847,7 +847,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns paginated payout (withdrawal) history for the authenticated merchant.",
+                "description": "Returns paginated payout (withdrawal) history for the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -1050,7 +1050,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns paginated refund requests for the authenticated merchant.",
+                "description": "Returns paginated refund requests for the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -1097,7 +1097,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "Returns a refund request owned by the authenticated merchant.",
+                "description": "Returns a refund request owned by the authenticated API domain.",
                 "produces": [
                     "application/json"
                 ],
@@ -1227,14 +1227,14 @@ const docTemplate = `{
         },
         "/auth/oidc/callback": {
             "get": {
-                "description": "Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the dealer in.",
+                "description": "Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the merchant in.",
                 "produces": [
                     "text/html"
                 ],
                 "tags": [
-                    "Dealers"
+                    "Merchant Portal"
                 ],
-                "summary": "Complete dealer OIDC login",
+                "summary": "Complete merchant OIDC login",
                 "parameters": [
                     {
                         "type": "string",
@@ -1253,13 +1253,13 @@ const docTemplate = `{
                 ],
                 "responses": {
                     "302": {
-                        "description": "Redirect to dealer dashboard",
+                        "description": "Redirect to merchant dashboard",
                         "schema": {
                             "type": "string"
                         }
                     },
                     "400": {
-                        "description": "Redirect to dealer login with error",
+                        "description": "Redirect to merchant login with error",
                         "schema": {
                             "type": "string"
                         }
@@ -1269,14 +1269,14 @@ const docTemplate = `{
         },
         "/auth/oidc/login": {
             "get": {
-                "description": "Redirects the dealer to the configured OIDC authorization URL.",
+                "description": "Redirects the merchant to the configured OIDC authorization URL.",
                 "produces": [
                     "text/html"
                 ],
                 "tags": [
-                    "Dealers"
+                    "Merchant Portal"
                 ],
-                "summary": "Start dealer OIDC login",
+                "summary": "Start merchant OIDC login",
                 "responses": {
                     "302": {
                         "description": "Redirect to OIDC provider",
@@ -1651,321 +1651,6 @@ const docTemplate = `{
                 "responses": {}
             }
         },
-        "/dealer/dashboard": {
-            "get": {
-                "description": "Renders the authenticated dealer panel with merchant info, domain creation form, and current domains.",
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Show dealer dashboard",
-                "responses": {
-                    "200": {
-                        "description": "HTML dealer dashboard",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "302": {
-                        "description": "Redirect to dealer login",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
-        "/dealer/domains": {
-            "post": {
-                "description": "Creates a merchant domain using the authenticated dealer session and redirects back to the dashboard.",
-                "consumes": [
-                    "application/x-www-form-urlencoded"
-                ],
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Create dealer domain from panel",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Domain URL",
-                        "name": "domain_url",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Webhook URL",
-                        "name": "webhook_url",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Webhook secret",
-                        "name": "webhook_secret",
-                        "in": "formData",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "302": {
-                        "description": "Redirect to dealer login or dashboard with error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
-        "/dealer/domains/{id}/rotate-api-secret": {
-            "post": {
-                "description": "Rotates the API secret for an authenticated dealer domain. The new secret is returned once in the response.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Rotate domain API secret",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Domain ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/types.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/dealer/login": {
-            "get": {
-                "description": "Renders the hosted dealer login page with the OIDC sign-in action.",
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Show dealer login",
-                "responses": {
-                    "200": {
-                        "description": "HTML dealer login page",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Authenticates a dealer with email and password, sets a dealer session cookie, and redirects to onboarding.",
-                "consumes": [
-                    "application/x-www-form-urlencoded"
-                ],
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Dealer email login",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Dealer email",
-                        "name": "email",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Password",
-                        "name": "password",
-                        "in": "formData",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "302": {
-                        "description": "Redirect to dealer onboarding",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "HTML login page with validation error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "401": {
-                        "description": "HTML login page with authentication error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
-        "/dealer/onboarding": {
-            "get": {
-                "description": "Renders the hosted onboarding page after a dealer merchant is created.",
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Show dealer onboarding",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Merchant ID",
-                        "name": "merchant_id",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Dealer name",
-                        "name": "name",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "Dealer email",
-                        "name": "email",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "HTML dealer onboarding page",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
-        "/dealer/register": {
-            "get": {
-                "description": "Renders the hosted self-service dealer registration page.",
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Show dealer registration",
-                "responses": {
-                    "200": {
-                        "description": "HTML dealer registration page",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            },
-            "post": {
-                "description": "Creates a merchant/dealer account from the hosted self-service registration page and redirects to onboarding.",
-                "consumes": [
-                    "application/x-www-form-urlencoded"
-                ],
-                "produces": [
-                    "text/html"
-                ],
-                "tags": [
-                    "Dealers"
-                ],
-                "summary": "Create dealer from form",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Dealer name",
-                        "name": "name",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Dealer email",
-                        "name": "email",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Dealer email confirmation",
-                        "name": "email_repeat",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Password",
-                        "name": "password",
-                        "in": "formData",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Password confirmation",
-                        "name": "password_repeat",
-                        "in": "formData",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "302": {
-                        "description": "Redirect to dealer onboarding",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "400": {
-                        "description": "HTML registration page with validation error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    },
-                    "500": {
-                        "description": "HTML registration page with server error",
-                        "schema": {
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        },
         "/docs/integration-guide.md": {
             "get": {
                 "description": "Returns the payment gateway integration guide as plain Markdown for developers and AI agents.",
@@ -1994,7 +1679,7 @@ const docTemplate = `{
         },
         "/merchant.create": {
             "post": {
-                "description": "Creates a merchant/dealer account for self-service onboarding.",
+                "description": "Creates a merchant account for self-service onboarding.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2002,12 +1687,12 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Dealers"
+                    "Merchant Portal"
                 ],
-                "summary": "Create dealer merchant",
+                "summary": "Create merchant",
                 "parameters": [
                     {
-                        "description": "Dealer merchant create payload",
+                        "description": "Merchant create payload",
                         "name": "payload",
                         "in": "body",
                         "required": true,
@@ -2048,7 +1733,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Dealers"
+                    "Merchant Portal"
                 ],
                 "summary": "Create merchant domain",
                 "parameters": [
@@ -2125,6 +1810,321 @@ const docTemplate = `{
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/dashboard": {
+            "get": {
+                "description": "Renders the authenticated merchant portal with merchant info, domain creation form, and current domains.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Show merchant dashboard",
+                "responses": {
+                    "200": {
+                        "description": "HTML merchant dashboard",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "302": {
+                        "description": "Redirect to merchant login",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/domains": {
+            "post": {
+                "description": "Creates a merchant domain using the authenticated merchant session and redirects back to the dashboard.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Create merchant domain from panel",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Domain URL",
+                        "name": "domain_url",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Webhook URL",
+                        "name": "webhook_url",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Webhook secret",
+                        "name": "webhook_secret",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to merchant login or dashboard with error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/domains/{id}/rotate-api-secret": {
+            "post": {
+                "description": "Rotates the API secret for an authenticated merchant domain. The new secret is returned once in the response.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Rotate domain API secret",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Domain ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/login": {
+            "get": {
+                "description": "Renders the hosted merchant portal login page with the OIDC sign-in action.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Show merchant login",
+                "responses": {
+                    "200": {
+                        "description": "HTML merchant login page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Authenticates a merchant with email and password, sets a merchant portal session cookie, and redirects to onboarding.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Merchant email login",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Merchant email",
+                        "name": "email",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password",
+                        "name": "password",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to merchant onboarding",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML login page with validation error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "HTML login page with authentication error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/onboarding": {
+            "get": {
+                "description": "Renders the hosted onboarding page after a merchant is created.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Show merchant onboarding",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Merchant ID",
+                        "name": "merchant_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant name",
+                        "name": "name",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant email",
+                        "name": "email",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "HTML merchant onboarding page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        },
+        "/merchant/register": {
+            "get": {
+                "description": "Renders the hosted self-service merchant registration page.",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Show merchant registration",
+                "responses": {
+                    "200": {
+                        "description": "HTML merchant registration page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a merchant account from the hosted self-service registration page and redirects to onboarding.",
+                "consumes": [
+                    "application/x-www-form-urlencoded"
+                ],
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "Merchant Portal"
+                ],
+                "summary": "Create merchant from form",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Merchant name",
+                        "name": "name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant email",
+                        "name": "email",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant email confirmation",
+                        "name": "email_repeat",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password",
+                        "name": "password",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Password confirmation",
+                        "name": "password_repeat",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to merchant onboarding",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "HTML registration page with validation error",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "500": {
+                        "description": "HTML registration page with server error",
+                        "schema": {
+                            "type": "string"
                         }
                     }
                 }
@@ -2989,6 +2989,10 @@ const docTemplate = `{
                 "created_at": {
                     "type": "string",
                     "example": "2024-06-01T12:00:00Z"
+                },
+                "domain_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
                 },
                 "note": {
                     "type": "string",

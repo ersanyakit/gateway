@@ -16,13 +16,13 @@ func NewMerchantHandler(service *services.MerchantService) *MerchantHandler {
 	return &MerchantHandler{service: service}
 }
 
-// HandleMerchantCreate creates a dealer merchant account.
-// @Summary Create dealer merchant
-// @Description Creates a merchant/dealer account for self-service onboarding.
-// @Tags Dealers
+// HandleMerchantCreate creates a merchant account.
+// @Summary Create merchant
+// @Description Creates a merchant account for self-service onboarding.
+// @Tags Merchant Portal
 // @Accept json
 // @Produce json
-// @Param payload body types.MerchantParams true "Dealer merchant create payload"
+// @Param payload body types.MerchantParams true "Merchant create payload"
 // @Success 201 {object} types.MerchantCreateResponse
 // @Failure 400 {object} types.ErrorResponse
 // @Failure 500 {object} types.ErrorResponse

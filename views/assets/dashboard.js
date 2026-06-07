@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', function () {
       resultEl.className = 'mt-2 rounded-2xl border p-3 text-xs font-semibold';
       resultEl.textContent = '';
 
-      fetch('/dealer/domains/' + domainID + '/test-webhook', {
+      fetch('/merchant/domains/' + domainID + '/test-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',

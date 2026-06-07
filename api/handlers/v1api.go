@@ -139,7 +139,7 @@ func HandleV1CommonStatus(deps V1APIDeps) fiber.Handler {
 
 // HandleV1CommonBalance godoc
 // @Summary Account balance
-// @Description Returns the ledger balance for each asset held by the authenticated merchant.
+// @Description Returns the ledger balance for each asset held under the authenticated API domain.
 // @Tags Common
 // @Produce json
 // @Security ApiKeyAuth
@@ -164,9 +164,12 @@ func HandleV1CommonBalance(deps V1APIDeps) fiber.Handler {
 
 		var items []balanceItem
 		if deps.LedgerRepo != nil {
-			rows, err := deps.LedgerRepo.MerchantBalances(c.Context(), domain.MerchantID)
+			rows, err := deps.LedgerRepo.DomainBalances(c.Context(), domain.MerchantID, domain.ID)
 			if err == nil {
 				for _, row := range rows {
+					if row.Account != models.LedgerAccountMerchantAvailable {
+						continue
+					}
 					logoURL := ""
 					if deps.AssetRegistry != nil {
 						logoURL = deps.AssetRegistry.LogoURL(row.Symbol)
@@ -567,7 +570,7 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentStaticAddressList godoc
 // @Summary Static address list
-// @Description Lists all static deposit wallets for the merchant, optionally filtered by user_id.
+// @Description Lists static deposit wallets under the authenticated API domain, optionally filtered by user_id.
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
@@ -592,7 +595,7 @@ func HandleV1PaymentStaticAddressList(deps V1APIDeps) fiber.Handler {
 		search := strings.TrimSpace(c.Query("user_id"))
 		offset := (page - 1) * limit
 
-		wallets, total, err := deps.WalletRepo.SearchByMerchantPage(c.Context(), domain.MerchantID, search, limit, offset)
+		wallets, total, err := deps.WalletRepo.SearchByDomainPage(c.Context(), domain.MerchantID, domain.ID, search, limit, offset)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to list wallets")
 		}
@@ -638,17 +641,14 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 
 		var session *models.PaymentSession
 		if trackID != "" {
-			session, err = deps.PaymentRepo.FindByToken(c.Context(), trackID)
+			session, err = deps.PaymentRepo.FindByTokenForDomain(c.Context(), domain.MerchantID, domain.ID, trackID)
 		} else if orderID != "" {
-			session, err = deps.PaymentRepo.FindByOrderID(c.Context(), domain.MerchantID, orderID)
+			session, err = deps.PaymentRepo.FindByOrderIDForDomain(c.Context(), domain.MerchantID, domain.ID, orderID)
 		} else {
 			return v1Err(c, fiber.StatusBadRequest, "track_id or order_id query param is required")
 		}
 
 		if err != nil {
-			return v1Err(c, fiber.StatusNotFound, "payment not found")
-		}
-		if session.MerchantID != domain.MerchantID {
 			return v1Err(c, fiber.StatusNotFound, "payment not found")
 		}
 		return v1OK(c, v1PaymentResponse(*session))
@@ -657,7 +657,7 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentHistory godoc
 // @Summary Payment history
-// @Description Returns paginated payment session history for the authenticated merchant.
+// @Description Returns paginated payment session history for the authenticated API domain.
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
@@ -681,7 +681,7 @@ func HandleV1PaymentHistory(deps V1APIDeps) fiber.Handler {
 		}
 		status := strings.TrimSpace(c.Query("status"))
 
-		sessions, total, err := deps.PaymentRepo.ListByMerchantPage(c.Context(), domain.MerchantID, status, page, limit)
+		sessions, total, err := deps.PaymentRepo.ListByDomainPage(c.Context(), domain.MerchantID, domain.ID, status, page, limit)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch payment history")
 		}
@@ -704,7 +704,7 @@ func HandleV1PaymentHistory(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentStatistics godoc
 // @Summary Payment statistics
-// @Description Returns count of payments grouped by status for the authenticated merchant.
+// @Description Returns count of payments grouped by status for the authenticated API domain.
 // @Tags Payment
 // @Produce json
 // @Security ApiKeyAuth
@@ -718,7 +718,7 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
 
-		stats, err := deps.PaymentRepo.StatsByMerchant(c.Context(), domain.MerchantID)
+		stats, err := deps.PaymentRepo.StatsByDomain(c.Context(), domain.MerchantID, domain.ID)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch statistics")
 		}
@@ -852,11 +852,10 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusBadRequest, err.Error())
 		}
 
-		wallets, err := deps.WalletRepo.ListReserveByMerchant(c.Context(), domain.MerchantID)
-		if err != nil || len(wallets) == 0 {
-			return v1Err(c, fiber.StatusBadRequest, "no reserve wallet found — create a static address first to initialize the reserve wallet")
+		wallet, err := deps.WalletRepo.FindReserveWallet(c.Context(), domain.MerchantID)
+		if err != nil {
+			return v1Err(c, fiber.StatusBadRequest, "no reserve wallet found — complete merchant onboarding to initialize the reserve wallet")
 		}
-		wallet := wallets[0]
 
 		amountRaw, err := types.DecimalToRaw(amount, decimals)
 		if err != nil {
@@ -865,6 +864,7 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 
 		req := &models.WithdrawalRequest{
 			MerchantID:  domain.MerchantID,
+			DomainID:    &domain.ID,
 			WalletID:    wallet.ID,
 			Chain:       chain,
 			Token:       token,
@@ -915,11 +915,8 @@ func HandleV1PayoutInfo(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusBadRequest, "invalid payout_id")
 		}
 
-		req, err := deps.WithdrawalRepo.Find(c.Context(), payoutID)
+		req, err := deps.WithdrawalRepo.FindByDomain(c.Context(), domain.MerchantID, domain.ID, payoutID)
 		if err != nil {
-			return v1Err(c, fiber.StatusNotFound, "payout not found")
-		}
-		if req.MerchantID != domain.MerchantID {
 			return v1Err(c, fiber.StatusNotFound, "payout not found")
 		}
 		return v1OK(c, v1PayoutResponse(*req))
@@ -928,7 +925,7 @@ func HandleV1PayoutInfo(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PayoutHistory godoc
 // @Summary Payout history
-// @Description Returns paginated payout (withdrawal) history for the authenticated merchant.
+// @Description Returns paginated payout (withdrawal) history for the authenticated API domain.
 // @Tags Payout
 // @Produce json
 // @Security ApiKeyAuth
@@ -950,7 +947,7 @@ func HandleV1PayoutHistory(deps V1APIDeps) fiber.Handler {
 			limit = 100
 		}
 
-		requests, total, err := deps.WithdrawalRepo.ListByMerchantPage(c.Context(), domain.MerchantID, page, limit)
+		requests, total, err := deps.WithdrawalRepo.ListByDomainPage(c.Context(), domain.MerchantID, domain.ID, page, limit)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch payout history")
 		}
@@ -1028,7 +1025,7 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		if err := c.Bind().Body(&body); err != nil {
 			return v1Err(c, fiber.StatusBadRequest, "invalid request body")
 		}
-		session, err := v1ResolvePayment(c, deps, domain.MerchantID, body.PaymentID, body.TrackID, body.OrderID)
+		session, err := v1ResolvePayment(c, deps, domain.MerchantID, domain.ID, body.PaymentID, body.TrackID, body.OrderID)
 		if err != nil {
 			return v1Err(c, fiber.StatusBadRequest, err.Error())
 		}
@@ -1060,7 +1057,7 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 
 // HandleV1RefundInfo godoc
 // @Summary Get refund info
-// @Description Returns a refund request owned by the authenticated merchant.
+// @Description Returns a refund request owned by the authenticated API domain.
 // @Tags Refund
 // @Produce json
 // @Security ApiKeyAuth
@@ -1080,8 +1077,8 @@ func HandleV1RefundInfo(deps V1APIDeps) fiber.Handler {
 		if err != nil {
 			return v1Err(c, fiber.StatusBadRequest, "invalid refund_id")
 		}
-		refund, err := deps.RefundRepo.Find(c.Context(), id)
-		if err != nil || refund.MerchantID != domain.MerchantID {
+		refund, err := deps.RefundRepo.FindByDomain(c.Context(), domain.MerchantID, domain.ID, id)
+		if err != nil {
 			return v1Err(c, fiber.StatusNotFound, "refund not found")
 		}
 		return v1OK(c, v1RefundResponse(*refund))
@@ -1090,7 +1087,7 @@ func HandleV1RefundInfo(deps V1APIDeps) fiber.Handler {
 
 // HandleV1RefundHistory godoc
 // @Summary Get refund history
-// @Description Returns paginated refund requests for the authenticated merchant.
+// @Description Returns paginated refund requests for the authenticated API domain.
 // @Tags Refund
 // @Produce json
 // @Security ApiKeyAuth
@@ -1107,7 +1104,7 @@ func HandleV1RefundHistory(deps V1APIDeps) fiber.Handler {
 		}
 		page := v1QueryInt(c, "page", 1)
 		limit := v1QueryInt(c, "limit", 20)
-		refunds, total, err := deps.RefundRepo.ListByMerchantPage(c.Context(), domain.MerchantID, page, limit)
+		refunds, total, err := deps.RefundRepo.ListByDomainPage(c.Context(), domain.MerchantID, domain.ID, page, limit)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch refund history")
 		}
@@ -1119,7 +1116,7 @@ func HandleV1RefundHistory(deps V1APIDeps) fiber.Handler {
 	}
 }
 
-func v1ResolvePayment(c fiber.Ctx, deps V1APIDeps, merchantID uuid.UUID, paymentID, trackID, orderID string) (*models.PaymentSession, error) {
+func v1ResolvePayment(c fiber.Ctx, deps V1APIDeps, merchantID, domainID uuid.UUID, paymentID, trackID, orderID string) (*models.PaymentSession, error) {
 	var session *models.PaymentSession
 	var err error
 	switch {
@@ -1128,18 +1125,15 @@ func v1ResolvePayment(c fiber.Ctx, deps V1APIDeps, merchantID uuid.UUID, payment
 		if parseErr != nil {
 			return nil, fmt.Errorf("invalid payment_id")
 		}
-		session, err = deps.PaymentRepo.FindByID(c.Context(), id)
+		session, err = deps.PaymentRepo.FindByIDForDomain(c.Context(), merchantID, domainID, id)
 	case strings.TrimSpace(trackID) != "":
-		session, err = deps.PaymentRepo.FindByToken(c.Context(), strings.TrimSpace(trackID))
+		session, err = deps.PaymentRepo.FindByTokenForDomain(c.Context(), merchantID, domainID, strings.TrimSpace(trackID))
 	case strings.TrimSpace(orderID) != "":
-		session, err = deps.PaymentRepo.FindByOrderID(c.Context(), merchantID, strings.TrimSpace(orderID))
+		session, err = deps.PaymentRepo.FindByOrderIDForDomain(c.Context(), merchantID, domainID, strings.TrimSpace(orderID))
 	default:
 		return nil, fmt.Errorf("payment_id, track_id or order_id is required")
 	}
 	if err != nil {
-		return nil, fmt.Errorf("payment not found")
-	}
-	if session.MerchantID != merchantID {
 		return nil, fmt.Errorf("payment not found")
 	}
 	return session, nil
@@ -1236,7 +1230,7 @@ func v1PayoutResponse(r models.WithdrawalRequest) fiber.Map {
 	if r.Token != nil {
 		token = *r.Token
 	}
-	return fiber.Map{
+	resp := fiber.Map{
 		"payout_id":     r.ID.String(),
 		"chain":         r.Chain,
 		"symbol":        r.Symbol,
@@ -1251,6 +1245,10 @@ func v1PayoutResponse(r models.WithdrawalRequest) fiber.Map {
 		"reviewed_at":   reviewedAt,
 		"created_at":    r.CreatedAt.UTC().Format(time.RFC3339),
 	}
+	if r.DomainID != nil {
+		resp["domain_id"] = r.DomainID.String()
+	}
+	return resp
 }
 
 type v1WalletItemType struct {

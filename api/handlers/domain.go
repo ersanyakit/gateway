@@ -19,7 +19,7 @@ func NewDomainHandler(service *services.DomainService) *DomainHandler {
 // HandleDomainCreate creates a merchant domain configuration.
 // @Summary Create merchant domain
 // @Description Creates a merchant domain with webhook settings and returns the API key used by payment requests.
-// @Tags Dealers
+// @Tags Merchant Portal
 // @Accept json
 // @Produce json
 // @Param payload body types.DomainParams true "Merchant domain create payload"

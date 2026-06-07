@@ -2,13 +2,13 @@
 
 Gateway, Go ile geliştirilmiş çok zincirli bir kripto ödeme geçidi ve merchant yönetim platformudur. Proje; merchant kaydı, domain bazlı API anahtarları, checkout oturumları, statik cüzdan adresleri, ödeme takibi, payout/refund akışları, webhook bildirimi, admin paneli ve blockchain listener worker'larını tek uygulama içinde birleştirir.
 
-Uygulama Go Fiber v3, GORM ve PostgreSQL üzerine kuruludur. Frontend tarafında server-rendered HTML view'ları, Tailwind CSS ve checkout/admin/dealer ekranları bulunur.
+Uygulama Go Fiber v3, GORM ve PostgreSQL üzerine kuruludur. Frontend tarafında server-rendered HTML view'ları, Tailwind CSS ve checkout/admin/merchant ekranları bulunur.
 
 ## Temel Özellikler
 
 - Çok zincirli cüzdan üretimi ve adres doğrulama
 - Checkout linki ve invoice ekranı ile kripto ödeme alma
-- Merchant/dealer paneli üzerinden domain, ürün, invoice ve withdrawal yönetimi
+- Merchant portalı üzerinden domain, ürün, invoice ve withdrawal yönetimi
 - Admin paneli üzerinden merchant, withdrawal, refund, webhook replay ve admin kullanıcı yönetimi
 - API key veya Bearer token ile `/api/v1` merchant API erişimi
 - Idempotency desteği olan ödeme oluşturma akışları
@@ -48,7 +48,7 @@ Desteklenen ağlar:
 ```text
 .
 ├── api/
-│   ├── handlers/          # HTTP handler'ları, checkout, dealer, admin ve v1 API
+│   ├── handlers/          # HTTP handler'ları, checkout, merchant portal, admin ve v1 API
 │   ├── middleware/        # Security header, CORS ve rate limit middleware'leri
 │   ├── router/            # Action router yardımcıları
 │   └── routes/            # Fiber route kayıtları ve Swagger route'ları
@@ -65,13 +65,13 @@ Desteklenen ağlar:
 ├── services/              # Database, pricing, realtime, system ve webhook servisleri
 ├── static/                # Chain/coin görselleri
 ├── types/                 # Request/response DTO'ları
-├── views/                 # Dealer, admin, gateway ve invoice HTML view'ları
+├── views/                 # Merchant portal, admin, gateway ve invoice HTML view'ları
 └── workers/               # Listener, dispatcher ve address index worker'ları
 ```
 
 ## Çalışma Akışı
 
-1. Merchant dealer panelinden veya internal endpoint'lerden oluşturulur.
+1. Merchant portalından veya internal endpoint'lerden oluşturulur.
 2. Merchant için domain kaydı açılır ve API secret/webhook ayarları tutulur.
 3. Merchant `/api/v1/payment/create` veya panel üzerinden invoice oluşturur.
 4. Kullanıcı checkout ekranında desteklenen ağ/varlık seçimi yapar.
@@ -176,8 +176,8 @@ Opsiyonel servis değişkenleri:
 | `COINGECKO_BASE_URL` | CoinGecko API adresi. Varsayılan: `https://api.coingecko.com/api/v3`. |
 | `COINGECKO_CACHE_TTL` | Fiyat cache süresi. |
 | `COINGECKO_API_KEY` | CoinGecko API anahtarı. |
-| `OIDC_CLIENT_ID` | Dealer OIDC login için client ID. |
-| `OIDC_CLIENT_SECRET` | Dealer OIDC login için client secret. |
+| `OIDC_CLIENT_ID` | Merchant portal OIDC login için client ID. |
+| `OIDC_CLIENT_SECRET` | Merchant portal OIDC login için client secret. |
 | `OIDC_REDIRECT_URI` | OIDC callback adresi. |
 | `OIDC_PROVIDER_NAME` | OIDC provider adı. |
 | `OIDC_SCOPES` | OIDC scope listesi. |
@@ -209,11 +209,11 @@ Gas/prefund ayarları:
 
 Ana web ekranları:
 
-- `/` - Dealer ana sayfası
-- `/dealer/login` - Merchant/dealer login
-- `/dealer/register` - Merchant kayıt
-- `/dealer/dashboard` - Dealer dashboard
-- `/dealer/onboarding` - Onboarding ekranı
+- `/` - Merchant portal ana sayfası
+- `/merchant/login` - Merchant portal login
+- `/merchant/register` - Merchant kayıt
+- `/merchant/dashboard` - Merchant dashboard
+- `/merchant/onboarding` - Onboarding ekranı
 - `/admin/login` - Admin login
 - `/admin` - Admin dashboard
 - `/payment-links/:token` - Payment link
@@ -378,7 +378,7 @@ Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispat
 
 - `MASTER_KEY` ve `MNEMONIC_PHRASE` production ortamında secret manager, KMS veya benzeri güvenli bir sistemden sağlanmalıdır.
 - Admin parolası güçlü ve benzersiz olmalıdır.
-- Dealer/admin formları ve public API uçları production öncesinde CSRF, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
+- Merchant portal/admin formları ve public API uçları production öncesinde CSRF, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
 - Webhook imzaları `X-Gateway-Signature`, `X-Gateway-Timestamp` ve `X-Gateway-Event` header'ları üzerinden doğrulanacak şekilde tasarlanmıştır.
 - Public erişimde HTTPS, güvenli cookie ayarları ve sınırlı CORS origin listesi kullanılmalıdır.
 

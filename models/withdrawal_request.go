@@ -15,11 +15,12 @@ const (
 )
 
 type WithdrawalRequest struct {
-	ID         uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
-	MerchantID uuid.UUID `gorm:"type:uuid;not null;index" json:"merchant_id"`
-	Merchant   Merchant  `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
-	WalletID   uuid.UUID `gorm:"type:uuid;not null;index" json:"wallet_id"`
-	Wallet     Wallet    `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
+	ID         uuid.UUID  `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+	MerchantID uuid.UUID  `gorm:"type:uuid;not null;index" json:"merchant_id"`
+	Merchant   Merchant   `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
+	DomainID   *uuid.UUID `gorm:"type:uuid;index" json:"domain_id,omitempty"`
+	WalletID   uuid.UUID  `gorm:"type:uuid;not null;index" json:"wallet_id"`
+	Wallet     Wallet     `gorm:"constraint:OnDelete:CASCADE;" json:"-"`
 
 	Chain     string  `gorm:"size:40;not null;index" json:"chain"`
 	Token     *string `gorm:"type:varchar(128);index" json:"token,omitempty"`

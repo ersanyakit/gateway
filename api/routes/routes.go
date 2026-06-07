@@ -167,9 +167,6 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
 	r.fiber.Get("/", handlers.HandleDealerHome())
-	r.fiber.Get("/dealer/login", handlers.HandleDealerLogin())
-	r.fiber.Post("/dealer/login", handlers.HandleDealerLoginSubmit(r.MerchantService, r.ActivityLogRepo))
-	r.fiber.Get("/dealer/register", handlers.HandleDealerRegister())
 	dealerDeps := handlers.DealerDeps{
 		MerchantService:     r.MerchantService,
 		DomainService:       r.DomainService,
@@ -189,23 +186,30 @@ func NewRouter(db *gorm.DB) *Router {
 		Notifier:            webhooksvc.NewNotifier(),
 		PriceOracle:         pricing.NewCoinGecko(),
 	}
-	r.fiber.Post("/dealer/register", handlers.HandleDealerRegisterSubmit(dealerDeps))
-	r.fiber.Get("/dealer", handlers.HandleDealerDashboard(dealerDeps))
-	r.fiber.Get("/dealer/dashboard", handlers.HandleDealerDashboard(dealerDeps))
-	r.fiber.Get("/dealer/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
-	r.fiber.Get("/dealer/domains", handlers.HandleDealerDashboard(dealerDeps))
-	r.fiber.Post("/dealer/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
-	r.fiber.Post("/dealer/products", handlers.HandleDealerProductCreate(dealerDeps))
-	r.fiber.Post("/dealer/invoices", handlers.HandleDealerInvoiceCreate(dealerDeps))
-	r.fiber.Post("/dealer/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
-	r.fiber.Post("/dealer/rescan", handlers.HandleDealerTxRescan(dealerDeps))
-	r.fiber.Post("/dealer/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
-	r.fiber.Post("/dealer/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
-	r.fiber.Post("/dealer/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
-	r.fiber.Post("/dealer/domains/:id/rotate-api-secret", handlers.HandleDealerDomainRotateAPISecret(dealerDeps))
-	r.fiber.Post("/dealer/settings", handlers.HandleDealerSettingsUpdate(dealerDeps))
-	r.fiber.Get("/dealer/onboarding", handlers.HandleDealerOnboarding())
-	r.fiber.Get("/dealer/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
+	registerMerchantPortal := func(prefix string) {
+		r.fiber.Get(prefix+"/login", handlers.HandleDealerLogin())
+		r.fiber.Post(prefix+"/login", handlers.HandleDealerLoginSubmit(r.MerchantService, r.ActivityLogRepo))
+		r.fiber.Get(prefix+"/register", handlers.HandleDealerRegister())
+		r.fiber.Post(prefix+"/register", handlers.HandleDealerRegisterSubmit(dealerDeps))
+		r.fiber.Get(prefix, handlers.HandleDealerDashboard(dealerDeps))
+		r.fiber.Get(prefix+"/dashboard", handlers.HandleDealerDashboard(dealerDeps))
+		r.fiber.Get(prefix+"/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
+		r.fiber.Get(prefix+"/domains", handlers.HandleDealerDashboard(dealerDeps))
+		r.fiber.Post(prefix+"/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
+		r.fiber.Post(prefix+"/products", handlers.HandleDealerProductCreate(dealerDeps))
+		r.fiber.Post(prefix+"/invoices", handlers.HandleDealerInvoiceCreate(dealerDeps))
+		r.fiber.Post(prefix+"/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
+		r.fiber.Post(prefix+"/rescan", handlers.HandleDealerTxRescan(dealerDeps))
+		r.fiber.Post(prefix+"/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
+		r.fiber.Post(prefix+"/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
+		r.fiber.Post(prefix+"/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
+		r.fiber.Post(prefix+"/domains/:id/rotate-api-secret", handlers.HandleDealerDomainRotateAPISecret(dealerDeps))
+		r.fiber.Post(prefix+"/settings", handlers.HandleDealerSettingsUpdate(dealerDeps))
+		r.fiber.Get(prefix+"/onboarding", handlers.HandleDealerOnboarding())
+		r.fiber.Get(prefix+"/logout", handlers.HandleDealerLogout(r.MerchantService, r.ActivityLogRepo))
+	}
+	registerMerchantPortal("/dealer")
+	registerMerchantPortal("/merchant")
 	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
 	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo, dealerDeps))
 	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())

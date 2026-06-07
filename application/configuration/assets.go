@@ -149,6 +149,16 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			},
 		},
 		{
+			Symbol:   "CHZINU",
+			Name:     "ChilizINU",
+			Type:     asset.AssetERC20,
+			Decimals: 18,
+			LogoSlug: "chzinu",
+			Deployments: []asset.Deployment{
+				{ChainID: constants.Chiliz, Address: "0xF3928e7871eb136DD6648Ad08aEEF6B6ea893001", Decimals: 4, Enabled: true},
+			},
+		},
+		{
 			Symbol:   "PEPPER",
 			Name:     "PEPPER",
 			Type:     asset.AssetERC20,
