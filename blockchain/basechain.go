@@ -209,6 +209,18 @@ func (f *BaseChain) GetDerivedPrivateKey(mnemonic string, hdPath string) (string
 	return walletcore.DerivePrivateKey(mnemonic, hdPath, f.ID)
 }
 
+func (f *BaseChain) GetDerivedWallet(mnemonic string, hdPath string) (*WalletDetails, error) {
+	wallet, err := walletcore.DeriveWallet(mnemonic, hdPath, f.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &WalletDetails{
+		Address:        wallet.Address,
+		PrivateKey:     wallet.PrivateKey,
+		MnemonicPhrase: mnemonic,
+	}, nil
+}
+
 func (b *BaseChain) AddWorker(listener Worker) error {
 	b.Workers = append(b.Workers, listener)
 	return nil

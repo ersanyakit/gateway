@@ -135,6 +135,73 @@ definitions:
       success_path:
         type: string
     type: object
+  types.V1AssetCatalogItem:
+    properties:
+      decimals:
+        example: 6
+        type: integer
+      deployments:
+        items:
+          $ref: '#/definitions/types.V1AssetDeploymentItem'
+        type: array
+      logo_url:
+        example: /static/coins/usdt.svg
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      type:
+        example: erc20
+        type: string
+    type: object
+  types.V1AssetDeploymentItem:
+    properties:
+      chain:
+        example: Ethereum
+        type: string
+      chain_id:
+        example: 1
+        type: integer
+      chain_logo_url:
+        example: /static/chains/ethereumchain.svg
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      enabled:
+        example: true
+        type: boolean
+      identifier:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+      logo_url:
+        example: /static/coins/usdt.svg
+        type: string
+      mint_address:
+        example: ""
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      native:
+        example: false
+        type: boolean
+      network:
+        example: ethereum
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+      type:
+        example: erc20
+        type: string
+    type: object
   types.V1AssetItem:
     properties:
       balance:
@@ -154,6 +221,21 @@ definitions:
         type: string
       token_address:
         example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1AssetsData:
+    properties:
+      assets:
+        items:
+          $ref: '#/definitions/types.V1AssetCatalogItem'
+        type: array
+    type: object
+  types.V1AssetsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1AssetsData'
+      result:
+        example: ok
         type: string
     type: object
   types.V1BalanceResponse:
@@ -786,6 +868,20 @@ info:
   title: Gateway API
   version: "1.0"
 paths:
+  /api/v1/common/assets:
+    get:
+      description: Lists all supported crypto assets grouped by logical asset with
+        their chain deployments.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1AssetsResponse'
+      summary: Supported assets
+      tags:
+      - Common
   /api/v1/common/balance:
     get:
       description: Returns the ledger balance for each asset held by the authenticated
@@ -896,6 +992,41 @@ paths:
       summary: Asset prices
       tags:
       - Common
+  /api/v1/common/qrcode:
+    get:
+      description: Returns a PNG QR code containing the supplied wallet address or
+        payment URI payload.
+      parameters:
+      - description: Wallet address or payment URI payload
+        in: query
+        name: address
+        required: true
+        type: string
+      - default: 300
+        description: PNG image size in pixels
+        in: query
+        maximum: 1024
+        minimum: 128
+        name: size
+        type: integer
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: PNG QR code
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      summary: Address QR code
+      tags:
+      - Common
   /api/v1/common/status:
     get:
       description: Returns current operational status of the gateway.
@@ -915,6 +1046,20 @@ paths:
       summary: System status
       tags:
       - Common
+  /api/v1/payment/assets:
+    get:
+      description: Lists all crypto assets that can be accepted as payment grouped
+        by logical asset with their chain deployments.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1AssetsResponse'
+      summary: Accepted assets
+      tags:
+      - Payment
   /api/v1/payment/create:
     post:
       consumes:

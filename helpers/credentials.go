@@ -235,6 +235,17 @@ func isPrivateIP(ip net.IP) bool {
 	return false
 }
 
+func allowPrivateWebhookURLs() bool {
+	appEnv := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	if appEnv == "production" {
+		return false
+	}
+	if v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("ALLOW_PRIVATE_WEBHOOK_URLS"))); err == nil && v {
+		return true
+	}
+	return appEnv == "development" || appEnv == "dev" || appEnv == "local" || appEnv == "test"
+}
+
 func ValidateWebhookURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -252,7 +263,7 @@ func ValidateWebhookURL(rawURL string) error {
 		return fmt.Errorf("webhook url host lookup failed: %w", err)
 	}
 	for _, ip := range ips {
-		if isPrivateIP(ip) {
+		if isPrivateIP(ip) && !allowPrivateWebhookURLs() {
 			return errors.New("webhook url must not resolve to a private or loopback address")
 		}
 	}

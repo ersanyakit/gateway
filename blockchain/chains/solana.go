@@ -6,8 +6,6 @@ import (
 	blockchain "core/blockchain"
 	"core/constants"
 	"core/models"
-	"crypto/ed25519"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -72,23 +70,16 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 		return nil, err
 	}
 
-	wallet, err := s.GenerateWalletFromMnemonic(mnemonic, "m/44'/501'/0'/1'")
+	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, "m/44'/501'/0'/1'")
 	if err != nil {
 		return nil, err
 	}
 
-	privateKey := wallet.PrivateKey.String()
-	address := wallet.PublicKey().String()
-
-	if !s.ValidateAddress(address) {
+	if !s.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid solana address format")
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
@@ -100,44 +91,16 @@ func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletI
 	}
 
 	hdPath := fmt.Sprintf("m/44'/501'/%d'/%d'", hdAccountId, hdWalletId)
-	wallet, err := s.GenerateWalletFromMnemonic(mnemonic, hdPath)
+	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	privateKey := wallet.PrivateKey.String()
-	address := wallet.PublicKey().String()
-
-	if !s.ValidateAddress(address) {
+	if !s.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid solana address format")
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
-}
-
-func (s *SolanaChain) GenerateWalletFromMnemonic(mnemonic, hdPath string) (*solana.Wallet, error) {
-	privateKeyHex, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
-	if err != nil {
-		return nil, err
-	}
-
-	raw, err := hex.DecodeString(privateKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("invalid solana private key hex: %w", err)
-	}
-	switch len(raw) {
-	case ed25519.SeedSize:
-		raw = ed25519.NewKeyFromSeed(raw)
-	case ed25519.PrivateKeySize:
-	default:
-		return nil, fmt.Errorf("invalid solana private key size: %d", len(raw))
-	}
-
-	return solana.WalletFromPrivateKeyBase58(solana.PrivateKey(raw).String())
+	return wallet, nil
 }
 
 func (s *SolanaChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {

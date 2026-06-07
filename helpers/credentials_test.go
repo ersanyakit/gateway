@@ -91,3 +91,44 @@ func TestSignatureAndTimestampValidation(t *testing.T) {
 		t.Fatal("expired timestamp should fail")
 	}
 }
+
+func TestValidateWebhookURLRejectsPrivateByDefault(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	t.Setenv("ALLOW_PRIVATE_WEBHOOK_URLS", "")
+
+	err := ValidateWebhookURL("http://127.0.0.1:3000/webhook")
+	if err == nil {
+		t.Fatal("private webhook url should fail by default")
+	}
+	if !strings.Contains(err.Error(), "private or loopback") {
+		t.Fatalf("error = %q, want private or loopback rejection", err.Error())
+	}
+}
+
+func TestValidateWebhookURLAllowsPrivateInDevelopment(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ALLOW_PRIVATE_WEBHOOK_URLS", "")
+
+	if err := ValidateWebhookURL("http://127.0.0.1:3000/webhook"); err != nil {
+		t.Fatalf("development private webhook url should pass: %v", err)
+	}
+}
+
+func TestValidateWebhookURLAllowsPrivateWithExplicitFlag(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	t.Setenv("ALLOW_PRIVATE_WEBHOOK_URLS", "true")
+
+	if err := ValidateWebhookURL("http://192.168.1.20/webhook"); err != nil {
+		t.Fatalf("explicitly allowed private webhook url should pass: %v", err)
+	}
+}
+
+func TestValidateWebhookURLRejectsPrivateInProductionEvenWithFlag(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("ALLOW_PRIVATE_WEBHOOK_URLS", "true")
+
+	err := ValidateWebhookURL("http://127.0.0.1:3000/webhook")
+	if err == nil {
+		t.Fatal("production private webhook url should fail")
+	}
+}

@@ -98,26 +98,16 @@ func (e *EVMCompatibleChain) Create(ctx context.Context) (*blockchain.WalletDeta
 	}
 
 	hdPath := e.BaseChain.GetDerivedPath(44, 60, 0, 0, 1)
-	privateKey, err := e.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := e.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	address, err := e.NewAddress(privateKey)
-	if err != nil {
-		log.Printf("[%s] NewAddress error:%s \n", e.BaseChain.Name(), err.Error())
-		return nil, err
-	}
-
-	if !e.ValidateAddress(address) {
+	if !e.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid ethereum address format")
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
@@ -129,28 +119,18 @@ func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hd
 	}
 
 	hdPath := e.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
-	privateKey, err := e.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := e.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	address, err := e.NewAddress(privateKey)
-	if err != nil {
-		log.Printf("[%s] NewAddress error:%s \n", e.BaseChain.Name(), err.Error())
-		return nil, err
-	}
-
-	if !e.ValidateAddress(address) {
+	if !e.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid ethereum address format")
 	}
 
-	fmt.Printf("WALLET:%s --- %s \n", e.BaseChain.Name(), address)
+	fmt.Printf("WALLET:%s --- %s \n", e.BaseChain.Name(), wallet.Address)
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (e *EVMCompatibleChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {

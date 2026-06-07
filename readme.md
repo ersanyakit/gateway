@@ -87,6 +87,7 @@ Desteklenen ağlar:
 - Go `1.25.4`
 - PostgreSQL
 - Node.js ve npm (Tailwind CSS çıktısını üretmek için)
+- Trust Wallet Core native library build'i (CGo, clang/cmake ve `scripts/build_wallet_core.sh`)
 - Chain listener'ların sağlıklı çalışması için ilgili ağlara RPC erişimi
 
 ## Kurulum
@@ -96,6 +97,12 @@ Bağımlılıkları indirin:
 ```bash
 go mod download
 npm install
+```
+
+Trust Wallet Core native library dosyalarını üretin. Cüzdan mnemonic doğrulama, HD private key türetme ve adres üretimi default olarak Trust Wallet Core üzerinden yapılır:
+
+```bash
+./scripts/build_wallet_core.sh
 ```
 
 Tailwind CSS dosyasını üretin:
@@ -109,6 +116,8 @@ Minimum `.env` örneği:
 ```env
 DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
 PORT=:4001
+APP_ENV=development
+ALLOW_PRIVATE_WEBHOOK_URLS=true
 MASTER_KEY=32-byte-or-longer-secret
 MNEMONIC_PHRASE="your bip39 mnemonic phrase"
 ADMIN_EMAIL=admin@example.com
@@ -144,8 +153,10 @@ Zorunlu veya kritik değişkenler:
 | --- | --- |
 | `DATABASE_URL` | PostgreSQL bağlantı adresi. Uygulama bu değer olmadan başlamaz. |
 | `PORT` | Fiber listen adresi. Örnek: `:4001`. |
+| `APP_ENV` | Çalışma ortamı. `production` değerinde bazı güvenlik kontrolleri sıkılaşır. Lokal geliştirme için `development` kullanılabilir. |
+| `ALLOW_PRIVATE_WEBHOOK_URLS` | Lokal geliştirmede `localhost`, `127.0.0.1` veya özel ağ IP'lerine webhook göndermeye izin verir. `APP_ENV=production` iken dikkate alınmaz. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
-| `MNEMONIC_PHRASE` | HD wallet üretimi için BIP39 mnemonic. |
+| `MNEMONIC_PHRASE` | Trust Wallet Core ile HD wallet üretimi için BIP39 mnemonic. |
 | `ADMIN_EMAIL` | Bootstrap admin hesabı için e-posta. |
 | `ADMIN_PASSWORD` | Bootstrap admin hesabı için parola. |
 | `ADMIN_NAME` | Bootstrap admin görünen adı. |
@@ -378,6 +389,8 @@ Go testleri:
 ```bash
 go test ./...
 ```
+
+Trust Wallet Core native build'i hazır değilse önce `./scripts/build_wallet_core.sh` çalıştırılmalıdır. Sadece lokal debug için fallback provider kullanılacaksa Go komutlarına `-tags walletcorefallback` eklenebilir; production wallet üretimi için kullanılmamalıdır.
 
 CSS build:
 

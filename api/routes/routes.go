@@ -281,6 +281,8 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/api/v1/common/balance", handlers.HandleV1CommonBalance(v1Deps))
 	r.fiber.Get("/api/v1/common/prices", handlers.HandleV1CommonPrices(v1Deps))
 	r.fiber.Get("/api/v1/common/currencies", handlers.HandleV1CommonCurrencies(v1Deps))
+	r.fiber.Get("/api/v1/common/assets", handlers.HandleV1CommonAssets(v1Deps))
+	r.fiber.Get("/api/v1/common/qrcode", handlers.HandleV1CommonAddressQRCode())
 	r.fiber.Get("/api/v1/common/fiat-currencies", handlers.HandleV1CommonFiatCurrencies(v1Deps))
 	r.fiber.Get("/api/v1/common/networks", handlers.HandleV1CommonNetworks(v1Deps))
 
@@ -293,6 +295,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/api/v1/payment/history", handlers.HandleV1PaymentHistory(v1Deps))
 	r.fiber.Get("/api/v1/payment/statistics", handlers.HandleV1PaymentStatistics(v1Deps))
 	r.fiber.Get("/api/v1/payment/currencies", handlers.HandleV1PaymentCurrencies(v1Deps))
+	r.fiber.Get("/api/v1/payment/assets", handlers.HandleV1PaymentAssets(v1Deps))
 	r.fiber.Get("/api/v1/payment/status-table", handlers.HandleV1PaymentStatusTable(v1Deps))
 
 	// ── Transaction API ──────────────────────────────────────────────────────

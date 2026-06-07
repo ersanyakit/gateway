@@ -59,3 +59,24 @@ func TestRegistryListReturnsNilForMissingChain(t *testing.T) {
 		t.Fatalf("missing chain list = %#v, want nil", list)
 	}
 }
+
+func TestRegistryRegisterDefinitionDefaultsDeploymentsToEnabled(t *testing.T) {
+	registry := NewRegistry()
+	registry.RegisterDefinition(AssetDefinition{
+		Symbol:   "PEPPER",
+		Name:     "PEPPER",
+		Type:     AssetSPL,
+		Decimals: 3,
+		Deployments: []Deployment{
+			{ChainID: constants.Solana, Mint: "GozPNCAseytzxCR3d2k8hTsTYkr4SDpuXy2RQAZFVx2g", Decimals: 3},
+		},
+	})
+
+	token, ok := registry.Get(constants.Solana, "GozPNCAseytzxCR3d2k8hTsTYkr4SDpuXy2RQAZFVx2g")
+	if !ok {
+		t.Fatal("deployment without explicit Enabled should be registered")
+	}
+	if token.GetSymbol() != "PEPPER" {
+		t.Fatalf("symbol = %q, want PEPPER", token.GetSymbol())
+	}
+}

@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -127,26 +126,16 @@ func (b *BitcoinChain) Create(ctx context.Context) (*blockchain.WalletDetails, e
 	}
 
 	hdPath := b.BaseChain.GetDerivedPath(int(Taproot), 0, 0, 0, 1)
-	privateKeyHex, err := b.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := b.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	address, err := b.NewAddress(privateKeyHex)
-	if err != nil {
-		log.Printf("[%s] NewAddress error: %s\n", b.Name(), err.Error())
-		return nil, err
-	}
-
-	if !b.ValidateAddress(address) {
+	if !b.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid bitcoin address format")
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKeyHex,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
@@ -158,26 +147,16 @@ func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWallet
 	}
 
 	hdPath := b.BaseChain.GetDerivedPath(int(Taproot), 0, 0, hdAccountId, hdWalletId)
-	privateKeyHex, err := b.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := b.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	address, err := b.NewAddress(privateKeyHex)
-	if err != nil {
-		log.Printf("[%s] NewAddress error: %s\n", b.Name(), err.Error())
-		return nil, err
-	}
-
-	if !b.ValidateAddress(address) {
+	if !b.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid bitcoin address format")
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKeyHex,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (b *BitcoinChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {

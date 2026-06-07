@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"core/helpers"
 	services "core/services/system"
 	"core/types"
 
@@ -42,6 +43,12 @@ func HandleDomainCreate(s *services.DomainService) fiber.Handler {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"success": false,
 				"errors":  err,
+			})
+		}
+		if err := helpers.ValidateWebhookURL(*params.WebhookURL); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"success": false,
+				"error":   "Invalid webhook URL: " + err.Error(),
 			})
 		}
 

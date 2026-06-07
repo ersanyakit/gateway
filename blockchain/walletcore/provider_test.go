@@ -2,6 +2,7 @@ package walletcore
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"core/constants"
@@ -45,6 +46,41 @@ func TestDerivePrivateKeyFormats(t *testing.T) {
 			}
 			if !containsInt(tt.sizes, len(raw)) {
 				t.Fatalf("private key size = %d, want one of %v", len(raw), tt.sizes)
+			}
+		})
+	}
+}
+
+func TestDeriveWalletAddresses(t *testing.T) {
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	tests := []struct {
+		name          string
+		chainID       constants.ChainID
+		path          string
+		addressPrefix string
+	}{
+		{name: "evm", chainID: constants.Ethereum, path: "m/44'/60'/0'/0/0", addressPrefix: "0x"},
+		{name: "tron", chainID: constants.TRON, path: "m/44'/195'/0'/0/0", addressPrefix: "T"},
+		{name: "bitcoin", chainID: constants.Bitcoin, path: "m/86'/0'/0'/0/0", addressPrefix: "bc1p"},
+		{name: "solana", chainID: constants.Solana, path: "m/44'/501'/0'/0'", addressPrefix: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wallet, err := DeriveWallet(mnemonic, tt.path, tt.chainID)
+			if err != nil {
+				if strings.Contains(err.Error(), "walletcorefallback") {
+					t.Skip(err)
+				}
+				t.Fatal(err)
+			}
+			if wallet.PrivateKey == "" {
+				t.Fatal("private key is empty")
+			}
+			if wallet.Address == "" {
+				t.Fatal("address is empty")
+			}
+			if tt.addressPrefix != "" && !strings.HasPrefix(wallet.Address, tt.addressPrefix) {
+				t.Fatalf("address %q does not have prefix %q", wallet.Address, tt.addressPrefix)
 			}
 		})
 	}

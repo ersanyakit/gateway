@@ -74,6 +74,14 @@ func logoFilename(sym string) string {
 		return "matic"
 	case "CHZ":
 		return "chz"
+	case "TBT":
+		return "tbt"
+	case "LGBT":
+		return "lgbt"
+	case "PEPPER":
+		return "pepper"
+	case "CHZINU":
+		return "chzinu"
 	default:
 		return ""
 	}

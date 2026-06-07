@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 go build ./...
 
+# Build Trust Wallet Core native library when missing/stale
+./scripts/build_wallet_core.sh
+
 # Run
 go run main.go
 
@@ -25,6 +28,7 @@ swag init -g main.go -o docs
 ```
 
 The `.env` file (see `.env.sample`) must be present. Required vars: `DATABASE_URL`, `MASTER_KEY`, `PORT`, `MNEMONIC_PHRASE`.
+Wallet mnemonic validation, HD private key derivation, and address generation use Trust Wallet Core by default. The fallback provider is only selected with `-tags walletcorefallback` and should not be used for production wallet generation.
 
 ## Architecture
 

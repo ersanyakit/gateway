@@ -96,6 +96,42 @@ type V1CurrenciesResponse struct {
 	Data   []V1CurrencyItem `json:"data"`
 }
 
+// V1AssetsResponse is returned by GET /api/v1/common/assets and /api/v1/payment/assets.
+type V1AssetsResponse struct {
+	Result string       `json:"result" example:"ok"`
+	Data   V1AssetsData `json:"data"`
+}
+
+type V1AssetsData struct {
+	Assets []V1AssetCatalogItem `json:"assets"`
+}
+
+type V1AssetCatalogItem struct {
+	Symbol      string                  `json:"symbol"      example:"USDT"`
+	Name        string                  `json:"name"        example:"Tether USD"`
+	Type        string                  `json:"type"        example:"erc20"`
+	Decimals    int                     `json:"decimals"    example:"6"`
+	LogoURL     string                  `json:"logo_url"    example:"/static/coins/usdt.svg"`
+	Deployments []V1AssetDeploymentItem `json:"deployments"`
+}
+
+type V1AssetDeploymentItem struct {
+	Symbol       string `json:"symbol"         example:"USDT"`
+	Name         string `json:"name"           example:"Tether USD"`
+	Type         string `json:"type"           example:"erc20"`
+	Chain        string `json:"chain"          example:"Ethereum"`
+	Network      string `json:"network"        example:"ethereum"`
+	ChainID      int64  `json:"chain_id"       example:"1"`
+	Decimals     int    `json:"decimals"       example:"6"`
+	Native       bool   `json:"native"         example:"false"`
+	Enabled      bool   `json:"enabled"        example:"true"`
+	Identifier   string `json:"identifier"     example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	TokenAddress string `json:"token_address"  example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	MintAddress  string `json:"mint_address"   example:""`
+	LogoURL      string `json:"logo_url"       example:"/static/coins/usdt.svg"`
+	ChainLogoURL string `json:"chain_logo_url" example:"/static/chains/ethereumchain.svg"`
+}
+
 // V1FiatCurrencyItem represents a supported fiat denomination.
 type V1FiatCurrencyItem struct {
 	Code   string `json:"code"    example:"USD"`

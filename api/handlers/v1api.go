@@ -20,6 +20,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 // V1APIDeps holds all dependencies used by the v1 REST API endpoints.
@@ -260,9 +261,14 @@ func HandleV1CommonCurrencies(deps V1APIDeps) fiber.Handler {
 		type currencyItem struct {
 			Symbol       string `json:"symbol"`
 			Name         string `json:"name"`
+			Type         string `json:"type"`
 			Network      string `json:"network"`
 			ChainID      int64  `json:"chain_id"`
 			Decimals     uint8  `json:"decimals"`
+			Native       bool   `json:"native"`
+			Identifier   string `json:"identifier"`
+			TokenAddress string `json:"token_address,omitempty"`
+			MintAddress  string `json:"mint_address,omitempty"`
 			LogoURL      string `json:"logo_url,omitempty"`
 			ChainLogoURL string `json:"chain_logo_url,omitempty"`
 		}
@@ -273,15 +279,73 @@ func HandleV1CommonCurrencies(deps V1APIDeps) fiber.Handler {
 				items = append(items, currencyItem{
 					Symbol:       a.GetSymbol(),
 					Name:         a.GetName(),
+					Type:         asset.AssetTypeName(a.GetType()),
 					Network:      chainLabel(a.GetChainID()),
 					ChainID:      int64(a.GetChainID()),
 					Decimals:     a.GetDecimals(),
+					Native:       a.IsNative(),
+					Identifier:   a.GetIdentifier(),
+					TokenAddress: asset.TokenAddress(a),
+					MintAddress:  asset.MintAddress(a),
 					LogoURL:      deps.AssetRegistry.LogoURL(a.GetSymbol()),
 					ChainLogoURL: asset.ChainLogoURL(a.GetChainID()),
 				})
 			}
 		}
 		return v1OK(c, fiber.Map{"currencies": items})
+	}
+}
+
+// HandleV1CommonAssets godoc
+// @Summary Supported assets
+// @Description Lists all supported crypto assets grouped by logical asset with their chain deployments.
+// @Tags Common
+// @Produce json
+// @Success 200 {object} types.V1AssetsResponse
+// @Router /api/v1/common/assets [get]
+func HandleV1CommonAssets(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		return v1OK(c, fiber.Map{"assets": v1AssetCatalog(deps.AssetRegistry)})
+	}
+}
+
+// HandleV1CommonAddressQRCode godoc
+// @Summary Address QR code
+// @Description Returns a PNG QR code containing the supplied wallet address or payment URI payload.
+// @Tags Common
+// @Produce png
+// @Param address query string true "Wallet address or payment URI payload"
+// @Param size query int false "PNG image size in pixels" minimum(128) maximum(1024) default(300)
+// @Success 200 {file} binary "PNG QR code"
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 500 {object} types.V1ErrorResponse
+// @Router /api/v1/common/qrcode [get]
+func HandleV1CommonAddressQRCode() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		address := strings.TrimSpace(c.Query("address"))
+		if address == "" {
+			return v1Err(c, fiber.StatusBadRequest, "address is required")
+		}
+		if len(address) > 2048 {
+			return v1Err(c, fiber.StatusBadRequest, "address is too long")
+		}
+
+		size := 300
+		sizeRaw := strings.TrimSpace(c.Query("size"))
+		if sizeRaw != "" {
+			parsed, err := strconv.Atoi(sizeRaw)
+			if err != nil || parsed < 128 || parsed > 1024 {
+				return v1Err(c, fiber.StatusBadRequest, "size must be between 128 and 1024")
+			}
+			size = parsed
+		}
+
+		png, err := qrcode.Encode(address, qrcode.Medium, size)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "QR generation failed")
+		}
+		c.Set("Content-Type", "image/png")
+		return c.Send(png)
 	}
 }
 
@@ -690,6 +754,17 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/payment/currencies [get]
 func HandleV1PaymentCurrencies(deps V1APIDeps) fiber.Handler {
 	return HandleV1CommonCurrencies(deps)
+}
+
+// HandleV1PaymentAssets godoc
+// @Summary Accepted assets
+// @Description Lists all crypto assets that can be accepted as payment grouped by logical asset with their chain deployments.
+// @Tags Payment
+// @Produce json
+// @Success 200 {object} types.V1AssetsResponse
+// @Router /api/v1/payment/assets [get]
+func HandleV1PaymentAssets(deps V1APIDeps) fiber.Handler {
+	return HandleV1CommonAssets(deps)
 }
 
 // HandleV1PaymentStatusTable godoc
@@ -1247,6 +1322,48 @@ func v1StaticAddressResponse(w *models.Wallet, chainID constants.ChainID, symbol
 		"address":   walletAddressForChain(*w, chainID),
 		"label":     strings.TrimSpace(label),
 	}
+}
+
+func v1AssetCatalog(registry *asset.Registry) []fiber.Map {
+	if registry == nil {
+		return []fiber.Map{}
+	}
+	definitions := registry.ListDefinitions()
+	items := make([]fiber.Map, 0, len(definitions))
+	for _, def := range definitions {
+		deployments := make([]fiber.Map, 0, len(def.Deployments))
+		for _, deployment := range def.Deployments {
+			if !deployment.IsEnabled() {
+				continue
+			}
+			deploymentAsset := asset.NewDeploymentAsset(def, deployment)
+			deployments = append(deployments, fiber.Map{
+				"symbol":         deploymentAsset.GetSymbol(),
+				"name":           deploymentAsset.GetName(),
+				"type":           asset.AssetTypeName(deploymentAsset.GetType()),
+				"chain":          chainLabel(deploymentAsset.GetChainID()),
+				"network":        constants.ChainName(deploymentAsset.GetChainID()),
+				"chain_id":       int64(deploymentAsset.GetChainID()),
+				"decimals":       deploymentAsset.GetDecimals(),
+				"native":         deploymentAsset.IsNative(),
+				"enabled":        deployment.IsEnabled(),
+				"identifier":     deploymentAsset.GetIdentifier(),
+				"token_address":  asset.TokenAddress(deploymentAsset),
+				"mint_address":   asset.MintAddress(deploymentAsset),
+				"logo_url":       registry.LogoURL(deploymentAsset.GetSymbol()),
+				"chain_logo_url": asset.ChainLogoURL(deploymentAsset.GetChainID()),
+			})
+		}
+		items = append(items, fiber.Map{
+			"symbol":      strings.ToUpper(strings.TrimSpace(def.Symbol)),
+			"name":        strings.TrimSpace(def.Name),
+			"type":        asset.AssetTypeName(def.Type),
+			"decimals":    def.Decimals,
+			"logo_url":    registry.LogoURL(def.Symbol),
+			"deployments": deployments,
+		})
+	}
+	return items
 }
 
 func findAssetByChain(registry *asset.Registry, chainName string) asset.Asset {

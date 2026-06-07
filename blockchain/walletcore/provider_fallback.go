@@ -1,4 +1,4 @@
-//go:build !trustwalletcore
+//go:build walletcorefallback
 
 package walletcore
 
@@ -49,6 +49,10 @@ func (fallbackProvider) DerivePrivateKey(mnemonic, derivationPath string, chainI
 		return "", err
 	}
 	return hex.EncodeToString(child.Key), nil
+}
+
+func (fallbackProvider) DeriveWallet(mnemonic, derivationPath string, chainID constants.ChainID) (*DerivedWallet, error) {
+	return nil, fmt.Errorf("walletcorefallback cannot derive wallet addresses; build with Trust Wallet Core")
 }
 
 func deriveSolanaPrivateKey(mnemonic, derivationPath string) (string, error) {

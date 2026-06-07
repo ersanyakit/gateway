@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -73,25 +72,17 @@ func (s *TronChain) Create(ctx context.Context) (*blockchain.WalletDetails, erro
 	}
 
 	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, 0, 0)
-	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
-	address, err := s.NewAddress(privateKey)
-	if err != nil {
-		log.Printf("[%s] NewAddress error:%s \n", s.BaseChain.Name(), err.Error())
-	}
 
-	if !s.ValidateAddress(address) {
+	if !s.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid tron address format")
 
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
@@ -103,25 +94,17 @@ func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId 
 	}
 
 	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, hdAccountId, hdWalletId)
-	privateKey, err := s.BaseChain.GetDerivedPrivateKey(mnemonic, hdPath)
+	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
 	}
-	address, err := s.NewAddress(privateKey)
-	if err != nil {
-		log.Printf("[%s] NewAddress error:%s \n", s.BaseChain.Name(), err.Error())
-	}
 
-	if !s.ValidateAddress(address) {
+	if !s.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid tron address format")
 
 	}
 
-	return &blockchain.WalletDetails{
-		Address:        address,
-		PrivateKey:     privateKey,
-		MnemonicPhrase: mnemonic,
-	}, nil
+	return wallet, nil
 }
 
 func (s *TronChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
