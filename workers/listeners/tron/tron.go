@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/big"
@@ -48,6 +49,7 @@ type RpcListener struct {
 	conn   *grpc.ClientConn
 	client *walletClient
 	apiKey string
+	connMu sync.RWMutex
 
 	mu      sync.Mutex
 	quit    chan struct{}
@@ -58,6 +60,8 @@ type RpcListener struct {
 type walletClient struct {
 	cc grpc.ClientConnInterface
 }
+
+var errTronClientNotConnected = errors.New("tron grpc client is not connected")
 
 type emptyMessage struct{}
 
@@ -93,18 +97,27 @@ func newWalletClient(cc grpc.ClientConnInterface) *walletClient {
 }
 
 func (c *walletClient) getNowBlock(ctx context.Context) (*pb.Block, error) {
+	if c == nil || c.cc == nil {
+		return nil, errTronClientNotConnected
+	}
 	out := new(pb.Block)
 	err := c.cc.Invoke(ctx, "/protocol.Wallet/GetNowBlock", &emptyMessage{}, out, grpc.MaxCallRecvMsgSize(32*1024*1024))
 	return out, err
 }
 
 func (c *walletClient) getBlockByNum(ctx context.Context, num int64) (*pb.Block, error) {
+	if c == nil || c.cc == nil {
+		return nil, errTronClientNotConnected
+	}
 	out := new(pb.Block)
 	err := c.cc.Invoke(ctx, "/protocol.Wallet/GetBlockByNum", &numberMessage{Num: num}, out, grpc.MaxCallRecvMsgSize(32*1024*1024))
 	return out, err
 }
 
 func (c *walletClient) getTransactionInfoByBlockNum(ctx context.Context, num int64) (*transactionInfoList, error) {
+	if c == nil || c.cc == nil {
+		return nil, errTronClientNotConnected
+	}
 	out := new(transactionInfoList)
 	err := c.cc.Invoke(ctx, "/protocol.Wallet/GetTransactionInfoByBlockNum", &numberMessage{Num: num}, out, grpc.MaxCallRecvMsgSize(32*1024*1024))
 	return out, err
@@ -139,6 +152,7 @@ func (r *RpcListener) Start() error {
 	if r.running {
 		return fmt.Errorf("listener already running")
 	}
+	r.quit = make(chan struct{})
 	if err := r.connect(); err != nil {
 		return err
 	}
@@ -157,10 +171,7 @@ func (r *RpcListener) Stop() error {
 	}
 	close(r.quit)
 	r.running = false
-	if r.conn != nil {
-		return r.conn.Close()
-	}
-	return nil
+	return r.closeClient()
 }
 
 func (r *RpcListener) Events() <-chan interface{} {
@@ -186,8 +197,7 @@ func (r *RpcListener) connect() error {
 			continue
 		}
 
-		r.conn = conn
-		r.client = client
+		r.setClient(conn, client)
 		log.Printf("[tron] connected to fullnode grpc %s", endpoint)
 		return nil
 	}
@@ -195,6 +205,35 @@ func (r *RpcListener) connect() error {
 		lastErr = fmt.Errorf("no tron gRPC endpoints configured")
 	}
 	return lastErr
+}
+
+func (r *RpcListener) currentClient() (*walletClient, error) {
+	r.connMu.RLock()
+	client := r.client
+	r.connMu.RUnlock()
+	if client == nil {
+		return nil, errTronClientNotConnected
+	}
+	return client, nil
+}
+
+func (r *RpcListener) setClient(conn *grpc.ClientConn, client *walletClient) {
+	r.connMu.Lock()
+	r.conn = conn
+	r.client = client
+	r.connMu.Unlock()
+}
+
+func (r *RpcListener) closeClient() error {
+	r.connMu.Lock()
+	conn := r.conn
+	r.conn = nil
+	r.client = nil
+	r.connMu.Unlock()
+	if conn != nil {
+		return conn.Close()
+	}
+	return nil
 }
 
 func (r *RpcListener) grpcContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -245,11 +284,7 @@ func (r *RpcListener) pollLoop() {
 }
 
 func (r *RpcListener) reconnect() {
-	if r.conn != nil {
-		_ = r.conn.Close()
-		r.conn = nil
-		r.client = nil
-	}
+	_ = r.closeClient()
 	for {
 		select {
 		case <-r.quit:
@@ -258,7 +293,13 @@ func (r *RpcListener) reconnect() {
 			if err := r.connect(); err == nil {
 				return
 			}
-			time.Sleep(3 * time.Second)
+			timer := time.NewTimer(3 * time.Second)
+			select {
+			case <-r.quit:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
 		}
 	}
 }
@@ -306,7 +347,11 @@ func (r *RpcListener) catchUp() error {
 }
 
 func (r *RpcListener) latestBlockNumber(ctx context.Context) (int64, error) {
-	block, err := r.client.getNowBlock(ctx)
+	client, err := r.currentClient()
+	if err != nil {
+		return 0, err
+	}
+	block, err := client.getNowBlock(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -314,11 +359,15 @@ func (r *RpcListener) latestBlockNumber(ctx context.Context) (int64, error) {
 }
 
 func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error {
-	block, err := r.client.getBlockByNum(ctx, blockNumber)
+	client, err := r.currentClient()
 	if err != nil {
 		return err
 	}
-	infoList, err := r.client.getTransactionInfoByBlockNum(ctx, blockNumber)
+	block, err := client.getBlockByNum(ctx, blockNumber)
+	if err != nil {
+		return err
+	}
+	infoList, err := client.getTransactionInfoByBlockNum(ctx, blockNumber)
 	if err != nil {
 		return err
 	}

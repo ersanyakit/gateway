@@ -212,6 +212,7 @@ func NewRouter(db *gorm.DB) *Router {
 	registerMerchantPortal("/merchant")
 	r.fiber.Get("/auth/oidc/login", handlers.HandleOIDCLogin())
 	r.fiber.Get("/auth/oidc/callback", handlers.HandleOIDCCallback(r.MerchantService, r.ActivityLogRepo, dealerDeps))
+	r.fiber.Get("/admin/auth/oidc/login", handlers.HandleAdminOIDCLogin())
 	r.fiber.Get("/admin/login", handlers.HandleAdminLogin())
 	r.fiber.Post("/admin/login", handlers.HandleAdminLoginSubmit(r.AdminRepo))
 	r.fiber.Get("/admin/logout", handlers.HandleAdminLogout())
@@ -236,6 +237,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/rescan", handlers.HandleAdminTxRescan(dealerDeps))
 	r.fiber.Post("/admin/webhooks/:id/replay", handlers.HandleAdminWebhookReplay(dealerDeps))
 	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))
+	r.fiber.Post("/admin/test-deposit", handlers.HandleAdminTestDeposit(dealerDeps))
 	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 

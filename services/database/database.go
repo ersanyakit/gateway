@@ -77,11 +77,6 @@ func InitDB() error {
 }
 
 func Migrate(app *application.App) error {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") &&
-		strings.TrimSpace(os.Getenv("ALLOW_AUTO_MIGRATE_IN_PRODUCTION")) != "true" {
-		return fmt.Errorf("AutoMigrate is disabled in production; run versioned SQL migrations or set ALLOW_AUTO_MIGRATE_IN_PRODUCTION=true explicitly")
-	}
-
 	fmt.Println("EnableExtensions:Begin")
 
 	extensions := map[string]string{
@@ -119,7 +114,31 @@ func Migrate(app *application.App) error {
 		return err
 	}
 
+	if err := VerifySchema(context.Background(), app.DB); err != nil {
+		return err
+	}
+
 	return ReconcileChainStates(context.Background(), app.DB)
+}
+
+func VerifySchema(ctx context.Context, db *gorm.DB) error {
+	requiredColumns := []struct {
+		table string
+		model any
+		field string
+	}{
+		{table: "transactions", model: &models.Transaction{}, field: "WebhookLockedUntil"},
+		{table: "payment_sessions", model: &models.PaymentSession{}, field: "WebhookLockedUntil"},
+		{table: "admins", model: &models.Admin{}, field: "TOTPSecret"},
+	}
+
+	migrator := db.WithContext(ctx).Migrator()
+	for _, column := range requiredColumns {
+		if !migrator.HasColumn(column.model, column.field) {
+			return fmt.Errorf("schema check failed: %s.%s is missing after AutoMigrate", column.table, column.field)
+		}
+	}
+	return nil
 }
 
 func ReconcileChainStates(ctx context.Context, db *gorm.DB) error {

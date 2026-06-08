@@ -53,9 +53,14 @@ document.addEventListener('DOMContentLoaded', function () {
       if (navigator.clipboard) {
         navigator.clipboard.writeText(value);
       }
+      var originalText = button.getAttribute('data-copy-original-text');
+      if (originalText === null) {
+        originalText = button.innerText;
+        button.setAttribute('data-copy-original-text', originalText);
+      }
       button.innerText = 'Kopyalandı';
       window.setTimeout(function () {
-        button.innerText = 'Kopyala';
+        button.innerText = originalText;
       }, 1200);
     });
   });

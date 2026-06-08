@@ -719,7 +719,7 @@ func NewApp() (*coreApplication.App, error) {
 			Router: routes.NewRouter(coreDB.DB),
 		}
 
-		migrateFlag := flag.Bool("migrate", false, "Run DB migrations")
+		migrateFlag := flag.Bool("migrate", false, "Run DB migrations (also runs automatically on startup)")
 		seedFlag := flag.Bool("seed", false, "Run DB seed")
 		installFlag := flag.Bool("install", false, "Run DB migrate & seed")
 
@@ -731,19 +731,18 @@ func NewApp() (*coreApplication.App, error) {
 		}
 
 		if *migrateFlag {
-			fmt.Println("Migration:BEGIN")
-			err = coreDB.Migrate(coreApplication.CORE)
-			if err != nil {
-				fmt.Println(err)
-			}
-
-			fmt.Println("Migration:END")
+			log.Println("Migration flag detected; startup migration check is enabled by default")
 		}
+		log.Println("Migration:BEGIN")
+		if err = coreDB.Migrate(coreApplication.CORE); err != nil {
+			return nil, err
+		}
+		log.Println("Migration:END")
 
 		if *seedFlag {
 			err = coreDB.Seed(coreApplication.CORE)
 			if err != nil {
-				fmt.Println(err)
+				return nil, err
 			}
 		}
 	}

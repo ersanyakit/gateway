@@ -164,6 +164,123 @@ func (r *LedgerRepo) PostDepositAvailable(ctx context.Context, session models.Pa
 	return r.db.WithContext(ctx).Create(&entries).Error
 }
 
+func (r *LedgerRepo) PostManualDeposit(ctx context.Context, txModel models.Transaction) error {
+	if txModel.MerchantID == nil || txModel.Amount == "" || !r.amountIsPositive(txModel.Amount) {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(dbtx *gorm.DB) error {
+		domainID := txModel.DomainID
+		pendingKey := "manual-deposit-pending:" + txModel.UniqueHash
+		availableKey := "manual-deposit-available:" + txModel.UniqueHash
+		for _, key := range []string{pendingKey, availableKey} {
+			exists, err := r.existsWithDB(ctx, dbtx, key)
+			if err != nil || exists {
+				return err
+			}
+		}
+		if err := r.lockLedgerAsset(ctx, dbtx, *txModel.MerchantID, domainID, txModel.ChainID, txModel.Token); err != nil {
+			return err
+		}
+		now := time.Now()
+		walletID := txModel.WalletID
+		entries := []models.LedgerEntry{
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositPending,
+				Account:               models.LedgerAccountMerchantPending,
+				Direction:             models.LedgerDirectionCredit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        pendingKey,
+				Reference:             txModel.UniqueHash,
+				Description:           "Manual admin test deposit",
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositPending,
+				Account:               models.LedgerAccountPlatformClearing,
+				Direction:             models.LedgerDirectionDebit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        pendingKey,
+				Reference:             txModel.UniqueHash,
+				Description:           "Manual admin test deposit",
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositAvailable,
+				Account:               models.LedgerAccountMerchantAvailable,
+				Direction:             models.LedgerDirectionCredit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        availableKey,
+				Reference:             txModel.UniqueHash,
+				Description:           "Manual admin test deposit",
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositAvailable,
+				Account:               models.LedgerAccountMerchantPending,
+				Direction:             models.LedgerDirectionDebit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        availableKey,
+				Reference:             txModel.UniqueHash,
+				Description:           "Manual admin test deposit",
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+		}
+		return dbtx.WithContext(ctx).Create(&entries).Error
+	})
+}
+
 func (r *LedgerRepo) CreateWithdrawalHold(ctx context.Context, request models.WithdrawalRequest) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return r.createWithdrawalHold(ctx, tx, request)

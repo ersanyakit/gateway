@@ -5,12 +5,15 @@ import (
 	"core/helpers"
 	"core/models"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+var ErrAdminInactive = errors.New("admin account is inactive")
 
 type AdminRepo struct {
 	db *gorm.DB
@@ -23,6 +26,8 @@ func NewAdminRepo(db *gorm.DB) *AdminRepo {
 func (r *AdminRepo) DB() *gorm.DB { return r.db }
 
 func (r *AdminRepo) Create(ctx context.Context, email, name, rawPassword string) (*models.Admin, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
 	if email == "" || rawPassword == "" {
 		return nil, errors.New("email and password required")
 	}
@@ -46,10 +51,22 @@ func (r *AdminRepo) Create(ctx context.Context, email, name, rawPassword string)
 }
 
 func (r *AdminRepo) FindByEmail(ctx context.Context, email string) (*models.Admin, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
 	var admin models.Admin
 	if err := r.db.WithContext(ctx).First(&admin, "email = ? AND is_active = true", email).Error; err != nil {
 		return nil, err
 	}
+	decryptAdminTOTPSecret(&admin)
+	return &admin, nil
+}
+
+func (r *AdminRepo) FindAnyByEmail(ctx context.Context, email string) (*models.Admin, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var admin models.Admin
+	if err := r.db.WithContext(ctx).First(&admin, "email = ?", email).Error; err != nil {
+		return nil, err
+	}
+	decryptAdminTOTPSecret(&admin)
 	return &admin, nil
 }
 
@@ -58,12 +75,7 @@ func (r *AdminRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Admin, 
 	if err := r.db.WithContext(ctx).First(&admin, "id = ?", id).Error; err != nil {
 		return nil, err
 	}
-	// Decrypt TOTP secret if present. Falls back to plaintext for pre-migration records.
-	if admin.TOTPSecret != "" {
-		if decrypted, err := helpers.DecryptSecret(admin.TOTPSecret); err == nil {
-			admin.TOTPSecret = decrypted
-		}
-	}
+	decryptAdminTOTPSecret(&admin)
 	return &admin, nil
 }
 
@@ -80,6 +92,16 @@ func (r *AdminRepo) SetActive(ctx context.Context, id uuid.UUID, active bool) er
 }
 
 func (r *AdminRepo) SaveTOTPSecret(ctx context.Context, id uuid.UUID, secret string) error {
+	encrypted, err := helpers.EncryptSecret(secret)
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&models.Admin{}).
+		Where("id = ?", id).
+		Updates(map[string]any{"totp_secret": encrypted, "totp_enabled": false, "updated_at": time.Now()}).Error
+}
+
+func (r *AdminRepo) EnableTOTPSecret(ctx context.Context, id uuid.UUID, secret string) error {
 	encrypted, err := helpers.EncryptSecret(secret)
 	if err != nil {
 		return err
@@ -116,10 +138,37 @@ func (r *AdminRepo) Authenticate(ctx context.Context, email, rawPassword string)
 	return admin, nil
 }
 
+func (r *AdminRepo) EnsureOIDCAdmin(ctx context.Context, email, name string) (*models.Admin, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
+	if email == "" {
+		return nil, errors.New("email required")
+	}
+	admin, err := r.FindAnyByEmail(ctx, email)
+	if err == nil {
+		if !admin.IsActive {
+			return nil, ErrAdminInactive
+		}
+		return admin, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if len(name) < 3 {
+		name = strings.Split(email, "@")[0]
+	}
+	if len(name) < 3 {
+		name = "OIDC Admin"
+	}
+	return r.Create(ctx, email, name, uuid.NewString()+uuid.NewString())
+}
+
 // EnsureBootstrapAdmin creates the first admin if no admin exists.
 // Uses a transaction to prevent the race where two simultaneous startups both
 // read count=0 and both try to insert.
 func (r *AdminRepo) EnsureBootstrapAdmin(ctx context.Context, email, name, rawPassword string) (*models.Admin, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	name = strings.TrimSpace(name)
 	var created *models.Admin
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var count int64
@@ -149,4 +198,13 @@ func (r *AdminRepo) EnsureBootstrapAdmin(ctx context.Context, email, name, rawPa
 		return nil
 	})
 	return created, err
+}
+
+func decryptAdminTOTPSecret(admin *models.Admin) {
+	if admin == nil || admin.TOTPSecret == "" {
+		return
+	}
+	if decrypted, err := helpers.DecryptSecret(admin.TOTPSecret); err == nil {
+		admin.TOTPSecret = decrypted
+	}
 }

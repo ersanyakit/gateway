@@ -19,10 +19,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	htmltemplate "html/template"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -41,8 +43,17 @@ const adminPendingTOTPCookie = "admin_totp_pending" // temp: holds admin ID awai
 const adminSetupTOTPCookie = "admin_totp_setup"     // temp: holds admin ID during TOTP setup
 const oidcStateCookie = "oidc_state"
 const oidcNonceCookie = "oidc_nonce"
+const oidcPortalCookie = "oidc_portal"
 const flashSuccessCookie = "flash_success"
 const flashErrorCookie = "flash_error"
+const flashDebugCookie = "flash_debug"
+
+const adminSessionDefaultTTL = 8 * time.Hour
+const adminSessionRememberTTL = 30 * 24 * time.Hour
+const adminPendingTOTPTTL = 5 * time.Minute
+const adminSetupTOTPTTL = 10 * time.Minute
+const oidcPortalMerchant = "merchant"
+const oidcPortalAdmin = "admin"
 
 type DealerDeps struct {
 	MerchantService     *services.MerchantService
@@ -128,6 +139,7 @@ type DealerPageData struct {
 	AdminActivityLogs []DealerAuditLogView
 	AdminWebhooks     []DealerWebhookDeliveryView
 	AdminRefunds      []DealerRefundView
+	AdminAssets       []DealerAssetOption
 
 	AdminPanel          string
 	AdminOverviewURL    string
@@ -142,6 +154,7 @@ type DealerPageData struct {
 	AdminWebhooksURL    string
 	AdminRefundsURL     string
 	AdminRescanURL      string
+	AdminTestDepositURL string
 	DepositCount        int
 	WithdrawalCount     int
 
@@ -155,8 +168,11 @@ type DealerPageData struct {
 	AdminMerchantFilter      string
 	AdminTOTPEnabled         bool
 	AdminSecurityURL         string
+	AdminLoginEmail          string
+	AdminRememberMe          bool
+	OIDCDebug                string
 	TOTPSecret               string
-	TOTPQRDataURL            string
+	TOTPQRDataURL            htmltemplate.URL
 	AdminDepositFromFilter   string
 	AdminDepositToFilter     string
 	AdminDepositHashFilter   string
@@ -313,6 +329,15 @@ type DealerRefundView struct {
 	CreatedAt   string
 }
 
+type DealerAssetOption struct {
+	Value    string
+	Label    string
+	Chain    string
+	Symbol   string
+	Token    string
+	Decimals uint8
+}
+
 type DealerBalanceView struct {
 	Chain         string
 	ChainLogoURL  string
@@ -376,13 +401,31 @@ type DealerAuditLogView struct {
 }
 
 type oidcUserInfo struct {
-	Sub           string       `json:"sub"`
-	Email         string       `json:"email"`
-	EmailVerified flexibleBool `json:"email_verified"`
-	Name          string       `json:"name"`
+	Sub           string              `json:"sub"`
+	Email         string              `json:"email"`
+	EmailVerified flexibleBool        `json:"email_verified"`
+	Name          string              `json:"name"`
+	Roles         stringList          `json:"roles"`
+	Role          stringList          `json:"role"`
+	RoleURI       stringList          `json:"http://schemas.microsoft.com/ws/2008/06/identity/claims/role"`
+	Groups        stringList          `json:"groups"`
+	Permissions   stringList          `json:"permissions"`
+	RoleSources   map[string][]string `json:"-"`
+}
+
+type adminSessionPayloadData struct {
+	Email     string `json:"email"`
+	ExpiresAt int64  `json:"expires_at"`
+}
+
+type adminTempSessionPayloadData struct {
+	AdminID    string `json:"admin_id"`
+	RememberMe bool   `json:"remember_me"`
 }
 
 type flexibleBool bool
+
+type stringList []string
 
 func (b *flexibleBool) UnmarshalJSON(data []byte) error {
 	value := strings.TrimSpace(string(data))
@@ -399,6 +442,38 @@ func (b *flexibleBool) UnmarshalJSON(data []byte) error {
 	}
 	*b = flexibleBool(parsed)
 	return nil
+}
+
+func (s *stringList) UnmarshalJSON(data []byte) error {
+	value := strings.TrimSpace(string(data))
+	if value == "" || value == "null" {
+		*s = nil
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*s = normalizeStringList(list)
+		return nil
+	}
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		*s = normalizeStringList(strings.FieldsFunc(single, func(r rune) bool {
+			return r == ',' || r == ' '
+		}))
+		return nil
+	}
+	return nil
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func HandleDealerHome() fiber.Handler {
@@ -1252,7 +1327,7 @@ func provisionMerchantReserve(ctx context.Context, merchantID uuid.UUID, deps De
 
 func HandleAdminLogin() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		data := dealerPageData("Admin girişi", "admin-login")
+		data := adminLoginPageData()
 		applyFlash(c, &data)
 		return c.Render("dealer/admin_login", data, "dealer/layout")
 	}
@@ -1262,10 +1337,13 @@ func HandleAdminLoginSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		email := strings.TrimSpace(c.FormValue("email"))
 		password := c.FormValue("password")
+		rememberMe := adminRememberRequested(c)
 
 		renderErr := func(msg string) error {
-			data := dealerPageData("Admin girişi", "admin-login")
+			data := adminLoginPageData()
 			data.Error = msg
+			data.AdminLoginEmail = email
+			data.AdminRememberMe = rememberMe
 			return c.Status(fiber.StatusUnauthorized).Render("dealer/admin_login", data, "dealer/layout")
 		}
 
@@ -1273,44 +1351,33 @@ func HandleAdminLoginSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 		if err != nil {
 			return renderErr("Admin bilgileri hatalı.")
 		}
-
-		if admin.TOTPEnabled {
-			// TOTP required — store pending admin ID, redirect to verify page.
-			val := signedDealerSessionValue(admin.ID.String())
-			c.Cookie(&fiber.Cookie{
-				Name:     adminPendingTOTPCookie,
-				Value:    val,
-				HTTPOnly: true,
-				SameSite: "Lax",
-				MaxAge:   300,
-			})
-			return c.Redirect().To("/admin/2fa/verify")
-		}
-
-		// TOTP not set up yet — redirect to setup.
-		val := signedDealerSessionValue(admin.ID.String())
-		c.Cookie(&fiber.Cookie{
-			Name:     adminSetupTOTPCookie,
-			Value:    val,
-			HTTPOnly: true,
-			SameSite: "Lax",
-			MaxAge:   600,
-		})
-		return c.Redirect().To("/admin/2fa/setup")
+		return continueAdminLogin(c, admin, rememberMe)
 	}
 }
 
-func totpQRDataURL(otpauthURL string) string {
+func continueAdminLogin(c fiber.Ctx, admin *models.Admin, rememberMe bool) error {
+	if admin == nil {
+		return redirectWithError(c, "/admin/login", "Admin bulunamadı.")
+	}
+	if admin.TOTPEnabled {
+		setAdminTempCookie(c, adminPendingTOTPCookie, admin.ID, rememberMe, adminPendingTOTPTTL)
+		return c.Redirect().To("/admin/2fa/verify")
+	}
+	setAdminTempCookie(c, adminSetupTOTPCookie, admin.ID, rememberMe, adminSetupTOTPTTL)
+	return c.Redirect().To("/admin/2fa/setup")
+}
+
+func totpQRDataURL(otpauthURL string) htmltemplate.URL {
 	png, err := qrcode.Encode(otpauthURL, qrcode.Medium, 256)
 	if err != nil {
 		return ""
 	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
+	return htmltemplate.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
 }
 
 func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		adminID, ok := verifyAdminTempCookie(c, adminSetupTOTPCookie)
+		adminID, _, ok := verifyAdminTempLoginCookie(c, adminSetupTOTPCookie)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
 		}
@@ -1319,7 +1386,6 @@ func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 			return redirectWithError(c, "/admin/login", "Admin bulunamadı.")
 		}
 
-		// Generate a new TOTP secret if one doesn't exist.
 		secret := admin.TOTPSecret
 		if secret == "" {
 			key, err := totp.Generate(totp.GenerateOpts{
@@ -1330,18 +1396,22 @@ func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 				return redirectWithError(c, "/admin/login", "2FA anahtar oluşturulamadı.")
 			}
 			secret = key.Secret()
-			// Save provisionally (not enabled yet until user confirms code).
-			_ = adminRepo.SaveTOTPSecret(c.Context(), adminID, secret)
+			if err := adminRepo.SaveTOTPSecret(c.Context(), adminID, secret); err != nil {
+				return redirectWithError(c, "/admin/login", "2FA anahtarı kaydedilemedi: "+err.Error())
+			}
 		}
 
 		qrURL := fmt.Sprintf(
 			"otpauth://totp/Gateway%%20Admin:%s?secret=%s&issuer=Gateway%%20Admin",
 			url.QueryEscape(admin.Email), secret,
 		)
+		qrDataURL := totpQRDataURL(qrURL)
+		if qrDataURL == "" {
+			return redirectWithError(c, "/admin/login", "2FA QR kodu oluşturulamadı.")
+		}
 		data := dealerPageData("2FA kurulum", "admin-2fa-setup")
-		data.Success = qrURL
 		data.TOTPSecret = secret
-		data.TOTPQRDataURL = totpQRDataURL(qrURL)
+		data.TOTPQRDataURL = qrDataURL
 		data.MerchantEmail = admin.Email
 		return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
 	}
@@ -1349,7 +1419,7 @@ func HandleAdminTOTPSetup(adminRepo *repositories.AdminRepo) fiber.Handler {
 
 func HandleAdminTOTPSetupSubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		adminID, ok := verifyAdminTempCookie(c, adminSetupTOTPCookie)
+		adminID, rememberMe, ok := verifyAdminTempLoginCookie(c, adminSetupTOTPCookie)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
 		}
@@ -1366,23 +1436,22 @@ func HandleAdminTOTPSetupSubmit(adminRepo *repositories.AdminRepo) fiber.Handler
 				"otpauth://totp/Gateway%%20Admin:%s?secret=%s&issuer=Gateway%%20Admin",
 				url.QueryEscape(admin.Email), admin.TOTPSecret,
 			)
-			data.Success = qrURL
 			data.TOTPSecret = admin.TOTPSecret
 			data.TOTPQRDataURL = totpQRDataURL(qrURL)
 			return c.Render("dealer/admin_2fa_setup", data, "dealer/layout")
 		}
-		// Enable TOTP.
-		_ = adminRepo.SaveTOTPSecret(c.Context(), adminID, admin.TOTPSecret)
-		// Clear setup cookie, issue full session.
-		c.Cookie(&fiber.Cookie{Name: adminSetupTOTPCookie, Value: "", MaxAge: -1, HTTPOnly: true})
-		setAdminSessionCookie(c, admin.Email)
+		if err := adminRepo.EnableTOTPSecret(c.Context(), adminID, admin.TOTPSecret); err != nil {
+			return redirectWithError(c, "/admin/login", "2FA etkinleştirilemedi: "+err.Error())
+		}
+		clearAdminTempCookie(c, adminSetupTOTPCookie)
+		setAdminSessionCookie(c, admin.Email, rememberMe)
 		return redirectWithSuccess(c, "/admin", "2FA başarıyla etkinleştirildi.")
 	}
 }
 
 func HandleAdminTOTPVerify(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		_, ok := verifyAdminTempCookie(c, adminPendingTOTPCookie)
+		_, _, ok := verifyAdminTempLoginCookie(c, adminPendingTOTPCookie)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
 		}
@@ -1394,7 +1463,7 @@ func HandleAdminTOTPVerify(adminRepo *repositories.AdminRepo) fiber.Handler {
 
 func HandleAdminTOTPVerifySubmit(adminRepo *repositories.AdminRepo) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		adminID, ok := verifyAdminTempCookie(c, adminPendingTOTPCookie)
+		adminID, rememberMe, ok := verifyAdminTempLoginCookie(c, adminPendingTOTPCookie)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Oturum süresi doldu.")
 		}
@@ -1406,8 +1475,8 @@ func HandleAdminTOTPVerifySubmit(adminRepo *repositories.AdminRepo) fiber.Handle
 		if !totp.Validate(code, admin.TOTPSecret) {
 			return redirectWithError(c, "/admin/2fa/verify", "Kod hatalı. Lütfen tekrar deneyin.")
 		}
-		c.Cookie(&fiber.Cookie{Name: adminPendingTOTPCookie, Value: "", MaxAge: -1, HTTPOnly: true})
-		setAdminSessionCookie(c, admin.Email)
+		clearAdminTempCookie(c, adminPendingTOTPCookie)
+		setAdminSessionCookie(c, admin.Email, rememberMe)
 		return c.Redirect().To("/admin")
 	}
 }
@@ -1497,14 +1566,7 @@ func HandleAdminTOTPEnable(deps DealerDeps) fiber.Handler {
 		if admin.TOTPEnabled {
 			return redirectWithError(c, "/admin/security", "2FA zaten etkin.")
 		}
-		val := signedDealerSessionValue(admin.ID.String())
-		c.Cookie(&fiber.Cookie{
-			Name:     adminSetupTOTPCookie,
-			Value:    val,
-			HTTPOnly: true,
-			SameSite: "Lax",
-			MaxAge:   600,
-		})
+		setAdminTempCookie(c, adminSetupTOTPCookie, admin.ID, false, adminSetupTOTPTTL)
 		return c.Redirect().To("/admin/2fa/setup")
 	}
 }
@@ -1560,15 +1622,20 @@ func HandleAdminTOTPDisableSubmit(deps DealerDeps) fiber.Handler {
 
 // verifyAdminTempCookie decrypts a temporary admin cookie returning the admin UUID.
 func verifyAdminTempCookie(c fiber.Ctx, cookieName string) (uuid.UUID, bool) {
+	adminID, _, ok := verifyAdminTempLoginCookie(c, cookieName)
+	return adminID, ok
+}
+
+func verifyAdminTempLoginCookie(c fiber.Ctx, cookieName string) (uuid.UUID, bool, bool) {
 	val, err := verifyDealerSessionValue(c.Cookies(cookieName))
 	if err != nil || val == "" {
-		return uuid.Nil, false
+		return uuid.Nil, false, false
 	}
-	id, err := uuid.Parse(val)
+	id, rememberMe, err := parseAdminTempSessionPayload(val)
 	if err != nil {
-		return uuid.Nil, false
+		return uuid.Nil, false, false
 	}
-	return id, true
+	return id, rememberMe, true
 }
 
 // adminListToMerchantViews repurposes DealerAdminMerchantView for the admin accounts list.
@@ -1699,6 +1766,11 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		case "sweep":
 			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
 			data.WithdrawalWallets = dealerWalletViews(wallets)
+
+		case "test-deposit":
+			wallets, _ := deps.WalletRepo.List(c.Context(), 500)
+			data.AdminWallets = dealerWalletViews(wallets)
+			data.AdminAssets = dealerAssetOptions(deps.AssetRegistry)
 
 		case "rescan":
 			// Form-only panel.
@@ -1860,6 +1932,108 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.sweep", "success", "wallet", walletID, "Tx: "+result.TxHash)
 		}
 		return redirectWithSuccess(c, "/admin/sweep", "Transfer gönderildi. Tx: "+result.TxHash)
+	}
+}
+
+func HandleAdminTestDeposit(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if deps.WalletRepo == nil || deps.TransactionRepo == nil || deps.LedgerRepo == nil || deps.Notifier == nil {
+			return redirectWithError(c, "/admin/test-deposit", "Test deposit altyapısı hazır değil.")
+		}
+
+		walletID, err := uuid.Parse(strings.TrimSpace(c.FormValue("wallet_id")))
+		if err != nil {
+			return redirectWithError(c, "/admin/test-deposit", "Geçerli wallet seçmelisin.")
+		}
+		wallet, err := deps.WalletRepo.FindByID(c.Context(), walletID)
+		if err != nil {
+			return redirectWithError(c, "/admin/test-deposit", "Wallet bulunamadı: "+err.Error())
+		}
+
+		selectedAsset, err := parseAdminAssetSelection(deps.AssetRegistry, c.FormValue("asset"))
+		if err != nil {
+			return redirectWithError(c, "/admin/test-deposit", err.Error())
+		}
+		chainID := selectedAsset.GetChainID()
+		toAddress := repositories.WalletAddressForChainID(*wallet, chainID)
+		if strings.TrimSpace(toAddress) == "" {
+			return redirectWithError(c, "/admin/test-deposit", "Seçilen wallet için "+constants.ChainName(chainID)+" adresi yok.")
+		}
+
+		amount := strings.TrimSpace(c.FormValue("amount"))
+		amountRaw, err := types.DecimalToRaw(amount, selectedAsset.GetDecimals())
+		if err != nil {
+			return redirectWithError(c, "/admin/test-deposit", "Tutar geçersiz: "+err.Error())
+		}
+
+		token := tokenForSelectedAsset(selectedAsset)
+		symbol := strings.ToUpper(strings.TrimSpace(selectedAsset.GetSymbol()))
+		status := models.TransactionStatusConfirmed
+		hash := "manual-" + uuid.NewString()
+		block := "0"
+		blockHash := hash
+		fromAddress := "admin-manual-test"
+		txParam := types.TransactionParam{
+			Context:   c.Context(),
+			ChainID:   chainID,
+			Hash:      &hash,
+			Block:     &block,
+			BlockHash: &blockHash,
+			Token:     token,
+			Symbol:    &symbol,
+			Decimals:  selectedAsset.GetDecimals(),
+			From:      &fromAddress,
+			To:        &toAddress,
+			Amount:    &amountRaw,
+			Status:    &status,
+		}
+
+		if err := deps.TransactionRepo.Create(txParam); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.create", "failed", "transaction", hash, err.Error())
+			return redirectWithError(c, "/admin/test-deposit", "Transaction oluşturulamadı: "+err.Error())
+		}
+		uniqueHash, err := deps.TransactionRepo.UniqueHash(txParam)
+		if err != nil {
+			return redirectWithError(c, "/admin/test-deposit", "Unique hash üretilemedi: "+err.Error())
+		}
+		if _, err := deps.TransactionRepo.BindWallet(c.Context(), uniqueHash, "manual_test_deposit", wallet); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.bind", "failed", "transaction", hash, err.Error())
+			return redirectWithError(c, "/admin/test-deposit", "Wallet bind başarısız: "+err.Error())
+		}
+		txModel, err := deps.TransactionRepo.MarkFinality(c.Context(), uniqueHash, 1, 1, true)
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.finality", "failed", "transaction", hash, err.Error())
+			return redirectWithError(c, "/admin/test-deposit", "Finality işlenemedi: "+err.Error())
+		}
+		if err := deps.LedgerRepo.PostManualDeposit(c.Context(), *txModel); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.ledger", "failed", "transaction", hash, err.Error())
+			return redirectWithError(c, "/admin/test-deposit", "Ledger yüklenemedi: "+err.Error())
+		}
+
+		var deliveryErrors []string
+		transactionDeliveryCtx, cancelTransactionDelivery := context.WithTimeout(context.Background(), 20*time.Second)
+		if err := deliverAdminTransactionWebhook(transactionDeliveryCtx, deps, wallet.Domain, *txModel); err != nil {
+			deliveryErrors = append(deliveryErrors, "deposit webhook: "+err.Error())
+		}
+		cancelTransactionDelivery()
+
+		paymentDeliveryCtx, cancelPaymentDelivery := context.WithTimeout(context.Background(), 20*time.Second)
+		if paymentWebhookSent, err := deliverAdminPaymentWebhookIfMatched(paymentDeliveryCtx, deps, *txModel); err != nil {
+			deliveryErrors = append(deliveryErrors, "payment webhook: "+err.Error())
+		} else if paymentWebhookSent {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.payment_webhook", "success", "transaction", hash, "Manual test deposit payment session ile eşleşti.")
+		}
+		cancelPaymentDelivery()
+
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.create", "success", "transaction", hash, amount+" "+symbol+" manual test deposit oluşturuldu.")
+		if len(deliveryErrors) > 0 {
+			return redirectWithError(c, "/admin/test-deposit", "Test deposit işlendi, ancak "+strings.Join(deliveryErrors, " | "))
+		}
+		return redirectWithSuccess(c, "/admin/test-deposit", "Test deposit işlendi, bakiye yüklendi ve webhook gönderildi. Tx: "+hash)
 	}
 }
 
@@ -2049,26 +2223,41 @@ func HandleAdminLogout() fiber.Handler {
 // @Router /auth/oidc/login [get]
 func HandleOIDCLogin() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
-		defer cancel()
-
-		oauthConfig, _, err := oidcOAuthConfig(ctx)
-		if err != nil {
-			data := dealerPageData("OIDC yapılandırması eksik", "login")
-			data.Error = err.Error()
-			return c.Status(fiber.StatusNotImplemented).Render("dealer/oidc_missing", data, "dealer/layout")
-		}
-		state := uuid.NewString()
-		nonce := uuid.NewString()
-		setOIDCCookie(c, oidcStateCookie, state)
-		setOIDCCookie(c, oidcNonceCookie, nonce)
-
-		options := []oauth2.AuthCodeOption{oidc.Nonce(nonce)}
-		if prompt := strings.TrimSpace(os.Getenv("OIDC_PROMPT")); prompt != "" {
-			options = append(options, oauth2.SetAuthURLParam("prompt", prompt))
-		}
-		return c.Redirect().To(oauthConfig.AuthCodeURL(state, options...))
+		return startOIDCLogin(c, oidcPortalMerchant)
 	}
+}
+
+func HandleAdminOIDCLogin() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		return startOIDCLogin(c, oidcPortalAdmin)
+	}
+}
+
+func startOIDCLogin(c fiber.Ctx, portal string) error {
+	ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+	defer cancel()
+
+	oauthConfig, _, err := oidcOAuthConfig(ctx)
+	if err != nil {
+		data := dealerPageData("OIDC yapılandırması eksik", "login")
+		if portal == oidcPortalAdmin {
+			data = adminLoginPageData()
+			data.Title = "Admin OIDC yapılandırması eksik"
+		}
+		data.Error = err.Error()
+		return c.Status(fiber.StatusNotImplemented).Render("dealer/oidc_missing", data, "dealer/layout")
+	}
+	state := uuid.NewString()
+	nonce := uuid.NewString()
+	setOIDCCookie(c, oidcStateCookie, state)
+	setOIDCCookie(c, oidcNonceCookie, nonce)
+	setOIDCCookie(c, oidcPortalCookie, signedDealerSessionValue(portal))
+
+	options := []oauth2.AuthCodeOption{oidc.Nonce(nonce)}
+	if prompt := strings.TrimSpace(os.Getenv("OIDC_PROMPT")); prompt != "" {
+		options = append(options, oauth2.SetAuthURLParam("prompt", prompt))
+	}
+	return c.Redirect().To(oauthConfig.AuthCodeURL(state, options...))
 }
 
 // HandleOIDCCallback completes the OIDC authorization-code flow and opens a merchant portal session.
@@ -2083,65 +2272,90 @@ func HandleOIDCLogin() fiber.Handler {
 // @Router /auth/oidc/callback [get]
 func HandleOIDCCallback(service *services.MerchantService, activityRepo *repositories.ActivityLogRepo, deps ...DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
+		portal := oidcPortalFromCookie(c)
+		loginPath := "/merchant/login"
+		actorKind := "dealer"
+		callbackEvent := "dealer.oidc_callback"
+		if portal == oidcPortalAdmin {
+			loginPath = "/admin/login"
+			actorKind = "admin"
+			callbackEvent = "admin.oidc_callback"
+		}
+		fail := func(email string, message string) error {
+			logDealerActivity(c, activityRepo, nil, actorKind, email, callbackEvent, "failed", "auth", "", message)
+			return redirectWithError(c, loginPath, message)
+		}
+
 		code := strings.TrimSpace(c.Query("code"))
 		state := strings.TrimSpace(c.Query("state"))
 		expectedState := strings.TrimSpace(c.Cookies(oidcStateCookie))
 		expectedNonce := strings.TrimSpace(c.Cookies(oidcNonceCookie))
 		clearOIDCCookie(c, oidcStateCookie)
 		clearOIDCCookie(c, oidcNonceCookie)
+		clearOIDCCookie(c, oidcPortalCookie)
 		if code == "" || state == "" || expectedState == "" || !hmac.Equal([]byte(state), []byte(expectedState)) {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC state doğrulaması başarısız.")
-			return redirectWithError(c, "/merchant/login", "OIDC oturum doğrulaması başarısız.")
+			return fail("", "OIDC oturum doğrulaması başarısız.")
 		}
 		if expectedNonce == "" {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce cookie bulunamadı.")
-			return redirectWithError(c, "/merchant/login", "OIDC nonce doğrulaması başarısız.")
+			return fail("", "OIDC nonce doğrulaması başarısız.")
 		}
 
 		ctx, cancel := context.WithTimeout(c.Context(), 20*time.Second)
 		defer cancel()
 		oauthConfig, provider, err := oidcOAuthConfig(ctx)
 		if err != nil {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/merchant/login", "OIDC yapılandırması eksik: "+err.Error())
+			return fail("", "OIDC yapılandırması eksik: "+err.Error())
 		}
 
 		token, err := oauthConfig.Exchange(ctx, code)
 		if err != nil {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/merchant/login", "OIDC token alınamadı: "+err.Error())
+			return fail("", "OIDC token alınamadı: "+err.Error())
 		}
 		rawIDToken, ok := token.Extra("id_token").(string)
 		if !ok || strings.TrimSpace(rawIDToken) == "" {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC id_token dönmedi.")
-			return redirectWithError(c, "/merchant/login", "OIDC id_token dönmedi.")
+			return fail("", "OIDC id_token dönmedi.")
 		}
 		idToken, err := provider.Verifier(&oidc.Config{ClientID: oauthConfig.ClientID}).Verify(ctx, rawIDToken)
 		if err != nil {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/merchant/login", "OIDC id_token doğrulanamadı: "+err.Error())
+			return fail("", "OIDC id_token doğrulanamadı: "+err.Error())
 		}
 		if !hmac.Equal([]byte(idToken.Nonce), []byte(expectedNonce)) {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC nonce doğrulaması başarısız.")
-			return redirectWithError(c, "/merchant/login", "OIDC nonce doğrulaması başarısız.")
+			return fail("", "OIDC nonce doğrulaması başarısız.")
 		}
 		if idToken.AccessTokenHash != "" && token.AccessToken != "" {
 			if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-				logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-				return redirectWithError(c, "/merchant/login", "OIDC access token doğrulanamadı: "+err.Error())
+				return fail("", "OIDC access token doğrulanamadı: "+err.Error())
 			}
 		}
 
 		userInfo, err := oidcUserFromToken(ctx, provider, token, idToken)
 		if err != nil {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", err.Error())
-			return redirectWithError(c, "/merchant/login", "OIDC kullanıcı bilgisi alınamadı: "+err.Error())
+			return fail("", "OIDC kullanıcı bilgisi alınamadı: "+err.Error())
 		}
 
 		email := strings.TrimSpace(userInfo.Email)
 		if email == "" {
-			logDealerActivity(c, activityRepo, nil, "dealer", "", "dealer.oidc_callback", "failed", "auth", "", "OIDC email bilgisi dönmedi.")
-			return redirectWithError(c, "/merchant/login", "OIDC email bilgisi dönmedi.")
+			return fail("", "OIDC email bilgisi dönmedi.")
+		}
+
+		if portal == oidcPortalAdmin {
+			if len(deps) == 0 || deps[0].AdminRepo == nil {
+				return fail(email, "Admin OIDC altyapısı hazır değil.")
+			}
+			if !oidcUserHasRole(userInfo, "admin") {
+				setFlashCookie(c, flashDebugCookie, adminOIDCDebugText(userInfo))
+				return fail(email, "OIDC hesabında admin rolü yok.")
+			}
+			admin, err := deps[0].AdminRepo.EnsureOIDCAdmin(c.Context(), email, userInfo.Name)
+			if err != nil {
+				if errors.Is(err, repositories.ErrAdminInactive) {
+					return fail(email, "Bu admin hesabı pasif.")
+				}
+				return fail(email, "Admin hesabı açılamadı: "+err.Error())
+			}
+			logDealerActivity(c, activityRepo, nil, "admin", admin.Email, "admin.oidc_login", "success", "admin", admin.ID.String(), "Admin OIDC ile giriş yaptı.")
+			setAdminSessionCookie(c, admin.Email, false)
+			return redirectWithSuccess(c, "/admin", "OIDC ile giriş yapıldı.")
 		}
 
 		merchant, err := findOrCreateOIDCMerchant(c, service, userInfo)
@@ -2187,6 +2401,19 @@ func clearOIDCCookie(c fiber.Ctx, name string) {
 
 }
 
+func oidcPortalFromCookie(c fiber.Ctx) string {
+	portal, err := verifyDealerSessionValue(c.Cookies(oidcPortalCookie))
+	if err != nil {
+		return oidcPortalMerchant
+	}
+	switch portal {
+	case oidcPortalAdmin, oidcPortalMerchant:
+		return portal
+	default:
+		return oidcPortalMerchant
+	}
+}
+
 func redirectWithSuccess(c fiber.Ctx, path string, message string) error {
 	setFlashCookie(c, flashSuccessCookie, message)
 	return c.Redirect().To(path)
@@ -2203,11 +2430,16 @@ func applyFlash(c fiber.Ctx, data *DealerPageData) {
 	}
 	data.Success = flashCookieValue(c.Cookies(flashSuccessCookie))
 	data.Error = flashCookieValue(c.Cookies(flashErrorCookie))
+	data.OIDCDebug = flashCookieValue(c.Cookies(flashDebugCookie))
 	clearFlashCookie(c, flashSuccessCookie)
 	clearFlashCookie(c, flashErrorCookie)
+	clearFlashCookie(c, flashDebugCookie)
 }
 
 func setFlashCookie(c fiber.Ctx, name string, value string) {
+	if len(value) > 3000 {
+		value = value[:3000] + "\n..."
+	}
 	c.Cookie(&fiber.Cookie{
 		Name:     name,
 		Value:    base64.RawURLEncoding.EncodeToString([]byte(value)),
@@ -2271,6 +2503,10 @@ func oidcUserFromToken(ctx context.Context, provider *oidc.Provider, token *oaut
 		if err := idToken.Claims(&claims); err != nil {
 			return nil, err
 		}
+		var rawClaims map[string]any
+		if err := idToken.Claims(&rawClaims); err == nil {
+			mergeOIDCRoleSources(&claims, rawClaims, "id_token")
+		}
 		if claims.Sub == "" {
 			claims.Sub = idToken.Subject
 		}
@@ -2299,6 +2535,25 @@ func oidcUserFromToken(ctx context.Context, provider *oidc.Provider, token *oaut
 				if claims.Sub == "" {
 					claims.Sub = extraClaims.Sub
 				}
+				if len(claims.Roles) == 0 {
+					claims.Roles = extraClaims.Roles
+				}
+				if len(claims.Role) == 0 {
+					claims.Role = extraClaims.Role
+				}
+				if len(claims.RoleURI) == 0 {
+					claims.RoleURI = extraClaims.RoleURI
+				}
+				if len(claims.Groups) == 0 {
+					claims.Groups = extraClaims.Groups
+				}
+				if len(claims.Permissions) == 0 {
+					claims.Permissions = extraClaims.Permissions
+				}
+			}
+			var rawClaims map[string]any
+			if err := userInfo.Claims(&rawClaims); err == nil {
+				mergeOIDCRoleSources(&claims, rawClaims, "userinfo")
 			}
 		} else if strings.TrimSpace(claims.Email) == "" {
 			return nil, err
@@ -2312,6 +2567,146 @@ func oidcUserFromToken(ctx context.Context, provider *oidc.Provider, token *oaut
 		return nil, errors.New("OIDC email bilgisi dönmedi")
 	}
 	return &claims, nil
+}
+
+func mergeOIDCRoleSources(userInfo *oidcUserInfo, rawClaims map[string]any, prefix string) {
+	if userInfo == nil || len(rawClaims) == 0 {
+		return
+	}
+	for _, key := range []string{"roles", "role", "groups", "permissions", "http://schemas.microsoft.com/ws/2008/06/identity/claims/role"} {
+		addOIDCRoleSource(userInfo, prefix+"."+key, rawClaims[key])
+	}
+	if realm, ok := rawClaims["realm_access"].(map[string]any); ok {
+		addOIDCRoleSource(userInfo, prefix+".realm_access.roles", realm["roles"])
+	}
+	if resources, ok := rawClaims["resource_access"].(map[string]any); ok {
+		for client, value := range resources {
+			if resource, ok := value.(map[string]any); ok {
+				addOIDCRoleSource(userInfo, prefix+".resource_access."+client+".roles", resource["roles"])
+			}
+		}
+	}
+	for key, value := range rawClaims {
+		lowerKey := strings.ToLower(key)
+		if strings.Contains(lowerKey, "role") {
+			addOIDCRoleSource(userInfo, prefix+"."+key, value)
+		}
+	}
+}
+
+func addOIDCRoleSource(userInfo *oidcUserInfo, source string, value any) {
+	values := stringsFromOIDCClaim(value)
+	if len(values) == 0 {
+		return
+	}
+	if userInfo.RoleSources == nil {
+		userInfo.RoleSources = make(map[string][]string)
+	}
+	seen := make(map[string]bool, len(userInfo.RoleSources[source])+len(values))
+	for _, existing := range userInfo.RoleSources[source] {
+		seen[existing] = true
+	}
+	for _, value := range values {
+		if !seen[value] {
+			userInfo.RoleSources[source] = append(userInfo.RoleSources[source], value)
+			seen[value] = true
+		}
+	}
+}
+
+func stringsFromOIDCClaim(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		return normalizeStringList(strings.FieldsFunc(v, func(r rune) bool {
+			return r == ',' || r == ' '
+		}))
+	case []string:
+		return normalizeStringList(v)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			out = append(out, stringsFromOIDCClaim(item)...)
+		}
+		return normalizeStringList(out)
+	case map[string]any:
+		if roles, ok := v["roles"]; ok {
+			return stringsFromOIDCClaim(roles)
+		}
+	}
+	return nil
+}
+
+func oidcUserHasRole(userInfo *oidcUserInfo, role string) bool {
+	if userInfo == nil {
+		return false
+	}
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		return false
+	}
+	roleClaims := append(append(append(userInfo.Roles, userInfo.Role...), userInfo.RoleURI...), userInfo.Groups...)
+	roleClaims = append(roleClaims, userInfo.Permissions...)
+	for _, values := range userInfo.RoleSources {
+		roleClaims = append(roleClaims, values...)
+	}
+	for _, value := range roleClaims {
+		if strings.EqualFold(strings.TrimSpace(value), role) {
+			return true
+		}
+	}
+	return false
+}
+
+func adminOIDCDebugText(userInfo *oidcUserInfo) string {
+	if userInfo == nil {
+		return "OIDC debug\nKullanıcı bilgisi alınamadı."
+	}
+	lines := []string{
+		"OIDC debug",
+		"email: " + emptyDebugValue(userInfo.Email),
+		"aranan rol: admin",
+		"roles: " + formatOIDCClaimValues(userInfo.Roles),
+		"role: " + formatOIDCClaimValues(userInfo.Role),
+		"ms role: " + formatOIDCClaimValues(userInfo.RoleURI),
+		"groups: " + formatOIDCClaimValues(userInfo.Groups),
+		"permissions: " + formatOIDCClaimValues(userInfo.Permissions),
+		"",
+		"claim kaynakları:",
+	}
+	if len(userInfo.RoleSources) == 0 {
+		lines = append(lines, "(rol claim'i bulunamadı)")
+		return strings.Join(lines, "\n")
+	}
+	keys := make([]string, 0, len(userInfo.RoleSources))
+	for key := range userInfo.RoleSources {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		lines = append(lines, key+": "+formatOIDCClaimValues(userInfo.RoleSources[key]))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func emptyDebugValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "(boş)"
+	}
+	return value
+}
+
+func formatOIDCClaimValues(values []string) string {
+	values = normalizeStringList(values)
+	if len(values) == 0 {
+		return "(boş)"
+	}
+	if len(values) > 25 {
+		return strings.Join(values[:25], ", ") + fmt.Sprintf(" ... (+%d)", len(values)-25)
+	}
+	return strings.Join(values, ", ")
 }
 
 func findOrCreateOIDCMerchant(c fiber.Ctx, service *services.MerchantService, userInfo *oidcUserInfo) (*models.Merchant, error) {
@@ -2376,15 +2771,20 @@ func clearDealerSessionCookie(c fiber.Ctx) {
 	})
 }
 
-func setAdminSessionCookie(c fiber.Ctx, email string) {
+func setAdminSessionCookie(c fiber.Ctx, email string, rememberMe bool) {
+	ttl := adminSessionDefaultTTL
+	if rememberMe {
+		ttl = adminSessionRememberTTL
+	}
+	expiresAt := time.Now().Add(ttl)
 	c.Cookie(&fiber.Cookie{
 		Name:     adminSessionCookie,
-		Value:    signedDealerSessionValue(email),
+		Value:    signedDealerSessionValue(adminSessionPayload(email, expiresAt)),
 		Path:     "/",
 		HTTPOnly: true,
 		SameSite: "Lax",
-		MaxAge:   int((8 * time.Hour).Seconds()),
-		Expires:  time.Now().Add(8 * time.Hour),
+		MaxAge:   int(ttl.Seconds()),
+		Expires:  expiresAt,
 		Secure:   strings.EqualFold(c.Protocol(), "https") || strings.EqualFold(c.Get("X-Forwarded-Proto"), "https"),
 	})
 }
@@ -2401,13 +2801,122 @@ func clearAdminSessionCookie(c fiber.Ctx) {
 	})
 }
 
+func setAdminTempCookie(c fiber.Ctx, name string, adminID uuid.UUID, rememberMe bool, ttl time.Duration) {
+	expiresAt := time.Now().Add(ttl)
+	c.Cookie(&fiber.Cookie{
+		Name:     name,
+		Value:    signedDealerSessionValue(adminTempSessionPayload(adminID, rememberMe)),
+		Path:     "/",
+		HTTPOnly: true,
+		SameSite: "Lax",
+		MaxAge:   int(ttl.Seconds()),
+		Expires:  expiresAt,
+		Secure:   strings.EqualFold(c.Protocol(), "https") || strings.EqualFold(c.Get("X-Forwarded-Proto"), "https"),
+	})
+}
+
+func clearAdminTempCookie(c fiber.Ctx, name string) {
+	c.Cookie(&fiber.Cookie{
+		Name:     name,
+		Value:    "",
+		Path:     "/",
+		HTTPOnly: true,
+		SameSite: "Lax",
+		MaxAge:   -1,
+		Expires:  time.Now().Add(-time.Hour),
+	})
+}
+
 func requireAdmin(c fiber.Ctx) (string, bool) {
-	email, err := verifyDealerSessionValue(c.Cookies(adminSessionCookie))
+	payload, err := verifyDealerSessionValue(c.Cookies(adminSessionCookie))
+	if err != nil || strings.TrimSpace(payload) == "" {
+		clearAdminSessionCookie(c)
+		return "", false
+	}
+	email, err := parseAdminSessionPayload(payload, time.Now())
 	if err != nil || strings.TrimSpace(email) == "" {
 		clearAdminSessionCookie(c)
 		return "", false
 	}
 	return email, true
+}
+
+func adminRememberRequested(c fiber.Ctx) bool {
+	switch strings.ToLower(strings.TrimSpace(c.FormValue("remember_me"))) {
+	case "1", "true", "on", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func adminSessionPayload(email string, expiresAt time.Time) string {
+	payload := adminSessionPayloadData{
+		Email:     strings.ToLower(strings.TrimSpace(email)),
+		ExpiresAt: expiresAt.Unix(),
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return payload.Email
+	}
+	return string(encoded)
+}
+
+func parseAdminSessionPayload(value string, now time.Time) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", errors.New("empty admin session")
+	}
+	if !strings.HasPrefix(value, "{") {
+		return strings.ToLower(value), nil
+	}
+	var payload adminSessionPayloadData
+	if err := json.Unmarshal([]byte(value), &payload); err != nil {
+		return "", err
+	}
+	email := strings.ToLower(strings.TrimSpace(payload.Email))
+	if email == "" {
+		return "", errors.New("empty admin email")
+	}
+	if payload.ExpiresAt <= 0 {
+		return "", errors.New("missing admin session expiry")
+	}
+	if !now.Before(time.Unix(payload.ExpiresAt, 0)) {
+		return "", errors.New("expired admin session")
+	}
+	return email, nil
+}
+
+func adminTempSessionPayload(adminID uuid.UUID, rememberMe bool) string {
+	payload := adminTempSessionPayloadData{
+		AdminID:    adminID.String(),
+		RememberMe: rememberMe,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return payload.AdminID
+	}
+	return string(encoded)
+}
+
+func parseAdminTempSessionPayload(value string) (uuid.UUID, bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return uuid.Nil, false, errors.New("empty admin temp session")
+	}
+	if !strings.HasPrefix(value, "{") {
+		id, err := uuid.Parse(value)
+		return id, false, err
+	}
+	var payload adminTempSessionPayloadData
+	if err := json.Unmarshal([]byte(value), &payload); err != nil {
+		return uuid.Nil, false, err
+	}
+	id, err := uuid.Parse(strings.TrimSpace(payload.AdminID))
+	if err != nil {
+		return uuid.Nil, false, err
+	}
+	return id, payload.RememberMe, nil
 }
 
 func requireDealerSession(c fiber.Ctx) (string, bool) {
@@ -2487,6 +2996,14 @@ func dealerPageData(title string, active string) DealerPageData {
 	}
 }
 
+func adminLoginPageData() DealerPageData {
+	data := dealerPageData("Admin girişi", "admin-login")
+	data.OIDCLoginURL = "/admin/auth/oidc/login"
+	data.LoginURL = "/admin/login"
+	data.RegisterURL = ""
+	return data
+}
+
 func normalizeLanguage(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "en", "en-us", "en-gb":
@@ -2562,6 +3079,8 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "rescan"
 	case "/admin/sweep":
 		return "sweep"
+	case "/admin/test-deposit":
+		return "test-deposit"
 	case "/admin/admins":
 		return "admins"
 	case "/admin/security":
@@ -2595,8 +3114,143 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminWebhooksURL:    "/admin/webhooks",
 		AdminRefundsURL:     "/admin/refunds",
 		AdminRescanURL:      "/admin/rescan",
+		AdminTestDepositURL: "/admin/test-deposit",
 	}
 	return data
+}
+
+func parseAdminAssetSelection(registry *asset.Registry, value string) (asset.Asset, error) {
+	if registry == nil {
+		return nil, errors.New("asset registry hazır değil")
+	}
+	parts := strings.SplitN(strings.TrimSpace(value), "|", 2)
+	if len(parts) != 2 {
+		return nil, errors.New("geçerli asset seçmelisin")
+	}
+	chainRaw, identifier := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	chainInt, err := strconv.ParseInt(chainRaw, 10, 64)
+	if err != nil {
+		return nil, errors.New("geçerli chain seçmelisin")
+	}
+	selected, ok := registry.Get(constants.ChainID(chainInt), identifier)
+	if !ok {
+		return nil, errors.New("asset registry içinde bulunamadı")
+	}
+	return selected, nil
+}
+
+func tokenForSelectedAsset(selected asset.Asset) *string {
+	if selected == nil || selected.IsNative() {
+		return nil
+	}
+	token := strings.TrimSpace(selected.GetIdentifier())
+	if token == "" {
+		return nil
+	}
+	return &token
+}
+
+func dealerAssetOptions(registry *asset.Registry) []DealerAssetOption {
+	if registry == nil {
+		return nil
+	}
+	assets := registry.ListAll()
+	options := make([]DealerAssetOption, 0, len(assets))
+	for _, item := range assets {
+		if item == nil {
+			continue
+		}
+		chainName := constants.ChainName(item.GetChainID())
+		token := ""
+		tokenLabel := "native"
+		if !item.IsNative() {
+			token = item.GetIdentifier()
+			tokenLabel = shortText(token, 8, 6)
+		}
+		label := fmt.Sprintf("%s / %s / %s / %d decimals", chainName, item.GetSymbol(), tokenLabel, item.GetDecimals())
+		options = append(options, DealerAssetOption{
+			Value:    fmt.Sprintf("%d|%s", item.GetChainID(), item.GetIdentifier()),
+			Label:    label,
+			Chain:    chainName,
+			Symbol:   item.GetSymbol(),
+			Token:    token,
+			Decimals: item.GetDecimals(),
+		})
+	}
+	return options
+}
+
+func deliverAdminTransactionWebhook(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) error {
+	if deps.Notifier == nil {
+		return errors.New("webhook notifier hazır değil")
+	}
+	deliveryID := createAdminTransactionWebhookDelivery(ctx, deps, domain, txModel)
+	err := deps.Notifier.Deliver(ctx, domain, txModel)
+	markAdminWebhookDeliveryAttempt(ctx, deps, deliveryID, err == nil, err)
+	if deps.TransactionRepo != nil {
+		_ = deps.TransactionRepo.MarkWebhookAttempt(context.Background(), txModel.UniqueHash, err == nil, err)
+	}
+	return err
+}
+
+func deliverAdminPaymentWebhookIfMatched(ctx context.Context, deps DealerDeps, txModel models.Transaction) (bool, error) {
+	if deps.PaymentRepo == nil || deps.Notifier == nil {
+		return false, nil
+	}
+	session, changed, err := deps.PaymentRepo.MarkPaidByTransaction(ctx, txModel)
+	if err != nil || !changed || session == nil {
+		return false, err
+	}
+	deliveryID := createAdminPaymentWebhookDelivery(ctx, deps, session.Domain, *session)
+	err = deps.Notifier.DeliverPayment(ctx, session.Domain, *session)
+	markAdminWebhookDeliveryAttempt(ctx, deps, deliveryID, err == nil, err)
+	_ = deps.PaymentRepo.MarkWebhookAttempt(context.Background(), session.ID, err == nil, err)
+	return true, err
+}
+
+func createAdminTransactionWebhookDelivery(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) uuid.UUID {
+	if deps.WebhookDeliveryRepo == nil || txModel.MerchantID == nil || txModel.DomainID == nil {
+		return uuid.Nil
+	}
+	delivery := &models.WebhookDelivery{
+		MerchantID:    *txModel.MerchantID,
+		DomainID:      *txModel.DomainID,
+		TransactionID: &txModel.ID,
+		EventID:       txModel.UniqueHash,
+		EventType:     txModel.EventType,
+		TargetURL:     domain.WebhookURL,
+		Status:        models.WebhookDeliveryStatusPending,
+	}
+	if err := deps.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+		return uuid.Nil
+	}
+	return delivery.ID
+}
+
+func createAdminPaymentWebhookDelivery(ctx context.Context, deps DealerDeps, domain models.Domain, session models.PaymentSession) uuid.UUID {
+	if deps.WebhookDeliveryRepo == nil {
+		return uuid.Nil
+	}
+	delivery := &models.WebhookDelivery{
+		MerchantID: session.MerchantID,
+		DomainID:   session.DomainID,
+		PaymentID:  &session.ID,
+		EventID:    session.ID.String() + ":" + session.WebhookEvent,
+		EventType:  session.WebhookEvent,
+		TargetURL:  domain.WebhookURL,
+		Status:     models.WebhookDeliveryStatusPending,
+	}
+	if err := deps.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+		return uuid.Nil
+	}
+	return delivery.ID
+}
+
+func markAdminWebhookDeliveryAttempt(ctx context.Context, deps DealerDeps, deliveryID uuid.UUID, delivered bool, lastErr error) {
+	if deps.WebhookDeliveryRepo == nil || deliveryID == uuid.Nil {
+		return
+	}
+	_ = deps.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, delivered, lastErr)
 }
 
 func dealerWebhookDeliveryViews(rows []models.WebhookDelivery) []DealerWebhookDeliveryView {
