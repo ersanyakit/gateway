@@ -390,6 +390,15 @@ Go testleri:
 go test ./...
 ```
 
+Exchange webhook/bakiye entegrasyon smoke testi:
+
+```bash
+cd ../exchange
+./scripts/smoke_gateway_deposit.sh
+```
+
+Bu test admin login gerektirmez; gateway domain webhook secret'ını decrypt eder, exchange callback'e imzalı BTC deposit gönderir ve exchange DB'deki bakiyenin arttığını doğrular.
+
 Trust Wallet Core native build'i hazır değilse önce `./scripts/build_wallet_core.sh` çalıştırılmalıdır. Sadece lokal debug için fallback provider kullanılacaksa Go komutlarına `-tags walletcorefallback` eklenebilir; production wallet üretimi için kullanılmamalıdır.
 
 CSS build:

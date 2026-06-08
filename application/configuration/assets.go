@@ -122,6 +122,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			LogoSlug: "bnb",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.Binance, Native: true, Enabled: true},
+				{ChainID: constants.Binance, Symbol: "WBNB", Name: "Wrapped BNB", Address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", Decimals: 18, Enabled: true},
 			},
 		},
 		{

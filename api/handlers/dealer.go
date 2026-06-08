@@ -2000,7 +2000,7 @@ func HandleAdminTestDeposit(deps DealerDeps) fiber.Handler {
 		if err != nil {
 			return redirectWithError(c, "/admin/test-deposit", "Unique hash üretilemedi: "+err.Error())
 		}
-		if _, err := deps.TransactionRepo.BindWallet(c.Context(), uniqueHash, "manual_test_deposit", wallet); err != nil {
+		if _, err := deps.TransactionRepo.BindWallet(c.Context(), uniqueHash, "deposit_confirmed", wallet); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.bind", "failed", "transaction", hash, err.Error())
 			return redirectWithError(c, "/admin/test-deposit", "Wallet bind başarısız: "+err.Error())
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
@@ -63,6 +64,18 @@ func (t *testChain) BatchBalances(ctx context.Context, addresses []string, worke
 	return nil
 }
 
+type blockingStopChain struct {
+	*testChain
+	started chan struct{}
+	release chan struct{}
+}
+
+func (t *blockingStopChain) StopWorkers() error {
+	close(t.started)
+	<-t.release
+	return nil
+}
+
 func TestChainFactoryLookupAliasesAndIDs(t *testing.T) {
 	factory := NewChainFactory()
 	eth := newTestChain(constants.Ethereum, "ethereum")
@@ -99,5 +112,26 @@ func TestChainFactoryCreateWalletsSeparatesErrors(t *testing.T) {
 	}
 	if errs["solana"] == nil {
 		t.Fatal("solana error should be recorded")
+	}
+}
+
+func TestChainFactoryStopAllWorkersHonorsContext(t *testing.T) {
+	factory := NewChainFactory()
+	chain := &blockingStopChain{
+		testChain: newTestChain(constants.Ethereum, "ethereum"),
+		started:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	factory.RegisterChain("ethereum", chain)
+	defer close(chain.release)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	errs := factory.StopAllWorkers(ctx)
+	<-chain.started
+
+	if !errors.Is(errs["ethereum"], context.DeadlineExceeded) {
+		t.Fatalf("stop error = %v, want deadline exceeded", errs["ethereum"])
 	}
 }

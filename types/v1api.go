@@ -16,7 +16,7 @@ type V1InvoiceRequest struct {
 // V1StaticAddressRequest is the request body for POST /api/v1/payment/static-address.
 type V1StaticAddressRequest struct {
 	UserID  string `json:"user_id"            example:"customer_42"  swaggertype:"string"`
-	ChainID int64  `json:"chain_id"           example:"1"            swaggertype:"integer"`
+	ChainID *int64 `json:"chain_id"           example:"1"            swaggertype:"integer"`
 	Symbol  string `json:"symbol"             example:"USDT"         swaggertype:"string"`
 	Label   string `json:"label,omitempty"    example:"Main wallet"  swaggertype:"string"`
 }

@@ -525,10 +525,10 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 		if userID == "" {
 			return v1Err(c, fiber.StatusBadRequest, "user_id is required")
 		}
-		if body.ChainID == 0 {
+		if body.ChainID == nil {
 			return v1Err(c, fiber.StatusBadRequest, "chain_id is required")
 		}
-		chainID := constants.ChainID(body.ChainID)
+		chainID := constants.ChainID(*body.ChainID)
 		if !constants.IsSupportedChainID(chainID) {
 			return v1Err(c, fiber.StatusBadRequest, "unsupported chain_id")
 		}
@@ -548,7 +548,7 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 				return v1Err(c, fiber.StatusBadRequest, "unsupported asset for chain_id")
 			}
 		}
-		productID := "static:" + strconv.FormatInt(body.ChainID, 10) + ":" + strings.ToUpper(symbol)
+		productID := "static:" + strconv.FormatInt(int64(chainID), 10) + ":" + strings.ToUpper(symbol)
 
 		merchantIDStr := domain.MerchantID.String()
 		domainIDStr := domain.ID.String()

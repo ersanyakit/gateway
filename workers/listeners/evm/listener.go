@@ -52,6 +52,9 @@ type RpcListener struct {
 	quit    chan struct{}
 	running bool
 	events  chan interface{}
+
+	traceUnavailable bool
+	lastTraceWarning time.Time
 }
 
 func NewRpcListener(
@@ -465,12 +468,25 @@ type Trace struct {
 }
 
 func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash string, nativeAsset asset.Asset) error {
+	requireTrace := strings.EqualFold(os.Getenv("REQUIRE_EVM_TRACE"), "true")
+	if r.traceUnavailable && !requireTrace {
+		return nil
+	}
+
 	var traces []Trace
 	if err := r.rpcCall(ctx, "trace_block", []interface{}{blockHex}, &traces); err != nil {
-		if strings.EqualFold(os.Getenv("REQUIRE_EVM_TRACE"), "true") {
+		if requireTrace {
 			return fmt.Errorf("trace_block failed: %w", err)
 		}
-		log.Printf("[%s] trace_block unavailable, internal transfers skipped for block %s: %v\n", r.chain.Name(), blockNumber, err)
+		if isTraceUnavailableError(err) {
+			r.traceUnavailable = true
+			log.Printf("[%s] trace_block unavailable; internal transfer tracing disabled for this listener: %v\n", r.chain.Name(), err)
+			return nil
+		}
+		if time.Since(r.lastTraceWarning) >= time.Minute {
+			r.lastTraceWarning = time.Now()
+			log.Printf("[%s] trace_block failed; internal transfers skipped for block %s: %v\n", r.chain.Name(), blockNumber, err)
+		}
 		return nil
 	}
 
@@ -519,6 +535,20 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 	}
 
 	return nil
+}
+
+func isTraceUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "trace_block not allowed") ||
+		strings.Contains(msg, "method trace_block not allowed") ||
+		strings.Contains(msg, "method trace_block does not exist") ||
+		strings.Contains(msg, "the method trace_block does not exist") ||
+		strings.Contains(msg, "method is not available") ||
+		strings.Contains(msg, "method not found") ||
+		strings.Contains(msg, "-32601")
 }
 
 func (r *RpcListener) normalizeTokenAddress(address string) string {

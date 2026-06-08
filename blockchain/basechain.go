@@ -117,6 +117,16 @@ func splitRPCEnv(raw string) []string {
 	return strings.Split(raw, ",")
 }
 
+func verboseEventLoggingEnabled() bool {
+	for _, key := range []string{"GATEWAY_VERBOSE_EVENTS", "VERBOSE"} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "1", "true", "yes", "on", "verbose":
+			return true
+		}
+	}
+	return false
+}
+
 func (b *BaseChain) rpcEnvNames() []string {
 	name := strings.ToUpper(strings.NewReplacer("-", "_").Replace(b.ChainName))
 	names := []string{name + "_RPC_URLS"}
@@ -265,7 +275,9 @@ func (b *BaseChain) Work(l Worker) {
 				return
 			}
 
-			fmt.Printf("[%s] Event: %v\n", b.ChainName, event)
+			if verboseEventLoggingEnabled() {
+				fmt.Printf("[%s] Event: %v\n", b.ChainName, event)
+			}
 		}
 	}
 }

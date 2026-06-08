@@ -34,6 +34,34 @@
   .admin-nav-link[aria-selected="true"] { background:#131313; color:#fff; box-shadow:0 1px 2px rgba(0,0,0,.12); }
   .admin-nav-dot { width:.42rem; height:.42rem; flex:0 0 auto; border-radius:999px; background:transparent; }
   .admin-nav-link[aria-selected="true"] .admin-nav-dot { background:#ff37c7; }
+  .admin-native-select-hidden { position:absolute !important; width:1px !important; height:1px !important; opacity:0 !important; pointer-events:none !important; }
+  .admin-rich-select { position:relative; min-width:0; }
+  .admin-rich-trigger { display:flex; width:100%; min-height:2.85rem; align-items:center; gap:.65rem; border:1px solid rgba(19,19,19,.08); border-radius:16px; background:linear-gradient(180deg,#fff,#f9f9f9); padding:.42rem .52rem; text-align:left; color:#131313; box-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 1px 2px rgba(0,0,0,.04); outline:none; transition:border-color .12s, box-shadow .12s, background .12s; }
+  .admin-rich-trigger:hover { background:#fff; border-color:rgba(19,19,19,.16); }
+  .admin-rich-trigger:focus-visible, .admin-rich-select[data-open="true"] .admin-rich-trigger { border-color:#ff37c7; box-shadow:0 0 0 4px rgba(255,55,199,.11),0 1px 2px rgba(0,0,0,.05); }
+  .admin-rich-select[data-invalid="true"] .admin-rich-trigger { border-color:#ef4444; box-shadow:0 0 0 4px rgba(239,68,68,.1); }
+  .admin-rich-select[data-empty="true"] .admin-rich-trigger { color:rgba(19,19,19,.42); }
+  .admin-rich-avatar { display:grid; width:2rem; height:2rem; flex:0 0 auto; place-items:center; border:1px solid rgba(19,19,19,.08); border-radius:12px; background:#fff3fc; color:#e500a5; font-size:.68rem; font-weight:950; line-height:1; text-transform:uppercase; }
+  .admin-rich-select[data-kind="asset"] .admin-rich-avatar { border-radius:999px; background:#131313; color:#fff; }
+  .admin-rich-copy { min-width:0; flex:1 1 auto; display:grid; gap:.05rem; }
+  .admin-rich-primary { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.82rem; font-weight:900; line-height:1.15; }
+  .admin-rich-meta { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:rgba(19,19,19,.5); font-size:.68rem; font-weight:750; line-height:1.2; }
+  .admin-rich-chip { max-width:6.5rem; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid rgba(19,19,19,.08); border-radius:999px; background:#fff; padding:.18rem .48rem; color:rgba(19,19,19,.56); font-size:.64rem; font-weight:900; line-height:1; }
+  .admin-rich-caret { width:.46rem; height:.46rem; flex:0 0 auto; border-right:2px solid rgba(19,19,19,.38); border-bottom:2px solid rgba(19,19,19,.38); transform:rotate(45deg) translateY(-1px); transition:transform .12s; }
+  .admin-rich-select[data-open="true"] .admin-rich-caret { transform:rotate(225deg) translate(-1px,-1px); }
+  .admin-rich-menu { position:absolute; z-index:80; top:calc(100% + .4rem); left:0; right:0; overflow:hidden; border:1px solid rgba(19,19,19,.1); border-radius:18px; background:rgba(255,255,255,.98); box-shadow:0 18px 48px rgba(19,19,19,.16),0 2px 8px rgba(19,19,19,.08); backdrop-filter:blur(12px); }
+  .admin-rich-menu[hidden] { display:none; }
+  .admin-rich-search-wrap { padding:.45rem; border-bottom:1px solid rgba(19,19,19,.08); background:#fff; }
+  .admin-rich-search { width:100%; min-height:2.15rem; border:1px solid rgba(19,19,19,.08); border-radius:12px; background:#f9f9f9; padding:0 .7rem; color:#131313; font-size:.78rem; font-weight:800; outline:none; }
+  .admin-rich-search:focus { border-color:#ff37c7; background:#fff; box-shadow:0 0 0 3px rgba(255,55,199,.09); }
+  .admin-rich-options { max-height:15.5rem; overflow-y:auto; padding:.28rem; }
+  .admin-rich-option { display:flex; width:100%; min-height:2.6rem; align-items:center; gap:.58rem; border:0; border-radius:13px; background:transparent; padding:.38rem .45rem; text-align:left; color:#131313; outline:none; }
+  .admin-rich-option:hover, .admin-rich-option:focus-visible { background:#f9f9f9; }
+  .admin-rich-option[aria-selected="true"] { background:#fff3fc; color:#e500a5; }
+  .admin-rich-option[aria-selected="true"] .admin-rich-meta, .admin-rich-option[aria-selected="true"] .admin-rich-chip { color:#b30080; border-color:rgba(255,55,199,.2); }
+  .admin-rich-check { width:.5rem; height:.85rem; flex:0 0 auto; border-right:2px solid transparent; border-bottom:2px solid transparent; transform:rotate(45deg); }
+  .admin-rich-option[aria-selected="true"] .admin-rich-check { border-color:#ff37c7; }
+  .admin-rich-empty { padding:1rem; text-align:center; color:rgba(19,19,19,.48); font-size:.75rem; font-weight:800; }
   @media (min-width:1024px) {
     .admin-shell { grid-template-columns:238px minmax(0,1fr); gap:1.25rem; }
     .admin-sidebar { position:sticky; top:73px; }
@@ -44,6 +72,9 @@
   @media (max-width:639px) {
     .admin-nav-list { grid-template-columns:1fr 1fr; }
     .admin-nav-link { min-height:2.5rem; white-space:normal; }
+    .admin-rich-chip { display:none; }
+    .admin-rich-menu { position:fixed; left:1rem; right:1rem; top:auto; bottom:1rem; max-height:min(70vh,30rem); }
+    .admin-rich-options { max-height:calc(min(70vh,30rem) - 3.35rem); }
   }
 	</style>
 
@@ -192,20 +223,20 @@
         <form method="post" action="{{.AdminTestDepositURL}}" class="grid gap-4">
           <label class="grid gap-1.5">
             <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Wallet <span class="text-red-500">*</span></span>
-            <select class="min-h-11 rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="wallet_id" required>
+            <select class="min-h-11 rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="wallet_id" required data-rich-select="wallet" data-placeholder="Wallet seç">
               <option value="">Wallet seç</option>
               {{range .AdminWallets}}
-              <option value="{{.ID}}">{{.Merchant}} · {{.Domain}} · {{.Label}} · {{.ID}}</option>
+              <option value="{{.ID}}" data-primary="{{.Label}}" data-meta="{{.Merchant}} · {{.Domain}}" data-chip="{{.ShortID}}" data-avatar="{{.Merchant}}" data-search="{{.Merchant}} {{.Domain}} {{.Label}} {{.ID}} {{.UserID}} {{.ProductID}}">{{.Merchant}} · {{.Domain}} · {{.Label}} · {{.ID}}</option>
               {{end}}
             </select>
           </label>
 
           <label class="grid gap-1.5">
             <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Asset <span class="text-red-500">*</span></span>
-            <select class="min-h-11 rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="asset" required>
+            <select class="min-h-11 rounded-2xl border border-line bg-wash px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:bg-white focus:ring-4 focus:ring-pink-50" name="asset" required data-rich-select="asset" data-placeholder="Asset seç">
               <option value="">Asset seç</option>
               {{range .AdminAssets}}
-              <option value="{{.Value}}">{{.Label}}</option>
+              <option value="{{.Value}}" data-primary="{{.Symbol}}" data-meta="{{.Chain}} · {{if .Token}}token{{else}}native{{end}}" data-chip="{{.Decimals}} dec" data-avatar="{{.Symbol}}" data-search="{{.Label}} {{.Symbol}} {{.Chain}} {{.Token}}">{{.Label}}</option>
               {{end}}
             </select>
           </label>
@@ -223,7 +254,7 @@
     <aside class="rounded-3xl border border-line bg-white p-5">
       <h3 class="m-0 text-base font-black text-ink">İşlem etkisi</h3>
       <div class="mt-3 grid gap-2 text-sm font-semibold text-muted">
-        <div class="rounded-2xl border border-line bg-wash px-4 py-3"><code>transactions</code> içinde <code>manual_test_deposit</code> event'i oluşturulur.</div>
+        <div class="rounded-2xl border border-line bg-wash px-4 py-3"><code>transactions</code> içinde sentetik <code>deposit_confirmed</code> event'i oluşturulur.</div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-3">Ledger'da pending ve available deposit entry'leri aynı anda yazılır.</div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-3">Domain webhook'u hemen tetiklenir ve delivery sonucu kaydedilir.</div>
         <div class="rounded-2xl border border-line bg-wash px-4 py-3">Açık checkout session eşleşirse payment webhook'u da gönderilir.</div>

@@ -147,21 +147,53 @@ func (f *ChainFactory) StartAllWorkers(ctx context.Context) map[string]error {
 }
 
 func (f *ChainFactory) StopAllWorkers(ctx context.Context) map[string]error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	f.mu.RLock()
 	chains := make(map[string]Chain, len(f.chains))
 	for k, v := range f.chains {
 		chains[k] = v
 	}
 	f.mu.RUnlock()
+
+	type stopResult struct {
+		name string
+		err  error
+	}
+
 	errMap := make(map[string]error)
+	results := make(chan stopResult, len(chains))
+	pending := make(map[string]struct{}, len(chains))
+
 	for name, chain := range chains {
-		if starter, ok := chain.(interface {
-			StopWorkers() error
-		}); ok {
-			if err := starter.StopWorkers(); err != nil {
-				errMap[name] = err
+		pending[name] = struct{}{}
+		go func(name string, chain Chain) {
+			if stopper, ok := chain.(interface {
+				StopWorkers() error
+			}); ok {
+				results <- stopResult{name: name, err: stopper.StopWorkers()}
+				return
 			}
+			results <- stopResult{name: name}
+		}(name, chain)
+	}
+
+	for len(pending) > 0 {
+		select {
+		case result := <-results:
+			delete(pending, result.name)
+			if result.err != nil {
+				errMap[result.name] = result.err
+			}
+		case <-ctx.Done():
+			for name := range pending {
+				errMap[name] = ctx.Err()
+			}
+			return errMap
 		}
 	}
+
 	return errMap
 }

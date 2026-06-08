@@ -45,6 +45,16 @@ func ptrValue(value *string) string {
 	return *value
 }
 
+func envFlagEnabled(keys ...string) bool {
+	for _, key := range keys {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "1", "true", "yes", "on", "verbose":
+			return true
+		}
+	}
+	return false
+}
+
 func isPositiveAmount(value string) bool {
 	amount, ok := new(big.Int).SetString(value, 10)
 	return ok && amount.Sign() > 0
@@ -72,6 +82,18 @@ func transactionFinalityInterval() time.Duration {
 		return 20 * time.Second
 	}
 	return interval
+}
+
+func gatewayShutdownTimeout() time.Duration {
+	raw := os.Getenv("GATEWAY_SHUTDOWN_TIMEOUT")
+	if raw == "" {
+		return 5 * time.Second
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return 5 * time.Second
+	}
+	return timeout
 }
 
 func chainConfirmationRequirement(chainID constants.ChainID) uint {
@@ -769,6 +791,7 @@ func main() {
 	defer cancel()
 
 	_ = godotenv.Load()
+	verboseTxLogging := envFlagEnabled("GATEWAY_VERBOSE_TX", "VERBOSE")
 
 	var err error
 	coreApplication.CORE, err = NewApp()
@@ -835,19 +858,21 @@ func main() {
 						}
 
 						tx := event.Transaction
-						fmt.Printf(
-							"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
-							chain.Name(),
-							tx.ChainID,
-							event.Type,
-							ptrValue(tx.Hash),
-							ptrValue(tx.Block),
-							ptrValue(tx.From),
-							ptrValue(tx.To),
-							ptrValue(tx.Amount),
-							ptrValue(tx.Symbol),
-							ptrValue(tx.LogIndex),
-						)
+						if verboseTxLogging {
+							fmt.Printf(
+								"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
+								chain.Name(),
+								tx.ChainID,
+								event.Type,
+								ptrValue(tx.Hash),
+								ptrValue(tx.Block),
+								ptrValue(tx.From),
+								ptrValue(tx.To),
+								ptrValue(tx.Amount),
+								ptrValue(tx.Symbol),
+								ptrValue(tx.LogIndex),
+							)
+						}
 
 						wallet, inbound, matched, err := transactionWalletMatch(mainCtx, *tx)
 						if err != nil {
@@ -984,17 +1009,28 @@ func main() {
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(c)
 	select {
 	case sig := <-c:
 		log.Println("Shutting down...", sig)
+		go func() {
+			sig := <-c
+			log.Println("Force shutdown requested...", sig)
+			os.Exit(1)
+		}()
 	case err := <-serverErr:
 		log.Fatal(err)
 	}
 
-	coreApplication.CORE.Router.Blockchains().StopAllWorkers(context.Background())
+	shutdownTimeout := gatewayShutdownTimeout()
 	cancel()
-	bus.Shutdown()
-	if err := fiberApp.Shutdown(); err != nil {
+	if err := fiberApp.ShutdownWithTimeout(shutdownTimeout); err != nil {
 		log.Println("Fiber shutdown error:", err)
 	}
+	workerCtx, workerCancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	for chainName, stopErr := range coreApplication.CORE.Router.Blockchains().StopAllWorkers(workerCtx) {
+		log.Printf("[%s] worker stop error: %v\n", chainName, stopErr)
+	}
+	workerCancel()
+	bus.Shutdown()
 }
