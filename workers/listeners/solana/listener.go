@@ -18,6 +18,7 @@ import (
 	"core/models"
 	"core/types"
 	"core/workers/dispatcher"
+	"core/workers/listeners/rpcutil"
 )
 
 const (
@@ -40,6 +41,8 @@ type RpcListener struct {
 	quit    chan struct{}
 	running bool
 	events  chan interface{}
+
+	throttleErrors int
 }
 
 func NewRpcListener(
@@ -99,18 +102,26 @@ func (r *RpcListener) Events() <-chan interface{} {
 }
 
 func (r *RpcListener) pollLoop() {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
 	for {
+		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[%s] listener catch-up error: %v\n", r.chain.Name(), err)
+			if rpcutil.IsThrottle(err) {
+				r.throttleErrors++
+				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
+			} else {
+				r.throttleErrors = 0
+			}
+		} else {
+			r.throttleErrors = 0
 		}
 
+		timer := time.NewTimer(delay)
 		select {
 		case <-r.quit:
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
@@ -149,16 +160,29 @@ func (r *RpcListener) catchUp() error {
 		if err := r.processSlot(ctx, slot); err != nil {
 			return err
 		}
-	}
-
-	r.chainState.LastProcessedBlock = to
-	r.chainState.LastConfirmedBlock = to
-	if r.stateWriter != nil {
-		if err := r.stateWriter(r.chainState); err != nil {
-			return fmt.Errorf("write chain state: %w", err)
+		if err := r.writeChainState(slot); err != nil {
+			return err
 		}
 	}
 
+	if r.chainState.LastProcessedBlock < to {
+		if err := r.writeChainState(to); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (r *RpcListener) writeChainState(block int64) error {
+	r.chainState.LastProcessedBlock = block
+	r.chainState.LastConfirmedBlock = block
+	if r.stateWriter == nil {
+		return nil
+	}
+	if err := r.stateWriter(r.chainState); err != nil {
+		return fmt.Errorf("write chain state: %w", err)
+	}
 	return nil
 }
 
@@ -204,6 +228,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	}
 
 	var lastErr error
+	var throttleErr error
 	for _, rpcURL := range r.chain.RPCs() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
@@ -225,7 +250,13 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("%s RPC returned HTTP %d: %s", r.chain.Name(), resp.StatusCode, string(respBody))
+			err := fmt.Errorf("%s RPC returned HTTP %d: %s", r.chain.Name(), resp.StatusCode, string(respBody))
+			if rpcutil.StatusThrottled(resp.StatusCode) {
+				lastErr = rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header))
+				throttleErr = lastErr
+			} else {
+				lastErr = err
+			}
 			continue
 		}
 
@@ -235,7 +266,13 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			continue
 		}
 		if rpcResp.Error != nil {
-			lastErr = fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			err := fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
+				lastErr = rpcutil.NewThrottleError(err, 0)
+				throttleErr = lastErr
+			} else {
+				lastErr = err
+			}
 			continue
 		}
 		if out == nil || string(rpcResp.Result) == "null" {
@@ -249,6 +286,9 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 		return nil
 	}
 
+	if throttleErr != nil {
+		return throttleErr
+	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no solana RPC endpoint configured")
 	}

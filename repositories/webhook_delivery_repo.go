@@ -53,7 +53,7 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		updates["next_retry_at"] = nil
 	} else {
 		status := models.WebhookDeliveryStatusFailed
-		if current.Attempts+1 >= webhookMaxAttempts() {
+		if isPermanentDeliveryError(lastErr) || current.Attempts+1 >= webhookMaxAttempts() {
 			status = models.WebhookDeliveryStatusDeadLetter
 		}
 		updates["status"] = status

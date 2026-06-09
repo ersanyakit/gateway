@@ -236,10 +236,13 @@ func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([
 	err := r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Where("wallet_id IS NOT NULL").
+			Joins("JOIN domains ON domains.id = transactions.domain_id").
+			Where("domains.webhook_url <> ''").
+			Where("domains.webhook_secret <> ''").
 			Where("status = ?", models.TransactionStatusConfirmed).
 			Where("webhook_sent_at IS NULL").
 			Where("webhook_locked_until IS NULL OR webhook_locked_until < ?", now).
-			Order("created_at ASC").
+			Order("transactions.created_at ASC").
 			Limit(limit).
 			Find(&transactions).Error; err != nil {
 			return err

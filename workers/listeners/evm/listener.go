@@ -23,6 +23,7 @@ import (
 	"core/models"
 	"core/types"
 	"core/workers/dispatcher"
+	"core/workers/listeners/rpcutil"
 
 	"github.com/btcsuite/btcd/btcutil/base58"
 	"github.com/ethereum/go-ethereum/common"
@@ -55,6 +56,10 @@ type RpcListener struct {
 
 	traceUnavailable bool
 	lastTraceWarning time.Time
+
+	blockReceiptsUnavailable bool
+	lastBlockReceiptsWarning time.Time
+	throttleErrors           int
 }
 
 func NewRpcListener(
@@ -115,18 +120,26 @@ func (r *RpcListener) Events() <-chan interface{} {
 }
 
 func (r *RpcListener) pollLoop() {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
 	for {
+		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[%s] listener catch-up error: %v\n", r.chain.Name(), err)
+			if rpcutil.IsThrottle(err) {
+				r.throttleErrors++
+				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
+			} else {
+				r.throttleErrors = 0
+			}
+		} else {
+			r.throttleErrors = 0
 		}
 
+		timer := time.NewTimer(delay)
 		select {
 		case <-r.quit:
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
@@ -204,6 +217,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	}
 
 	var lastErr error
+	var throttleErr error
 	for _, rpcURL := range r.chain.RPCs() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
@@ -225,7 +239,13 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", r.chain.Name(), rpcURL, resp.StatusCode, string(respBody))
+			err := fmt.Errorf("%s %s returned HTTP %d: %s", r.chain.Name(), rpcURL, resp.StatusCode, string(respBody))
+			if rpcutil.StatusThrottled(resp.StatusCode) {
+				lastErr = rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header))
+				throttleErr = lastErr
+			} else {
+				lastErr = err
+			}
 			continue
 		}
 
@@ -235,7 +255,13 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			continue
 		}
 		if rpcResp.Error != nil {
-			lastErr = fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			err := fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
+				lastErr = rpcutil.NewThrottleError(err, 0)
+				throttleErr = lastErr
+			} else {
+				lastErr = err
+			}
 			continue
 		}
 		if out == nil {
@@ -249,6 +275,9 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 		return nil
 	}
 
+	if throttleErr != nil {
+		return throttleErr
+	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no RPC endpoint configured")
 	}
@@ -309,15 +338,24 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 	}
 
 	readableBlockNumber := hexToDec(block.Number)
+	receiptsByHash, err := r.receiptsByBlock(ctx, blockHex)
+	if err != nil {
+		return err
+	}
 	for idx, tx := range block.Transactions {
 		if tx.Hash == "" {
 			continue
 		}
 
 		receipt := Receipt{}
-		receiptErr := r.rpcCall(ctx, "eth_getTransactionReceipt", []interface{}{tx.Hash}, &receipt)
-		if receiptErr != nil {
-			return fmt.Errorf("receipt fetch failed for %s: %w", tx.Hash, receiptErr)
+		if receiptsByHash != nil {
+			receipt = receiptsByHash[strings.ToLower(tx.Hash)]
+		}
+		if receipt.TransactionHash == "" {
+			receiptErr := r.rpcCall(ctx, "eth_getTransactionReceipt", []interface{}{tx.Hash}, &receipt)
+			if receiptErr != nil {
+				return fmt.Errorf("receipt fetch failed for %s: %w", tx.Hash, receiptErr)
+			}
 		}
 
 		status := receiptStatus(receipt.Status)
@@ -376,6 +414,38 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		return err
 	}
 	return nil
+}
+
+func (r *RpcListener) receiptsByBlock(ctx context.Context, blockHex string) (map[string]Receipt, error) {
+	if r.blockReceiptsUnavailable {
+		return nil, nil
+	}
+
+	var receipts []Receipt
+	if err := r.rpcCall(ctx, "eth_getBlockReceipts", []interface{}{blockHex}, &receipts); err != nil {
+		if rpcutil.IsThrottle(err) {
+			return nil, err
+		}
+		if isBlockReceiptsUnavailableError(err) {
+			r.blockReceiptsUnavailable = true
+			log.Printf("[%s] eth_getBlockReceipts unavailable; falling back to per-transaction receipts: %v\n", r.chain.Name(), err)
+			return nil, nil
+		}
+		if time.Since(r.lastBlockReceiptsWarning) >= time.Minute {
+			r.lastBlockReceiptsWarning = time.Now()
+			log.Printf("[%s] eth_getBlockReceipts failed for block %s; falling back to per-transaction receipts: %v\n", r.chain.Name(), blockHex, err)
+		}
+		return nil, nil
+	}
+
+	byHash := make(map[string]Receipt, len(receipts))
+	for _, receipt := range receipts {
+		if receipt.TransactionHash == "" {
+			continue
+		}
+		byHash[strings.ToLower(receipt.TransactionHash)] = receipt
+	}
+	return byHash, nil
 }
 
 func (r *RpcListener) dispatch(ctx context.Context, eventType string, txParam *types.TransactionParam) error {
@@ -548,6 +618,23 @@ func isTraceUnavailableError(err error) bool {
 		strings.Contains(msg, "the method trace_block does not exist") ||
 		strings.Contains(msg, "method is not available") ||
 		strings.Contains(msg, "method not found") ||
+		strings.Contains(msg, "-32601")
+}
+
+func isBlockReceiptsUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "eth_getblockreceipts") {
+		return false
+	}
+	return strings.Contains(msg, "method eth_getblockreceipts not allowed") ||
+		strings.Contains(msg, "method eth_getblockreceipts does not exist") ||
+		strings.Contains(msg, "the method eth_getblockreceipts does not exist") ||
+		strings.Contains(msg, "method is not available") ||
+		strings.Contains(msg, "method not found") ||
+		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "-32601")
 }
 

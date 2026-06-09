@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,33 @@ import (
 
 type Notifier struct {
 	client *http.Client
+}
+
+type permanentError struct {
+	err error
+}
+
+func (e permanentError) Error() string {
+	return e.err.Error()
+}
+
+func (e permanentError) Unwrap() error {
+	return e.err
+}
+
+func (e permanentError) Permanent() bool {
+	return true
+}
+
+func permanent(err error) error {
+	return permanentError{err: err}
+}
+
+func IsPermanent(err error) bool {
+	var permanentErr interface {
+		Permanent() bool
+	}
+	return errors.As(err, &permanentErr) && permanentErr.Permanent()
 }
 
 type Payload struct {
@@ -81,13 +109,13 @@ func NewNotifier() *Notifier {
 
 func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.Transaction) error {
 	if domain.WebhookURL == "" {
-		return fmt.Errorf("webhook url is empty for domain %s", domain.ID.String())
+		return permanent(fmt.Errorf("webhook url is empty for domain %s", domain.ID.String()))
 	}
 	if domain.WebhookSecret == "" {
-		return fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String())
+		return permanent(fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String()))
 	}
 	if err := helpers.ValidateWebhookURL(domain.WebhookURL); err != nil {
-		return fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err)
+		return permanent(fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err))
 	}
 
 	payload := Payload{
@@ -128,7 +156,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 
 	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
 	if err != nil {
-		return fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err)
+		return permanent(fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err))
 	}
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -161,13 +189,13 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 
 func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, session models.PaymentSession) error {
 	if domain.WebhookURL == "" {
-		return fmt.Errorf("webhook url is empty for domain %s", domain.ID.String())
+		return permanent(fmt.Errorf("webhook url is empty for domain %s", domain.ID.String()))
 	}
 	if domain.WebhookSecret == "" {
-		return fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String())
+		return permanent(fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String()))
 	}
 	if err := helpers.ValidateWebhookURL(domain.WebhookURL); err != nil {
-		return fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err)
+		return permanent(fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err))
 	}
 
 	var chainID *int64
@@ -214,7 +242,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 
 	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
 	if err != nil {
-		return fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err)
+		return permanent(fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err))
 	}
 
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)

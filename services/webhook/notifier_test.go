@@ -102,9 +102,13 @@ func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 	domain := models.Domain{ID: uuid.New()}
 	if err := notifier.Deliver(context.Background(), domain, models.Transaction{}); err == nil {
 		t.Fatal("empty webhook url should fail")
+	} else if !IsPermanent(err) {
+		t.Fatalf("empty webhook url error should be permanent: %v", err)
 	}
 	domain.WebhookURL = "https://example.com/webhook"
 	if err := notifier.Deliver(context.Background(), domain, models.Transaction{}); err == nil {
 		t.Fatal("empty webhook secret should fail")
+	} else if !IsPermanent(err) {
+		t.Fatalf("empty webhook secret error should be permanent: %v", err)
 	}
 }
