@@ -137,6 +137,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 				{ChainID: constants.Solana, Mint: "6eftxVbSAunVEoxUWdGhPdxg5UdsJ8Wkwy5w5YFuxouw", Decimals: 8, Enabled: true},
 				{ChainID: constants.Base, Address: "0x70c8392DE9b39a1E48d12A70Af6FF4Be25D6D0A2", Decimals: 18, Enabled: true},
 				{ChainID: constants.Chiliz, Symbol: "WCHZ", Name: "Wrapped Chiliz", Address: "0x677f7e16c7dd57be1d4c8ad1244883214953dc47", Decimals: 18, Enabled: true},
+				{ChainID: constants.Ethereum, Symbol: "CHZ", Name: "Chiliz", Address: "0x3506424F91fD33084466F402d5D97f05F8e3b4AF", Decimals: 18, Enabled: true},
 			},
 		},
 		{
