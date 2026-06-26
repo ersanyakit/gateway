@@ -3,6 +3,7 @@
 ## Current
 
 - WDS Project Brief flow started for a crypto wallet provider and payment gateway.
+- Vision Capture completed and confirmed.
 - Existing BMad artifacts are available and should be treated as source context:
   - `_bmad-output/planning-artifacts/prd.md`
   - `_bmad-output/planning-artifacts/ux.md`
@@ -20,6 +21,7 @@
   - Wallet-provider-as-a-service / exchange-user wallet infrastructure.
 - Design work must expose operational truth for risky money workflows: finality, ledger authority, signer boundary, webhook delivery, reconciliation, and approval audit trails.
 - Business pressure is broad: live readiness, merchant/partner acquisition, wallet-provider growth, investor/partner readiness, and productization all matter.
+- Confirmed vision: one shared money core for merchant/dealer payment gateway and wallet-provider-as-a-service; controlled merchant/dealer beta first, wallet-provider expansion only when operational gates are strong enough.
 
 ## Backlog
 
@@ -33,3 +35,4 @@
 - Development baseline: PRD, UX handoff, architecture spine, epics, sprint status, Story 1.1, and `_bmad-output/project-context.md`.
 - Story 1.1 is done with canonical request auth, replay protection, tenant-scope tests, query-bound signing, redacted auth diagnostics, fresh-context review fixes, and validation commands.
 - Next implementation candidate is Story 1.2, but it should get a dedicated story/spec file and validation before code changes.
+- Story 1.2 story/spec is created and validated for idempotent selected-asset payment session creation; next step is development environment baseline before implementation.

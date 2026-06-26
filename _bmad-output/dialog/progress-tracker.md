@@ -30,7 +30,7 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 
 - [x] Initial Context — crypto wallet provider and payment gateway framing
 - [x] Client Profile — one-person product / technical ownership confirmed
-- [ ] Vision Capture — what we're building and why
+- [x] Vision Capture — what we're building and why
 - [ ] User Definition — who we're building for
 - [ ] Product Concept — the founding structural idea
 - [ ] Core Features — essential functionality
@@ -60,3 +60,5 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - `_bmad-output/dialog/00-context.md`
 - `_bmad-output/dialog/client-profile.md`
 - `_bmad-output/dialog/decisions.md`
+- `_bmad-output/dialog/02-vision.md`
+- `_bmad-output/A-Product-Brief/project-brief.md`

@@ -8,9 +8,15 @@ config:
   product_languages:
     - en
 current_phase: A-Product-Brief
-current_step: client-profile-complete
+current_step: vision-complete
+stepsCompleted:
+  - step-01-init.md
+  - step-01a-client-profile.md
+  - step-02-vision.md
+vision: "Gateway will become a serious crypto currency wallet provider and payment gateway platform built around one shared money core for merchant payments and wallet-provider infrastructure."
 notes:
   - "Brownfield WDS flow initialized from existing PRD, UX, architecture, and readiness audit artifacts."
   - "Product domain: crypto currency wallet provider and payment gateway."
   - "Primary design surfaces: merchant/dealer portal and admin/operator portal."
   - "Development lane D active alongside product brief work; Story 1.1 is done and Story 1.2 is next."
+  - "Story 1.2 story/spec created and ready for WDS development baseline."
