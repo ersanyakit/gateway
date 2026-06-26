@@ -120,8 +120,7 @@ func ValidatePositiveDecimal(value string) error {
 	if value == "" || strings.HasPrefix(value, "-") {
 		return errors.New("invalid amount")
 	}
-	parts := strings.SplitN(value, ".", 2)
-	if len(parts) > 2 {
+	if strings.Count(value, ".") > 1 {
 		return errors.New("invalid amount")
 	}
 	digits := strings.ReplaceAll(value, ".", "")

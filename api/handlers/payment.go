@@ -57,27 +57,30 @@ func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, product
 }
 
 type CheckoutAssetOption struct {
-	ChainID       int64
-	ChainName     string
-	ChainLogoURL  string
-	Symbol        string
-	Name          string
-	Token         string
-	Decimals      uint8
-	AmountRaw     string
-	AmountDisplay string
-	Native        bool
-	Available     bool
-	LogoURL       string
+	ChainID           int64
+	ChainName         string
+	ChainLogoURL      string
+	Symbol            string
+	Name              string
+	Token             string
+	Decimals          uint8
+	AmountRaw         string
+	AmountDisplay     string
+	Native            bool
+	Available         bool
+	QuoteAvailable    bool
+	UnavailableReason string
+	LogoURL           string
 }
 
 type CheckoutAssetGroup struct {
-	Symbol        string
-	Name          string
-	AmountDisplay string
-	ChainCount    int
-	URL           string
-	LogoURL       string
+	Symbol         string
+	Name           string
+	AmountDisplay  string
+	ChainCount     int
+	URL            string
+	LogoURL        string
+	QuoteAvailable bool
 }
 
 // HandlePaymentCreate creates a merchant payment checkout session.
@@ -193,6 +196,9 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 			UserId:     &userID,
 		})
 		if err != nil {
+			if idempotencyRecord != nil {
+				_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
+			}
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"success": false,
 				"error":   "wallet create failed: " + err.Error(),
@@ -329,7 +335,7 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			return renderCheckoutWithError(c, deps, session, err.Error())
 		}
 
-		amountRaw, err := checkoutExpectedAmountRaw(c.Context(), deps.PriceOracle, *session, assetInfo)
+		amountRaw, quotePrice, quoteSource, err := checkoutExpectedQuote(c.Context(), deps.PriceOracle, *session, assetInfo)
 		if err != nil {
 			return renderCheckoutWithError(c, deps, session, err.Error())
 		}
@@ -343,6 +349,29 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			identifier := assetInfo.GetIdentifier()
 			selectedToken = &identifier
 		}
+		quotedAt := time.Now()
+		quoteExpiresAt := quotedAt.Add(15 * time.Minute)
+		if session.ExpiresAt != nil && session.ExpiresAt.Before(quoteExpiresAt) {
+			quoteExpiresAt = *session.ExpiresAt
+		}
+		quote := &models.PriceQuote{
+			ChainID:           assetInfo.GetChainID(),
+			Token:             selectedToken,
+			Symbol:            assetInfo.GetSymbol(),
+			Decimals:          assetInfo.GetDecimals(),
+			FiatCurrency:      strings.ToUpper(strings.TrimSpace(session.Currency)),
+			FiatAmount:        strings.TrimSpace(session.Amount),
+			ExpectedAmountRaw: amountRaw,
+			PriceSource:       quoteSource,
+			Price:             quotePrice,
+			QuotedAt:          quotedAt,
+			ExpiresAt:         quoteExpiresAt,
+			CreatedAt:         quotedAt,
+			UpdatedAt:         quotedAt,
+		}
+		if quote.FiatCurrency == "" {
+			quote.FiatCurrency = "USD"
+		}
 		updatedSession, err := deps.PaymentRepo.SelectAsset(
 			c.Context(),
 			session.SessionToken,
@@ -352,6 +381,7 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			assetInfo.GetDecimals(),
 			amountRaw,
 			depositAddress,
+			quote,
 		)
 		if err != nil {
 			return renderCheckoutWithError(c, deps, session, "Could not select this asset.")
@@ -640,10 +670,6 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 	bySymbol := make(map[string]CheckoutAssetGroup)
 	seenChains := make(map[string]map[constants.ChainID]struct{})
 	for _, assetInfo := range assets {
-		amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
-		if err != nil || amountRaw == "" {
-			continue
-		}
 		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
 			continue
 		}
@@ -653,7 +679,7 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 			group = CheckoutAssetGroup{
 				Symbol:        symbol,
 				Name:          checkoutGroupName(symbol),
-				AmountDisplay: formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), symbol),
+				AmountDisplay: "",
 				URL:           "/checkout/" + session.SessionToken + "?asset=" + url.QueryEscape(symbol),
 				LogoURL:       deps.AssetRegistry.LogoURL(symbol),
 			}
@@ -661,6 +687,13 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 		}
 		seenChains[symbol][assetInfo.GetChainID()] = struct{}{}
 		group.ChainCount = len(seenChains[symbol])
+		if !group.QuoteAvailable {
+			amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
+			if err == nil && amountRaw != "" {
+				group.AmountDisplay = formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), symbol)
+				group.QuoteAvailable = true
+			}
+		}
 		bySymbol[symbol] = group
 	}
 	groups := make([]CheckoutAssetGroup, 0, len(bySymbol))
@@ -685,26 +718,37 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 			continue
 		}
 		amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
-		if err != nil {
-			continue
+		quoteAvailable := err == nil && amountRaw != ""
+		addressAvailable := paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) != ""
+		unavailableReason := ""
+		if !addressAvailable {
+			unavailableReason = "address"
+		} else if !quoteAvailable {
+			unavailableReason = "quote"
 		}
 		token := ""
 		if !assetInfo.IsNative() {
 			token = assetInfo.GetIdentifier()
 		}
+		amountDisplay := ""
+		if quoteAvailable {
+			amountDisplay = formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), assetInfo.GetSymbol())
+		}
 		options = append(options, CheckoutAssetOption{
-			ChainID:       int64(assetInfo.GetChainID()),
-			ChainName:     constants.ChainName(assetInfo.GetChainID()),
-			ChainLogoURL:  asset.ChainLogoURL(assetInfo.GetChainID()),
-			Symbol:        assetInfo.GetSymbol(),
-			Name:          assetInfo.GetName(),
-			Token:         token,
-			Decimals:      assetInfo.GetDecimals(),
-			AmountRaw:     amountRaw,
-			AmountDisplay: formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), assetInfo.GetSymbol()),
-			Native:        assetInfo.IsNative(),
-			Available:     paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) != "",
-			LogoURL:       deps.AssetRegistry.LogoURL(assetInfo.GetSymbol()),
+			ChainID:           int64(assetInfo.GetChainID()),
+			ChainName:         constants.ChainName(assetInfo.GetChainID()),
+			ChainLogoURL:      asset.ChainLogoURL(assetInfo.GetChainID()),
+			Symbol:            assetInfo.GetSymbol(),
+			Name:              assetInfo.GetName(),
+			Token:             token,
+			Decimals:          assetInfo.GetDecimals(),
+			AmountRaw:         amountRaw,
+			AmountDisplay:     amountDisplay,
+			Native:            assetInfo.IsNative(),
+			Available:         addressAvailable && quoteAvailable,
+			QuoteAvailable:    quoteAvailable,
+			UnavailableReason: unavailableReason,
+			LogoURL:           deps.AssetRegistry.LogoURL(assetInfo.GetSymbol()),
 		})
 	}
 	sort.Slice(options, func(i, j int) bool {
@@ -768,6 +812,11 @@ func checkoutGroupName(symbol string) string {
 }
 
 func checkoutExpectedAmountRaw(ctx context.Context, oracle pricing.PriceOracle, session models.PaymentSession, assetInfo asset.Asset) (string, error) {
+	amountRaw, _, _, err := checkoutExpectedQuote(ctx, oracle, session, assetInfo)
+	return amountRaw, err
+}
+
+func checkoutExpectedQuote(ctx context.Context, oracle pricing.PriceOracle, session models.PaymentSession, assetInfo asset.Asset) (string, string, string, error) {
 	amount := strings.TrimSpace(session.Amount)
 	currency := strings.ToUpper(strings.TrimSpace(session.Currency))
 	symbol := strings.ToUpper(strings.TrimSpace(assetInfo.GetSymbol()))
@@ -775,21 +824,29 @@ func checkoutExpectedAmountRaw(ctx context.Context, oracle pricing.PriceOracle, 
 		currency = "USD"
 	}
 	if strings.EqualFold(currency, symbol) || strings.EqualFold(currency, checkoutCanonicalSymbol(symbol)) {
-		return types.DecimalToRaw(amount, assetInfo.GetDecimals())
+		raw, err := types.DecimalToRaw(amount, assetInfo.GetDecimals())
+		return raw, "1", "fixed", err
 	}
 	if oracle == nil {
-		return "", errors.New("price provider is not configured")
+		return "", "", "", errors.New("price provider is not configured")
 	}
 	fiatAmount, ok := new(big.Rat).SetString(amount)
 	if !ok || fiatAmount.Sign() <= 0 {
-		return "", errors.New("invalid payment amount")
+		return "", "", "", errors.New("invalid payment amount")
 	}
 	price, err := oracle.Price(ctx, symbol, currency)
 	if err != nil {
-		return "", err
+		return "", "", "", err
+	}
+	if price == nil || price.Sign() <= 0 {
+		return "", "", "", errors.New("price provider returned an invalid price")
 	}
 	tokenAmount := new(big.Rat).Quo(fiatAmount, price)
-	return ratToRawCeil(tokenAmount, assetInfo.GetDecimals())
+	raw, err := ratToRawCeil(tokenAmount, assetInfo.GetDecimals())
+	if err != nil {
+		return "", "", "", err
+	}
+	return raw, formatRatDecimal(price, 18), "price_oracle", nil
 }
 
 func ratToRawCeil(value *big.Rat, decimals uint8) (string, error) {
@@ -808,6 +865,22 @@ func ratToRawCeil(value *big.Rat, decimals uint8) (string, error) {
 		return "", errors.New("amount must be greater than zero")
 	}
 	return raw.String(), nil
+}
+
+func formatRatDecimal(value *big.Rat, precision int) string {
+	if value == nil {
+		return ""
+	}
+	if precision < 0 {
+		precision = 18
+	}
+	formatted := value.FloatString(precision)
+	formatted = strings.TrimRight(formatted, "0")
+	formatted = strings.TrimRight(formatted, ".")
+	if formatted == "" {
+		return "0"
+	}
+	return formatted
 }
 
 func formatPaymentAmount(raw string, decimals uint8, symbol string) string {

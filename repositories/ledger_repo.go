@@ -164,6 +164,72 @@ func (r *LedgerRepo) PostDepositAvailable(ctx context.Context, session models.Pa
 	return r.db.WithContext(ctx).Create(&entries).Error
 }
 
+func (r *LedgerRepo) PostStandaloneDepositAvailable(ctx context.Context, txModel models.Transaction) error {
+	if txModel.MerchantID == nil || txModel.Amount == "" || !r.amountIsPositive(txModel.Amount) {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(dbtx *gorm.DB) error {
+		key := "deposit-standalone-available:" + txModel.UniqueHash
+		exists, err := r.existsWithDB(ctx, dbtx, key)
+		if err != nil || exists {
+			return err
+		}
+		if err := r.lockLedgerAsset(ctx, dbtx, *txModel.MerchantID, txModel.DomainID, txModel.ChainID, txModel.Token); err != nil {
+			return err
+		}
+		now := time.Now()
+		domainID := txModel.DomainID
+		walletID := txModel.WalletID
+		entries := []models.LedgerEntry{
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositAvailable,
+				Account:               models.LedgerAccountMerchantAvailable,
+				Direction:             models.LedgerDirectionCredit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        key,
+				Reference:             txModel.UniqueHash,
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+			{
+				ID:                    uuid.New(),
+				MerchantID:            *txModel.MerchantID,
+				DomainID:              domainID,
+				WalletID:              walletID,
+				TransactionUniqueHash: txModel.UniqueHash,
+				TransactionHash:       txModel.Hash,
+				ChainID:               txModel.ChainID,
+				Token:                 txModel.Token,
+				Symbol:                txModel.Symbol,
+				Decimals:              txModel.Decimals,
+				EntryType:             models.LedgerEntryTypeDepositAvailable,
+				Account:               models.LedgerAccountMerchantPending,
+				Direction:             models.LedgerDirectionDebit,
+				Status:                models.LedgerStatusPosted,
+				AmountRaw:             txModel.Amount,
+				IdempotencyKey:        key,
+				Reference:             txModel.UniqueHash,
+				PostedAt:              &now,
+				CreatedAt:             now,
+				UpdatedAt:             now,
+			},
+		}
+		return dbtx.WithContext(ctx).Create(&entries).Error
+	})
+}
+
 func (r *LedgerRepo) PostManualDeposit(ctx context.Context, txModel models.Transaction) error {
 	if txModel.MerchantID == nil || txModel.Amount == "" || !r.amountIsPositive(txModel.Amount) {
 		return nil
@@ -544,6 +610,12 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 	chainID := constants.ChainID(0)
 	if session.SelectedChainID != nil {
 		chainID = *session.SelectedChainID
+	}
+	if err := r.lockLedgerAsset(ctx, tx, refund.MerchantID, &refund.DomainID, chainID, session.SelectedToken); err != nil {
+		return err
+	}
+	if err := r.ensureAvailableBalance(ctx, tx, refund.MerchantID, &refund.DomainID, chainID, session.SelectedToken, refund.AmountRaw); err != nil {
+		return err
 	}
 	entries := []models.LedgerEntry{
 		{

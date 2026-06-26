@@ -64,3 +64,9 @@ func TestMerchantParamsValidateCollectsErrors(t *testing.T) {
 		t.Fatalf("validation errors = %d, want at least 5", len(validationErrs))
 	}
 }
+
+func TestValidatePositiveDecimalRejectsMultipleDecimalPoints(t *testing.T) {
+	if err := ValidatePositiveDecimal("1.2.3"); err == nil {
+		t.Fatal("amount with multiple decimal points should fail")
+	}
+}

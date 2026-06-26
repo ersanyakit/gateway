@@ -1,8 +1,10 @@
 package rpcutil
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -48,8 +50,27 @@ func IsThrottle(err error) bool {
 		strings.Contains(msg, "throttled")
 }
 
+func IsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if IsThrottle(err) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context deadline exceeded") ||
+		strings.Contains(msg, "client.timeout exceeded") ||
+		strings.Contains(msg, "i/o timeout") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "connection refused") ||
+		strings.Contains(msg, "temporary failure")
+}
+
 func ThrottleDelay(err error, consecutive int, normal time.Duration) time.Duration {
-	if !IsThrottle(err) {
+	if !IsRetryable(err) {
 		return normal
 	}
 	if consecutive < 1 {

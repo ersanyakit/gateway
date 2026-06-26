@@ -124,7 +124,7 @@ func (r *RpcListener) pollLoop() {
 		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[%s] listener catch-up error: %v\n", r.chain.Name(), err)
-			if rpcutil.IsThrottle(err) {
+			if rpcutil.IsRetryable(err) {
 				r.throttleErrors++
 				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
 			} else {
@@ -152,22 +152,23 @@ func (r *RpcListener) catchUp() error {
 	if err != nil {
 		return err
 	}
-	latest -= safeBlockConfirmations
-	if latest <= 0 {
+	confirmedHead := latest
+	safeLatest := latest - safeBlockConfirmations
+	if safeLatest <= 0 {
 		return nil
 	}
 
 	from := r.chainState.LastProcessedBlock + 1
 	if from <= 1 {
-		from = latest
+		from = safeLatest
 	}
-	if from > latest {
+	if from > safeLatest {
 		return nil
 	}
 
 	to := from + maxBlocksPerPoll - 1
-	if to > latest {
-		to = latest
+	if to > safeLatest {
+		to = safeLatest
 	}
 
 	for blockNumber := from; blockNumber <= to; blockNumber++ {
@@ -176,7 +177,7 @@ func (r *RpcListener) catchUp() error {
 		}
 
 		r.chainState.LastProcessedBlock = blockNumber
-		r.chainState.LastConfirmedBlock = blockNumber
+		r.chainState.LastConfirmedBlock = confirmedHead
 		if r.stateWriter != nil {
 			if err := r.stateWriter(r.chainState); err != nil {
 				return fmt.Errorf("write chain state: %w", err)
@@ -539,6 +540,7 @@ type Trace struct {
 
 func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash string, nativeAsset asset.Asset) error {
 	requireTrace := strings.EqualFold(os.Getenv("REQUIRE_EVM_TRACE"), "true")
+	debugTrace := strings.EqualFold(os.Getenv("DEBUG_EVM_TRACE"), "true")
 	if r.traceUnavailable && !requireTrace {
 		return nil
 	}
@@ -550,10 +552,12 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 		}
 		if isTraceUnavailableError(err) {
 			r.traceUnavailable = true
-			log.Printf("[%s] trace_block unavailable; internal transfer tracing disabled for this listener: %v\n", r.chain.Name(), err)
+			if debugTrace {
+				log.Printf("[%s] trace_block unavailable; internal transfer tracing disabled for this listener: %v\n", r.chain.Name(), err)
+			}
 			return nil
 		}
-		if time.Since(r.lastTraceWarning) >= time.Minute {
+		if debugTrace && time.Since(r.lastTraceWarning) >= time.Minute {
 			r.lastTraceWarning = time.Now()
 			log.Printf("[%s] trace_block failed; internal transfers skipped for block %s: %v\n", r.chain.Name(), blockNumber, err)
 		}
@@ -616,6 +620,7 @@ func isTraceUnavailableError(err error) bool {
 		strings.Contains(msg, "method trace_block not allowed") ||
 		strings.Contains(msg, "method trace_block does not exist") ||
 		strings.Contains(msg, "the method trace_block does not exist") ||
+		strings.Contains(msg, "can't route your request to suitable provider") ||
 		strings.Contains(msg, "method is not available") ||
 		strings.Contains(msg, "method not found") ||
 		strings.Contains(msg, "-32601")

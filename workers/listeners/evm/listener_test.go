@@ -15,6 +15,7 @@ func TestIsTraceUnavailableError(t *testing.T) {
 		{name: "method missing", err: errors.New("chiliz RPC trace_block error -32601: the method trace_block does not exist/is not available"), want: true},
 		{name: "method not allowed", err: errors.New("avalanche RPC trace_block error -32600: Method trace_block not allowed"), want: true},
 		{name: "provider tier", err: errors.New("arbitrum returned HTTP 400: method is not available on freetier"), want: true},
+		{name: "provider cannot route trace", err: errors.New(`bnbchain https://bsc.drpc.org returned HTTP 400: {"error":{"message":"Can't route your request to suitable provider"}}`), want: true},
 		{name: "transient", err: errors.New("context deadline exceeded"), want: false},
 	}
 

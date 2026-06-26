@@ -47,7 +47,7 @@ type PaymentSession struct {
 
 	PaidAt                *time.Time `json:"paid_at,omitempty"`
 	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
-	TxUniqueHash          *string    `gorm:"size:256;index" json:"tx_unique_hash,omitempty"`
+	TxUniqueHash          *string    `gorm:"size:256;uniqueIndex:ux_payment_tx_unique_hash" json:"tx_unique_hash,omitempty"`
 	TxHash                *string    `gorm:"size:128;index" json:"tx_hash,omitempty"`
 	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
 	ConfirmedAt           *time.Time `json:"confirmed_at,omitempty"`

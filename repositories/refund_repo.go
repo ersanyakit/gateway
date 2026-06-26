@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"core/models"
+	"math/big"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,6 +112,32 @@ func (r *RefundRepo) FindByDomain(ctx context.Context, merchantID, domainID, id 
 		return nil, err
 	}
 	return &refund, nil
+}
+
+func (r *RefundRepo) ActiveTotalRawByPayment(ctx context.Context, paymentID uuid.UUID) (*big.Int, error) {
+	var raw string
+	err := r.db.WithContext(ctx).
+		Model(&models.Refund{}).
+		Select("COALESCE(SUM(amount_raw::numeric), 0)::text").
+		Where("payment_id = ? AND status IN ?", paymentID, []string{
+			models.RefundStatusPending,
+			models.RefundStatusProcessing,
+			models.RefundStatusApproved,
+			models.RefundStatusSucceeded,
+		}).
+		Where("amount_raw ~ '^[0-9]+$'").
+		Scan(&raw).Error
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		raw = "0"
+	}
+	total, ok := new(big.Int).SetString(raw, 10)
+	if !ok {
+		return nil, gorm.ErrInvalidData
+	}
+	return total, nil
 }
 
 func (r *RefundRepo) ListProcessingWithTxHash(ctx context.Context, limit int) ([]models.Refund, error) {

@@ -1,6 +1,7 @@
 package rpcutil
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -25,6 +26,25 @@ func TestThrottleDelayHonorsRetryAfter(t *testing.T) {
 	err := NewThrottleError(errors.New("too many requests"), 90*time.Second)
 	if got := ThrottleDelay(err, 1, 10*time.Second); got != 90*time.Second {
 		t.Fatalf("delay = %s, want retry-after", got)
+	}
+}
+
+func TestThrottleDelayBacksOffRetryableTimeouts(t *testing.T) {
+	err := errors.Join(errors.New("receipt fetch failed"), context.DeadlineExceeded)
+	if got := ThrottleDelay(err, 1, 10*time.Second); got != 30*time.Second {
+		t.Fatalf("timeout delay = %s, want 30s", got)
+	}
+}
+
+func TestIsRetryable(t *testing.T) {
+	if !IsRetryable(context.DeadlineExceeded) {
+		t.Fatal("context deadline should be retryable")
+	}
+	if !IsRetryable(errors.New("Post \"https://base.drpc.org\": context deadline exceeded")) {
+		t.Fatal("wrapped timeout message should be retryable")
+	}
+	if IsRetryable(errors.New("method not found")) {
+		t.Fatal("non-transient RPC error should not be retryable")
 	}
 }
 

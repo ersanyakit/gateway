@@ -119,22 +119,23 @@ func (r *RpcListener) catchUp() error {
 	if err != nil {
 		return err
 	}
-	latest -= safeBlockConfirmations
-	if latest <= 0 {
+	confirmedHead := latest
+	safeLatest := latest - safeBlockConfirmations
+	if safeLatest <= 0 {
 		return nil
 	}
 
 	from := r.chainState.LastProcessedBlock + 1
 	if from <= 1 {
-		from = latest
+		from = safeLatest
 	}
-	if from > latest {
+	if from > safeLatest {
 		return nil
 	}
 
 	to := from + maxBlocksPerPoll - 1
-	if to > latest {
-		to = latest
+	if to > safeLatest {
+		to = safeLatest
 	}
 
 	for height := from; height <= to; height++ {
@@ -142,7 +143,7 @@ func (r *RpcListener) catchUp() error {
 			return err
 		}
 		r.chainState.LastProcessedBlock = height
-		r.chainState.LastConfirmedBlock = height
+		r.chainState.LastConfirmedBlock = confirmedHead
 		if r.stateWriter != nil {
 			if err := r.stateWriter(r.chainState); err != nil {
 				return fmt.Errorf("write chain state: %w", err)

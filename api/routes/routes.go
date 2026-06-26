@@ -15,7 +15,6 @@ import (
 	services "core/services/system"
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
-	"fmt"
 	"strings"
 
 	"github.com/bytedance/sonic"
@@ -167,6 +166,11 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
 	r.fiber.Get("/", handlers.HandleDealerHome())
+	portalCSRF := middleware.PortalCSRF()
+	r.fiber.Use("/dealer", portalCSRF)
+	r.fiber.Use("/merchant", portalCSRF)
+	r.fiber.Use("/admin", portalCSRF)
+
 	dealerDeps := handlers.DealerDeps{
 		MerchantService:     r.MerchantService,
 		DomainService:       r.DomainService,
@@ -220,6 +224,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/2fa/setup", handlers.HandleAdminTOTPSetupSubmit(r.AdminRepo))
 	r.fiber.Get("/admin/2fa/verify", handlers.HandleAdminTOTPVerify(r.AdminRepo))
 	r.fiber.Post("/admin/2fa/verify", handlers.HandleAdminTOTPVerifySubmit(r.AdminRepo))
+	r.fiber.Use("/admin", handlers.RequireAdmin(r.AdminRepo))
 	r.fiber.Get("/admin/admins", handlers.HandleAdminManageAdmins(dealerDeps))
 	r.fiber.Post("/admin/admins", handlers.HandleAdminCreateAdmin(dealerDeps))
 	r.fiber.Post("/admin/admins/:id/toggle", handlers.HandleAdminToggleAdmin(dealerDeps))
@@ -275,6 +280,7 @@ func NewRouter(db *gorm.DB) *Router {
 		LedgerRepo:      r.LedgerRepo,
 		TransactionRepo: r.TransactionRepo,
 		AssetRegistry:   r.assetRegistry,
+		Blockchains:     r.blockchains,
 		PriceOracle:     pricing.NewCoinGecko(),
 		Notifier:        webhooksvc.NewNotifier(),
 		PaymentHub:      r.PaymentHub,
@@ -372,8 +378,7 @@ func (r *Router) handlePacket(c fiber.Ctx) error {
 	}
 
 	if action == "" {
-		fmt.Println("Default handler executed")
-		return c.SendString("Default handler executed")
+		return c.Status(fiber.StatusBadRequest).SendString("action is required")
 	}
 
 	route, ok := r.action.GetHandler(action)

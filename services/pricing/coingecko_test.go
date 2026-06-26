@@ -40,6 +40,7 @@ func TestCoinGeckoIDAliases(t *testing.T) {
 }
 
 func TestCoinGeckoPriceFetchesAndCaches(t *testing.T) {
+	clearPriceFallbacks(t, "ETH", "WETH")
 	var requests int
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
@@ -84,7 +85,89 @@ func TestCoinGeckoPriceFetchesAndCaches(t *testing.T) {
 	}
 }
 
+func TestCoinGeckoPriceUsesStablecoinUSDFallbackWithoutHTTP(t *testing.T) {
+	clearPriceFallbacks(t, "USDC")
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("stablecoin fallback should not call HTTP: %s", r.URL.String())
+		return nil, nil
+	})}
+	oracle := &CoinGecko{
+		client:  client,
+		baseURL: "https://coingecko.test",
+		ttl:     time.Minute,
+		now:     time.Now,
+		cache:   make(map[string]cachedPrice),
+	}
+
+	price, err := oracle.Price(context.Background(), "USDC", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if price.Cmp(big.NewRat(1, 1)) != 0 {
+		t.Fatalf("price = %s, want 1", price)
+	}
+}
+
+func TestCoinGeckoPriceUsesConfiguredFallbackWithoutHTTP(t *testing.T) {
+	t.Setenv("PRICE_PEPPER_USD", "0.0001")
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		t.Fatalf("configured fallback should not call HTTP: %s", r.URL.String())
+		return nil, nil
+	})}
+	oracle := &CoinGecko{
+		client:  client,
+		baseURL: "https://coingecko.test",
+		ttl:     time.Minute,
+		now:     time.Now,
+		cache:   make(map[string]cachedPrice),
+	}
+
+	price, err := oracle.Price(context.Background(), "PEPPER", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := new(big.Rat).SetString("0.0001")
+	if price.Cmp(want) != 0 {
+		t.Fatalf("price = %s, want %s", price, want)
+	}
+}
+
+func TestCoinGeckoPriceReturnsStaleCacheOnFetchError(t *testing.T) {
+	clearPriceFallbacks(t, "ETH")
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Body:       ioNopCloser(`{"error":"down"}`),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	stale, _ := new(big.Rat).SetString("1999.25")
+	oracle := &CoinGecko{
+		client:  client,
+		baseURL: "https://coingecko.test",
+		ttl:     time.Minute,
+		now:     func() time.Time { return now },
+		cache: map[string]cachedPrice{
+			"ethereum|usd": {
+				price:     stale,
+				expiresAt: now.Add(-time.Minute),
+			},
+		},
+	}
+
+	price, err := oracle.Price(context.Background(), "ETH", "USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if price.Cmp(stale) != 0 {
+		t.Fatalf("price = %s, want stale %s", price, stale)
+	}
+}
+
 func TestCoinGeckoPriceRejectsInvalidResponses(t *testing.T) {
+	clearPriceFallbacks(t, "ETH")
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -114,3 +197,12 @@ type nopCloser struct {
 }
 
 func (n *nopCloser) Close() error { return nil }
+
+func clearPriceFallbacks(t *testing.T, symbols ...string) {
+	t.Helper()
+	for _, symbol := range symbols {
+		for _, prefix := range []string{"PRICE_", "GATEWAY_PRICE_"} {
+			t.Setenv(prefix+symbol+"_USD", "")
+		}
+	}
+}

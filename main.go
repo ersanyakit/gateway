@@ -130,7 +130,14 @@ func transactionConfirmations(blockNumber string, state *models.ChainState) uint
 	if err != nil || block <= 0 || state == nil || state.LastProcessedBlock < block {
 		return 0
 	}
-	return uint(state.LastProcessedBlock - block + 1)
+	confirmedHead := state.LastConfirmedBlock
+	if confirmedHead < state.LastProcessedBlock {
+		confirmedHead = state.LastProcessedBlock
+	}
+	if confirmedHead < block {
+		return 0
+	}
+	return uint(confirmedHead - block + 1)
 }
 
 var addrIndex *addressindex.AddressIndex
@@ -414,6 +421,7 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		return
 	}
 	if !changed || session == nil {
+		postStaticAddressDepositAvailable(ctx, txModel)
 		return
 	}
 	if coreApplication.CORE.Router.LedgerRepo != nil {
@@ -439,6 +447,22 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 	markWebhookDeliveryAttempt(ctx, deliveryID, true, nil)
 	if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
 		log.Println("Payment webhook mark delivered error:", err)
+	}
+}
+
+func postStaticAddressDepositAvailable(ctx context.Context, txModel *models.Transaction) {
+	if txModel == nil || txModel.WalletID == nil || coreApplication.CORE.Router.LedgerRepo == nil {
+		return
+	}
+	wallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
+	if err != nil || wallet == nil {
+		return
+	}
+	if !strings.HasPrefix(strings.TrimSpace(wallet.ProductID), "static:") {
+		return
+	}
+	if err := coreApplication.CORE.Router.LedgerRepo.PostStandaloneDepositAvailable(ctx, *txModel); err != nil {
+		log.Println("Ledger standalone available deposit error:", err)
 	}
 }
 

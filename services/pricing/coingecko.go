@@ -60,29 +60,42 @@ func NewCoinGecko() *CoinGecko {
 }
 
 func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (*big.Rat, error) {
-	coinID, ok := CoinGeckoID(symbol)
-	if !ok {
-		return nil, fmt.Errorf("CoinGecko price id is not configured for %s", strings.ToUpper(strings.TrimSpace(symbol)))
-	}
-
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
 	vsCurrency := strings.ToLower(strings.TrimSpace(currency))
 	if vsCurrency == "" {
 		vsCurrency = "usd"
 	}
+
+	if price, ok, err := configuredFallbackPrice(symbol, vsCurrency); ok || err != nil {
+		return price, err
+	}
+	if price, ok := stablecoinFallbackPrice(symbol, vsCurrency); ok {
+		return price, nil
+	}
+
+	coinID, ok := CoinGeckoID(symbol)
+	if !ok {
+		return nil, fmt.Errorf("CoinGecko price id is not configured for %s", symbol)
+	}
+
 	key := coinID + "|" + vsCurrency
 
+	var stalePrice *big.Rat
 	c.mu.RLock()
 	cached, ok := c.cache[key]
-	if ok && c.now().Before(cached.expiresAt) {
+	if ok && cached.price != nil {
 		price := new(big.Rat).Set(cached.price)
-		c.mu.RUnlock()
-		return price, nil
+		if c.now().Before(cached.expiresAt) {
+			c.mu.RUnlock()
+			return price, nil
+		}
+		stalePrice = price
 	}
 	c.mu.RUnlock()
 
 	endpoint, err := url.Parse(c.baseURL + "/simple/price")
 	if err != nil {
-		return nil, err
+		return staleOrError(stalePrice, err)
 	}
 	query := endpoint.Query()
 	query.Set("ids", coinID)
@@ -91,7 +104,7 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
 	if err != nil {
-		return nil, err
+		return staleOrError(stalePrice, err)
 	}
 	if c.apiKey != "" {
 		req.Header.Set("x-cg-demo-api-key", c.apiKey)
@@ -100,28 +113,28 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, err
+		return staleOrError(stalePrice, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("CoinGecko returned HTTP %d", resp.StatusCode)
+		return staleOrError(stalePrice, fmt.Errorf("CoinGecko returned HTTP %d", resp.StatusCode))
 	}
 
 	var payload map[string]map[string]json.Number
 	decoder := json.NewDecoder(resp.Body)
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
+		return staleOrError(stalePrice, err)
 	}
 
 	number, ok := payload[coinID][vsCurrency]
 	if !ok {
-		return nil, fmt.Errorf("CoinGecko price not found for %s/%s", coinID, vsCurrency)
+		return staleOrError(stalePrice, fmt.Errorf("CoinGecko price not found for %s/%s", coinID, vsCurrency))
 	}
 	price, ok := new(big.Rat).SetString(number.String())
 	if !ok || price.Sign() <= 0 {
-		return nil, errors.New("CoinGecko returned invalid price")
+		return staleOrError(stalePrice, errors.New("CoinGecko returned invalid price"))
 	}
 
 	c.mu.Lock()
@@ -132,6 +145,68 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 	c.mu.Unlock()
 
 	return price, nil
+}
+
+func staleOrError(stalePrice *big.Rat, err error) (*big.Rat, error) {
+	if stalePrice != nil && stalePrice.Sign() > 0 {
+		return new(big.Rat).Set(stalePrice), nil
+	}
+	return nil, err
+}
+
+func configuredFallbackPrice(symbol string, currency string) (*big.Rat, bool, error) {
+	symbolPart := priceEnvPart(symbol)
+	currencyPart := priceEnvPart(currency)
+	if symbolPart == "" || currencyPart == "" {
+		return nil, false, nil
+	}
+	for _, key := range []string{
+		"PRICE_" + symbolPart + "_" + currencyPart,
+		"GATEWAY_PRICE_" + symbolPart + "_" + currencyPart,
+	} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		price, ok := new(big.Rat).SetString(raw)
+		if !ok || price.Sign() <= 0 {
+			return nil, true, fmt.Errorf("%s must be a positive decimal price", key)
+		}
+		return price, true, nil
+	}
+	return nil, false, nil
+}
+
+func stablecoinFallbackPrice(symbol string, currency string) (*big.Rat, bool) {
+	if strings.ToLower(strings.TrimSpace(currency)) != "usd" {
+		return nil, false
+	}
+	switch strings.ToUpper(strings.TrimSpace(symbol)) {
+	case "USDT", "USDC":
+		return big.NewRat(1, 1), true
+	default:
+		return nil, false
+	}
+}
+
+func priceEnvPart(value string) string {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	var b strings.Builder
+	lastUnderscore := false
+	for _, char := range value {
+		isAlpha := char >= 'A' && char <= 'Z'
+		isDigit := char >= '0' && char <= '9'
+		if isAlpha || isDigit {
+			b.WriteRune(char)
+			lastUnderscore = false
+			continue
+		}
+		if b.Len() > 0 && !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
+	return strings.Trim(b.String(), "_")
 }
 
 func CoinGeckoID(symbol string) (string, bool) {

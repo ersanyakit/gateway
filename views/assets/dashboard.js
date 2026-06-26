@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', function () {
+  initCSRFProtection();
+
   document.querySelectorAll('[data-test-webhook]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var domainID = btn.getAttribute('data-test-webhook');
@@ -89,6 +91,70 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 });
 
+function initCSRFProtection() {
+  attachCSRFInputs();
+  patchCSRFFetch();
+}
+
+function csrfCookie(name) {
+  var prefix = name + '=';
+  var cookies = document.cookie ? document.cookie.split(';') : [];
+  for (var i = 0; i < cookies.length; i += 1) {
+    var cookie = cookies[i].trim();
+    if (cookie.indexOf(prefix) === 0) {
+      return decodeURIComponent(cookie.slice(prefix.length));
+    }
+  }
+  return '';
+}
+
+function csrfToken() {
+  return csrfCookie('gateway_csrf_jwt');
+}
+
+function attachCSRFInputs() {
+  var token = csrfToken();
+  if (!token) return;
+  document.querySelectorAll('form').forEach(function (form) {
+    var method = (form.getAttribute('method') || 'get').toLowerCase();
+    if (method !== 'post') return;
+    var input = form.querySelector('input[name="_csrf"]');
+    if (!input) {
+      input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = '_csrf';
+      form.appendChild(input);
+    }
+    input.value = token;
+  });
+}
+
+function patchCSRFFetch() {
+  if (!window.fetch || window.fetch.__csrfPatched) return;
+  var originalFetch = window.fetch;
+  window.fetch = function (input, init) {
+    init = init || {};
+    var method = (init.method || (input && input.method) || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var sameOrigin = !url || url.indexOf('/') === 0 || url.indexOf(window.location.origin) === 0;
+      var token = csrfToken();
+      if (sameOrigin && token) {
+        var headers = new Headers(init.headers || (input && input.headers) || {});
+        if (!headers.has('X-CSRF-Token')) {
+          headers.set('X-CSRF-Token', token);
+        }
+        init.headers = headers;
+        if (!init.credentials) {
+          init.credentials = 'same-origin';
+        }
+      }
+    }
+    return originalFetch(input, init);
+  };
+  window.fetch.__csrfPatched = true;
+}
+
 function initAdminRichSelects() {
   var controls = [];
 
@@ -110,6 +176,7 @@ function initAdminRichSelects() {
     var searchWrap = document.createElement('div');
     var search = document.createElement('input');
     var optionsEl = document.createElement('div');
+    var preview = null;
 
     root.className = 'admin-rich-select';
     root.setAttribute('data-kind', kind);
@@ -153,6 +220,12 @@ function initAdminRichSelects() {
     menu.appendChild(optionsEl);
     root.appendChild(trigger);
     root.appendChild(menu);
+    if (kind === 'wallet') {
+      preview = document.createElement('div');
+      preview.className = 'admin-rich-preview';
+      preview.setAttribute('data-visible', 'false');
+      root.appendChild(preview);
+    }
 
     select.classList.add('admin-native-select-hidden');
     select.setAttribute('tabindex', '-1');
@@ -198,7 +271,15 @@ function initAdminRichSelects() {
         return;
       }
 
+      var lastGroup = null;
       records.forEach(function (record) {
+        if (record.group && record.group !== lastGroup) {
+          lastGroup = record.group;
+          var group = document.createElement('div');
+          group.className = 'admin-rich-group';
+          group.textContent = record.group;
+          optionsEl.appendChild(group);
+        }
         var optionButton = document.createElement('button');
         optionButton.type = 'button';
         optionButton.className = 'admin-rich-option';
@@ -327,6 +408,7 @@ function initAdminRichSelects() {
     select.addEventListener('change', function () {
       root.setAttribute('data-invalid', 'false');
       updateTrigger();
+      updatePreview();
       renderOptions(search.value);
     });
 
@@ -339,6 +421,64 @@ function initAdminRichSelects() {
 
     controls.push({ root: root, close: closeMenu });
     updateTrigger();
+    updatePreview();
+
+    function updatePreview() {
+      if (!preview) return;
+      var record = selectedRecord();
+      if (!record) {
+        preview.textContent = '';
+        preview.setAttribute('data-visible', 'false');
+        return;
+      }
+      preview.textContent = '';
+      preview.setAttribute('data-visible', 'true');
+
+      var head = document.createElement('div');
+      var copy = document.createElement('div');
+      var title = document.createElement('p');
+      var subtitle = document.createElement('p');
+      var badge = document.createElement('span');
+      var grid = document.createElement('div');
+
+      head.className = 'admin-rich-preview-head';
+      title.className = 'admin-rich-preview-title';
+      subtitle.className = 'admin-rich-preview-subtitle';
+      badge.className = 'admin-rich-preview-badge';
+      grid.className = 'admin-rich-preview-grid';
+
+      title.textContent = record.details.merchant || record.primary;
+      subtitle.textContent = record.details.domain || record.meta;
+      badge.textContent = record.details.kind || record.chip;
+
+      copy.appendChild(title);
+      copy.appendChild(subtitle);
+      head.appendChild(copy);
+      if (badge.textContent) head.appendChild(badge);
+      preview.appendChild(head);
+
+      [
+        ['Domain ID', record.details.domainID],
+        ['Wallet', record.details.wallet || record.value],
+        ['Owner', record.details.owner],
+        ['Wallet ID', record.value],
+      ].forEach(function (item) {
+        if (!item[1]) return;
+        var cell = document.createElement('div');
+        var key = document.createElement('span');
+        var value = document.createElement('span');
+        cell.className = 'admin-rich-preview-item';
+        key.className = 'admin-rich-preview-key';
+        value.className = 'admin-rich-preview-value';
+        key.textContent = item[0];
+        value.textContent = item[1];
+        value.title = item[1];
+        cell.appendChild(key);
+        cell.appendChild(value);
+        grid.appendChild(cell);
+      });
+      preview.appendChild(grid);
+    }
   });
 
   document.addEventListener('click', function (event) {
@@ -361,6 +501,7 @@ function readOption(option) {
   var meta = option.getAttribute('data-meta') || text;
   var chip = option.getAttribute('data-chip') || '';
   var avatarSource = option.getAttribute('data-avatar') || primary;
+  var group = compactText(option.getAttribute('data-group') || '');
   var search = [
     option.getAttribute('data-search') || '',
     option.value,
@@ -375,8 +516,17 @@ function readOption(option) {
     primary: compactText(primary),
     meta: compactText(meta),
     chip: compactText(chip),
+    group: group,
     avatar: initials(avatarSource),
     search: normalize(search),
+    details: {
+      domain: compactText(option.getAttribute('data-detail-domain') || ''),
+      domainID: compactText(option.getAttribute('data-detail-domain-id') || ''),
+      merchant: compactText(option.getAttribute('data-detail-merchant') || ''),
+      wallet: compactText(option.getAttribute('data-detail-wallet') || ''),
+      owner: compactText(option.getAttribute('data-detail-owner') || ''),
+      kind: compactText(option.getAttribute('data-detail-kind') || ''),
+    },
   };
 }
 

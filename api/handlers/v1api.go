@@ -1,6 +1,8 @@
 package handlers
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"core/asset"
+	"core/blockchain"
 	"core/constants"
 	"core/helpers"
 	"core/models"
@@ -21,6 +24,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
+	"gorm.io/gorm"
 )
 
 // V1APIDeps holds all dependencies used by the v1 REST API endpoints.
@@ -33,6 +37,7 @@ type V1APIDeps struct {
 	LedgerRepo      *repositories.LedgerRepo
 	TransactionRepo *repositories.TransactionRepo
 	AssetRegistry   *asset.Registry
+	Blockchains     *blockchain.ChainFactory
 	PriceOracle     pricing.PriceOracle
 	Notifier        *webhooksvc.Notifier
 	PaymentHub      *realtime.PaymentHub
@@ -165,24 +170,25 @@ func HandleV1CommonBalance(deps V1APIDeps) fiber.Handler {
 		var items []balanceItem
 		if deps.LedgerRepo != nil {
 			rows, err := deps.LedgerRepo.DomainBalances(c.Context(), domain.MerchantID, domain.ID)
-			if err == nil {
-				for _, row := range rows {
-					if row.Account != models.LedgerAccountMerchantAvailable {
-						continue
-					}
-					logoURL := ""
-					if deps.AssetRegistry != nil {
-						logoURL = deps.AssetRegistry.LogoURL(row.Symbol)
-					}
-					items = append(items, balanceItem{
-						Symbol:   row.Symbol,
-						Chain:    chainLabel(constants.ChainID(row.ChainID)),
-						ChainID:  row.ChainID,
-						Balance:  formatV1Amount(row.BalanceRaw, row.Decimals),
-						Decimals: row.Decimals,
-						LogoURL:  logoURL,
-					})
+			if err != nil {
+				return v1Err(c, fiber.StatusInternalServerError, "failed to fetch ledger balances")
+			}
+			for _, row := range rows {
+				if row.Account != models.LedgerAccountMerchantAvailable {
+					continue
 				}
+				logoURL := ""
+				if deps.AssetRegistry != nil {
+					logoURL = deps.AssetRegistry.LogoURL(row.Symbol)
+				}
+				items = append(items, balanceItem{
+					Symbol:   row.Symbol,
+					Chain:    chainLabel(constants.ChainID(row.ChainID)),
+					ChainID:  row.ChainID,
+					Balance:  formatV1Amount(row.BalanceRaw, row.Decimals),
+					Decimals: row.Decimals,
+					LogoURL:  logoURL,
+				})
 			}
 		}
 		if items == nil {
@@ -852,9 +858,9 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusBadRequest, err.Error())
 		}
 
-		wallet, err := deps.WalletRepo.FindReserveWallet(c.Context(), domain.MerchantID)
+		wallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
 		if err != nil {
-			return v1Err(c, fiber.StatusBadRequest, "no reserve wallet found — complete merchant onboarding to initialize the reserve wallet")
+			return v1Err(c, fiber.StatusInternalServerError, "reserve wallet initialization failed: "+err.Error())
 		}
 
 		amountRaw, err := types.DecimalToRaw(amount, decimals)
@@ -1036,8 +1042,20 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		if amountRaw == "" {
 			amountRaw = session.ExpectedAmountRaw
 		}
-		if _, ok := stringsToPositiveBigInt(amountRaw); !ok {
+		requestedRaw, ok := stringsToPositiveBigInt(amountRaw)
+		if !ok {
 			return v1Err(c, fiber.StatusBadRequest, "amount_raw must be a positive integer")
+		}
+		limitRaw, err := v1RefundLimitRaw(c.Context(), deps, session)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "refund limit check failed: "+err.Error())
+		}
+		activeTotal, err := deps.RefundRepo.ActiveTotalRawByPayment(c.Context(), session.ID)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "refund total check failed: "+err.Error())
+		}
+		if new(big.Int).Add(activeTotal, requestedRaw).Cmp(limitRaw) > 0 {
+			return v1Err(c, fiber.StatusBadRequest, "refund amount exceeds refundable payment amount")
 		}
 		refund := &models.Refund{
 			MerchantID:  domain.MerchantID,
@@ -1163,6 +1181,49 @@ func stringsToPositiveBigInt(value string) (*big.Int, bool) {
 	}
 	amount, ok := new(big.Int).SetString(value, 10)
 	return amount, ok && amount.Sign() > 0
+}
+
+func v1RefundLimitRaw(ctx context.Context, deps V1APIDeps, session *models.PaymentSession) (*big.Int, error) {
+	expected, ok := stringsToPositiveBigInt(session.ExpectedAmountRaw)
+	if !ok {
+		return nil, fmt.Errorf("payment expected amount is invalid")
+	}
+	limit := new(big.Int).Set(expected)
+	if deps.TransactionRepo == nil || session.TxUniqueHash == nil || strings.TrimSpace(*session.TxUniqueHash) == "" {
+		return limit, nil
+	}
+	txModel, err := deps.TransactionRepo.FindByUniqueHash(ctx, strings.TrimSpace(*session.TxUniqueHash))
+	if err != nil {
+		return limit, nil
+	}
+	actual, ok := stringsToPositiveBigInt(txModel.Amount)
+	if ok && actual.Cmp(limit) > 0 {
+		limit = actual
+	}
+	return limit, nil
+}
+
+func ensureV1ReserveWallet(ctx context.Context, deps V1APIDeps, merchantID uuid.UUID) (*models.Wallet, error) {
+	if deps.DomainRepo == nil || deps.WalletRepo == nil {
+		return nil, fmt.Errorf("reserve wallet repositories are not ready")
+	}
+	wallet, err := deps.WalletRepo.FindReserveWallet(ctx, merchantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		domain, createErr := deps.DomainRepo.CreateReserveDomain(ctx, merchantID)
+		if createErr != nil {
+			return nil, fmt.Errorf("reserve domain: %w", createErr)
+		}
+		wallet, err = deps.WalletRepo.CreateReserveWallet(ctx, merchantID, domain.ID, domain.HDAccountID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if deps.Blockchains != nil {
+		if err := deps.WalletRepo.EnsureAllAddresses(ctx, wallet.ID, deps.Blockchains); err != nil {
+			return nil, err
+		}
+	}
+	return deps.WalletRepo.FindByID(ctx, wallet.ID)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

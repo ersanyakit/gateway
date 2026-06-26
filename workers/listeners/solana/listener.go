@@ -106,7 +106,7 @@ func (r *RpcListener) pollLoop() {
 		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[%s] listener catch-up error: %v\n", r.chain.Name(), err)
-			if rpcutil.IsThrottle(err) {
+			if rpcutil.IsRetryable(err) {
 				r.throttleErrors++
 				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
 			} else {

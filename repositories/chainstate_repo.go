@@ -58,7 +58,22 @@ func (r *ChainStateRepo) Update(ctx context.Context, state *models.ChainState) e
 	}
 
 	state.UpdatedAt = time.Now()
-	return r.db.WithContext(ctx).Save(state).Error
+	if err := r.db.WithContext(ctx).Exec(
+		`INSERT INTO chain_states (chain_id, last_processed_block, last_confirmed_block, updated_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT (chain_id) DO UPDATE
+		 SET last_processed_block = EXCLUDED.last_processed_block,
+		     last_confirmed_block = EXCLUDED.last_confirmed_block,
+		     updated_at = EXCLUDED.updated_at`,
+		int64(state.ChainID),
+		state.LastProcessedBlock,
+		state.LastConfirmedBlock,
+		state.UpdatedAt,
+	).Error; err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (r *ChainStateRepo) Exists(ctx context.Context, chainID int64) (bool, error) {

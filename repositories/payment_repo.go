@@ -263,7 +263,7 @@ func (r *PaymentRepo) StatsByDomain(ctx context.Context, merchantID, domainID uu
 	return result, nil
 }
 
-func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID constants.ChainID, symbol string, assetToken *string, decimals uint8, amountRaw string, depositAddress string) (*models.PaymentSession, error) {
+func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID constants.ChainID, symbol string, assetToken *string, decimals uint8, amountRaw string, depositAddress string, quote *models.PriceQuote) (*models.PaymentSession, error) {
 	updates := map[string]interface{}{
 		"selected_chain_id":   &chainID,
 		"selected_token":      assetToken,
@@ -275,15 +275,45 @@ func (r *PaymentRepo) SelectAsset(ctx context.Context, token string, chainID con
 		"updated_at":          time.Now(),
 	}
 
-	if err := r.db.WithContext(ctx).
-		Model(&models.PaymentSession{}).
-		Where("session_token = ?", token).
-		Where("status IN ?", []string{models.PaymentStatusPending, models.PaymentStatusAwaitingPayment}).
-		Updates(updates).Error; err != nil {
+	var session models.PaymentSession
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.PaymentSession{}).
+			Where("session_token = ?", token).
+			Where("status IN ?", []string{models.PaymentStatusPending, models.PaymentStatusAwaitingPayment}).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if err := tx.Preload("Domain").
+			Preload("Wallet").
+			First(&session, "session_token = ?", token).Error; err != nil {
+			return err
+		}
+		if quote != nil {
+			if quote.ID == uuid.Nil {
+				quote.ID = uuid.New()
+			}
+			quote.PaymentID = session.ID
+			if quote.QuotedAt.IsZero() {
+				quote.QuotedAt = time.Now()
+			}
+			if quote.ExpiresAt.IsZero() {
+				quote.ExpiresAt = time.Now().Add(15 * time.Minute)
+				if session.ExpiresAt != nil {
+					quote.ExpiresAt = *session.ExpiresAt
+				}
+			}
+			return tx.Create(quote).Error
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 
-	return r.FindByToken(ctx, token)
+	return &session, nil
 }
 
 func (r *PaymentRepo) ResetSelection(ctx context.Context, token string) (*models.PaymentSession, error) {
@@ -377,10 +407,28 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 		if new(big.Int).Mul(txAmount, big.NewInt(1000)).Cmp(threshold) < 0 {
 			continue
 		}
+		// Reject extreme overpayments so a reused/static wallet deposit cannot accidentally
+		// satisfy an unrelated checkout for the same asset.
+		upperBound := new(big.Int).Mul(expected, big.NewInt(120))
+		if new(big.Int).Mul(txAmount, big.NewInt(100)).Cmp(upperBound) > 0 {
+			continue
+		}
 
 		var paidSession models.PaymentSession
 		paid := false
 		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "payment-tx:"+txModel.UniqueHash).Error; err != nil {
+				return err
+			}
+			var used int64
+			if err := tx.Model(&models.PaymentSession{}).
+				Where("tx_unique_hash = ?", txModel.UniqueHash).
+				Count(&used).Error; err != nil {
+				return err
+			}
+			if used > 0 {
+				return nil
+			}
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 				Preload("Domain").
 				First(&paidSession, "id = ?", candidate.ID).Error; err != nil {

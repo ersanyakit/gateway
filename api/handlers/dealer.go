@@ -35,10 +35,12 @@ import (
 	"github.com/pquerna/otp/totp"
 	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/oauth2"
+	"gorm.io/gorm"
 )
 
 const dealerSessionCookie = "dealer_session"
 const adminSessionCookie = "admin_session"
+const adminSessionEmailLocal = "admin_session_email"
 const adminPendingTOTPCookie = "admin_totp_pending" // temp: holds admin ID awaiting 2FA
 const adminSetupTOTPCookie = "admin_totp_setup"     // temp: holds admin ID during TOTP setup
 const oidcStateCookie = "oidc_state"
@@ -54,6 +56,8 @@ const adminPendingTOTPTTL = 5 * time.Minute
 const adminSetupTOTPTTL = 10 * time.Minute
 const oidcPortalMerchant = "merchant"
 const oidcPortalAdmin = "admin"
+
+var runtimeDealerSessionSecret = "runtime-session-secret-" + uuid.NewString()
 
 type DealerDeps struct {
 	MerchantService     *services.MerchantService
@@ -193,11 +197,15 @@ type DealerDomainView struct {
 type DealerWalletView struct {
 	ID            string
 	ShortID       string
+	MerchantID    string
 	Merchant      string
 	Label         string
 	ProductID     string
 	UserID        string
+	OwnerRef      string
+	DomainID      string
 	Domain        string
+	WalletKind    string
 	CreatedAt     string
 	Addresses     []DealerAddressView
 	MissingChains []DealerMissingChainView
@@ -1090,12 +1098,24 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 		symbol := strings.TrimSpace(c.FormValue("symbol"))
 		tokenAddress := strings.TrimSpace(c.FormValue("token_address"))
 		toAddress := strings.TrimSpace(c.FormValue("to_address"))
-		amountRaw := strings.TrimSpace(c.FormValue("amount_raw"))
+		amount := strings.TrimSpace(c.FormValue("amount"))
+		if amount == "" {
+			amount = strings.TrimSpace(c.FormValue("amount_raw"))
+		}
 		note := strings.TrimSpace(c.FormValue("note"))
 		chain, token, symbol, decimals, err := resolveWithdrawalAsset(deps.AssetRegistry, chain, symbol, tokenAddress)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
 			return redirectWithError(c, "/merchant/dashboard", err.Error())
+		}
+		if err := types.ValidatePositiveDecimal(amount); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
+			return redirectWithError(c, "/merchant/dashboard/withdrawals", "Tutar pozitif decimal olmalı.")
+		}
+		amountRaw, err := types.DecimalToRaw(amount, decimals)
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
+			return redirectWithError(c, "/merchant/dashboard/withdrawals", "Tutar geçersiz: "+err.Error())
 		}
 		params := types.TransferParams{
 			Context:   c.Context(),
@@ -1323,6 +1343,29 @@ func provisionMerchantReserve(ctx context.Context, merchantID uuid.UUID, deps De
 		return fmt.Errorf("reserve wallet: %w", err)
 	}
 	return nil
+}
+
+func ensureDealerReserveWallet(ctx context.Context, merchantID uuid.UUID, deps DealerDeps) (*models.Wallet, error) {
+	if deps.DomainService == nil || deps.WalletRepo == nil {
+		return nil, errors.New("reserve wallet services are not ready")
+	}
+	wallet, err := deps.WalletRepo.FindReserveWallet(ctx, merchantID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		domain, createErr := deps.DomainService.CreateReserve(ctx, merchantID)
+		if createErr != nil {
+			return nil, fmt.Errorf("reserve domain: %w", createErr)
+		}
+		wallet, err = deps.WalletRepo.CreateReserveWallet(ctx, merchantID, domain.ID, domain.HDAccountID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if deps.Blockchains != nil {
+		if err := deps.WalletRepo.EnsureAllAddresses(ctx, wallet.ID, deps.Blockchains); err != nil {
+			return nil, err
+		}
+	}
+	return deps.WalletRepo.FindByID(ctx, wallet.ID)
 }
 
 func HandleAdminLogin() fiber.Handler {
@@ -1690,12 +1733,18 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 
 		switch panel {
 		case "merchants":
-			rows, total, _ := deps.MerchantService.Repo().ListPage(c.Context(), page, limit)
+			rows, total, err := deps.MerchantService.Repo().ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Merchant listesi okunamadı", err)
+			}
 			data.AdminMerchants = dealerAdminMerchantViews(rows)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/merchants")
 
 		case "payments":
-			rows, total, _ := deps.PaymentRepo.ListPage(c.Context(), page, limit)
+			rows, total, err := deps.PaymentRepo.ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Payment listesi okunamadı", err)
+			}
 			data.Payments = dealerPaymentViews(c, rows)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/payments")
 
@@ -1706,18 +1755,27 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminDepositFromFilter = fromFilter
 			data.AdminDepositToFilter = toFilter
 			data.AdminDepositHashFilter = hashFilter
-			rows, total, _ := deps.TransactionRepo.ListPageFiltered(c.Context(), page, limit, fromFilter, toFilter, hashFilter)
+			rows, total, err := deps.TransactionRepo.ListPageFiltered(c.Context(), page, limit, fromFilter, toFilter, hashFilter)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Deposit listesi okunamadı", err)
+			}
 			data.AdminDeposits = dealerActivityViews(rows, deps.AssetRegistry)
 			depositBase := buildDepositFilterURL(fromFilter, toFilter, hashFilter)
 			data.AdminPagination = dealerPaginationView(page, limit, total, depositBase)
 
 		case "withdrawals":
-			rows, total, _ := deps.WithdrawalRepo.ListPage(c.Context(), page, limit)
+			rows, total, err := deps.WithdrawalRepo.ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Çekim listesi okunamadı", err)
+			}
 			data.Withdrawals = dealerWithdrawalViews(rows)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/withdrawals")
 
 		case "wallets":
-			rows, total, _ := deps.WalletRepo.ListPage(c.Context(), page, limit)
+			rows, total, err := deps.WalletRepo.ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Wallet listesi okunamadı", err)
+			}
 			balanceMap := buildWalletBalanceMap(c.Context(), deps.TransactionRepo, deps.AssetRegistry)
 			data.AdminWallets = dealerWalletViewsWithBalances(rows, balanceMap)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/wallets")
@@ -1731,9 +1789,15 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 					mID = &parsed
 				}
 			}
-			rows, total, _ := deps.ActivityLogRepo.ListPage(c.Context(), page, limit, mID)
+			rows, total, err := deps.ActivityLogRepo.ListPage(c.Context(), page, limit, mID)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Activity listesi okunamadı", err)
+			}
 			data.AdminActivityLogs = dealerAuditLogViews(rows)
-			merchants, _ := deps.MerchantService.List(c.Context(), 500)
+			merchants, err := deps.MerchantService.List(c.Context(), 500)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Merchant filtresi okunamadı", err)
+			}
 			data.AdminMerchants = dealerAdminMerchantViews(merchants)
 			activityBase := "/admin/activity"
 			if merchantFilter != "" {
@@ -1744,7 +1808,10 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		case "webhooks":
 			statusFilter := strings.TrimSpace(c.Query("status"))
 			data.AdminWebhookStatusFilter = statusFilter
-			rows, total, _ := deps.WebhookDeliveryRepo.ListPage(c.Context(), page, limit, statusFilter)
+			rows, total, err := deps.WebhookDeliveryRepo.ListPage(c.Context(), page, limit, statusFilter)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Webhook listesi okunamadı", err)
+			}
 			data.AdminWebhooks = dealerWebhookDeliveryViews(rows)
 			webhookBase := "/admin/webhooks"
 			if statusFilter != "" {
@@ -1755,7 +1822,10 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		case "refunds":
 			statusFilter := strings.TrimSpace(c.Query("status"))
 			data.AdminRefundStatusFilter = statusFilter
-			rows, total, _ := deps.RefundRepo.ListPage(c.Context(), page, limit, statusFilter)
+			rows, total, err := deps.RefundRepo.ListPage(c.Context(), page, limit, statusFilter)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Refund listesi okunamadı", err)
+			}
 			data.AdminRefunds = dealerRefundViews(rows)
 			refundBase := "/admin/refunds"
 			if statusFilter != "" {
@@ -1764,11 +1834,18 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminPagination = dealerPaginationView(page, limit, total, refundBase)
 
 		case "sweep":
-			wallets, _ := deps.WalletRepo.List(c.Context(), 200)
+			wallets, walletTotal, err := deps.WalletRepo.ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Sweep wallet listesi okunamadı", err)
+			}
 			data.WithdrawalWallets = dealerWalletViews(wallets)
+			data.AdminPagination = dealerPaginationView(page, limit, walletTotal, "/admin/sweep")
 
 		case "test-deposit":
-			wallets, _ := deps.WalletRepo.List(c.Context(), 500)
+			wallets, err := deps.WalletRepo.List(c.Context(), 500)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Test deposit wallet listesi okunamadı", err)
+			}
 			data.AdminWallets = dealerWalletViews(wallets)
 			data.AdminAssets = dealerAssetOptions(deps.AssetRegistry)
 
@@ -1776,17 +1853,25 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			// Form-only panel.
 
 		case "links":
-			rows, total, _ := deps.ProductRepo.ListPage(c.Context(), page, limit)
+			rows, total, err := deps.ProductRepo.ListPage(c.Context(), page, limit)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Link listesi okunamadı", err)
+			}
 			data.Products = dealerProductViews(c, rows)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/links")
 
 		case "security":
-			if admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail); err == nil {
-				data.AdminTOTPEnabled = admin.TOTPEnabled
+			admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Admin güvenlik ayarları okunamadı", err)
 			}
+			data.AdminTOTPEnabled = admin.TOTPEnabled
 
 		default: // overview
-			recentRows, _, _ := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
+			recentRows, _, err := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Son depositler okunamadı", err)
+			}
 			data.AdminDeposits = dealerActivityViews(recentRows, deps.AssetRegistry)
 		}
 
@@ -2143,7 +2228,11 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/refunds", "Refund hedef adresi bulunamadı.")
 		}
 
-		walletID := session.WalletID.String()
+		reserveWallet, err := ensureDealerReserveWallet(c.Context(), refund.MerchantID, deps)
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Bayi reserve cüzdanı hazırlanamadı: "+err.Error())
+		}
+		walletID := reserveWallet.ID.String()
 		chain := constants.ChainName(*session.SelectedChainID)
 		claimedRefund, err := deps.RefundRepo.ClaimPending(c.Context(), id, adminEmail)
 		if err != nil {
@@ -2154,6 +2243,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			Context:   c.Context(),
 			WalletID:  &walletID,
 			Chain:     &chain,
+			Token:     session.SelectedToken,
 			ToAddress: &toAddress,
 			AmountRaw: &amountRaw,
 		}
@@ -2827,7 +2917,31 @@ func clearAdminTempCookie(c fiber.Ctx, name string) {
 	})
 }
 
-func requireAdmin(c fiber.Ctx) (string, bool) {
+func RequireAdmin(adminRepo *repositories.AdminRepo) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if isPublicAdminPath(c.Path()) {
+			return c.Next()
+		}
+		email, ok := verifyActiveAdminSession(c, adminRepo)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		c.Locals(adminSessionEmailLocal, email)
+		return c.Next()
+	}
+}
+
+func isPublicAdminPath(rawPath string) bool {
+	path := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(rawPath), "/"))
+	switch path {
+	case "/admin/login", "/admin/logout", "/admin/auth/oidc/login", "/admin/2fa/setup", "/admin/2fa/verify":
+		return true
+	default:
+		return false
+	}
+}
+
+func verifyActiveAdminSession(c fiber.Ctx, adminRepo *repositories.AdminRepo) (string, bool) {
 	payload, err := verifyDealerSessionValue(c.Cookies(adminSessionCookie))
 	if err != nil || strings.TrimSpace(payload) == "" {
 		clearAdminSessionCookie(c)
@@ -2836,6 +2950,27 @@ func requireAdmin(c fiber.Ctx) (string, bool) {
 	email, err := parseAdminSessionPayload(payload, time.Now())
 	if err != nil || strings.TrimSpace(email) == "" {
 		clearAdminSessionCookie(c)
+		return "", false
+	}
+	if adminRepo == nil {
+		clearAdminSessionCookie(c)
+		return "", false
+	}
+	admin, err := adminRepo.FindByEmail(c.Context(), email)
+	if err != nil || admin == nil || !admin.IsActive {
+		clearAdminSessionCookie(c)
+		return "", false
+	}
+	return admin.Email, true
+}
+
+func requireAdmin(c fiber.Ctx) (string, bool) {
+	email, ok := c.Locals(adminSessionEmailLocal).(string)
+	if !ok {
+		return "", false
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
 		return "", false
 	}
 	return email, true
@@ -2868,7 +3003,7 @@ func parseAdminSessionPayload(value string, now time.Time) (string, error) {
 		return "", errors.New("empty admin session")
 	}
 	if !strings.HasPrefix(value, "{") {
-		return strings.ToLower(value), nil
+		return "", errors.New("invalid admin session payload")
 	}
 	var payload adminSessionPayloadData
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
@@ -3117,6 +3252,14 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminTestDepositURL: "/admin/test-deposit",
 	}
 	return data
+}
+
+func renderAdminDashboardError(c fiber.Ctx, data DealerPageData, message string, err error) error {
+	if err != nil {
+		message += ": " + err.Error()
+	}
+	data.Error = message
+	return c.Status(fiber.StatusInternalServerError).Render("dealer/admin_dashboard", data, "dealer/layout")
 }
 
 func parseAdminAssetSelection(registry *asset.Registry, value string) (asset.Asset, error) {
@@ -3413,14 +3556,23 @@ func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 		if domainLabel == "" {
 			domainLabel = shortText(wallet.DomainID.String(), 8, 6)
 		}
+		walletKind := "Kullanıcı wallet"
+		if wallet.HDAddressId == 0 || domainLabel == "_reserve_" {
+			walletKind = "Reserve wallet"
+		}
+		ownerRef := walletOwnerRef(wallet)
 		views = append(views, DealerWalletView{
 			ID:            wallet.ID.String(),
 			ShortID:       shortText(wallet.ID.String(), 8, 6),
+			MerchantID:    wallet.MerchantID.String(),
 			Merchant:      merchant,
 			Label:         walletLabel(wallet),
 			ProductID:     emptyDash(wallet.ProductID),
 			UserID:        emptyDash(wallet.UserID),
+			OwnerRef:      ownerRef,
+			DomainID:      wallet.DomainID.String(),
 			Domain:        domainLabel,
+			WalletKind:    walletKind,
 			CreatedAt:     formatPanelTime(wallet.CreatedAt),
 			Addresses:     walletAddressViews(wallet),
 			MissingChains: missing,
@@ -3491,10 +3643,10 @@ func dealerPaginationView(page int, limit int, total int64, basePath string) Dea
 		HasNext:    totalPages > 0 && page < totalPages,
 	}
 	if view.HasPrev {
-		view.PrevURL = fmt.Sprintf("%s?page=%d&limit=%d", basePath, page-1, limit)
+		view.PrevURL = paginationURL(basePath, page-1, limit)
 	}
 	if view.HasNext {
-		view.NextURL = fmt.Sprintf("%s?page=%d&limit=%d", basePath, page+1, limit)
+		view.NextURL = paginationURL(basePath, page+1, limit)
 	}
 
 	// Build page link list (show at most ~7 items with ellipsis).
@@ -3507,7 +3659,7 @@ func dealerPaginationView(page int, limit int, total int64, basePath string) Dea
 			seen[p] = true
 			view.PageURLs = append(view.PageURLs, DealerPageURL{
 				Page:   p,
-				URL:    fmt.Sprintf("%s?page=%d&limit=%d", basePath, p, limit),
+				URL:    paginationURL(basePath, p, limit),
 				Active: p == page,
 			})
 		}
@@ -3522,6 +3674,14 @@ func dealerPaginationView(page int, limit int, total int64, basePath string) Dea
 		}
 	}
 	return view
+}
+
+func paginationURL(basePath string, page, limit int) string {
+	separator := "?"
+	if strings.Contains(basePath, "?") {
+		separator = "&"
+	}
+	return fmt.Sprintf("%s%spage=%d&limit=%d", basePath, separator, page, limit)
 }
 
 func min(a, b int) int {
@@ -3582,6 +3742,21 @@ func walletLabel(wallet models.Wallet) string {
 		return userID
 	default:
 		return "Wallet " + shortText(wallet.ID.String(), 8, 6)
+	}
+}
+
+func walletOwnerRef(wallet models.Wallet) string {
+	productID := strings.TrimSpace(wallet.ProductID)
+	userID := strings.TrimSpace(wallet.UserID)
+	switch {
+	case productID != "" && userID != "":
+		return "User " + userID + " · Product " + productID
+	case userID != "":
+		return "User " + userID
+	case productID != "":
+		return "Product " + productID
+	default:
+		return "Reserve / sistem"
 	}
 }
 
@@ -4098,7 +4273,7 @@ func dealerSessionSecret() string {
 			return value
 		}
 	}
-	return fmt.Sprintf("dev-session-secret-%s", dealerSessionCookie)
+	return runtimeDealerSessionSecret
 }
 
 func oidcScopes() string {
