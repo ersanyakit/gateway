@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"core/asset"
+	"core/blockchain"
 	"core/constants"
 	"core/models"
 	"core/repositories"
@@ -35,6 +36,7 @@ type PaymentHandlerDeps struct {
 	ProductRepo      *repositories.ProductRepo
 	IdempotencyRepo  *repositories.IdempotencyRepo
 	AssetRegistry    *asset.Registry
+	Blockchains      *blockchain.ChainFactory
 	PriceOracle      pricing.PriceOracle
 	Notifier         *webhooksvc.Notifier
 	PaymentHub       *realtime.PaymentHub
@@ -266,6 +268,7 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
+		session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
@@ -315,6 +318,7 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
+		session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
@@ -660,6 +664,20 @@ func paymentIdempotencyKey(c fiber.Ctx, params types.PaymentCreateParams) string
 		return ""
 	}
 	return "order:" + strings.TrimSpace(*params.OrderID)
+}
+
+func ensureCheckoutWalletAddresses(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession) *models.PaymentSession {
+	if session == nil || deps.WalletRepo == nil || deps.PaymentRepo == nil || deps.Blockchains == nil {
+		return session
+	}
+	if err := deps.WalletRepo.EnsureAllAddresses(ctx, session.WalletID, deps.Blockchains); err != nil {
+		return session
+	}
+	refreshed, err := deps.PaymentRepo.FindByToken(ctx, session.SessionToken)
+	if err != nil {
+		return session
+	}
+	return refreshed
 }
 
 func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session models.PaymentSession) []CheckoutAssetGroup {

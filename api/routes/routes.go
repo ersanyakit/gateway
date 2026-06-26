@@ -252,6 +252,7 @@ func NewRouter(db *gorm.DB) *Router {
 		PaymentRepo:      r.PaymentRepo,
 		ProductRepo:      r.ProductRepo,
 		AssetRegistry:    r.assetRegistry,
+		Blockchains:      r.blockchains,
 		PriceOracle:      pricing.NewCoinGecko(),
 		Notifier:         webhooksvc.NewNotifier(),
 		PaymentHub:       r.PaymentHub,

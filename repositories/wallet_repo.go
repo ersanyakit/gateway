@@ -116,7 +116,10 @@ func (r *WalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
 		if commitErr := tx.Commit().Error; commitErr != nil {
 			return nil, commitErr
 		}
-		return &existing, nil
+		if err := r.EnsureAllAddresses(params.Context, existing.ID, r.domainRepo.MerchantRepo().blockchains); err != nil {
+			return nil, fmt.Errorf("wallet address backfill failed: %w", err)
+		}
+		return r.FindByID(params.Context, existing.ID)
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		tx.Rollback()
@@ -222,7 +225,10 @@ func (r *WalletRepo) CreateReserveWallet(ctx context.Context, merchantID, domain
 	if err := r.DB().WithContext(ctx).
 		Where("merchant_id = ? AND domain_id = ? AND hd_address_id = 0", merchantID, domainID).
 		First(&existing).Error; err == nil {
-		return &existing, nil
+		if err := r.EnsureAllAddresses(ctx, existing.ID, r.domainRepo.MerchantRepo().blockchains); err != nil {
+			return nil, fmt.Errorf("reserve wallet address backfill failed: %w", err)
+		}
+		return r.FindByID(ctx, existing.ID)
 	}
 
 	walletsMap, errorsMap := r.domainRepo.MerchantRepo().blockchains.CreateHDWallets(ctx, int(hdAccountID), 0)
@@ -568,6 +574,9 @@ func (r *WalletRepo) FillChainAddress(ctx context.Context, walletID uuid.UUID, c
 // EnsureAllAddresses derives and saves any chain addresses that are null on the given wallet.
 // Safe to call repeatedly — skips chains that already have an address.
 func (r *WalletRepo) EnsureAllAddresses(ctx context.Context, walletID uuid.UUID, blockchains *blockchain.ChainFactory) error {
+	if blockchains == nil {
+		return nil
+	}
 	wallet, err := r.FindByID(ctx, walletID)
 	if err != nil {
 		return err
