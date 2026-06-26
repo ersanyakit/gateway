@@ -1,0 +1,2361 @@
+basePath: /
+definitions:
+  types.DomainCreateResponse:
+    properties:
+      api_key:
+        type: string
+      api_secret:
+        type: string
+      created_at:
+        type: string
+      domain_url:
+        type: string
+      hd_account_id:
+        type: integer
+      id:
+        type: string
+      is_enabled:
+        type: boolean
+      key_id:
+        type: string
+      merchant_id:
+        type: string
+      updated_at:
+        type: string
+      webhook_url:
+        type: string
+    type: object
+  types.DomainParams:
+    properties:
+      api_key:
+        type: string
+      api_secret:
+        type: string
+      domain_id:
+        type: string
+      domain_url:
+        type: string
+      merchant_id:
+        type: string
+      webhook_secret:
+        type: string
+      webhook_url:
+        type: string
+    type: object
+  types.ErrorResponse:
+    properties:
+      error:
+        type: string
+      errors: {}
+      success:
+        type: boolean
+    type: object
+  types.MerchantCreateResponse:
+    properties:
+      created_at:
+        type: string
+      email:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  types.MerchantParams:
+    properties:
+      captcha:
+        type: string
+      cursor:
+        type: string
+      email:
+        type: string
+      email_repeat:
+        type: string
+      id:
+        type: string
+      limit:
+        type: integer
+      name:
+        type: string
+      password:
+        type: string
+      password_repeat:
+        type: string
+    type: object
+  types.PaymentCreateParams:
+    properties:
+      amount:
+        type: string
+      cancel_url:
+        type: string
+      currency:
+        type: string
+      domain_id:
+        type: string
+      merchant_id:
+        type: string
+      order_id:
+        type: string
+      product_id:
+        type: string
+      success_url:
+        type: string
+      user_id:
+        type: string
+    type: object
+  types.PaymentCreateResponse:
+    properties:
+      checkout_url:
+        type: string
+      deposit_wallet:
+        type: string
+      expires_at:
+        type: string
+      payment_id:
+        type: string
+      session_token:
+        type: string
+      status:
+        type: string
+      success:
+        type: boolean
+    type: object
+  types.PaymentStatusResponse:
+    properties:
+      cancel_path:
+        type: string
+      paid:
+        type: boolean
+      status:
+        type: string
+      success:
+        type: boolean
+      success_path:
+        type: string
+    type: object
+  types.V1AssetCatalogItem:
+    properties:
+      decimals:
+        example: 6
+        type: integer
+      deployments:
+        items:
+          $ref: '#/definitions/types.V1AssetDeploymentItem'
+        type: array
+      logo_url:
+        example: /static/coins/usdt.svg
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      type:
+        example: erc20
+        type: string
+    type: object
+  types.V1AssetDeploymentItem:
+    properties:
+      chain:
+        example: Ethereum
+        type: string
+      chain_id:
+        example: 1
+        type: integer
+      chain_logo_url:
+        example: /static/chains/ethereumchain.svg
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      enabled:
+        example: true
+        type: boolean
+      identifier:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+      logo_url:
+        example: /static/coins/usdt.svg
+        type: string
+      mint_address:
+        example: ""
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      native:
+        example: false
+        type: boolean
+      network:
+        example: ethereum
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+      type:
+        example: erc20
+        type: string
+    type: object
+  types.V1AssetItem:
+    properties:
+      balance:
+        example: "1250.00"
+        type: string
+      balance_raw:
+        example: "1250000000"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1AssetsData:
+    properties:
+      assets:
+        items:
+          $ref: '#/definitions/types.V1AssetCatalogItem'
+        type: array
+    type: object
+  types.V1AssetsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1AssetsData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1BalanceResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1AssetItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1CurrenciesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1CurrencyItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1CurrencyItem:
+    properties:
+      chain:
+        example: ethereum
+        type: string
+      chain_id:
+        example: 1
+        type: integer
+      decimals:
+        example: 6
+        type: integer
+      logo_url:
+        example: https://assets.coingecko.com/coins/images/325/large/Tether.png
+        type: string
+      name:
+        example: Tether USD
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1ErrorResponse:
+    properties:
+      message:
+        example: X-API-Key header is required
+        type: string
+      result:
+        example: error
+        type: string
+    type: object
+  types.V1FiatCurrenciesResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1FiatCurrencyItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1FiatCurrencyItem:
+    properties:
+      code:
+        example: USD
+        type: string
+      name:
+        example: US Dollar
+        type: string
+      symbol:
+        example: $
+        type: string
+    type: object
+  types.V1InvoiceRequest:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      cancel_url:
+        example: https://example.com/cancel
+        type: string
+      currency:
+        example: USD
+        type: string
+      description:
+        example: Product purchase
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      success_url:
+        example: https://example.com/success
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1NetworkItem:
+    properties:
+      chain_id:
+        example: 1
+        type: integer
+      explorer:
+        example: https://etherscan.io
+        type: string
+      logo_url:
+        example: https://assets.coingecko.com/coins/images/279/large/ethereum.png
+        type: string
+      name:
+        example: Ethereum
+        type: string
+      slug:
+        example: ethereum
+        type: string
+    type: object
+  types.V1NetworksResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1NetworkItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentCreatedData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentCreatedData:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      checkout_url:
+        example: https://pay.example.com/checkout/eyJhbGci
+        type: string
+      currency:
+        example: USD
+        type: string
+      expires_at:
+        example: "2024-06-01T12:30:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      session_token:
+        example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
+        type: string
+      status:
+        example: pending
+        type: string
+      track_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  types.V1PaymentDetail:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      checkout_url:
+        example: https://pay.example.com/checkout/eyJhbGci
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      currency:
+        example: USD
+        type: string
+      deposit_wallet:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      expires_at:
+        example: "2024-06-01T12:30:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      paid_at:
+        example: "2024-06-01T12:15:00Z"
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      selected_asset:
+        example: USDT
+        type: string
+      selected_chain:
+        example: ethereum
+        type: string
+      status:
+        example: paid
+        type: string
+      track_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      tx_hash:
+        example: 0xabc123...
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1PaymentHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PaymentDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 48
+        type: integer
+    type: object
+  types.V1PaymentInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentStatisticsData:
+    properties:
+      awaiting_payment:
+        example: 8
+        type: integer
+      expired:
+        example: 5
+        type: integer
+      paid:
+        example: 95
+        type: integer
+      pending:
+        example: 12
+        type: integer
+      total:
+        example: 120
+        type: integer
+      total_volume_usd:
+        example: "48320.00"
+        type: string
+    type: object
+  types.V1PaymentStatisticsResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentStatisticsData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentStatusTableResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1StatusTableItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PayoutDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutDetail:
+    properties:
+      amount_raw:
+        example: "50000000"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      domain_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      note:
+        example: Monthly settlement
+        type: string
+      payout_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      status:
+        example: pending
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      to_address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+      tx_hash:
+        example: ""
+        type: string
+    type: object
+  types.V1PayoutHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PayoutDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 12
+        type: integer
+    type: object
+  types.V1PayoutInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PayoutDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PayoutRequest:
+    properties:
+      amount:
+        example: "0.05"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      note:
+        example: Monthly settlement
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      to_address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
+    type: object
+  types.V1PayoutStatusTableItem:
+    properties:
+      description:
+        example: Awaiting admin approval
+        type: string
+      is_final:
+        example: false
+        type: boolean
+      status:
+        example: pending
+        type: string
+    type: object
+  types.V1PayoutStatusTableResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1PayoutStatusTableItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PriceItem:
+    properties:
+      price:
+        example: "67430.21"
+        type: string
+      symbol:
+        example: BTC
+        type: string
+    type: object
+  types.V1PricesResponse:
+    properties:
+      currency:
+        example: USD
+        type: string
+      data:
+        items:
+          $ref: '#/definitions/types.V1PriceItem'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1RefundDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundDetail:
+    properties:
+      amount_raw:
+        example: "25000000"
+        type: string
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440001
+        type: string
+      reason:
+        example: Customer requested refund
+        type: string
+      refund_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      status:
+        example: pending
+        type: string
+      tx_hash:
+        example: ""
+        type: string
+    type: object
+  types.V1RefundHistoryResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1RefundDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 3
+        type: integer
+    type: object
+  types.V1RefundInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1RefundDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1RefundRequest:
+    properties:
+      amount_raw:
+        example: "25000000"
+        type: string
+      order_id:
+        example: ORD-2024-001
+        type: string
+      payment_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      reason:
+        example: Customer requested refund
+        type: string
+    type: object
+  types.V1StaticAddressDetail:
+    properties:
+      address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      label:
+        example: Main wallet
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  types.V1StaticAddressListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1StaticAddressDetail'
+        type: array
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StaticAddressRequest:
+    properties:
+      chain_id:
+        example: 1
+        type: integer
+      label:
+        example: Main wallet
+        type: string
+      symbol:
+        example: USDT
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1StaticAddressResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1StaticAddressDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StatusData:
+    properties:
+      status:
+        example: operational
+        type: string
+      version:
+        example: 1.0.0
+        type: string
+    type: object
+  types.V1StatusResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1StatusData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1StatusTableItem:
+    properties:
+      description:
+        example: Payment confirmed on-chain
+        type: string
+      is_final:
+        example: true
+        type: boolean
+      status:
+        example: paid
+        type: string
+    type: object
+  types.WalletCreateResponse:
+    properties:
+      arbitrum:
+        type: string
+      avalanche:
+        type: string
+      base:
+        type: string
+      bitcoin:
+        type: string
+      bnbchain:
+        type: string
+      chiliz:
+        type: string
+      created_at:
+        type: string
+      domain_id:
+        type: string
+      ethereum:
+        type: string
+      hd_account_id:
+        type: integer
+      hd_address_id:
+        type: integer
+      id:
+        type: string
+      merchant_id:
+        type: string
+      product_id:
+        type: string
+      solana:
+        type: string
+      tron:
+        type: string
+      unichain:
+        type: string
+      updated_at:
+        type: string
+      user_id:
+        type: string
+    type: object
+  types.WalletParams:
+    properties:
+      domain_id:
+        type: string
+      merchant_id:
+        type: string
+      product_id:
+        type: string
+      user_id:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: Multi-chain merchant payment gateway API.
+  title: Gateway API
+  version: "1.0"
+paths:
+  /api/v1/common/assets:
+    get:
+      description: Lists all supported crypto assets grouped by logical asset with
+        their chain deployments.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1AssetsResponse'
+      summary: Supported assets
+      tags:
+      - Common
+  /api/v1/common/balance:
+    get:
+      description: Returns the ledger balance for each asset held under the authenticated
+        API domain.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1BalanceResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Account balance
+      tags:
+      - Common
+  /api/v1/common/currencies:
+    get:
+      description: Lists all supported crypto assets with chain, decimals, and logo
+        URLs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1CurrenciesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported crypto currencies
+      tags:
+      - Common
+  /api/v1/common/fiat-currencies:
+    get:
+      description: Lists all fiat currencies accepted as payment amount denomination.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1FiatCurrenciesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported fiat currencies
+      tags:
+      - Common
+  /api/v1/common/networks:
+    get:
+      description: Lists all supported blockchain networks with chain IDs and logo
+        URLs.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1NetworksResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Supported blockchain networks
+      tags:
+      - Common
+  /api/v1/common/prices:
+    get:
+      description: Returns current prices for all supported crypto assets in the requested
+        fiat currency.
+      parameters:
+      - default: USD
+        description: Fiat currency code
+        enum:
+        - USD
+        - EUR
+        - TRY
+        - GBP
+        in: query
+        name: currency
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PricesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Asset prices
+      tags:
+      - Common
+  /api/v1/common/qrcode:
+    get:
+      description: Returns a PNG QR code containing the supplied wallet address or
+        payment URI payload.
+      parameters:
+      - description: Wallet address or payment URI payload
+        in: query
+        name: address
+        required: true
+        type: string
+      - default: 300
+        description: PNG image size in pixels
+        in: query
+        maximum: 1024
+        minimum: 128
+        name: size
+        type: integer
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: PNG QR code
+          schema:
+            type: file
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      summary: Address QR code
+      tags:
+      - Common
+  /api/v1/common/status:
+    get:
+      description: Returns current operational status of the gateway.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1StatusResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: System status
+      tags:
+      - Common
+  /api/v1/payment/assets:
+    get:
+      description: Lists all crypto assets that can be accepted as payment grouped
+        by logical asset with their chain deployments.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1AssetsResponse'
+      summary: Accepted assets
+      tags:
+      - Payment
+  /api/v1/payment/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a hosted checkout payment session. Returns a checkout URL
+        the customer visits to complete payment.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Invoice parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1InvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate invoice
+      tags:
+      - Payment
+  /api/v1/payment/currencies:
+    get:
+      description: Lists all crypto currencies that can be accepted as payment.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1CurrenciesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Accepted currencies
+      tags:
+      - Payment
+  /api/v1/payment/history:
+    get:
+      description: Returns paginated payment session history for the authenticated
+        API domain.
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      - description: Filter by status
+        enum:
+        - pending
+        - awaiting_payment
+        - paid
+        - expired
+        - canceled
+        - failed
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PaymentHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment history
+      tags:
+      - Payment
+  /api/v1/payment/info:
+    get:
+      description: Retrieves detailed payment session info by track_id (session token)
+        or order_id.
+      parameters:
+      - description: Session token (UUID)
+        example: 550e8400-e29b-41d4-a716-446655440000
+        in: query
+        name: track_id
+        type: string
+      - description: Merchant order ID
+        example: ORD-2024-001
+        in: query
+        name: order_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PaymentInfoResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment information
+      tags:
+      - Payment
+  /api/v1/payment/static-address:
+    post:
+      consumes:
+      - application/json
+      description: Creates a permanent deposit wallet for a user. Subsequent calls
+        with the same user_id and chain return the existing address.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Static address parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1StaticAddressRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1StaticAddressResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate static address
+      tags:
+      - Payment
+  /api/v1/payment/static-addresses:
+    get:
+      description: Lists static deposit wallets under the authenticated API domain,
+        optionally filtered by user_id.
+      parameters:
+      - description: Filter by user ID
+        example: customer_42
+        in: query
+        name: user_id
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1StaticAddressListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Static address list
+      tags:
+      - Payment
+  /api/v1/payment/statistics:
+    get:
+      description: Returns count of payments grouped by status for the authenticated
+        API domain.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PaymentStatisticsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment statistics
+      tags:
+      - Payment
+  /api/v1/payment/status-table:
+    get:
+      description: Returns all possible payment statuses with descriptions and whether
+        each is a terminal state.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PaymentStatusTableResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payment status table
+      tags:
+      - Payment
+  /api/v1/payment/white-label:
+    post:
+      consumes:
+      - application/json
+      description: Creates a white label hosted checkout session. Identical to Generate
+        Invoice but returns a branded URL.
+      parameters:
+      - description: Invoice parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1InvoiceRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate white label payment
+      tags:
+      - Payment
+  /api/v1/payout/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a withdrawal (payout) request from the merchant's wallet
+        to the specified address. Requires admin approval before execution.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Payout parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1PayoutRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1PayoutCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Generate payout
+      tags:
+      - Payout
+  /api/v1/payout/history:
+    get:
+      description: Returns paginated payout (withdrawal) history for the authenticated
+        API domain.
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PayoutHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout history
+      tags:
+      - Payout
+  /api/v1/payout/info:
+    get:
+      description: Returns details of a specific payout request by payout_id.
+      parameters:
+      - description: Payout UUID
+        example: 550e8400-e29b-41d4-a716-446655440000
+        in: query
+        name: payout_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PayoutInfoResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout information
+      tags:
+      - Payout
+  /api/v1/payout/status-table:
+    get:
+      description: Returns all possible payout statuses with descriptions and whether
+        each is a terminal state.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1PayoutStatusTableResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Payout status table
+      tags:
+      - Payout
+  /api/v1/refund/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a refund request for a paid payment. Provide payment_id
+        OR order_id to identify the payment. Admin approval broadcasts the on-chain
+        refund.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Refund parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1RefundRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1RefundCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create refund request
+      tags:
+      - Refund
+  /api/v1/refund/history:
+    get:
+      description: Returns paginated refund requests for the authenticated API domain.
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1RefundHistoryResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund history
+      tags:
+      - Refund
+  /api/v1/refund/info:
+    get:
+      description: Returns a refund request owned by the authenticated API domain.
+      parameters:
+      - description: Refund UUID
+        example: 550e8400-e29b-41d4-a716-446655440000
+        in: query
+        name: refund_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1RefundInfoResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Get refund info
+      tags:
+      - Refund
+  /api/v1/transaction/rescan:
+    post:
+      consumes:
+      - application/json
+      description: Re-fetches a transaction from the selected blockchain and replays
+        it through wallet matching, payment, ledger, and webhook processing.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: chain and tx_hash
+        in: body
+        name: payload
+        required: true
+        schema:
+          additionalProperties:
+            type: string
+          type: object
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Rescan transaction
+      tags:
+      - Transaction
+  /auth/oidc/callback:
+    get:
+      description: Exchanges the OIDC authorization code for tokens, fetches userinfo,
+        and signs the merchant in.
+      parameters:
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: OIDC state
+        in: query
+        name: state
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant dashboard
+          schema:
+            type: string
+        "400":
+          description: Redirect to merchant login with error
+          schema:
+            type: string
+      summary: Complete merchant OIDC login
+      tags:
+      - Merchant Portal
+  /auth/oidc/login:
+    get:
+      description: Redirects the merchant to the configured OIDC authorization URL.
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to OIDC provider
+          schema:
+            type: string
+        "501":
+          description: HTML page explaining missing OIDC configuration
+          schema:
+            type: string
+      summary: Start merchant OIDC login
+      tags:
+      - Merchant Portal
+  /checkout/{token}:
+    get:
+      description: Renders the hosted checkout page where the payer selects a network
+        and asset.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML checkout page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Show checkout
+      tags:
+      - Payments
+  /checkout/{token}/cancel:
+    get:
+      description: Cancels the hosted checkout session, sends a payment_failed webhook
+        when applicable, and redirects to the merchant cancel URL.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant cancel URL or rendered result page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Cancel checkout
+      tags:
+      - Payments
+  /checkout/{token}/change:
+    get:
+      description: Resets a pending or awaiting payment session back to asset selection.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "303":
+          description: Redirect to checkout page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Change checkout asset
+      tags:
+      - Payments
+  /checkout/{token}/pay:
+    get:
+      description: Renders the QR code, payment address, selected chain, asset, and
+        amount for a checkout session.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML payment page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Show payment instructions
+      tags:
+      - Payments
+  /checkout/{token}/qr.png:
+    get:
+      description: Returns a PNG QR code containing the payment URI or deposit address.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - image/png
+      responses:
+        "200":
+          description: PNG QR code
+          schema:
+            type: file
+        "404":
+          description: Not found
+          schema:
+            type: string
+        "500":
+          description: QR generation failed
+          schema:
+            type: string
+      summary: Get checkout QR code
+      tags:
+      - Payments
+  /checkout/{token}/return/success:
+    get:
+      description: Redirects a paid checkout session to the merchant success URL or
+        renders the built-in success page.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant success URL or rendered result page
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Return after successful payment
+      tags:
+      - Payments
+  /checkout/{token}/select:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Stores the selected network and asset, computes the raw expected
+        amount, and redirects to the payment page.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: Chain ID
+        in: formData
+        name: chain_id
+        required: true
+        type: integer
+      - description: Asset symbol
+        in: formData
+        name: symbol
+        required: true
+        type: string
+      - description: Token contract address or asset identifier
+        in: formData
+        name: token
+        type: string
+      produces:
+      - text/html
+      responses:
+        "303":
+          description: Redirect to payment page
+          schema:
+            type: string
+        "400":
+          description: HTML checkout page with validation error
+          schema:
+            type: string
+        "404":
+          description: HTML error page
+          schema:
+            type: string
+        "410":
+          description: HTML error page
+          schema:
+            type: string
+      summary: Select checkout asset
+      tags:
+      - Payments
+  /checkout/{token}/status.json:
+    get:
+      description: Returns whether the checkout session is paid and the next hosted
+        checkout paths.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.PaymentStatusResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Get checkout status
+      tags:
+      - Payments
+  /checkout/{token}/ws:
+    get:
+      description: Opens a WebSocket connection that emits payment status changes
+        for the checkout session.
+      parameters:
+      - description: Payment session token
+        in: path
+        name: token
+        required: true
+        type: string
+      responses: {}
+      summary: Subscribe checkout status
+      tags:
+      - Payments
+  /docs/integration-guide.md:
+    get:
+      description: Returns the payment gateway integration guide as plain Markdown
+        for developers and AI agents.
+      produces:
+      - text/markdown
+      responses:
+        "200":
+          description: Markdown integration guide
+          schema:
+            type: string
+        "404":
+          description: integration guide not found
+          schema:
+            type: string
+      summary: Integration guide
+      tags:
+      - Documentation
+  /merchant.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a merchant account for self-service onboarding.
+      parameters:
+      - description: Merchant create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.MerchantParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.MerchantCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create merchant
+      tags:
+      - Merchant Portal
+  /merchant.domain.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a merchant domain with webhook settings and returns the
+        API key used by payment requests.
+      parameters:
+      - description: Merchant domain create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.DomainParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.DomainCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create merchant domain
+      tags:
+      - Merchant Portal
+  /merchant.wallet.create:
+    post:
+      consumes:
+      - application/json
+      description: Creates or returns the deterministic multi-chain wallet for a merchant
+        domain, product_id, and user_id.
+      parameters:
+      - description: User wallet create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.WalletParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.WalletCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Create user wallet
+      tags:
+      - Users
+  /merchant/dashboard:
+    get:
+      description: Renders the authenticated merchant portal with merchant info, domain
+        creation form, and current domains.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant dashboard
+          schema:
+            type: string
+        "302":
+          description: Redirect to merchant login
+          schema:
+            type: string
+      summary: Show merchant dashboard
+      tags:
+      - Merchant Portal
+  /merchant/domains:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant domain using the authenticated merchant session
+        and redirects back to the dashboard.
+      parameters:
+      - description: Domain URL
+        in: formData
+        name: domain_url
+        required: true
+        type: string
+      - description: Webhook URL
+        in: formData
+        name: webhook_url
+        required: true
+        type: string
+      - description: Webhook secret
+        in: formData
+        name: webhook_secret
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant login or dashboard with error
+          schema:
+            type: string
+      summary: Create merchant domain from panel
+      tags:
+      - Merchant Portal
+  /merchant/domains/{id}/rotate-api-secret:
+    post:
+      description: Rotates the API secret for an authenticated merchant domain. The
+        new secret is returned once in the response.
+      parameters:
+      - description: Domain ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: Rotate domain API secret
+      tags:
+      - Merchant Portal
+  /merchant/login:
+    get:
+      description: Renders the hosted merchant portal login page with the OIDC sign-in
+        action.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant login page
+          schema:
+            type: string
+      summary: Show merchant login
+      tags:
+      - Merchant Portal
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Authenticates a merchant with email and password, sets a merchant
+        portal session cookie, and redirects to onboarding.
+      parameters:
+      - description: Merchant email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML login page with validation error
+          schema:
+            type: string
+        "401":
+          description: HTML login page with authentication error
+          schema:
+            type: string
+      summary: Merchant email login
+      tags:
+      - Merchant Portal
+  /merchant/onboarding:
+    get:
+      description: Renders the hosted onboarding page after a merchant is created.
+      parameters:
+      - description: Merchant ID
+        in: query
+        name: merchant_id
+        type: string
+      - description: Merchant name
+        in: query
+        name: name
+        type: string
+      - description: Merchant email
+        in: query
+        name: email
+        type: string
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant onboarding page
+          schema:
+            type: string
+      summary: Show merchant onboarding
+      tags:
+      - Merchant Portal
+  /merchant/register:
+    get:
+      description: Renders the hosted self-service merchant registration page.
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: HTML merchant registration page
+          schema:
+            type: string
+      summary: Show merchant registration
+      tags:
+      - Merchant Portal
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Creates a merchant account from the hosted self-service registration
+        page and redirects to onboarding.
+      parameters:
+      - description: Merchant name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: Merchant email
+        in: formData
+        name: email
+        required: true
+        type: string
+      - description: Merchant email confirmation
+        in: formData
+        name: email_repeat
+        required: true
+        type: string
+      - description: Password
+        in: formData
+        name: password
+        required: true
+        type: string
+      - description: Password confirmation
+        in: formData
+        name: password_repeat
+        required: true
+        type: string
+      produces:
+      - text/html
+      responses:
+        "302":
+          description: Redirect to merchant onboarding
+          schema:
+            type: string
+        "400":
+          description: HTML registration page with validation error
+          schema:
+            type: string
+        "500":
+          description: HTML registration page with server error
+          schema:
+            type: string
+      summary: Create merchant from form
+      tags:
+      - Merchant Portal
+  /payments/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a checkout session for a merchant order and returns a hosted
+        checkout URL.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Idempotency key. If omitted, order_id is used within the domain
+          scope.
+        in: header
+        name: Idempotency-Key
+        type: string
+      - description: Payment create payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.PaymentCreateParams'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.PaymentCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      - BearerAuth: []
+      summary: Create payment session
+      tags:
+      - Payments
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: X-API-Key
+    type: apiKey
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

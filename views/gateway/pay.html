@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pay</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/checkout.js" defer></script>
+</head>
+<body class="crypto-page">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="/checkout/{{.Session.SessionToken}}/change">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Crypto Checkout</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
+        </span>
+      </a>
+      <div class="crypto-steps" aria-label="Checkout progress">
+        <span class="crypto-step-dot done"></span>
+        <span class="crypto-step-dot done"></span>
+        <span class="crypto-step-dot active"></span>
+      </div>
+    </header>
+
+    <section class="crypto-card">
+      <div class="crypto-stack">
+        {{if .ProductName}}
+        <div class="crypto-product-strip compact">
+          {{if .ProductLogoURL}}<img class="crypto-product-logo compact" src="{{.ProductLogoURL}}" alt="">{{else}}<div class="crypto-product-avatar compact">{{printf "%.1s" .ProductName}}</div>{{end}}
+          <div class="crypto-product-copy">
+            <strong class="crypto-product-title">{{.ProductName}}</strong>
+            {{if .ProductDescription}}<p class="crypto-product-description">{{.ProductDescription}}</p>{{end}}
+          </div>
+        </div>
+        {{end}}
+        <div class="crypto-flex-between crypto-align-start">
+          <div>
+            <p class="crypto-label">{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}</p>
+            <div class="crypto-send-amount">{{.AmountDisplay}}</div>
+            <p class="crypto-muted">Order {{.Session.OrderID}} · {{.Session.Amount}} {{.Session.Currency}}</p>
+          </div>
+          <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+            <span>--:--</span>
+          </div>
+        </div>
+
+        <div class="crypto-progress-bar"><span data-progress-fill data-countdown-unix="{{.ExpiresAtUnix}}"></span></div>
+
+        <section class="crypto-qr-wrap">
+          <div class="crypto-qr-outer">
+            <img src="{{.QRCodeURL}}" alt="Payment QR">
+            {{if .SelectedAssetLogoURL}}
+              <span class="crypto-qr-logo" style="background:#fff;padding:4px;">
+                <img src="{{.SelectedAssetLogoURL}}" alt="{{.Session.SelectedSymbol}}" style="width:26px;height:26px;object-fit:contain;">
+              </span>
+            {{else}}
+              <span class="crypto-qr-logo">{{.Session.SelectedSymbol}}</span>
+            {{end}}
+          </div>
+          <span class="crypto-net-pill">
+            {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.ChainName}}" style="width:14px;height:14px;object-fit:contain;border-radius:3px;margin-right:4px;">{{else}}<i></i>{{end}}
+            {{.ChainName}}
+          </span>
+          <p>{{if .IsEnglish}}Scan with your wallet app to pay{{else}}Ödeme için wallet uygulamanla QR kodu tara{{end}}</p>
+        </section>
+
+        <section class="crypto-live-panel">
+          <div class="crypto-live-row">
+            <span class="crypto-live-pulse"></span>
+            <span>
+              <strong>{{if .IsEnglish}}Send the payment now{{else}}Ödemeyi şimdi gönder{{end}}</strong>
+              <small>{{if .IsEnglish}}This page is listening live. It will continue automatically when the deposit is confirmed.{{else}}Bu sayfa canlı dinliyor. Deposit onaylandığı anda otomatik devam edecek.{{end}}</small>
+            </span>
+          </div>
+          <ol class="crypto-payment-steps-list">
+            <li>{{if .IsEnglish}}Open your wallet app and choose {{.ChainName}}.{{else}}Wallet uygulamanı aç ve {{.ChainName}} networkünü seç.{{end}}</li>
+            <li>{{if .IsEnglish}}Send exactly {{.AmountDisplay}} to the address below.{{else}}Aşağıdaki adrese tam olarak {{.AmountDisplay}} gönder.{{end}}</li>
+            <li>{{if .IsEnglish}}Keep this page open until the confirmation arrives.{{else}}Onay gelene kadar bu sayfayı açık tut.{{end}}</li>
+          </ol>
+        </section>
+
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">{{if .IsEnglish}}Wallet address{{else}}Wallet adresi{{end}}</p>
+            <button class="crypto-copy-btn" type="button" data-copy-target="depositAddress">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+            </button>
+          </div>
+          <code class="crypto-copy-value" id="depositAddress">{{.Session.DepositAddress}}</code>
+        </section>
+
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">{{if .IsEnglish}}Exact amount{{else}}Tam tutar{{end}}</p>
+            <button class="crypto-copy-btn" type="button" data-copy-value="{{.AmountDisplay}}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+            </button>
+          </div>
+          <code class="crypto-copy-value no-bg">{{.AmountDisplay}}</code>
+        </section>
+
+        <section class="crypto-copy-section">
+          <div class="crypto-copy-header">
+            <p class="crypto-label">Payment URI</p>
+          </div>
+          <code class="crypto-copy-value">{{.PaymentURI}}</code>
+        </section>
+
+        <section class="crypto-status-box detecting" id="statusLabel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          <span>
+            <strong id="statusTitle">{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}</strong>
+            <small id="statusBody">{{if .IsEnglish}}Live connection is opening. Send the exact amount to the address above.{{else}}Canlı bağlantı açılıyor. Yukarıdaki adrese tam tutarı gönder.{{end}}</small>
+          </span>
+          <span class="crypto-bouncing-dots"><i></i><i></i><i></i></span>
+        </section>
+
+        <section class="crypto-warning">
+          <span>!</span>
+          <p>{{if .IsEnglish}}Send only{{else}}Sadece{{end}} <strong>{{.Session.SelectedSymbol}}</strong> {{if .IsEnglish}}on the{{else}}assetini{{end}} <strong>{{.ChainName}}</strong> {{if .IsEnglish}}network. Sending other assets may result in permanent loss.{{else}}network üzerinde gönder. Farklı asset göndermek kalıcı kayba yol açabilir.{{end}}</p>
+        </section>
+
+        <div>
+          <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
+          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/change">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
+          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/cancel">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
+        </div>
+      </div>
+    </section>
+
+    <p class="crypto-footer">{{if .IsEnglish}}Secured by signed webhooks · Non-custodial payments{{else}}İmzalı webhooklar ile güvenli · Non-custodial ödeme{{end}}</p>
+  </main>
+
+  <script>
+    function setPaymentStatus(mode, title, body) {
+      var status = document.getElementById("statusLabel");
+      var statusTitle = document.getElementById("statusTitle");
+      var statusBody = document.getElementById("statusBody");
+      if (!status || !statusTitle || !statusBody) return;
+      status.className = "crypto-status-box " + mode;
+      statusTitle.textContent = title;
+      statusBody.textContent = body;
+    }
+
+    function handlePaymentPayload(data) {
+      if (!data) return false;
+      if (data.paid) {
+        setPaymentStatus(
+          "confirming",
+          "{{if .IsEnglish}}Payment confirmed{{else}}Ödeme onaylandı{{end}}",
+          "{{if .IsEnglish}}Redirecting to the success page.{{else}}Başarı sayfasına yönlendiriliyorsun.{{end}}"
+        );
+        window.location.href = data.success_path || "/checkout/{{.Session.SessionToken}}/return/success";
+        return true;
+      }
+      if (data.status === "expired" || data.status === "canceled" || data.status === "failed") {
+        setPaymentStatus(
+          "expired",
+          "{{if .IsEnglish}}Payment {{else}}Ödeme {{end}}" + data.status,
+          "{{if .IsEnglish}}This checkout can no longer receive a payment.{{else}}Bu checkout artık ödeme alamaz.{{end}}"
+        );
+        return true;
+      }
+      return false;
+    }
+
+    (function connectPaymentSocket() {
+      if (!("WebSocket" in window)) return;
+      var closedByPage = false;
+      var wsURL = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/checkout/{{.Session.SessionToken}}/ws";
+      var socket = new WebSocket(wsURL);
+
+      socket.addEventListener("open", function () {
+        setPaymentStatus(
+          "detecting",
+          "{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}",
+          "{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}"
+        );
+      });
+
+      socket.addEventListener("message", function (event) {
+        try {
+          var data = JSON.parse(event.data);
+          if (handlePaymentPayload(data)) {
+            closedByPage = true;
+            socket.close();
+          }
+        } catch (e) {}
+      });
+
+      socket.addEventListener("close", function () {
+        if (closedByPage) return;
+        setPaymentStatus(
+          "offline",
+          "{{if .IsEnglish}}Live connection reconnecting{{else}}Canlı bağlantı yeniden kuruluyor{{end}}",
+          "{{if .IsEnglish}}Polling fallback is still checking this payment.{{else}}Yedek kontrol bu ödemeyi takip etmeye devam ediyor.{{end}}"
+        );
+        window.setTimeout(connectPaymentSocket, 3000);
+      });
+    })();
+
+    async function pollStatus() {
+      try {
+        var response = await fetch("/checkout/{{.Session.SessionToken}}/status.json", { cache: "no-store" });
+        var data = await response.json();
+        if (handlePaymentPayload(data)) {
+          return;
+        }
+      } catch (e) {}
+      window.setTimeout(pollStatus, 5000);
+    }
+    pollStatus();
+  </script>
+</body>
+</html>

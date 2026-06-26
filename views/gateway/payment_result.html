@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="{{if .IsEnglish}}en{{else}}tr{{end}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="crypto-page">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="/">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Crypto Checkout</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
+        </span>
+      </a>
+    </header>
+
+    <section class="crypto-card">
+      <div class="crypto-result-wrap visible">
+        <div class="crypto-success-icon {{.ResultKind}}">
+          <span class="crypto-success-ring one"></span>
+          <span class="crypto-success-ring two"></span>
+          <span class="crypto-success-circle">
+            {{if eq .ResultKind "success"}}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"></path></svg>
+            {{else if eq .ResultKind "canceled"}}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+            {{else}}
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="10"></circle></svg>
+            {{end}}
+          </span>
+        </div>
+
+        <div>
+          <h1 class="crypto-success-title">{{.Title}}</h1>
+          <p class="crypto-success-sub">{{.Message}}</p>
+        </div>
+
+        <section class="crypto-summary-card">
+          <div class="crypto-summary-body">
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Status{{else}}Durum{{end}}</span><strong>{{.Status}}</strong></div>
+            <div class="crypto-summary-row"><span>Gateway</span><strong>Crypto Checkout</strong></div>
+          </div>
+        </section>
+
+        <div class="crypto-thank-box">
+          <p>{{if .IsEnglish}}Thank you.{{else}}Teşekkürler.{{end}}</p>
+          <p>{{if .IsEnglish}}The merchant will receive the payment status by webhook.{{else}}Üye işyeri ödeme durumunu webhook ile alacak.{{end}}</p>
+        </div>
+
+        <a class="crypto-primary-btn" href="/">{{if .IsEnglish}}Back to gateway{{else}}Gateway'e dön{{end}}</a>
+      </div>
+    </section>
+
+    <p class="crypto-footer">{{if .IsEnglish}}Secured by signed webhooks · Non-custodial payments{{else}}İmzalı webhooklar ile güvenli · Non-custodial ödeme{{end}}</p>
+  </main>
+</body>
+</html>

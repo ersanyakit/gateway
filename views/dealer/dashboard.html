@@ -1,0 +1,763 @@
+<section class="grid gap-4">
+  <header class="overflow-hidden rounded-[28px] border border-line bg-white/90 p-4 shadow-soft sm:p-5">
+    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+      <div class="min-w-0">
+        <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Merchant treasury</span>
+        <h1 class="m-0 mt-3 max-w-4xl text-3xl font-black tracking-normal text-ink sm:text-4xl">Üye işyeri kasası</h1>
+        <p class="m-0 mt-2 max-w-3xl text-sm leading-6 text-muted">Dashboard sadece merchant'ın biriken varlıklarını gösterir: hangi network, hangi asset, ne kadar bakiye.</p>
+      </div>
+      <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+        <a class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.DomainsPanelURL}}">Domain ekle</a>
+        <a class="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="{{.ProductsPanelURL}}">Payment link oluştur</a>
+        <a class="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="/swagger/index.html">API Docs</a>
+      </div>
+    </div>
+
+    {{if .Success}}<div class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
+    {{if .Error}}<div class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+
+    <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="rounded-3xl border border-line bg-wash p-4">
+        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Biriken asset</span>
+        <strong class="mt-2 block text-3xl font-black text-ink">{{.AssetCount}}</strong>
+      </div>
+      <div class="rounded-3xl border border-line bg-wash p-4">
+        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Desteklenen ağ</span>
+        <strong class="mt-2 block text-3xl font-black text-ink">{{.NetworkCount}}</strong>
+      </div>
+      <div class="rounded-3xl border border-line bg-wash p-4">
+        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Domain</span>
+        <strong class="mt-2 block text-3xl font-black text-ink">{{.DomainCount}}</strong>
+      </div>
+      <div class="rounded-3xl border border-line bg-wash p-4">
+        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Payment link</span>
+        <strong class="mt-2 block text-3xl font-black text-ink">{{.ProductCount}}</strong>
+      </div>
+      <div class="rounded-3xl border border-line bg-wash p-4">
+        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri</span>
+        <strong class="mt-2 block truncate text-base font-black text-ink">{{.MerchantName}}</strong>
+        <span class="mt-1 block truncate text-xs font-semibold text-muted">{{.MerchantEmail}}</span>
+      </div>
+      <div class="rounded-3xl border border-line bg-wash p-4 xl:col-span-4">
+        <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div class="min-w-0">
+            <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri ID</span>
+            <code class="mt-2 block truncate rounded-2xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink" id="merchantIdValue">{{.MerchantID}}</code>
+          </div>
+          <button class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="merchantIdValue">Kopyala</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/85 p-2 shadow-sm backdrop-blur">
+    <div class="flex gap-2 overflow-x-auto">
+      <a class="dash-tab" href="{{.TreasuryURL}}" aria-selected="{{if eq .ActivePanel "treasury"}}true{{else}}false{{end}}">Treasury</a>
+      <a class="dash-tab" href="{{.ActivityURL}}" aria-selected="{{if eq .ActivePanel "activity"}}true{{else}}false{{end}}">Activity</a>
+      <a class="dash-tab" href="{{.TransactionsURL}}" aria-selected="{{if eq .ActivePanel "transactions"}}true{{else}}false{{end}}">Transactions</a>
+      <a class="dash-tab" href="{{.UsersURL}}" aria-selected="{{if eq .ActivePanel "users"}}true{{else}}false{{end}}">Users</a>
+      <a class="dash-tab" href="{{.ProductsPanelURL}}" aria-selected="{{if eq .ActivePanel "products"}}true{{else}}false{{end}}">Products</a>
+      <a class="dash-tab" href="{{.WithdrawalsURL}}" aria-selected="{{if eq .ActivePanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals{{if gt .WithdrawalCount 0}} <span class="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-extrabold text-accent">{{.WithdrawalCount}}</span>{{end}}</a>
+      <a class="dash-tab" href="{{.RescanURL}}" aria-selected="{{if eq .ActivePanel "rescan"}}true{{else}}false{{end}}">Rescan</a>
+      <a class="dash-tab" href="{{.DomainsPanelURL}}" aria-selected="{{if eq .ActivePanel "domains"}}true{{else}}false{{end}}">Domains</a>
+      <a class="dash-tab" href="{{.SettingsPanelURL}}" aria-selected="{{if eq .ActivePanel "settings"}}true{{else}}false{{end}}">Settings</a>
+    </div>
+  </div>
+
+  <section class="grid{{if ne .ActivePanel "treasury"}} hidden{{end}} gap-4">
+    <div class="grid gap-4">
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 class="m-0 text-xl font-black text-ink">Biriken varlıklar</h2>
+            <p class="m-0 mt-1 text-sm leading-6 text-muted">Her kart tek bir network + asset bakiyesini gösterir.</p>
+          </div>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.AssetCount}} asset</span>
+        </div>
+
+        <div class="overflow-hidden rounded-3xl border border-line">
+          {{range .Balances}}
+            <article class="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-wash">
+              <div style="position:relative;width:36px;height:36px;flex-shrink:0;">
+                {{if .LogoURL}}
+                  <img src="{{.LogoURL}}" alt="{{.Symbol}}" style="width:36px;height:36px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;padding:2px;object-fit:contain;display:block;">
+                {{else}}
+                  <div class="grid place-items-center rounded-full bg-ink text-[10px] font-black text-white" style="width:36px;height:36px;">{{.Symbol}}</div>
+                {{end}}
+                {{if .ChainLogoURL}}
+                  <div style="position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid #fff;box-shadow:0 0 0 1px #e5e7eb;display:flex;align-items:center;justify-content:center;">
+                    <img src="{{.ChainLogoURL}}" alt="{{.Chain}}" style="width:11px;height:11px;object-fit:contain;">
+                  </div>
+                {{end}}
+              </div>
+              <div class="min-w-0 flex-1">
+                <span class="block text-sm font-black text-ink">{{.Symbol}}</span>
+                <span class="block text-xs font-semibold text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
+              </div>
+              <div class="shrink-0 text-right">
+                <strong class="block text-sm font-black text-ink">{{.AmountDisplay}}</strong>
+                {{if .AmountUSD}}<span class="block text-xs font-bold text-emerald-600">{{.AmountUSD}}</span>{{end}}
+                <span class="block text-xs font-semibold text-muted">{{.Deposits}} dep · {{.Users}} user</span>
+              </div>
+            </article>
+          {{end}}
+        </div>
+      </section>
+
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 class="m-0 text-xl font-black text-ink">Network kasaları</h2>
+            <p class="m-0 mt-1 text-sm leading-6 text-muted">Tüm desteklenen chain'ler ve o chain altında biriken asset sayısı.</p>
+          </div>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.NetworkCount}} network</span>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {{range .ChainVaults}}
+            <article class="rounded-3xl border border-line bg-wash p-4">
+              <div class="flex items-center gap-3">
+                {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="h-8 w-8 rounded-full border border-line bg-white p-1 object-contain">{{end}}
+                <div class="min-w-0">
+                  <strong class="block truncate text-sm font-black text-ink">{{.Chain}}</strong>
+                  <span class="block text-xs font-semibold text-muted">{{if .Empty}}0 asset{{else}}{{len .Assets}} asset · {{.Deposits}} dep{{end}}</span>
+                </div>
+              </div>
+            </article>
+          {{end}}
+        </div>
+      </section>
+    </div>
+  </section>
+
+  {{/* Users — wallet listesi */}}
+  <section class="grid{{if ne .ActivePanel "users"}} hidden{{end}} gap-4">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-2 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Users &amp; Wallets</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Her user'a ait türetilmiş wallet adresleri. Yeni ağlar sunucu başlangıcında otomatik eklenir.</p>
+        </div>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.WalletCount}} wallet</span>
+      </div>
+      <form method="get" action="/merchant/dashboard/users" class="mb-4 flex gap-2">
+        <input class="min-h-10 flex-1 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="q" type="search" placeholder="User ID veya label ara…" value="{{.WalletSearch}}">
+        <button class="inline-flex min-h-10 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Ara</button>
+        {{if .WalletSearch}}<a class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" href="/merchant/dashboard/users">Temizle</a>{{end}}
+      </form>
+      {{if .Wallets}}
+      <div class="grid gap-3">
+        {{range .Wallets}}
+        <article class="overflow-hidden rounded-3xl border border-line bg-wash">
+          <div class="flex items-center justify-between gap-3 px-4 py-3">
+            <div class="min-w-0">
+              <strong class="block text-sm font-black text-ink">{{.Label}}</strong>
+              <small class="block text-xs font-semibold text-muted">{{if .UserID}}User: {{.UserID}}{{else}}Genel wallet{{end}}</small>
+            </div>
+            <code class="shrink-0 rounded-lg bg-white px-2 py-0.5 text-xs text-muted">{{.ShortID}}</code>
+          </div>
+          {{if .Addresses}}
+          <div class="grid gap-px border-t border-line sm:grid-cols-2 xl:grid-cols-3">
+            {{range .Addresses}}
+            <div class="flex items-center gap-2 bg-white px-4 py-2.5">
+              <span class="w-16 shrink-0 text-xs font-black text-muted">{{.Chain}}</span>
+              <code class="min-w-0 flex-1 truncate text-xs text-ink">{{.Address}}</code>
+            </div>
+            {{end}}
+          </div>
+          {{end}}
+          {{if .MissingChains}}
+          <div class="border-t border-dashed border-amber-200 bg-amber-50/60 px-4 py-2.5">
+            <p class="mb-2 text-xs font-bold text-amber-700">Türetilmeyi bekleyen adresler — sunucu yeniden başlatıldığında otomatik oluşturulur:</p>
+            <div class="flex flex-wrap gap-1.5">
+              {{range .MissingChains}}
+              <form method="post" action="/merchant/wallets/{{.WalletID}}/fill-address">
+                <input type="hidden" name="chain" value="{{.ChainName}}">
+                <button type="submit" class="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-700 hover:bg-amber-50">
+                  <span>+ {{.ChainLabel}}</span>
+                </button>
+              </form>
+              {{end}}
+            </div>
+          </div>
+          {{end}}
+        </article>
+        {{end}}
+      </div>
+      {{if or .WalletPage.HasPrev .WalletPage.HasNext}}
+      <div class="mt-4 flex items-center justify-between gap-3">
+        <span class="text-xs font-semibold text-muted">{{.WalletPage.From}}–{{.WalletPage.To}} / {{.WalletPage.Total}}</span>
+        <div class="flex items-center gap-1">
+          {{if .WalletPage.HasPrev}}<a href="{{.WalletPage.PrevURL}}" class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash">← Önceki</a>{{end}}
+          {{range .WalletPage.PageURLs}}<a href="{{.URL}}" class="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border text-sm font-extrabold {{if .Active}}border-accent bg-accent text-white{{else}}border-line bg-white text-ink hover:bg-wash{{end}}">{{.Page}}</a>{{end}}
+          {{if .WalletPage.HasNext}}<a href="{{.WalletPage.NextURL}}" class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash">Sonraki →</a>{{end}}
+        </div>
+      </div>
+      {{end}}
+      {{else}}
+      <p class="text-sm text-muted">Henüz wallet yok.</p>
+      {{end}}
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "rescan"}} hidden{{end}} gap-4">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4">
+        <h2 class="m-0 text-xl font-black text-ink">Transaction yeniden işleme</h2>
+        <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri wallet adreslerine ait zincirde var olan tx'i tekrar tarar; ödeme, ledger ve webhook akışı idempotent şekilde yeniden denenir.</p>
+      </div>
+      <form class="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-end" method="post" action="/merchant/rescan">
+        <label class="grid gap-2 text-sm font-bold text-muted">Blockchain
+          <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="chain" required>
+            <option value="">— seçin —</option>
+            <option value="bitcoin">Bitcoin</option>
+            <option value="ethereum">Ethereum</option>
+            <option value="bnbchain">BNB Chain</option>
+            <option value="base">Base</option>
+            <option value="arbitrum">Arbitrum</option>
+            <option value="avalanche">Avalanche</option>
+            <option value="unichain">Unichain</option>
+            <option value="solana">Solana</option>
+            <option value="tron">TRON</option>
+            <option value="chiliz">Chiliz</option>
+            <option value="chiliz-spicy">Chiliz Spicy</option>
+          </select>
+        </label>
+        <label class="grid gap-2 text-sm font-bold text-muted">Tx hash
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="tx_hash" type="text" placeholder="0x... / signature / txid" required>
+        </label>
+        <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Yeniden işle</button>
+      </form>
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "activity"}} hidden{{end}} gap-4">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Audit logger</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri panelindeki kritik aksiyonlar IP, user-agent, path ve kesin timestamp ile kaydedilir.</p>
+        </div>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ActivityCount}} kayıt</span>
+      </div>
+
+      {{if .AuditLogs}}
+        <div class="overflow-hidden rounded-3xl border border-line">
+          <div class="hidden grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
+            <span>Event</span><span>Actor</span><span>Network</span><span>Request</span><span>Timestamp</span>
+          </div>
+          {{range .AuditLogs}}
+            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 {{if .IsFailed}}bg-red-50/40{{end}} lg:grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] lg:items-start">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <strong class="text-sm font-black text-ink">{{.Event}}</strong>
+                  <span class="rounded-full {{if eq .Status "success"}}bg-emerald-50 text-emerald-700{{else}}bg-red-50 text-red-700{{end}} px-2 py-1 text-xs font-extrabold">{{.Status}}</span>
+                  {{if .IsOIDC}}<span class="rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-violet-700">OIDC</span>{{end}}
+                </div>
+                <small class="mt-2 block text-xs font-semibold leading-5 {{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</small>
+                <code class="mt-2 block truncate text-xs text-muted">{{.Subject}}</code>
+              </div>
+              <div class="min-w-0"><span class="block truncate text-sm font-bold text-ink">{{.Actor}}</span><small class="mt-1 block text-xs font-semibold text-muted">merchant</small></div>
+              <div class="min-w-0"><span class="block truncate text-sm font-bold text-ink">{{.IPAddress}}</span><code class="mt-1 block truncate text-xs text-muted">{{.UserAgent}}</code></div>
+              <div class="min-w-0"><span class="block text-sm font-bold text-ink">{{.Method}}</span><code class="mt-1 block truncate text-xs text-muted">{{.Path}}</code></div>
+              <time class="text-xs font-bold leading-5 text-muted" datetime="{{.CreatedISO}}">{{.CreatedAt}}</time>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz audit kaydı yok.</div>
+      {{end}}
+    </section>
+
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Ödeme aktiviteleri</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Checkout sessionları, ödeme durumları ve deposit eşleşmeleri.</p>
+        </div>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.PaymentCount}} session</span>
+      </div>
+      {{if .PaymentStats}}
+        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div class="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-center">
+            <strong class="block text-lg font-black text-emerald-700">{{index .PaymentStats "paid"}}</strong>
+            <span class="text-xs font-bold text-emerald-600">Ödendi</span>
+          </div>
+          <div class="rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-center">
+            <strong class="block text-lg font-black text-amber-700">{{index .PaymentStats "pending"}}</strong>
+            <span class="text-xs font-bold text-amber-600">Bekliyor</span>
+          </div>
+          <div class="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-center">
+            <strong class="block text-lg font-black text-blue-700">{{index .PaymentStats "awaiting_payment"}}</strong>
+            <span class="text-xs font-bold text-blue-600">Bekleniyor</span>
+          </div>
+          <div class="rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-center">
+            <strong class="block text-lg font-black text-red-700">{{index .PaymentStats "expired"}}</strong>
+            <span class="text-xs font-bold text-red-600">Süresi doldu</span>
+          </div>
+        </div>
+      {{end}}
+      <div class="mb-4 flex flex-wrap gap-2">
+        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter ""}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}">Tümü</a>
+        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "paid"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=paid">Ödendi</a>
+        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "pending"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=pending">Bekliyor</a>
+        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "awaiting_payment"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=awaiting_payment">Bekleniyor</a>
+        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "expired"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=expired">Süresi doldu</a>
+      </div>
+      {{if .Payments}}
+        <div class="overflow-hidden rounded-3xl border border-line">
+          <div class="hidden grid-cols-[1fr_0.7fr_0.6fr_auto] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
+            <span>Order</span><span>Tutar</span><span>Durum</span><span>Tarih</span>
+          </div>
+          {{range .Payments}}
+            <article class="grid gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-wash lg:grid-cols-[1fr_0.7fr_0.6fr_auto] lg:items-center">
+              <div class="min-w-0">
+                <strong class="block text-sm font-black text-ink">{{if .OrderID}}{{.OrderID}}{{else}}—{{end}}</strong>
+                <small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}} · {{.ProductID}}</small>
+              </div>
+              <div><strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.SelectedAsset}}</small></div>
+              <div><span class="rounded-full px-3 py-1 text-xs font-extrabold {{if eq .Status "paid"}}bg-emerald-50 text-emerald-700{{else if eq .Status "pending"}}bg-amber-50 text-amber-700{{else if eq .Status "awaiting_payment"}}bg-blue-50 text-blue-700{{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span></div>
+              <time class="text-xs font-semibold text-muted">{{.CreatedAt}}</time>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz ödeme aktivitesi yok.</div>
+      {{end}}
+    </section>
+
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Blockchain deposits</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Zincir üzerinde tespit edilen deposit, transfer ve webhook durumları.</p>
+        </div>
+      </div>
+      {{if .Activities}}
+        <div class="overflow-hidden rounded-3xl border border-line">
+          <div class="hidden grid-cols-[1.35fr_0.7fr_0.6fr_0.7fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
+            <span>Transaction</span><span>Customer</span><span>Webhook</span><span>Timestamp</span>
+          </div>
+          {{range .Activities}}
+            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 transition-colors hover:bg-wash lg:grid-cols-[1.35fr_0.7fr_0.6fr_0.7fr] lg:items-center">
+              <div class="flex min-w-0 items-start gap-2">
+                <div class="relative mt-0.5 h-8 w-8 shrink-0">
+                  {{if .LogoURL}}
+                    <img class="absolute left-0 top-0 h-7 w-7 rounded-full border border-line bg-white p-1 object-contain" src="{{.LogoURL}}" alt="{{.Symbol}}">
+                  {{end}}
+                  {{if .ChainLogoURL}}
+                    <div class="absolute bottom-0 right-0 flex items-center justify-center border-2 border-white bg-white shadow-sm" style="width:14px;height:14px;border-radius:50%;">
+                      <img src="{{.ChainLogoURL}}" alt="{{.Chain}}" style="width:10px;height:10px;object-fit:contain;">
+                    </div>
+                  {{end}}
+                </div>
+                <div class="min-w-0">
+                  <strong class="block text-sm font-black text-ink">{{.Chain}} · {{.Symbol}} · {{.AmountDisplay}}</strong>
+                  <code class="mt-1 block truncate text-xs text-muted">{{.Hash}}</code>
+                  <small class="mt-1 block text-xs font-semibold text-muted">{{.Type}} · {{.Status}}</small>
+                </div>
+              </div>
+              <div><span class="block truncate text-sm font-bold text-ink">{{.ProductID}}</span><small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}}</small></div>
+              <div><span class="block text-sm font-bold text-ink">{{.WebhookStatus}}</span><small class="mt-1 block text-xs font-semibold text-muted">{{.WebhookAttempts}} deneme</small></div>
+              <time class="text-xs font-bold leading-5 text-muted">{{.CreatedAt}}</time>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz zincir işlemi yok.</div>
+      {{end}}
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "transactions"}} hidden{{end}} gap-4">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Transactions</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri wallet'larına gelen tüm on-chain transaction kayıtları, webhook ve ödeme eşleşme durumları.</p>
+        </div>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ActivityCount}} kayıt</span>
+      </div>
+      {{if .Activities}}
+        <div class="overflow-hidden rounded-3xl border border-line">
+          <div class="hidden grid-cols-[1.35fr_0.72fr_0.65fr_0.72fr_auto] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
+            <span>Transaction</span><span>Customer</span><span>Status</span><span>Webhook</span><span>Timestamp</span>
+          </div>
+          {{range .Activities}}
+            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 transition-colors hover:bg-wash lg:grid-cols-[1.35fr_0.72fr_0.65fr_0.72fr_auto] lg:items-center">
+              <div class="flex min-w-0 items-start gap-2">
+                <div class="relative mt-0.5 h-8 w-8 shrink-0">
+                  {{if .LogoURL}}<img class="absolute left-0 top-0 h-7 w-7 rounded-full border border-line bg-white p-1 object-contain" src="{{.LogoURL}}" alt="{{.Symbol}}">{{end}}
+                  {{if .ChainLogoURL}}
+                    <div class="absolute bottom-0 right-0 flex items-center justify-center border-2 border-white bg-white shadow-sm" style="width:14px;height:14px;border-radius:50%;">
+                      <img src="{{.ChainLogoURL}}" alt="{{.Chain}}" style="width:10px;height:10px;object-fit:contain;">
+                    </div>
+                  {{end}}
+                </div>
+                <div class="min-w-0">
+                  <strong class="block text-sm font-black text-ink">{{.Chain}} · {{.Symbol}} · {{.AmountDisplay}}</strong>
+                  <code class="mt-1 block truncate text-xs text-muted">{{.Hash}}</code>
+                  <small class="mt-1 block text-xs font-semibold text-muted">{{.Type}}</small>
+                </div>
+              </div>
+              <div><span class="block truncate text-sm font-bold text-ink">{{.ProductID}}</span><small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}}</small></div>
+              <div><span class="rounded-full px-3 py-1 text-xs font-extrabold {{if eq .Status "confirmed"}}bg-emerald-50 text-emerald-700{{else if eq .Status "pending_confirmation"}}bg-blue-50 text-blue-700{{else if eq .Status "pending"}}bg-amber-50 text-amber-700{{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span></div>
+              <div><span class="block text-sm font-bold text-ink">{{.WebhookStatus}}</span><small class="mt-1 block text-xs font-semibold text-muted">{{.WebhookAttempts}} deneme</small></div>
+              <time class="text-xs font-bold leading-5 text-muted">{{.CreatedAt}}</time>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz transaction yok.</div>
+      {{end}}
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "products"}} hidden{{end}} gap-4 xl:grid-cols-[minmax(0,430px)_1fr]">
+    <div class="grid gap-4">
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <h2 class="m-0 text-lg font-black text-ink">Invoice oluştur</h2>
+        <p class="m-0 mt-1 text-sm leading-6 text-muted">Tek kullanımlık checkout ve fatura linki oluştur.</p>
+        {{if .Domains}}
+        <form class="mt-4 grid gap-3" method="post" action="{{.InvoicesURL}}">
+          <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_domain_id">Domain
+            <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_domain_id" name="domain_id" required>
+              {{range .Domains}}<option value="{{.ID}}">{{.DomainURL}}</option>{{end}}
+            </select>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_order_id">Sipariş no
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_order_id" name="order_id" type="text" placeholder="ORD-1001">
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_user_id">Customer ID
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_user_id" name="user_id" type="text" placeholder="customer_42">
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_amount">Tutar
+              <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_amount" name="amount" type="text" inputmode="decimal" placeholder="99.00" required>
+            </label>
+            <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_currency">Para birimi
+              <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_currency" name="currency">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="TRY">TRY</option>
+              </select>
+            </label>
+          </div>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_success_url">Success URL
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_success_url" name="success_url" type="url" placeholder="https://example.com/success">
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="invoice_cancel_url">Cancel URL
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="invoice_cancel_url" name="cancel_url" type="url" placeholder="https://example.com/cancel">
+          </label>
+          <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Invoice oluştur</button>
+        </form>
+        {{else}}
+        <div class="mt-4 rounded-3xl border border-dashed border-line bg-wash px-5 py-6 text-center text-sm font-semibold text-muted">Invoice oluşturmak için önce domain eklemelisin.</div>
+        {{end}}
+      </section>
+
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <h2 class="m-0 text-lg font-black text-ink">Payment link oluştur</h2>
+        <p class="m-0 mt-1 text-sm leading-6 text-muted">Ürün bilgilerini gir; sistem tekrar kullanılabilir hosted checkout linki üretsin.</p>
+        {{if .Domains}}
+        <form class="mt-4 grid gap-3" method="post" action="{{.ProductsURL}}">
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_domain_id">Domain
+            <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_domain_id" name="domain_id" required>
+              {{range .Domains}}<option value="{{.ID}}">{{.DomainURL}}</option>{{end}}
+            </select>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_name">Ürün adı
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_name" name="name" type="text" placeholder="Pro abonelik" required>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_description">Açıklama
+            <textarea class="min-h-24 rounded-2xl border border-line bg-white px-3 py-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_description" name="description" placeholder="Müşterinin checkout öncesi göreceği kısa açıklama"></textarea>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_logo_url">Logo URL
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_logo_url" name="logo_url" type="url" placeholder="https://example.com/logo.png">
+          </label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <label class="grid gap-2 text-sm font-bold text-muted" for="product_amount">Tutar
+              <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_amount" name="amount" type="text" inputmode="decimal" placeholder="99.00" required>
+            </label>
+            <label class="grid gap-2 text-sm font-bold text-muted" for="product_currency">Para birimi
+              <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_currency" name="currency">
+                <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="TRY">TRY</option>
+              </select>
+            </label>
+          </div>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_language">Dil
+            <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_language" name="language">
+              <option value="tr">Türkçe</option>
+              <option value="en">English</option>
+            </select>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_success_url">Success URL
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_success_url" name="success_url" type="url" placeholder="https://example.com/success">
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted" for="product_cancel_url">Cancel URL
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="product_cancel_url" name="cancel_url" type="url" placeholder="https://example.com/cancel">
+          </label>
+          <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Payment link oluştur</button>
+        </form>
+        {{else}}
+        <div class="mt-4 rounded-3xl border border-dashed border-line bg-wash px-5 py-6 text-center text-sm font-semibold text-muted">Payment link oluşturmak için önce domain eklemelisin.</div>
+        {{end}}
+      </section>
+    </div>
+
+    <section class="grid gap-4">
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 class="m-0 text-xl font-black text-ink">Ürünler ve linkler</h2>
+            <p class="m-0 mt-1 text-sm leading-6 text-muted">Müşteriye paylaşacağın linkler burada kopyalanabilir.</p>
+          </div>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ProductCount}} ürün</span>
+        </div>
+        {{if .Products}}
+          <div class="overflow-hidden rounded-3xl border border-line">
+            {{range .Products}}
+              <article class="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0">
+                <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-ink text-sm font-black text-white">{{.LogoText}}</div>
+                <div class="min-w-0 flex-1">
+                  <strong class="block truncate text-sm font-black text-ink">{{.Name}}</strong>
+                  <span class="block text-xs font-semibold text-muted">{{.Amount}} {{.Currency}} · {{.Domain}}</span>
+                </div>
+                <div class="flex shrink-0 items-center gap-2">
+                  <code class="hidden max-w-[180px] truncate rounded-xl border border-line bg-white px-2 py-1.5 text-xs font-bold text-ink sm:block" id="productLink{{.ID}}">{{.PaymentURL}}</code>
+                  <button class="inline-flex min-h-8 items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="productLink{{.ID}}">Kopyala</button>
+                </div>
+              </article>
+            {{end}}
+          </div>
+        {{else}}
+          <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz ürün/payment link yok.</div>
+        {{end}}
+      </section>
+
+      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 class="m-0 text-xl font-black text-ink">Checkout geçmişi</h2>
+            <p class="m-0 mt-1 text-sm leading-6 text-muted">Bu üye işyeri için oluşturulan son hosted checkout sessionları.</p>
+          </div>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.PaymentCount}} checkout</span>
+        </div>
+        {{if .Payments}}
+          <div class="overflow-hidden rounded-3xl border border-line">
+            {{range .Payments}}
+              <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 lg:grid-cols-[1fr_0.7fr_0.7fr_auto] lg:items-center">
+                <div class="min-w-0">
+                  <strong class="block text-sm font-black text-ink">{{.OrderID}}</strong>
+                  <code class="mt-1 block truncate text-xs text-muted">{{.CheckoutURL}}</code>
+                  <small class="mt-1 block text-xs font-semibold text-muted">{{.ProductID}} · {{.UserID}}</small>
+                </div>
+                <div><strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.SelectedAsset}} / {{.SelectedChain}}</small></div>
+                <div><span class="rounded-full px-3 py-1 text-xs font-extrabold {{if eq .Status "paid"}}bg-emerald-50 text-emerald-700{{else if eq .Status "pending"}}bg-amber-50 text-amber-700{{else if eq .Status "awaiting_payment"}}bg-blue-50 text-blue-700{{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span><small class="mt-2 block text-xs font-semibold text-muted">{{.CreatedAt}}</small></div>
+                <div class="flex flex-wrap gap-2">
+                  <button class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-value="{{.CheckoutURL}}">Linki kopyala</button>
+                  <a class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink shadow-sm hover:bg-wash" href="{{.InvoiceURL}}" target="_blank">Fatura</a>
+                </div>
+              </article>
+            {{end}}
+          </div>
+        {{else}}
+          <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz checkout yok.</div>
+        {{end}}
+      </section>
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "withdrawals"}} hidden{{end}} gap-4 xl:grid-cols-[minmax(0,380px)_1fr]">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <h2 class="m-0 text-lg font-black text-ink">Yeni çekim talebi</h2>
+      <p class="m-0 mt-1 text-sm leading-6 text-muted">Reserve cüzdandan dış adrese transfer. Admin onayından sonra işlenir.</p>
+      {{if .WithdrawalWallets}}
+        <form class="mt-4 grid gap-3" method="post" action="/merchant/withdrawals">
+          <label class="grid gap-2 text-sm font-bold text-muted">Reserve cüzdan
+            <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="wallet_id" required>
+              <option value="">— seçin —</option>
+              {{range .WithdrawalWallets}}
+                <option value="{{.ID}}">Reserve — {{.Domain}}</option>
+              {{end}}
+            </select>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted">Ağ
+            <select class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="chain" required>
+              <option value="">— seçin —</option>
+              <option value="bitcoin">Bitcoin</option>
+              <option value="ethereum">Ethereum</option>
+              <option value="bnbchain">BNB Chain</option>
+              <option value="base">Base</option>
+              <option value="arbitrum">Arbitrum</option>
+              <option value="avalanche">Avalanche</option>
+              <option value="unichain">Unichain</option>
+              <option value="solana">Solana</option>
+              <option value="tron">TRON</option>
+              <option value="chiliz">Chiliz</option>
+            </select>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted">Alıcı adres
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="to_address" type="text" placeholder="0x… / bc1… / T…" required>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted">Miktar (token birimi)
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="amount" type="text" inputmode="decimal" placeholder="0.05" required>
+          </label>
+          <label class="grid gap-2 text-sm font-bold text-muted">Not (opsiyonel)
+            <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" name="note" type="text" placeholder="Açıklama">
+          </label>
+          <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Çekim talebi oluştur</button>
+        </form>
+      {{else}}
+        <div class="mt-4 rounded-3xl border border-dashed border-line bg-wash px-5 py-6 text-center text-sm font-semibold text-muted">Reserve cüzdan henüz oluşturulmamış. Domain ekleyip bir kullanıcıya static adres tanımladığınızda reserve cüzdan otomatik oluşur.</div>
+      {{end}}
+    </section>
+
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+        <div>
+          <h2 class="m-0 text-xl font-black text-ink">Çekim talepleri</h2>
+          <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri çekimleri admin onayından sonra gerçek transfer olarak işlenir.</p>
+        </div>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">Admin approval</span>
+      </div>
+      {{if .Withdrawals}}
+        <div class="grid gap-3 md:grid-cols-2">
+          {{range .Withdrawals}}
+            <article class="rounded-3xl border border-line bg-wash p-4 transition-colors hover:bg-white">
+              <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <strong class="block text-sm font-black text-ink">{{.Chain}} · {{.AmountRaw}}</strong>
+                  <span class="mt-1 block truncate text-xs font-semibold text-muted">{{.ToAddress}}</span>
+                </div>
+                <span class="rounded-full bg-white px-3 py-1 text-xs font-extrabold
+                  {{if eq .Status "pending"}}text-yellow-600{{else if eq .Status "approved"}}text-emerald-600{{else if eq .Status "rejected"}}text-red-600{{else}}text-muted{{end}}">{{.Status}}</span>
+              </div>
+              {{if .Note}}<p class="m-0 mt-2 text-xs font-semibold leading-5 text-muted">{{.Note}}</p>{{end}}
+              {{if .TxHash}}<code class="mt-3 block truncate rounded-2xl border border-line bg-white px-3 py-2 text-xs text-muted">{{.TxHash}}</code>{{end}}
+              {{if .Error}}<code class="mt-3 block break-words rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">{{.Error}}</code>{{end}}
+              <time class="mt-3 block text-xs font-bold text-muted">{{.CreatedAt}}</time>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz çekim talebi yok.</div>
+      {{end}}
+    </section>
+  </section>
+
+  {{/* Settings panel */}}
+  <section class="grid{{if ne .ActivePanel "settings"}} hidden{{end}} gap-4 xl:grid-cols-[minmax(0,480px)_1fr]">
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <h2 class="m-0 text-lg font-black text-ink">Görünüm ayarları</h2>
+      <p class="m-0 mt-1 text-sm leading-6 text-muted">Dashboard'da görünmesini istemediğin ağları ve test ağlarını buradan gizleyebilirsin.</p>
+      <form class="mt-5 grid gap-4" method="post" action="/merchant/settings">
+        <label class="flex cursor-pointer items-center gap-3 rounded-2xl border border-line bg-wash px-4 py-3 hover:bg-white">
+          <input class="h-4 w-4 accent-accent" type="checkbox" name="hide_testnets" value="on" {{if .HideTestnets}}checked{{end}}>
+          <div>
+            <strong class="block text-sm font-black text-ink">Test ağlarını gizle</strong>
+            <span class="block text-xs font-semibold text-muted">Chiliz Spicy ve diğer testnet'ler Treasury ve Network kasalarında görünmez.</span>
+          </div>
+        </label>
+
+        <div>
+          <p class="mb-2 text-sm font-bold text-muted">Gizlenecek ağlar (virgülle ayır)</p>
+          <input class="min-h-11 w-full rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100"
+            name="hidden_chains" type="text"
+            placeholder="Örn: Chiliz Spicy, Unichain"
+            value="{{.HiddenChains}}">
+          <p class="mt-1 text-xs font-semibold text-muted">Treasury ve Network kasalarından bu ağlara ait satırlar kaldırılır.</p>
+        </div>
+
+        <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Kaydet</button>
+      </form>
+    </section>
+
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <h2 class="m-0 text-lg font-black text-ink">Desteklenen ağlar</h2>
+      <p class="m-0 mt-1 text-sm leading-6 text-muted">Tüm ağlar ve testnet durumları.</p>
+      <div class="mt-4 grid gap-3 sm:grid-cols-2">
+        {{range .ChainVaults}}
+          <div class="flex items-center gap-3 rounded-2xl border border-line bg-wash px-3 py-2">
+            {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="h-7 w-7 rounded-full border border-line bg-white p-0.5 object-contain">{{end}}
+            <div class="min-w-0">
+              <strong class="block text-sm font-black text-ink">{{.Chain}}</strong>
+            </div>
+          </div>
+        {{else}}
+          <p class="col-span-2 text-sm font-semibold text-muted">—</p>
+        {{end}}
+      </div>
+    </section>
+  </section>
+
+  <section class="grid{{if ne .ActivePanel "domains"}} hidden{{end}} gap-4 xl:grid-cols-[minmax(0,420px)_1fr]">
+    <section id="domain-create" class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <h2 class="m-0 text-lg font-black text-ink">Domain ekle</h2>
+      <p class="m-0 mt-1 text-sm leading-6 text-muted">Checkout ve webhook çağrıları domain bazlı API key ile çalışır.</p>
+      <form class="mt-4 grid gap-3" method="post" action="{{.DomainsURL}}">
+        <label class="grid gap-2 text-sm font-bold text-muted" for="domain_url">Domain
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="domain_url" name="domain_url" type="text" placeholder="example.com" required>
+        </label>
+        <label class="grid gap-2 text-sm font-bold text-muted" for="webhook_url">Webhook URL
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="webhook_url" name="webhook_url" type="url" placeholder="https://example.com/webhooks/gateway" required>
+        </label>
+        <label class="grid gap-2 text-sm font-bold text-muted" for="webhook_secret">Webhook secret
+          <input class="min-h-11 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="webhook_secret" name="webhook_secret" type="text" autocomplete="off" required>
+        </label>
+        <button class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-generate-secret="webhook_secret">Webhook secret üret</button>
+        <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Domain oluştur</button>
+      </form>
+    </section>
+
+    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
+      <h2 class="m-0 text-lg font-black text-ink">Domainler</h2>
+      {{if .Domains}}
+        <div class="mt-4 grid gap-3 md:grid-cols-2">
+          {{range .Domains}}
+            <article class="rounded-3xl border border-line bg-wash p-4">
+              <strong class="block break-words text-sm font-black text-ink">{{.DomainURL}}</strong>
+              {{if .WebhookURL}}
+                <span class="mt-1 block truncate text-xs font-semibold text-muted">{{.WebhookURL}}</span>
+              {{else}}
+                <span class="mt-1 block text-xs font-semibold text-red-400">Webhook URL tanımlanmamış</span>
+              {{end}}
+              <div class="mt-3 grid gap-2">
+                <div class="grid gap-1">
+                  <span class="text-[11px] font-black uppercase tracking-[0.08em] text-muted">Domain ID</span>
+                  <code class="block truncate rounded-2xl border border-line bg-white px-3 py-1.5 text-xs text-muted" data-copy-value="{{.ID}}" title="Kopyalamak için tıkla">{{.ID}}</code>
+                </div>
+                <div class="grid gap-1">
+                  <span class="text-[11px] font-black uppercase tracking-[0.08em] text-muted">API Key</span>
+                  <code class="block truncate rounded-2xl border border-line bg-white px-3 py-1.5 text-xs text-muted" data-copy-value="{{.APIKey}}" title="Kopyalamak için tıkla">{{.APIKey}}</code>
+                </div>
+              </div>
+              {{if .WebhookURL}}
+                <button class="mt-3 inline-flex min-h-8 w-full items-center justify-center rounded-2xl border border-line bg-white px-3 text-xs font-extrabold text-ink shadow-sm hover:bg-wash"
+                  data-test-webhook="{{.ID}}"
+                  data-webhook-url="{{.WebhookURL}}">
+                  Webhook Test Et
+                </button>
+                <div id="webhook-result-{{.ID}}" class="mt-2 hidden rounded-2xl border p-3 text-xs font-semibold"></div>
+              {{end}}
+              <details class="mt-3">
+                <summary class="cursor-pointer rounded-2xl border border-line bg-white px-3 py-2 text-xs font-extrabold text-muted hover:bg-wash">Webhook güncelle</summary>
+                <form method="post" action="/merchant/domains/{{.ID}}/update-webhook" class="mt-3 grid gap-2">
+                  <input class="min-h-9 rounded-2xl border border-line bg-white px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="webhook_url" type="url" placeholder="https://example.com/webhook" value="{{.WebhookURL}}" required>
+                  <input class="min-h-9 rounded-2xl border border-line bg-white px-3 text-xs font-semibold text-ink outline-none focus:border-accent focus:ring-2 focus:ring-pink-100" name="webhook_secret" type="text" placeholder="Yeni webhook secret" autocomplete="off" required>
+                  <div class="flex gap-2">
+                    <button class="inline-flex min-h-8 flex-1 items-center justify-center rounded-full bg-accent px-3 text-xs font-extrabold text-white hover:bg-accentHover" type="submit">Kaydet</button>
+                    <button class="inline-flex min-h-8 items-center justify-center rounded-full border border-line bg-white px-3 text-xs font-extrabold text-ink hover:bg-wash" type="button" data-generate-secret="webhook_secret" data-target-form="{{.ID}}">Secret üret</button>
+                  </div>
+                </form>
+              </details>
+            </article>
+          {{end}}
+        </div>
+      {{else}}
+        <div class="mt-4 rounded-3xl border border-dashed border-line bg-wash px-4 py-6 text-center text-sm font-semibold text-muted">Henüz domain eklenmedi.</div>
+      {{end}}
+    </section>
+  </section>
+</section>

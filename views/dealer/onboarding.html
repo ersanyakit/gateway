@@ -1,0 +1,18 @@
+<section class="grid min-h-[calc(100vh-184px)] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_460px]">
+  <div class="grid max-w-2xl gap-5">
+    <span class="inline-flex w-fit rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Üye işyeri hesabı</span>
+    <h1 class="m-0 text-5xl font-black leading-[0.96] text-ink sm:text-6xl">Merchant kaydı oluşturuldu.</h1>
+    <p class="m-0 max-w-xl text-base leading-8 text-muted">Domain, webhook, checkout ve deposit operasyonları bu üye işyeri hesabı üzerinden yönetilecek.</p>
+  </div>
+
+  <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft" aria-labelledby="onboarding-title">
+    <h2 class="m-0 text-2xl font-black text-ink" id="onboarding-title">Kayıt tamamlandı</h2>
+    <p class="m-0 mt-2 text-sm leading-6 text-muted">Üye işyeri hesabı panele hazır.</p>
+    <dl class="mt-5 grid gap-3">
+      {{if .MerchantID}}<div class="rounded-2xl border border-line bg-wash p-3"><dt class="text-xs font-bold text-muted">Merchant ID</dt><dd class="m-0 mt-1 break-words text-sm font-black text-ink">{{.MerchantID}}</dd></div>{{end}}
+      {{if .MerchantName}}<div class="rounded-2xl border border-line bg-wash p-3"><dt class="text-xs font-bold text-muted">Üye işyeri</dt><dd class="m-0 mt-1 break-words text-sm font-black text-ink">{{.MerchantName}}</dd></div>{{end}}
+      {{if .MerchantEmail}}<div class="rounded-2xl border border-line bg-wash p-3"><dt class="text-xs font-bold text-muted">E-posta</dt><dd class="m-0 mt-1 break-words text-sm font-black text-ink">{{.MerchantEmail}}</dd></div>{{end}}
+    </dl>
+    <a class="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.DashboardURL}}">Panele git</a>
+  </section>
+</section>

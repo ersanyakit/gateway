@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 32px 16px;
+    }
+    .invoice {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 2px 24px rgba(0,0,0,.07);
+      max-width: 580px;
+      width: 100%;
+      padding: 40px;
+    }
+    .invoice-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+    .invoice-brand { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+    .invoice-brand span { color: #e84393; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 5px 14px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .status-paid { background: #d1fae5; color: #065f46; }
+    .status-pending { background: #fef9c3; color: #92400e; }
+    .status-canceled { background: #fee2e2; color: #991b1b; }
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .divider { border: none; border-top: 1px solid #e8e8ed; margin: 28px 0; }
+    .invoice-title { font-size: 13px; color: #86868b; font-weight: 600; margin-bottom: 6px; }
+    .invoice-value { font-size: 15px; font-weight: 700; color: #1d1d1f; word-break: break-all; }
+    .amount-row {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      margin: 28px 0;
+    }
+    .amount-big { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
+    .amount-currency {
+      font-size: 16px;
+      font-weight: 700;
+      color: #86868b;
+      padding-bottom: 5px;
+    }
+    .detail-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .tx-hash {
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 12px;
+      color: #86868b;
+      background: #f5f5f7;
+      border-radius: 8px;
+      padding: 10px 12px;
+      word-break: break-all;
+      margin-top: 8px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 32px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 0 20px;
+      height: 40px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      border: none;
+    }
+    .btn-primary { background: #e84393; color: #fff; }
+    .btn-secondary { background: #f5f5f7; color: #1d1d1f; }
+    .checkout-link { font-size: 13px; color: #86868b; margin-top: 10px; text-align: center; }
+    .checkout-link a { color: #e84393; text-decoration: none; font-weight: 600; }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .invoice { box-shadow: none; border-radius: 0; max-width: 100%; }
+      .actions { display: none; }
+      .checkout-link { display: none; }
+    }
+    @media (max-width: 520px) {
+      .invoice { padding: 24px; }
+      .detail-grid { grid-template-columns: 1fr; }
+      .invoice-header { flex-direction: column; gap: 14px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="invoice">
+    <div class="invoice-header">
+      <div>
+        <div class="invoice-brand">gateway<span>.</span></div>
+        <div style="font-size:13px;color:#86868b;margin-top:4px;font-weight:600;">{{.DomainURL}}</div>
+      </div>
+      {{if .IsPaid}}
+        <span class="status-badge status-paid"><span class="status-dot"></span>Ödendi</span>
+      {{else if eq .Status "canceled"}}
+        <span class="status-badge status-canceled"><span class="status-dot"></span>İptal</span>
+      {{else if eq .Status "expired"}}
+        <span class="status-badge status-canceled"><span class="status-dot"></span>Süresi doldu</span>
+      {{else}}
+        <span class="status-badge status-pending"><span class="status-dot"></span>Beklemede</span>
+      {{end}}
+    </div>
+
+    <div class="amount-row">
+      <span class="amount-big">{{.Amount}}</span>
+      <span class="amount-currency">{{.Currency}}</span>
+    </div>
+
+    <hr class="divider">
+
+    <div class="detail-grid">
+      <div>
+        <div class="invoice-title">Sipariş No</div>
+        <div class="invoice-value">{{.OrderID}}</div>
+      </div>
+      <div>
+        <div class="invoice-title">Oluşturma</div>
+        <div class="invoice-value">{{.CreatedAt}}</div>
+      </div>
+      {{if .PaidAt}}
+      <div>
+        <div class="invoice-title">Ödeme Tarihi</div>
+        <div class="invoice-value">{{.PaidAt}}</div>
+      </div>
+      {{end}}
+      {{if .Symbol}}
+      <div>
+        <div class="invoice-title">Ödenen Coin</div>
+        <div class="invoice-value">{{.Symbol}}</div>
+      </div>
+      {{end}}
+    </div>
+
+    {{if .TxHash}}
+    <hr class="divider">
+    <div>
+      <div class="invoice-title">Zincir İşlem Hash</div>
+      <div class="tx-hash">{{.TxHash}}</div>
+    </div>
+    {{end}}
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="window.print()">Yazdır / PDF</button>
+      {{if not .IsPaid}}
+        <a class="btn btn-secondary" href="{{.CheckoutURL}}">Ödeme Sayfası</a>
+      {{end}}
+    </div>
+
+    <div class="checkout-link">
+      Fatura linki: <a href="/invoice/{{.OrderID}}" id="invoice-self-link">{{.CheckoutURL}}</a>
+    </div>
+  </div>
+  <script>
+    var selfLink = document.getElementById('invoice-self-link');
+    if (selfLink) { selfLink.href = window.location.href; selfLink.textContent = window.location.href; }
+  </script>
+</body>
+</html>

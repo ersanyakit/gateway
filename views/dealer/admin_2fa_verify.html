@@ -1,0 +1,27 @@
+<section class="grid min-h-[calc(100vh-184px)] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_430px]">
+  <div class="grid max-w-2xl gap-5">
+    <span class="inline-flex w-fit rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">2FA Doğrulama</span>
+    <h1 class="m-0 text-5xl font-black leading-[0.96] text-ink sm:text-6xl">İki faktörlü kimlik doğrulama.</h1>
+    <p class="m-0 max-w-xl text-base leading-8 text-muted">Google Authenticator uygulamasındaki 6 haneli kodu gir.</p>
+  </div>
+
+  <section class="grid gap-5 rounded-[28px] border border-line bg-white/90 p-6 shadow-soft">
+    <div>
+      <h2 class="m-0 text-2xl font-black text-ink">2FA Doğrulama</h2>
+      <p class="m-0 mt-1 text-sm text-muted">Authenticator uygulamasındaki kodu gir.</p>
+    </div>
+
+    {{if .Error}}<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
+    {{if .Success}}<div class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
+
+    <form class="grid gap-4" method="post" action="/admin/2fa/verify">
+      <label class="grid gap-1.5 text-sm font-bold text-muted">
+        Doğrulama kodu
+        <input class="min-h-14 rounded-2xl border border-line bg-white px-4 text-center text-3xl font-black tracking-[0.4em] text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100"
+               name="code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" autofocus required placeholder="000000">
+      </label>
+      <button class="inline-flex min-h-12 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" type="submit">Giriş yap</button>
+      <a class="text-center text-xs font-bold text-muted hover:text-ink" href="/admin/login">← Geri dön</a>
+    </form>
+  </section>
+</section>
