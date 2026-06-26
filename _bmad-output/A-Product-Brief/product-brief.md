@@ -103,6 +103,55 @@ The first customer/onboarding decision path is founder-led and manual: ersan cur
 
 ---
 
+## Target Users
+
+### Primary Users
+
+1. **Developer Integrator**
+   - **Context:** Works inside a merchant/dealer or wallet/exchange tenant and owns the technical integration.
+   - **Goals:** Authenticate safely, create payment sessions, issue static wallets, retry idempotently, understand response contracts, and validate webhook delivery.
+   - **Frustrations:** Unclear auth rules, unstable response shapes, duplicate payment/session risk, poor webhook examples, and insufficient evidence that the integration is production-safe.
+   - **Current alternatives:** Checkout-only processors, custom internal wallet/indexer/ledger code, manual wallet operations, or heavy custody/exchange infrastructure.
+   - **Design needs:** Clear API credentials, HMAC guidance, idempotency feedback, webhook event catalog, integration proof, and error responses that are actionable without exposing secrets.
+
+2. **Merchant / Exchange Operator**
+   - **Context:** Monitors payment, deposit, wallet, refund, payout, sweep, and balance states for a tenant.
+   - **Goals:** Understand where funds are, whether deposits are final, whether webhooks delivered, whether balances are ledger-backed, and which failures need action.
+   - **Frustrations:** Ambiguous payment states, hidden webhook failures, unclear underpaid/expired flows, balance drift, and no recoverable audit trail.
+   - **Current alternatives:** Manual chain explorer checks, spreadsheets, internal scripts, support escalation, or fragmented admin tools.
+   - **Design needs:** Dealer-scoped dashboard, payment sessions, static wallet visibility, webhook diagnostics, ledger-derived balances, refund/payout visibility, and clear recovery paths.
+
+3. **Platform / Admin Operator**
+   - **Context:** Operates the Gateway platform across tenants and money-state recovery surfaces.
+   - **Goals:** Resolve webhook dead letters, reconciliation jobs, reorg corrections, provider degradation, launch-readiness gaps, and risky outbound money operations.
+   - **Frustrations:** Missing correlation IDs, hidden tenant scope, destructive history edits, unsafe replay, signer ambiguity, and no evidence for launch gates.
+   - **Current alternatives:** Database inspection, logs, manual scripts, ad hoc runbooks, or direct code intervention.
+   - **Design needs:** Admin portal, webhook replay/dead-letter views, reconciliation dashboard, provider health, withdrawal/refund/sweep review, launch readiness checklist, audit rows, and redacted diagnostics.
+
+### Secondary Users
+
+- **Checkout Payer:** Uses hosted checkout from a merchant. Needs clear asset/network, amount, address, QR, expiry, and status. Must never see internal diagnostics or a misleading payable state after expiry.
+- **Custody / Security Owner:** Reviews signer readiness, private key/mnemonic isolation, policy checks, withdrawal approvals, and custody launch gates. In the current project phase, many of these responsibilities are represented by admin/operator surfaces.
+- **Platform Owner:** Reviews controlled beta readiness, production gateway readiness, wallet-provider custody readiness, and exchange-grade tracking readiness. In the current project, ersan owns this role.
+- **Wallet End User:** Downstream user of a tenant's wallet product. Not a direct Gateway buyer or primary v1 interface user; represented through wallet-provider APIs and tenant operations.
+
+### Explicit Non-Users for v1
+
+- High-volume regulated exchanges requiring production custody before external signer, compliance, reconciliation, observability, and exchange-grade indexer gates are complete.
+- Self-custody wallet consumers.
+- Fiat on/off-ramp, card acquiring, dispute/chargeback, or bank settlement users.
+- General-purpose blockchain indexer users outside owned wallet/address money movement.
+
+### Design Implications
+
+- Authenticated app design must separate dealer/merchant scoped surfaces from admin/operator surfaces.
+- Checkout must remain payer-safe and isolated from internal app chrome.
+- Operator screens must expose scope, actor, status, timestamps, IDs, audit trail, and next action near every risky workflow.
+- Diagnostic surfaces must redact secrets, private keys, mnemonics, raw signatures, and internal-only payloads.
+- User definitions support the existing UX flows: hosted checkout, developer integration proof, webhook replay recovery, reconciliation recovery, withdrawal approval safety, and launch readiness review.
+
+---
+
 ## Additional Context
 
 Existing source artifacts:
@@ -122,7 +171,7 @@ Existing source artifacts:
 - [x] Positioning
 - [x] Business Model
 - [x] Business Customer Profile
-- [ ] Target Users
+- [x] Target Users
 - [ ] Product Concept
 - [ ] Success Criteria
 - [ ] Competitive Landscape

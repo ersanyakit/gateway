@@ -7,6 +7,7 @@
 - Positioning completed and confirmed from `_bmad-output` sources.
 - Business Model completed from `_bmad-output` sources.
 - Business Customer Profile completed from `_bmad-output` sources plus user clarification.
+- Target Users completed from `_bmad-output` sources.
 - Existing BMad artifacts are available and should be treated as source context:
   - `_bmad-output/planning-artifacts/prd.md`
   - `_bmad-output/planning-artifacts/ux.md`
@@ -28,6 +29,7 @@
 - Confirmed positioning: B2B crypto payment gateway + wallet-provider infrastructure, differentiated by shared money core across payment lifecycle, static wallet, ledger, webhook, reconciliation, and admin recovery.
 - Business model: B2B infrastructure platform. Merchant/dealer and wallet/exchange tenants are paying customers; checkout payers and wallet end users are downstream users.
 - Business customers: controlled-beta merchant/dealer tenants and small/mid wallet or exchange platform tenants. Initial onboarding and commercial decisions are founder-led by ersan.
+- Target users: developer integrator, merchant/exchange operator, platform/admin operator, checkout payer, custody/security owner, platform owner, and downstream wallet end user.
 
 ## Backlog
 
