@@ -29,20 +29,21 @@ import (
 
 // V1APIDeps holds all dependencies used by the v1 REST API endpoints.
 type V1APIDeps struct {
-	DomainRepo      *repositories.DomainRepo
-	WalletRepo      *repositories.WalletRepo
-	PaymentRepo     *repositories.PaymentRepo
-	WithdrawalRepo  *repositories.WithdrawalRequestRepo
-	RefundRepo      *repositories.RefundRepo
-	LedgerRepo      *repositories.LedgerRepo
-	TransactionRepo *repositories.TransactionRepo
-	AssetRegistry   *asset.Registry
-	Blockchains     *blockchain.ChainFactory
-	PriceOracle     pricing.PriceOracle
-	Notifier        *webhooksvc.Notifier
-	PaymentHub      *realtime.PaymentHub
-	IdempotencyRepo *repositories.IdempotencyRepo
-	TxRescanService func() *txrescan.Service
+	DomainRepo          *repositories.DomainRepo
+	WalletRepo          *repositories.WalletRepo
+	PaymentRepo         *repositories.PaymentRepo
+	WithdrawalRepo      *repositories.WithdrawalRequestRepo
+	RefundRepo          *repositories.RefundRepo
+	LedgerRepo          *repositories.LedgerRepo
+	TransactionRepo     *repositories.TransactionRepo
+	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
+	AssetRegistry       *asset.Registry
+	Blockchains         *blockchain.ChainFactory
+	PriceOracle         pricing.PriceOracle
+	Notifier            *webhooksvc.Notifier
+	PaymentHub          *realtime.PaymentHub
+	IdempotencyRepo     *repositories.IdempotencyRepo
+	TxRescanService     func() *txrescan.Service
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1072,6 +1073,12 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), req, deps.LedgerRepo); err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "payout creation failed: "+err.Error())
 		}
+		if deps.WebhookDeliveryRepo != nil {
+			payload := webhooksvc.NewPayoutPayload(constants.WebhookEventPayoutRequestedV1, *req)
+			if _, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(c.Context(), *domain, payload); err != nil {
+				fmt.Println("payout lifecycle webhook enqueue error:", err)
+			}
+		}
 
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"result": "ok",
@@ -1255,6 +1262,12 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		}
 		if err := deps.RefundRepo.Create(c.Context(), refund); err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "refund creation failed: "+err.Error())
+		}
+		if deps.WebhookDeliveryRepo != nil {
+			payload := webhooksvc.NewRefundPayload(constants.WebhookEventRefundRequestedV1, *refund)
+			if _, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(c.Context(), *domain, payload); err != nil {
+				fmt.Println("refund lifecycle webhook enqueue error:", err)
+			}
 		}
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{"result": "ok", "data": v1RefundResponse(*refund)})
 	}

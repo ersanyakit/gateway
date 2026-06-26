@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"core/constants"
 	"core/helpers"
 	"core/models"
 )
@@ -262,6 +263,54 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	req.Header.Set("X-Gateway-Event", session.WebhookEvent)
 	req.Header.Set("X-Gateway-Event-Version", "v1")
 	req.Header.Set("X-Gateway-Event-Id", payload.EventID)
+	req.Header.Set("X-Gateway-Timestamp", timestamp)
+	req.Header.Set("X-Gateway-Signature", "sha256="+signature)
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
+}
+
+func (n *Notifier) DeliverRaw(ctx context.Context, domain models.Domain, eventType, eventID, eventVersion string, body []byte) error {
+	if domain.WebhookURL == "" {
+		return permanent(fmt.Errorf("webhook url is empty for domain %s", domain.ID.String()))
+	}
+	if domain.WebhookSecret == "" {
+		return permanent(fmt.Errorf("webhook secret is empty for domain %s", domain.ID.String()))
+	}
+	if err := helpers.ValidateWebhookURL(domain.WebhookURL); err != nil {
+		return permanent(fmt.Errorf("webhook url validation failed for domain %s: %w", domain.ID.String(), err))
+	}
+	if eventVersion == "" {
+		eventVersion = constants.WebhookEventVersionV1
+	}
+
+	secret, err := helpers.DecryptSecret(domain.WebhookSecret)
+	if err != nil {
+		return permanent(fmt.Errorf("webhook secret decrypt failed for domain %s: %w", domain.ID, err))
+	}
+
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := helpers.GenerateSignature(secret, timestamp, body)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, domain.WebhookURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "gateway-webhook/1.0")
+	req.Header.Set("X-Gateway-Event", eventType)
+	req.Header.Set("X-Gateway-Event-Version", eventVersion)
+	req.Header.Set("X-Gateway-Event-Id", eventID)
 	req.Header.Set("X-Gateway-Timestamp", timestamp)
 	req.Header.Set("X-Gateway-Signature", "sha256="+signature)
 

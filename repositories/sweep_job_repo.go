@@ -145,6 +145,14 @@ func (r *SweepJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error) 
 		}).Error
 }
 
+func (r *SweepJobRepo) Find(ctx context.Context, id uuid.UUID) (*models.SweepJob, error) {
+	var job models.SweepJob
+	if err := r.db.WithContext(ctx).First(&job, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &job, nil
+}
+
 func (r *SweepJobRepo) ListDeadLetters(ctx context.Context, limit int) ([]models.SweepJob, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

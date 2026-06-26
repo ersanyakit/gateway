@@ -390,6 +390,7 @@ func enqueueSweepJob(ctx context.Context, txModel *models.Transaction) {
 	}
 	if created && job != nil {
 		log.Printf("sweep enqueue: job=%s tx=%s chain=%d", job.ID, txModel.UniqueHash, txModel.ChainID)
+		enqueueSweepLifecycleWebhook(ctx, *job, txModel, constants.WebhookEventSweepRequestedV1, "")
 	}
 }
 
@@ -571,6 +572,68 @@ func createPaymentWebhookDelivery(ctx context.Context, domain models.Domain, ses
 	return delivery.ID
 }
 
+func enqueueLifecycleWebhook(ctx context.Context, domain models.Domain, payload webhooksvc.LifecyclePayload) uuid.UUID {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+		return uuid.Nil
+	}
+	delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	if err != nil {
+		log.Printf("Lifecycle webhook enqueue error event=%s id=%s: %v\n", payload.EventType, payload.EventID, err)
+		return uuid.Nil
+	}
+	if delivery == nil {
+		return uuid.Nil
+	}
+	return delivery.ID
+}
+
+func findDomainForLifecycle(ctx context.Context, domainID uuid.UUID) (*models.Domain, error) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.DomainRepo == nil {
+		return nil, errors.New("domain repo is unavailable")
+	}
+	domainIDString := domainID.String()
+	return coreApplication.CORE.Router.DomainRepo.FindByID(types.DomainParams{
+		Context:  ctx,
+		DomainID: &domainIDString,
+	})
+}
+
+func enqueueSweepLifecycleWebhook(ctx context.Context, job models.SweepJob, txModel *models.Transaction, eventType string, errText string) uuid.UUID {
+	if txModel == nil || txModel.DomainID == nil {
+		return uuid.Nil
+	}
+	domain, err := findDomainForLifecycle(ctx, *txModel.DomainID)
+	if err != nil {
+		log.Printf("Sweep lifecycle domain lookup error job=%s domain=%s: %v\n", job.ID, txModel.DomainID.String(), err)
+		return uuid.Nil
+	}
+	payload := webhooksvc.NewSweepPayload(eventType, job, txModel, errText)
+	return enqueueLifecycleWebhook(ctx, *domain, payload)
+}
+
+func enqueuePayoutLifecycleWebhook(ctx context.Context, request models.WithdrawalRequest, eventType string) uuid.UUID {
+	if request.DomainID == nil {
+		return uuid.Nil
+	}
+	domain, err := findDomainForLifecycle(ctx, *request.DomainID)
+	if err != nil {
+		log.Printf("Payout lifecycle domain lookup error payout=%s domain=%s: %v\n", request.ID, request.DomainID.String(), err)
+		return uuid.Nil
+	}
+	payload := webhooksvc.NewPayoutPayload(eventType, request)
+	return enqueueLifecycleWebhook(ctx, *domain, payload)
+}
+
+func enqueueRefundLifecycleWebhook(ctx context.Context, refund models.Refund, eventType string) uuid.UUID {
+	domain, err := findDomainForLifecycle(ctx, refund.DomainID)
+	if err != nil {
+		log.Printf("Refund lifecycle domain lookup error refund=%s domain=%s: %v\n", refund.ID, refund.DomainID.String(), err)
+		return uuid.Nil
+	}
+	payload := webhooksvc.NewRefundPayload(eventType, refund)
+	return enqueueLifecycleWebhook(ctx, *domain, payload)
+}
+
 func markWebhookDeliveryAttempt(ctx context.Context, deliveryID uuid.UUID, delivered bool, lastErr error) {
 	if deliveryID == uuid.Nil || coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
 		return
@@ -656,6 +719,36 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 		if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
 			log.Println("Payment webhook mark delivered error:", err)
 		}
+	}
+
+	if coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.DomainRepo == nil {
+		return
+	}
+	deliveries, err := coreApplication.CORE.Router.WebhookDeliveryRepo.ListDueLifecycle(ctx, 100)
+	if err != nil {
+		log.Println("Pending lifecycle webhook query error:", err)
+		return
+	}
+	for _, delivery := range deliveries {
+		domain, err := findDomainForLifecycle(ctx, delivery.DomainID)
+		if err != nil {
+			log.Println("Lifecycle webhook domain lookup error:", err)
+			_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, false, err)
+			continue
+		}
+		eventVersion := delivery.EventVersion
+		if eventVersion == "" {
+			eventVersion = constants.WebhookEventVersionV1
+		}
+		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		err = notifier.DeliverRaw(deliveryCtx, *domain, delivery.EventType, delivery.EventID, eventVersion, []byte(delivery.PayloadJSON))
+		cancel()
+		if err != nil {
+			log.Println("Lifecycle webhook retry error:", err)
+			_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, false, err)
+			continue
+		}
+		_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, true, nil)
 	}
 }
 
@@ -782,6 +875,13 @@ func processSweepJobs(ctx context.Context) {
 		if err != nil {
 			log.Printf("Sweep job transaction lookup error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
 			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
+			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
+				eventType := constants.WebhookEventSweepFailedV1
+				if updated.Status == models.SweepJobStatusDeadLetter {
+					eventType = constants.WebhookEventSweepDeadLetteredV1
+				}
+				enqueueSweepLifecycleWebhook(ctx, *updated, nil, eventType, err.Error())
+			}
 			continue
 		}
 		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
@@ -790,6 +890,13 @@ func processSweepJobs(ctx context.Context) {
 		if err != nil {
 			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
 			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
+			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
+				eventType := constants.WebhookEventSweepFailedV1
+				if updated.Status == models.SweepJobStatusDeadLetter {
+					eventType = constants.WebhookEventSweepDeadLetteredV1
+				}
+				enqueueSweepLifecycleWebhook(ctx, *updated, txModel, eventType, err.Error())
+			}
 			continue
 		}
 		txHash := ""
@@ -800,6 +907,10 @@ func processSweepJobs(ctx context.Context) {
 			log.Printf("Sweep job mark succeeded error job=%s: %v\n", job.ID, err)
 			continue
 		}
+		job.Status = models.SweepJobStatusSucceeded
+		job.SweepTxHash = txHash
+		job.LastError = ""
+		enqueueSweepLifecycleWebhook(ctx, job, txModel, constants.WebhookEventSweepSucceededV1, "")
 		log.Printf("Sweep job succeeded job=%s tx=%s sweep_tx=%s\n", job.ID, job.TransactionUniqueHash, txHash)
 	}
 }
@@ -868,6 +979,10 @@ func finalizeProcessingTransfers(ctx context.Context) {
 			for _, request := range withdrawals {
 				if err := router.WithdrawalRepo.FinalizeProcessingWithLedger(ctx, request.ID, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing withdrawal finalize error %s: %v\n", request.ID, err)
+				} else if err == nil {
+					request.Status = models.WithdrawalStatusApproved
+					request.Error = ""
+					enqueuePayoutLifecycleWebhook(ctx, request, constants.WebhookEventPayoutFinalizedV1)
 				}
 			}
 		}
@@ -885,6 +1000,10 @@ func finalizeProcessingTransfers(ctx context.Context) {
 				}
 				if err := router.RefundRepo.MarkSucceededWithLedger(ctx, refund.ID, refund.ReviewedBy, refund.TxHash, *session, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing refund finalize error %s: %v\n", refund.ID, err)
+				} else if err == nil {
+					refund.Status = models.RefundStatusSucceeded
+					refund.Error = ""
+					enqueueRefundLifecycleWebhook(ctx, refund, constants.WebhookEventRefundSucceededV1)
 				}
 			}
 		}

@@ -29,11 +29,11 @@ type LifecyclePayload struct {
 	WalletID   string `json:"wallet_id,omitempty"`
 	PaymentID  string `json:"payment_id,omitempty"`
 
-	ChainID int64   `json:"chain_id,omitempty"`
-	Chain   string  `json:"chain,omitempty"`
-	Token   *string `json:"token,omitempty"`
-	Symbol  string  `json:"symbol,omitempty"`
-	Decimals uint8  `json:"decimals,omitempty"`
+	ChainID  int64   `json:"chain_id,omitempty"`
+	Chain    string  `json:"chain,omitempty"`
+	Token    *string `json:"token,omitempty"`
+	Symbol   string  `json:"symbol,omitempty"`
+	Decimals uint8   `json:"decimals,omitempty"`
 
 	AmountRaw string `json:"amount_raw,omitempty"`
 	ToAddress string `json:"to_address,omitempty"`
@@ -161,4 +161,3 @@ func NewSweepPayload(eventType string, job models.SweepJob, txModel *models.Tran
 	}
 	return payload
 }
-

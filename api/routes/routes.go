@@ -277,20 +277,21 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/invoice/:token", handlers.HandlePaymentInvoice(paymentDeps))
 
 	v1Deps := handlers.V1APIDeps{
-		DomainRepo:      r.DomainRepo,
-		WalletRepo:      r.WalletRepo,
-		PaymentRepo:     r.PaymentRepo,
-		WithdrawalRepo:  r.WithdrawalRepo,
-		RefundRepo:      r.RefundRepo,
-		LedgerRepo:      r.LedgerRepo,
-		TransactionRepo: r.TransactionRepo,
-		AssetRegistry:   r.assetRegistry,
-		Blockchains:     r.blockchains,
-		PriceOracle:     pricing.NewCoinGecko(),
-		Notifier:        webhooksvc.NewNotifier(),
-		PaymentHub:      r.PaymentHub,
-		IdempotencyRepo: r.IdempotencyRepo,
-		TxRescanService: func() *txrescan.Service { return r.TxRescanService },
+		DomainRepo:          r.DomainRepo,
+		WalletRepo:          r.WalletRepo,
+		PaymentRepo:         r.PaymentRepo,
+		WithdrawalRepo:      r.WithdrawalRepo,
+		RefundRepo:          r.RefundRepo,
+		LedgerRepo:          r.LedgerRepo,
+		TransactionRepo:     r.TransactionRepo,
+		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
+		AssetRegistry:       r.assetRegistry,
+		Blockchains:         r.blockchains,
+		PriceOracle:         pricing.NewCoinGecko(),
+		Notifier:            webhooksvc.NewNotifier(),
+		PaymentHub:          r.PaymentHub,
+		IdempotencyRepo:     r.IdempotencyRepo,
+		TxRescanService:     func() *txrescan.Service { return r.TxRescanService },
 	}
 
 	// ── Common API ───────────────────────────────────────────────────────────

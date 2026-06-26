@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"core/models"
@@ -50,20 +51,20 @@ func (r *WebhookDeliveryRepo) EnqueueLifecycle(ctx context.Context, domain model
 	if err == nil {
 		return &existing, false, nil
 	}
-	if err != nil && err != gorm.ErrRecordNotFound {
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, false, err
 	}
 	delivery := &models.WebhookDelivery{
-		MerchantID:    domain.MerchantID,
-		DomainID:      domain.ID,
-		EventID:       payload.EventID,
-		EventType:     payload.EventType,
-		EventVersion:  payload.EventVersion,
-		EntityType:    payload.EntityType,
-		EntityID:      payload.EntityUUID(),
-		PayloadJSON:   string(body),
-		TargetURL:     domain.WebhookURL,
-		Status:        models.WebhookDeliveryStatusPending,
+		MerchantID:   domain.MerchantID,
+		DomainID:     domain.ID,
+		EventID:      payload.EventID,
+		EventType:    payload.EventType,
+		EventVersion: payload.EventVersion,
+		EntityType:   payload.EntityType,
+		EntityID:     payload.EntityUUID(),
+		PayloadJSON:  string(body),
+		TargetURL:    domain.WebhookURL,
+		Status:       models.WebhookDeliveryStatusPending,
 	}
 	if err := r.Create(ctx, delivery); err != nil {
 		return nil, false, err

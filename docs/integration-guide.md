@@ -25,9 +25,20 @@ webhook:
     - payment_succeeded
     - payment_failed
     - payment_expired
-  not_currently_sent_as_webhooks:
-    - payout status events
-    - refund status events
+    - payout.requested.v1
+    - payout.broadcast.v1
+    - payout.finalized.v1
+    - payout.rejected.v1
+    - payout.failed.v1
+    - refund.requested.v1
+    - refund.broadcast.v1
+    - refund.succeeded.v1
+    - refund.rejected.v1
+    - refund.failed.v1
+    - sweep.requested.v1
+    - sweep.succeeded.v1
+    - sweep.failed.v1
+    - sweep.dead_lettered.v1
 ```
 
 ## Credentials
@@ -298,7 +309,15 @@ Payout statuses:
 - `rejected`: rejected by admin.
 - `failed`: transfer failed.
 
-Current behavior: payout status is not sent as a webhook. Poll:
+Payout lifecycle events are sent as webhooks when a domain webhook is configured:
+
+- `payout.requested.v1`
+- `payout.broadcast.v1`
+- `payout.finalized.v1`
+- `payout.rejected.v1`
+- `payout.failed.v1`
+
+Polling remains supported:
 
 ```http
 GET /api/v1/payout/info?payout_id=<uuid>
@@ -340,7 +359,15 @@ Refund statuses:
 - `rejected`
 - `failed`
 
-Current behavior: refund status is not sent as a webhook. Poll:
+Refund lifecycle events are sent as webhooks when a domain webhook is configured:
+
+- `refund.requested.v1`
+- `refund.broadcast.v1`
+- `refund.succeeded.v1`
+- `refund.rejected.v1`
+- `refund.failed.v1`
+
+Polling remains supported:
 
 ```http
 GET /api/v1/refund/info?refund_id=<uuid>
@@ -467,6 +494,37 @@ Event examples:
   "tx_unique_hash": "1-0xhash-log:0",
   "created_at": "2026-06-06T09:55:00Z",
   "paid_at": "2026-06-06T10:00:00Z"
+}
+```
+
+### Lifecycle Webhook Payload
+
+Event examples:
+
+- `payout.finalized.v1`
+- `refund.succeeded.v1`
+- `sweep.succeeded.v1`
+
+```json
+{
+  "event_id": "entity_uuid:payout.finalized.v1",
+  "event_type": "payout.finalized.v1",
+  "event_version": "v1",
+  "entity_type": "payout",
+  "entity_id": "uuid",
+  "merchant_id": "uuid",
+  "domain_id": "uuid",
+  "wallet_id": "uuid",
+  "chain": "ethereum",
+  "symbol": "USDT",
+  "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "decimals": 6,
+  "amount_raw": "10500000",
+  "to_address": "0xRecipient",
+  "status": "approved",
+  "tx_hash": "0xhash",
+  "created_at": "2026-06-26T10:00:00Z",
+  "updated_at": "2026-06-26T10:05:00Z"
 }
 ```
 

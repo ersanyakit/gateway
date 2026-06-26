@@ -112,3 +112,52 @@ func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 		t.Fatalf("empty webhook secret error should be permanent: %v", err)
 	}
 }
+
+func TestNotifierDeliverRawSignsAndPostsLifecycle(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"event_id":"evt-1","event_type":"payout.finalized.v1"}`)
+	var receivedBody []byte
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != "payout.finalized.v1" {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if r.Header.Get("X-Gateway-Event-Version") != "v1" {
+			t.Fatalf("version header = %q", r.Header.Get("X-Gateway-Event-Version"))
+		}
+		if r.Header.Get("X-Gateway-Event-Id") != "evt-1" {
+			t.Fatalf("event id header = %q", r.Header.Get("X-Gateway-Event-Id"))
+		}
+		if !strings.HasPrefix(r.Header.Get("X-Gateway-Signature"), "sha256=") {
+			t.Fatalf("signature header = %q", r.Header.Get("X-Gateway-Signature"))
+		}
+		receivedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverRaw(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, "payout.finalized.v1", "evt-1", "v1", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(receivedBody) != string(body) {
+		t.Fatalf("body = %s, want %s", string(receivedBody), string(body))
+	}
+}

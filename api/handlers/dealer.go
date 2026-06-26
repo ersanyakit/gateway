@@ -12,6 +12,7 @@ import (
 	"core/services/pricing"
 	services "core/services/system"
 	"core/services/txrescan"
+	webhooksvc "core/services/webhook"
 	"core/types"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -83,6 +84,7 @@ type DealerDeps struct {
 type WebhookNotifier interface {
 	Deliver(ctx context.Context, domain models.Domain, tx models.Transaction) error
 	DeliverPayment(ctx context.Context, domain models.Domain, session models.PaymentSession) error
+	DeliverRaw(ctx context.Context, domain models.Domain, eventType, eventID, eventVersion string, body []byte) error
 }
 
 type DealerPageData struct {
@@ -1964,6 +1966,20 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 			return redirectWithSuccess(c, "/admin/webhooks", "Transaction webhook yeniden gönderildi.")
 		}
 
+		if strings.TrimSpace(delivery.PayloadJSON) != "" {
+			eventVersion := delivery.EventVersion
+			if eventVersion == "" {
+				eventVersion = constants.WebhookEventVersionV1
+			}
+			if err := deps.Notifier.DeliverRaw(c.Context(), *domain, delivery.EventType, delivery.EventID, eventVersion, []byte(delivery.PayloadJSON)); err != nil {
+				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
+				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
+			}
+			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Lifecycle webhook yeniden gönderildi.")
+			return redirectWithSuccess(c, "/admin/webhooks", "Lifecycle webhook yeniden gönderildi.")
+		}
+
 		err = errors.New("delivery payment veya transaction referansı taşımıyor")
 		_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
 		return redirectWithError(c, "/admin/webhooks", err.Error())
@@ -2157,9 +2173,19 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		})
 		if err != nil {
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
+				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
 				return redirectWithError(c, "/admin/withdrawals", "Transfer gönderildi ancak ledger güncellenemedi: "+err.Error())
 			}
+			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusFailed {
+				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFailedV1)
+			}
 			return redirectWithError(c, "/admin/withdrawals", "Transfer başarısız: "+err.Error())
+		}
+		if approvedRequest != nil {
+			broadcastRequest := *approvedRequest
+			broadcastRequest.Status = models.WithdrawalStatusProcessing
+			enqueueDealerPayoutLifecycle(c.Context(), deps, broadcastRequest, constants.WebhookEventPayoutBroadcastV1)
+			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFinalizedV1)
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
 	}
@@ -2181,6 +2207,9 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		}
 		if err := deps.WithdrawalRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
 			return redirectWithError(c, "/admin/withdrawals", "Talep reddedilemedi: "+err.Error())
+		}
+		if request, err := deps.WithdrawalRepo.Find(c.Context(), id); err == nil {
+			enqueueDealerPayoutLifecycle(c.Context(), deps, *request, constants.WebhookEventPayoutRejectedV1)
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi reddedildi.")
 	}
@@ -2249,6 +2278,9 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		}
 		if err := params.ValidateWithdraw(); err != nil {
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
+			claimedRefund.Status = models.RefundStatusFailed
+			claimedRefund.Error = err.Error()
+			enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundFailedV1)
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", err.Error())
 		}
@@ -2256,16 +2288,26 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
 		if err != nil {
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
+			claimedRefund.Status = models.RefundStatusFailed
+			claimedRefund.Error = err.Error()
+			enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundFailedV1)
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
 		}
 		if err := deps.RefundRepo.RecordBroadcast(c.Context(), id, adminEmail, result.TxHash); err != nil {
 			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak tx hash kaydedilemedi: "+err.Error())
 		}
+		claimedRefund.Status = models.RefundStatusProcessing
+		claimedRefund.TxHash = result.TxHash
+		claimedRefund.ReviewedBy = adminEmail
+		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundBroadcastV1)
 		if err := deps.RefundRepo.MarkSucceededWithLedger(c.Context(), id, adminEmail, result.TxHash, *session, deps.LedgerRepo); err != nil {
 			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, "ledger/finalize failed: "+err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
 		}
+		claimedRefund.Status = models.RefundStatusSucceeded
+		claimedRefund.Error = ""
+		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundSucceededV1)
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+result.TxHash)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")
 	}
@@ -2290,6 +2332,9 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 		}
 		if err := deps.RefundRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
 			return redirectWithError(c, "/admin/refunds", "Refund reddedilemedi: "+err.Error())
+		}
+		if refund, err := deps.RefundRepo.Find(c.Context(), id); err == nil {
+			enqueueDealerRefundLifecycle(c.Context(), deps, *refund, constants.WebhookEventRefundRejectedV1)
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund talebi reddedildi.")
@@ -3387,6 +3432,49 @@ func createAdminPaymentWebhookDelivery(ctx context.Context, deps DealerDeps, dom
 		return uuid.Nil
 	}
 	return delivery.ID
+}
+
+func enqueueDealerLifecycleWebhook(ctx context.Context, deps DealerDeps, domain models.Domain, payload webhooksvc.LifecyclePayload) uuid.UUID {
+	if deps.WebhookDeliveryRepo == nil {
+		return uuid.Nil
+	}
+	delivery, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	if err != nil || delivery == nil {
+		return uuid.Nil
+	}
+	return delivery.ID
+}
+
+func enqueueDealerPayoutLifecycle(ctx context.Context, deps DealerDeps, request models.WithdrawalRequest, eventType string) uuid.UUID {
+	if request.DomainID == nil || deps.DomainService == nil {
+		return uuid.Nil
+	}
+	domainID := request.DomainID.String()
+	domain, err := deps.DomainService.FindByID(types.DomainParams{
+		Context:  ctx,
+		DomainID: &domainID,
+	})
+	if err != nil {
+		return uuid.Nil
+	}
+	payload := webhooksvc.NewPayoutPayload(eventType, request)
+	return enqueueDealerLifecycleWebhook(ctx, deps, *domain, payload)
+}
+
+func enqueueDealerRefundLifecycle(ctx context.Context, deps DealerDeps, refund models.Refund, eventType string) uuid.UUID {
+	if deps.DomainService == nil {
+		return uuid.Nil
+	}
+	domainID := refund.DomainID.String()
+	domain, err := deps.DomainService.FindByID(types.DomainParams{
+		Context:  ctx,
+		DomainID: &domainID,
+	})
+	if err != nil {
+		return uuid.Nil
+	}
+	payload := webhooksvc.NewRefundPayload(eventType, refund)
+	return enqueueDealerLifecycleWebhook(ctx, deps, *domain, payload)
 }
 
 func markAdminWebhookDeliveryAttempt(ctx context.Context, deps DealerDeps, deliveryID uuid.UUID, delivered bool, lastErr error) {
