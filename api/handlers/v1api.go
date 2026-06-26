@@ -37,6 +37,8 @@ type V1APIDeps struct {
 	LedgerRepo          *repositories.LedgerRepo
 	TransactionRepo     *repositories.TransactionRepo
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
+	SweepJobRepo        *repositories.SweepJobRepo
+	ReconciliationRepo  *repositories.ReconciliationRepo
 	AssetRegistry       *asset.Registry
 	Blockchains         *blockchain.ChainFactory
 	PriceOracle         pricing.PriceOracle
@@ -50,7 +52,7 @@ type V1APIDeps struct {
 // Auth helper
 // ────────────────────────────────────────────────────────────────────────────
 
-func v1ResolveDomain(c fiber.Ctx, domainRepo *repositories.DomainRepo) (*models.Domain, error) {
+func v1ResolveDomain(c fiber.Ctx, domainRepo v1DomainLookup) (*models.Domain, error) {
 	key := strings.TrimSpace(c.Get("X-API-Key"))
 	if key == "" {
 		auth := strings.TrimSpace(c.Get("Authorization"))
@@ -59,41 +61,66 @@ func v1ResolveDomain(c fiber.Ctx, domainRepo *repositories.DomainRepo) (*models.
 		}
 	}
 	if key == "" {
-		return nil, fmt.Errorf("X-API-Key header or Authorization: Bearer <key> is required")
+		err := fmt.Errorf("X-API-Key header or Authorization: Bearer <key> is required")
+		v1LogAuthFailure(c, nil, "missing_api_key", err)
+		return nil, err
 	}
-	return domainRepo.FindByAPIKey(types.DomainParams{Context: c.Context(), APIKey: &key})
+	domain, err := domainRepo.FindByAPIKey(types.DomainParams{Context: c.Context(), APIKey: &key})
+	if err != nil {
+		v1LogAuthFailure(c, nil, "invalid_api_key", err)
+		return nil, err
+	}
+	return domain, nil
 }
 
-func v1ResolveSignedDomain(c fiber.Ctx, domainRepo *repositories.DomainRepo) (*models.Domain, error) {
+func v1ResolveSignedDomain(c fiber.Ctx, domainRepo v1DomainLookup) (*models.Domain, error) {
 	domain, err := v1ResolveDomain(c, domainRepo)
 	if err != nil {
 		return nil, err
 	}
 	apiSecret := strings.TrimSpace(c.Get("X-API-Secret"))
 	if apiSecret == "" {
-		return nil, fmt.Errorf("X-API-Secret header is required")
+		err := fmt.Errorf("X-API-Secret header is required")
+		v1LogAuthFailure(c, domain, "missing_api_secret", err)
+		return nil, err
 	}
 	secretDomain, err := domainRepo.FindByAPISecret(types.DomainParams{Context: c.Context(), APISecret: &apiSecret})
 	if err != nil {
-		return nil, fmt.Errorf("invalid API secret")
+		err := fmt.Errorf("invalid API secret")
+		v1LogAuthFailure(c, domain, "invalid_api_secret", err)
+		return nil, err
 	}
 	if secretDomain.ID != domain.ID {
-		return nil, fmt.Errorf("API key and secret do not match")
+		err := fmt.Errorf("API key and secret do not match")
+		v1LogAuthFailure(c, domain, "api_key_secret_mismatch", err)
+		return nil, err
 	}
 	timestamp := strings.TrimSpace(c.Get("X-Gateway-Timestamp"))
 	if timestamp == "" {
-		return nil, fmt.Errorf("X-Gateway-Timestamp header is required")
+		err := fmt.Errorf("X-Gateway-Timestamp header is required")
+		v1LogAuthFailure(c, domain, "missing_timestamp", err)
+		return nil, err
 	}
 	if err := helpers.ValidateTimestamp(timestamp); err != nil {
+		v1LogAuthFailure(c, domain, "invalid_timestamp", err)
 		return nil, err
 	}
 	signature := strings.TrimSpace(c.Get("X-Gateway-Signature"))
 	signature = strings.TrimPrefix(signature, "sha256=")
 	if signature == "" {
-		return nil, fmt.Errorf("X-Gateway-Signature header is required")
+		err := fmt.Errorf("X-Gateway-Signature header is required")
+		v1LogAuthFailure(c, domain, "missing_signature", err)
+		return nil, err
 	}
-	if !helpers.VerifySignature(apiSecret, timestamp, c.Body(), signature) {
-		return nil, fmt.Errorf("invalid request signature")
+	if !helpers.VerifyRequestSignature(apiSecret, c.Method(), c.Path(), timestamp, c.Body(), signature) {
+		err := fmt.Errorf("invalid request signature")
+		v1LogAuthFailure(c, domain, "invalid_signature", err)
+		return nil, err
+	}
+	if !v1RequestReplayAccepted(domain, c, timestamp, signature) {
+		err := v1ReplayError()
+		v1LogAuthFailure(c, domain, "signature_replay", err)
+		return nil, err
 	}
 	return domain, nil
 }
@@ -460,7 +487,7 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1WalletCreateRequest true "Wallet create parameters"
 // @Success 201 {object} types.V1WalletCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -649,7 +676,7 @@ func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -701,7 +728,7 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1StaticAddressRequest true "Static address parameters"
 // @Success 200 {object} types.V1StaticAddressResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -1005,7 +1032,7 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1PayoutRequest true "Payout parameters"
 // @Success 201 {object} types.V1PayoutCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -1203,7 +1230,7 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1RefundRequest true "Refund parameters"
 // @Success 201 {object} types.V1RefundCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse

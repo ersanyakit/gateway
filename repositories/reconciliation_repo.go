@@ -109,3 +109,30 @@ func (r *ReconciliationRepo) MarkFailed(ctx context.Context, id uuid.UUID, err e
 			"updated_at": time.Now(),
 		}).Error
 }
+
+func (r *ReconciliationRepo) CountByStatus(ctx context.Context, statuses ...string) (map[string]int64, error) {
+	out := make(map[string]int64, len(statuses))
+	for _, status := range statuses {
+		out[status] = 0
+	}
+	if len(statuses) == 0 {
+		return out, nil
+	}
+	var rows []struct {
+		Status string
+		Count  int64
+	}
+	err := r.db.WithContext(ctx).
+		Model(&models.ReconciliationJob{}).
+		Select("status, COUNT(*) AS count").
+		Where("status IN ?", statuses).
+		Group("status").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		out[row.Status] = row.Count
+	}
+	return out, nil
+}

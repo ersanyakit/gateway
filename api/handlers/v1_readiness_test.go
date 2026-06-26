@@ -84,3 +84,27 @@ func TestV1ReadinessOK(t *testing.T) {
 		t.Fatal("failing check should not be ready")
 	}
 }
+
+func TestV1ReadinessCountDetails(t *testing.T) {
+	counts := map[string]int64{
+		"pending":     2,
+		"failed":      1,
+		"dead_letter": 0,
+	}
+	got := v1ReadinessCountDetails(counts, "pending", "failed", "dead_letter")
+	want := "pending=2, failed=1, dead_letter=0"
+	if got != want {
+		t.Fatalf("details = %q, want %q", got, want)
+	}
+}
+
+func TestV1ReadinessCountTotal(t *testing.T) {
+	counts := map[string]int64{
+		"open":       2,
+		"processing": 3,
+		"failed":     5,
+	}
+	if got := v1ReadinessCountTotal(counts, "open", "processing", "failed"); got != 10 {
+		t.Fatalf("total = %d, want 10", got)
+	}
+}

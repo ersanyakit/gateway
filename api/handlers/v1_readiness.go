@@ -15,6 +15,7 @@ import (
 
 	"core/blockchain"
 	"core/constants"
+	"core/models"
 	"core/types"
 
 	"github.com/gofiber/fiber/v3"
@@ -100,6 +101,8 @@ func v1RunReadinessChecks(ctx context.Context, deps V1APIDeps) []types.V1Readine
 		add("database", true, "database query succeeded", nil)
 	}
 
+	v1AppendOperationalReadinessChecks(ctx, &checks, deps)
+
 	if deps.Blockchains == nil {
 		add("chain.registry", false, "", errors.New("blockchain factory is not configured"))
 		return checks
@@ -133,6 +136,88 @@ func v1RunReadinessChecks(ctx context.Context, deps V1APIDeps) []types.V1Readine
 	}
 
 	return checks
+}
+
+func v1AppendOperationalReadinessChecks(ctx context.Context, checks *[]types.V1ReadinessCheck, deps V1APIDeps) {
+	add := func(name string, ok bool, details string, err error) {
+		check := types.V1ReadinessCheck{Name: name, OK: ok, Details: details}
+		if err != nil {
+			check.Error = err.Error()
+		}
+		*checks = append(*checks, check)
+	}
+
+	webhookStatuses := []string{
+		models.WebhookDeliveryStatusPending,
+		models.WebhookDeliveryStatusFailed,
+		models.WebhookDeliveryStatusDeadLetter,
+	}
+	if deps.WebhookDeliveryRepo == nil {
+		add("webhook.delivery_backlog", false, "", errors.New("webhook delivery repository is not configured"))
+	} else if counts, err := deps.WebhookDeliveryRepo.CountByStatus(ctx, webhookStatuses...); err != nil {
+		add("webhook.delivery_backlog", false, "", err)
+	} else {
+		add(
+			"webhook.delivery_backlog",
+			counts[models.WebhookDeliveryStatusDeadLetter] == 0,
+			v1ReadinessCountDetails(counts, webhookStatuses...),
+			nil,
+		)
+	}
+
+	sweepStatuses := []string{
+		models.SweepJobStatusPending,
+		models.SweepJobStatusProcessing,
+		models.SweepJobStatusFailed,
+		models.SweepJobStatusDeadLetter,
+	}
+	if deps.SweepJobRepo == nil {
+		add("sweep.job_backlog", false, "", errors.New("sweep job repository is not configured"))
+	} else if counts, err := deps.SweepJobRepo.CountByStatus(ctx, sweepStatuses...); err != nil {
+		add("sweep.job_backlog", false, "", err)
+	} else {
+		add(
+			"sweep.job_backlog",
+			counts[models.SweepJobStatusDeadLetter] == 0,
+			v1ReadinessCountDetails(counts, sweepStatuses...),
+			nil,
+		)
+	}
+
+	reconciliationStatuses := []string{
+		models.ReconciliationStatusOpen,
+		models.ReconciliationStatusProcessing,
+		models.ReconciliationStatusFailed,
+	}
+	if deps.ReconciliationRepo == nil {
+		add("reconciliation.drift", false, "", errors.New("reconciliation repository is not configured"))
+	} else if counts, err := deps.ReconciliationRepo.CountByStatus(ctx, reconciliationStatuses...); err != nil {
+		add("reconciliation.drift", false, "", err)
+	} else {
+		total := v1ReadinessCountTotal(counts, reconciliationStatuses...)
+		add(
+			"reconciliation.drift",
+			total == 0,
+			v1ReadinessCountDetails(counts, reconciliationStatuses...),
+			nil,
+		)
+	}
+}
+
+func v1ReadinessCountDetails(counts map[string]int64, statuses ...string) string {
+	parts := make([]string, 0, len(statuses))
+	for _, status := range statuses {
+		parts = append(parts, fmt.Sprintf("%s=%d", status, counts[status]))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func v1ReadinessCountTotal(counts map[string]int64, statuses ...string) int64 {
+	var total int64
+	for _, status := range statuses {
+		total += counts[status]
+	}
+	return total
 }
 
 func v1AppendChainReadinessChecks(ctx context.Context, checks *[]types.V1ReadinessCheck, chain blockchain.Chain) {

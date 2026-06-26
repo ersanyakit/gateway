@@ -90,6 +90,36 @@ func TestSignatureAndTimestampValidation(t *testing.T) {
 	if err := ValidateTimestamp(old); err == nil {
 		t.Fatal("expired timestamp should fail")
 	}
+	if err := ValidateTimestamp("not-a-unix-timestamp"); err == nil {
+		t.Fatal("malformed timestamp should fail")
+	}
+	allowedFuture := strconv.FormatInt(time.Now().Add(time.Duration(TimeSkewSec-1)*time.Second).Unix(), 10)
+	if err := ValidateTimestamp(allowedFuture); err != nil {
+		t.Fatalf("timestamp inside future skew rejected: %v", err)
+	}
+	tooFarFuture := strconv.FormatInt(time.Now().Add(time.Duration(TimeSkewSec+2)*time.Second).Unix(), 10)
+	if err := ValidateTimestamp(tooFarFuture); err == nil {
+		t.Fatal("future timestamp outside skew should fail")
+	}
+}
+
+func TestRequestSignatureBindsMethodPathTimestampAndBody(t *testing.T) {
+	body := []byte(`{"amount":"1"}`)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := GenerateRequestSignature("secret", "POST", "/api/v1/payment/create", ts, body)
+
+	if !VerifyRequestSignature("secret", "POST", "/api/v1/payment/create", ts, body, signature) {
+		t.Fatal("request signature should verify")
+	}
+	if VerifyRequestSignature("secret", "GET", "/api/v1/payment/create", ts, body, signature) {
+		t.Fatal("request signature should reject modified method")
+	}
+	if VerifyRequestSignature("secret", "POST", "/api/v1/payment/info", ts, body, signature) {
+		t.Fatal("request signature should reject modified path")
+	}
+	if VerifyRequestSignature("secret", "POST", "/api/v1/payment/create", ts, []byte(`{"amount":"2"}`), signature) {
+		t.Fatal("request signature should reject modified body")
+	}
 }
 
 func TestValidateWebhookURLRejectsPrivateByDefault(t *testing.T) {

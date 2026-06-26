@@ -286,6 +286,8 @@ func NewRouter(db *gorm.DB) *Router {
 		LedgerRepo:          r.LedgerRepo,
 		TransactionRepo:     r.TransactionRepo,
 		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
+		SweepJobRepo:        r.SweepJobRepo,
+		ReconciliationRepo:  r.ReconciliationRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
 		PriceOracle:         pricing.NewCoinGecko(),
