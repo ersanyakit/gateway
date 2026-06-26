@@ -269,6 +269,15 @@ Common endpoint'ler:
 - `GET /api/v1/common/fiat-currencies`
 - `GET /api/v1/common/networks`
 
+Wallet provider endpoint'leri:
+
+- `POST /api/v1/wallet/create`
+- `GET /api/v1/wallet/info`
+- `GET /api/v1/wallet/addresses`
+- `GET /api/v1/wallet/list`
+- `GET /api/v1/wallet/balance`
+- `GET /api/v1/wallets`
+
 Payment endpoint'leri:
 
 - `POST /api/v1/payment/create`
@@ -299,7 +308,10 @@ Refund endpoint'leri:
 ```bash
 curl -X POST http://localhost:4001/api/v1/payment/create \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: <api-secret>" \
+  -H "X-API-Key: <api-key>" \
+  -H "X-API-Secret: <api-secret>" \
+  -H "X-Gateway-Timestamp: <unix_seconds>" \
+  -H "X-Gateway-Signature: sha256=<signature>" \
   -H "Idempotency-Key: order-2024-001" \
   -d '{
     "order_id": "ORD-2024-001",
@@ -317,12 +329,30 @@ curl -X POST http://localhost:4001/api/v1/payment/create \
 ```bash
 curl -X POST http://localhost:4001/api/v1/payment/static-address \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: <api-secret>" \
+  -H "X-API-Key: <api-key>" \
+  -H "X-API-Secret: <api-secret>" \
+  -H "X-Gateway-Timestamp: <unix_seconds>" \
+  -H "X-Gateway-Signature: sha256=<signature>" \
   -d '{
     "user_id": "customer_42",
     "chain_id": 1,
     "symbol": "USDT",
     "label": "Main wallet"
+}'
+```
+
+Örnek wallet provider cüzdanı oluşturma isteği:
+
+```bash
+curl -X POST http://localhost:4001/api/v1/wallet/create \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <api-key>" \
+  -H "X-API-Secret: <api-secret>" \
+  -H "X-Gateway-Timestamp: <unix_seconds>" \
+  -H "X-Gateway-Signature: sha256=<signature>" \
+  -d '{
+    "user_id": "customer_42",
+    "product_id": "wallet"
   }'
 ```
 

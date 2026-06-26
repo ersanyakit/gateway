@@ -458,12 +458,17 @@ func postStaticAddressDepositAvailable(ctx context.Context, txModel *models.Tran
 	if err != nil || wallet == nil {
 		return
 	}
-	if !strings.HasPrefix(strings.TrimSpace(wallet.ProductID), "static:") {
+	if !isStandaloneDepositWalletProduct(wallet.ProductID) {
 		return
 	}
 	if err := coreApplication.CORE.Router.LedgerRepo.PostStandaloneDepositAvailable(ctx, *txModel); err != nil {
 		log.Println("Ledger standalone available deposit error:", err)
 	}
+}
+
+func isStandaloneDepositWalletProduct(productID string) bool {
+	productID = strings.TrimSpace(productID)
+	return strings.HasPrefix(productID, "static:") || strings.HasPrefix(productID, "wallet:")
 }
 
 func createTransactionWebhookDelivery(ctx context.Context, domain models.Domain, txModel models.Transaction) uuid.UUID {

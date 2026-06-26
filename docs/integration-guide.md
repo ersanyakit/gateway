@@ -57,6 +57,7 @@ Signed endpoints include:
 - `POST /api/v1/payment/create`
 - `POST /api/v1/payment/white-label`
 - `POST /api/v1/payment/static-address`
+- `POST /api/v1/wallet/create`
 - `POST /api/v1/payout/create`
 - `POST /api/v1/refund/create`
 - `POST /api/v1/transaction/rescan`
@@ -185,6 +186,55 @@ Response:
 ```
 
 Deposits to this address are detected by blockchain listeners and can generate transaction/payment webhooks depending on the matching flow.
+
+## Create Wallet Provider Wallet
+
+Use this when your product needs Gateway to act as a wallet provider. The endpoint creates or returns one deterministic multi-chain wallet for a merchant user and product scope.
+
+```http
+POST /api/v1/wallet/create
+```
+
+Request body:
+
+```json
+{
+  "user_id": "customer_42",
+  "product_id": "wallet"
+}
+```
+
+Response:
+
+```json
+{
+  "result": "ok",
+  "data": {
+    "wallet_id": "uuid",
+    "user_id": "customer_42",
+    "product_id": "wallet",
+    "addresses": {
+      "ethereum": "0x...",
+      "bitcoin": "bc1...",
+      "solana": "So...",
+      "tron": "T..."
+    },
+    "created_at": "2026-06-26T12:00:00Z"
+  }
+}
+```
+
+Read wallet data:
+
+```http
+GET /api/v1/wallet/info?wallet_id=<uuid>
+GET /api/v1/wallet/info?user_id=customer_42&product_id=wallet
+GET /api/v1/wallet/addresses?wallet_id=<uuid>
+GET /api/v1/wallet/list?user_id=customer_42
+GET /api/v1/wallet/balance?wallet_id=<uuid>
+```
+
+Wallet-provider deposits are matched by address and posted to the ledger for that wallet. Use `GET /api/v1/wallet/balance` for wallet-scoped balances and `GET /api/v1/common/balance` for domain aggregate balances.
 
 ## Query Payment
 

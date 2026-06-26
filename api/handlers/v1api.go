@@ -447,6 +447,195 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Wallet provider API
+// ────────────────────────────────────────────────────────────────────────────
+
+// HandleV1WalletCreate godoc
+// @Summary Create wallet
+// @Description Creates or returns a reusable multi-chain wallet for a merchant user. This endpoint is for wallet-provider integrations.
+// @Tags Wallet
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param payload body types.V1WalletCreateRequest true "Wallet create parameters"
+// @Success 201 {object} types.V1WalletCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Router /api/v1/wallet/create [post]
+func HandleV1WalletCreate(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		if deps.WalletRepo == nil {
+			return v1Err(c, fiber.StatusInternalServerError, "wallet repository is not ready")
+		}
+
+		var body types.V1WalletCreateRequest
+		if err := c.Bind().Body(&body); err != nil {
+			return v1Err(c, fiber.StatusBadRequest, "invalid request body")
+		}
+		userID := strings.TrimSpace(body.UserID)
+		if userID == "" {
+			return v1Err(c, fiber.StatusBadRequest, "user_id is required")
+		}
+		if len(userID) > 128 {
+			return v1Err(c, fiber.StatusBadRequest, "user_id must be at most 128 characters")
+		}
+		productID := v1WalletProductID(body.ProductID)
+		if len(productID) > 128 {
+			return v1Err(c, fiber.StatusBadRequest, "product_id must be at most 128 characters")
+		}
+		merchantIDStr := domain.MerchantID.String()
+		domainIDStr := domain.ID.String()
+		wallet, err := deps.WalletRepo.Create(types.WalletParams{
+			Context:    c.Context(),
+			MerchantId: &merchantIDStr,
+			DomainId:   &domainIDStr,
+			ProductId:  &productID,
+			UserId:     &userID,
+		})
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "wallet creation failed: "+err.Error())
+		}
+		if deps.Blockchains != nil {
+			if err := deps.WalletRepo.EnsureAllAddresses(c.Context(), wallet.ID, deps.Blockchains); err != nil {
+				return v1Err(c, fiber.StatusInternalServerError, "wallet address backfill failed: "+err.Error())
+			}
+			if refreshed, err := deps.WalletRepo.FindByID(c.Context(), wallet.ID); err == nil {
+				wallet = refreshed
+			}
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"result": "ok",
+			"data":   v1WalletResponse(wallet),
+		})
+	}
+}
+
+// HandleV1WalletInfo godoc
+// @Summary Wallet information
+// @Description Returns a wallet by wallet_id, or by user_id plus optional product_id under the authenticated API domain.
+// @Tags Wallet
+// @Produce json
+// @Security ApiKeyAuth
+// @Param wallet_id query string false "Wallet UUID"
+// @Param user_id query string false "Merchant user ID"
+// @Param product_id query string false "Wallet product scope. Defaults to wallet"
+// @Success 200 {object} types.V1WalletInfoResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Failure 404 {object} types.V1ErrorResponse
+// @Router /api/v1/wallet/info [get]
+func HandleV1WalletInfo(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		wallet, err := v1FindDomainWallet(c.Context(), deps, domain, c)
+		if err != nil {
+			status := fiber.StatusNotFound
+			if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid") {
+				status = fiber.StatusBadRequest
+			}
+			return v1Err(c, status, err.Error())
+		}
+		return v1OK(c, v1WalletResponse(wallet))
+	}
+}
+
+// HandleV1WalletList godoc
+// @Summary Wallet list
+// @Description Lists wallet-provider wallets under the authenticated API domain, optionally filtered by user_id.
+// @Tags Wallet
+// @Produce json
+// @Security ApiKeyAuth
+// @Param user_id query string false "Filter by user ID"
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page (max 100)" default(20)
+// @Success 200 {object} types.V1WalletListResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Router /api/v1/wallet/list [get]
+func HandleV1WalletList(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		if deps.WalletRepo == nil {
+			return v1Err(c, fiber.StatusInternalServerError, "wallet repository is not ready")
+		}
+
+		page := v1QueryInt(c, "page", 1)
+		limit := v1QueryInt(c, "limit", 20)
+		if limit > 100 {
+			limit = 100
+		}
+		search := strings.TrimSpace(c.Query("user_id"))
+		offset := (page - 1) * limit
+		wallets, total, err := deps.WalletRepo.ListProviderByDomainPage(c.Context(), domain.MerchantID, domain.ID, search, limit, offset)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "failed to list wallets")
+		}
+		items := make([]v1WalletItemType, 0, len(wallets))
+		for _, wallet := range wallets {
+			items = append(items, v1WalletItem(wallet))
+		}
+		return v1OK(c, fiber.Map{
+			"wallets": items,
+			"total":   total,
+			"page":    page,
+			"limit":   limit,
+		})
+	}
+}
+
+// HandleV1WalletBalance godoc
+// @Summary Wallet balance
+// @Description Returns ledger balances scoped to one wallet-provider wallet.
+// @Tags Wallet
+// @Produce json
+// @Security ApiKeyAuth
+// @Param wallet_id query string false "Wallet UUID"
+// @Param user_id query string false "Merchant user ID"
+// @Param product_id query string false "Wallet product scope. Defaults to wallet"
+// @Success 200 {object} types.V1WalletBalanceResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Failure 404 {object} types.V1ErrorResponse
+// @Router /api/v1/wallet/balance [get]
+func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		domain, err := v1ResolveDomain(c, deps.DomainRepo)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		wallet, err := v1FindDomainWallet(c.Context(), deps, domain, c)
+		if err != nil {
+			status := fiber.StatusNotFound
+			if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "invalid") {
+				status = fiber.StatusBadRequest
+			}
+			return v1Err(c, status, err.Error())
+		}
+		balances, err := v1WalletBalances(c.Context(), deps, domain, wallet)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch wallet balances")
+		}
+		return v1OK(c, fiber.Map{
+			"wallet":   v1WalletResponse(wallet),
+			"balances": balances,
+		})
+	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Payment API
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -472,6 +661,7 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 		WalletRepo:      deps.WalletRepo,
 		PaymentRepo:     deps.PaymentRepo,
 		AssetRegistry:   deps.AssetRegistry,
+		Blockchains:     deps.Blockchains,
 		PriceOracle:     deps.PriceOracle,
 		Notifier:        deps.Notifier,
 		PaymentHub:      deps.PaymentHub,
@@ -601,17 +791,14 @@ func HandleV1PaymentStaticAddressList(deps V1APIDeps) fiber.Handler {
 		search := strings.TrimSpace(c.Query("user_id"))
 		offset := (page - 1) * limit
 
-		wallets, total, err := deps.WalletRepo.SearchByDomainPage(c.Context(), domain.MerchantID, domain.ID, search, limit, offset)
+		wallets, total, err := deps.WalletRepo.ListStaticByDomainPage(c.Context(), domain.MerchantID, domain.ID, search, limit, offset)
 		if err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to list wallets")
 		}
 
-		var items []v1WalletItemType
+		items := make([]fiber.Map, 0, len(wallets))
 		for _, w := range wallets {
-			items = append(items, v1WalletItem(w))
-		}
-		if items == nil {
-			items = []v1WalletItemType{}
+			items = append(items, v1StaticWalletListItem(w))
 		}
 		return v1OK(c, fiber.Map{
 			"wallets": items,
@@ -1230,6 +1417,136 @@ func ensureV1ReserveWallet(ctx context.Context, deps V1APIDeps, merchantID uuid.
 // Internal helpers
 // ────────────────────────────────────────────────────────────────────────────
 
+func v1WalletProductID(productID string) string {
+	productID = strings.TrimSpace(productID)
+	if productID == "" || productID == "wallet" {
+		return "wallet:default"
+	}
+	if strings.HasPrefix(productID, "wallet:") {
+		return productID
+	}
+	return "wallet:" + productID
+}
+
+func v1WalletDisplayProductID(productID string) string {
+	productID = strings.TrimSpace(productID)
+	if productID == "wallet:default" {
+		return "wallet"
+	}
+	if strings.HasPrefix(productID, "wallet:") {
+		return strings.TrimPrefix(productID, "wallet:")
+	}
+	return productID
+}
+
+func v1FindDomainWallet(ctx context.Context, deps V1APIDeps, domain *models.Domain, c fiber.Ctx) (*models.Wallet, error) {
+	if deps.WalletRepo == nil {
+		return nil, fmt.Errorf("wallet repository is not ready")
+	}
+	walletIDRaw := strings.TrimSpace(c.Query("wallet_id"))
+	var wallet *models.Wallet
+	var err error
+	if walletIDRaw != "" {
+		walletID, parseErr := uuid.Parse(walletIDRaw)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid wallet_id")
+		}
+		wallet, err = deps.WalletRepo.FindByDomain(ctx, domain.MerchantID, domain.ID, walletID)
+	} else {
+		userID := strings.TrimSpace(c.Query("user_id"))
+		if userID == "" {
+			return nil, fmt.Errorf("wallet_id or user_id is required")
+		}
+		productID := v1WalletProductID(c.Query("product_id"))
+		wallet, err = deps.WalletRepo.FindByDomainOwner(ctx, domain.MerchantID, domain.ID, productID, userID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			legacyProductID := strings.TrimSpace(c.Query("product_id"))
+			if legacyProductID == "" {
+				legacyProductID = "wallet"
+			}
+			wallet, err = deps.WalletRepo.FindByDomainOwner(ctx, domain.MerchantID, domain.ID, legacyProductID, userID)
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("wallet not found")
+	}
+	if deps.Blockchains != nil {
+		if err := deps.WalletRepo.EnsureAllAddresses(ctx, wallet.ID, deps.Blockchains); err != nil {
+			return nil, err
+		}
+		if refreshed, err := deps.WalletRepo.FindByID(ctx, wallet.ID); err == nil {
+			wallet = refreshed
+		}
+	}
+	return wallet, nil
+}
+
+func v1WalletBalances(ctx context.Context, deps V1APIDeps, domain *models.Domain, wallet *models.Wallet) ([]fiber.Map, error) {
+	if deps.LedgerRepo == nil {
+		return []fiber.Map{}, nil
+	}
+	rows, err := deps.LedgerRepo.WalletBalances(ctx, domain.MerchantID, domain.ID, wallet.ID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]fiber.Map, 0, len(rows))
+	for _, row := range rows {
+		logoURL := ""
+		if deps.AssetRegistry != nil {
+			logoURL = deps.AssetRegistry.LogoURL(row.Symbol)
+		}
+		items = append(items, fiber.Map{
+			"symbol":      row.Symbol,
+			"chain":       chainLabel(constants.ChainID(row.ChainID)),
+			"chain_id":    row.ChainID,
+			"account":     row.Account,
+			"balance":     formatV1Amount(row.BalanceRaw, row.Decimals),
+			"balance_raw": row.BalanceRaw,
+			"decimals":    row.Decimals,
+			"logo_url":    logoURL,
+		})
+	}
+	return items, nil
+}
+
+func v1StaticWalletListItem(w models.Wallet) fiber.Map {
+	chainID, symbol, ok := parseStaticWalletProductID(w.ProductID)
+	address := ""
+	chain := ""
+	var chainIDValue any
+	if ok {
+		chain = constants.ChainName(chainID)
+		address = walletAddressForChain(w, chainID)
+		chainIDValue = int64(chainID)
+	}
+	return fiber.Map{
+		"wallet_id":  w.ID.String(),
+		"user_id":    w.UserID,
+		"product_id": w.ProductID,
+		"chain":      chain,
+		"chain_id":   chainIDValue,
+		"symbol":     symbol,
+		"address":    address,
+		"created_at": w.CreatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func parseStaticWalletProductID(productID string) (constants.ChainID, string, bool) {
+	parts := strings.Split(strings.TrimSpace(productID), ":")
+	if len(parts) < 3 || parts[0] != "static" {
+		return 0, "", false
+	}
+	chainIDRaw, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return 0, "", false
+	}
+	chainID := constants.ChainID(chainIDRaw)
+	if !constants.IsSupportedChainID(chainID) {
+		return 0, "", false
+	}
+	return chainID, strings.ToUpper(strings.TrimSpace(parts[2])), true
+}
+
 func formatV1Amount(raw string, decimals uint8) string {
 	if raw == "" || raw == "0" || decimals == 0 {
 		return raw
@@ -1358,7 +1675,7 @@ func v1WalletItem(w models.Wallet) v1WalletItemType {
 	return v1WalletItemType{
 		WalletID:  w.ID.String(),
 		UserID:    w.UserID,
-		ProductID: w.ProductID,
+		ProductID: v1WalletDisplayProductID(w.ProductID),
 		Addresses: addrs,
 		CreatedAt: w.CreatedAt.UTC().Format(time.RFC3339),
 	}

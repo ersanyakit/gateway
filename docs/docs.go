@@ -1225,6 +1225,257 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/wallet/balance": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns ledger balances scoped to one wallet-provider wallet.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wallet"
+                ],
+                "summary": "Wallet balance",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet UUID",
+                        "name": "wallet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant user ID",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Wallet product scope. Defaults to wallet",
+                        "name": "product_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1WalletBalanceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/wallet/create": {
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Creates or returns a reusable multi-chain wallet for a merchant user. This endpoint is for wallet-provider integrations.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wallet"
+                ],
+                "summary": "Create wallet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Wallet create parameters",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/types.V1WalletCreateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1WalletCreateResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/wallet/info": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Returns a wallet by wallet_id, or by user_id plus optional product_id under the authenticated API domain.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wallet"
+                ],
+                "summary": "Wallet information",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet UUID",
+                        "name": "wallet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Merchant user ID",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Wallet product scope. Defaults to wallet",
+                        "name": "product_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1WalletInfoResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/wallet/list": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Lists wallet-provider wallets under the authenticated API domain, optionally filtered by user_id.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wallet"
+                ],
+                "summary": "Wallet list",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by user ID",
+                        "name": "user_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Page number",
+                        "name": "page",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Items per page (max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1WalletListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/auth/oidc/callback": {
             "get": {
                 "description": "Exchanges the OIDC authorization code for tokens, fetches userinfo, and signs the merchant in.",
@@ -3381,6 +3632,160 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "paid"
+                }
+            }
+        },
+        "types.V1WalletBalanceData": {
+            "type": "object",
+            "properties": {
+                "balances": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1WalletBalanceItem"
+                    }
+                },
+                "wallet": {
+                    "$ref": "#/definitions/types.V1WalletDetail"
+                }
+            }
+        },
+        "types.V1WalletBalanceItem": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "type": "string",
+                    "example": "merchant_available"
+                },
+                "balance": {
+                    "type": "string",
+                    "example": "12.5"
+                },
+                "balance_raw": {
+                    "type": "string",
+                    "example": "12500000"
+                },
+                "chain": {
+                    "type": "string",
+                    "example": "ethereum"
+                },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "logo_url": {
+                    "type": "string",
+                    "example": "/static/coins/usdt.svg"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                }
+            }
+        },
+        "types.V1WalletBalanceResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1WalletBalanceData"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1WalletCreateRequest": {
+            "type": "object",
+            "properties": {
+                "product_id": {
+                    "type": "string",
+                    "example": "wallet"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                }
+            }
+        },
+        "types.V1WalletCreateResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1WalletDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1WalletDetail": {
+            "type": "object",
+            "properties": {
+                "addresses": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:00:00Z"
+                },
+                "product_id": {
+                    "type": "string",
+                    "example": "wallet"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "customer_42"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "types.V1WalletInfoResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1WalletDetail"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1WalletListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1WalletDetail"
+                    }
+                },
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 48
                 }
             }
         },

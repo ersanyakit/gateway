@@ -747,3 +747,25 @@ func (r *LedgerRepo) DomainBalances(ctx context.Context, merchantID, domainID uu
 	`, merchantID, domainID).Scan(&rows).Error
 	return rows, err
 }
+
+func (r *LedgerRepo) WalletBalances(ctx context.Context, merchantID, domainID, walletID uuid.UUID) ([]LedgerBalanceRow, error) {
+	var rows []LedgerBalanceRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT merchant_id,
+		       chain_id,
+		       token,
+		       symbol,
+		       decimals,
+		       account,
+		       SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END)::text AS balance_raw
+		FROM ledger_entries
+		WHERE merchant_id = ?
+		  AND domain_id = ?
+		  AND wallet_id = ?
+		  AND status IN ('pending', 'posted')
+		  AND amount_raw ~ '^[0-9]+$'
+		GROUP BY merchant_id, chain_id, token, symbol, decimals, account
+		ORDER BY chain_id ASC, symbol ASC, account ASC
+	`, merchantID, domainID, walletID).Scan(&rows).Error
+	return rows, err
+}

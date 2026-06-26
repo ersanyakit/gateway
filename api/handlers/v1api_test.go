@@ -6,12 +6,74 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
 
 	fiber "github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 )
+
+func TestV1WalletProductIDDefaultsToWallet(t *testing.T) {
+	if got := v1WalletProductID(""); got != "wallet:default" {
+		t.Fatalf("default product id = %q, want wallet:default", got)
+	}
+	if got := v1WalletProductID(" app-wallet "); got != "wallet:app-wallet" {
+		t.Fatalf("product id = %q, want wallet:app-wallet", got)
+	}
+	if got := v1WalletDisplayProductID("wallet:default"); got != "wallet" {
+		t.Fatalf("display product id = %q, want wallet", got)
+	}
+}
+
+func TestV1WalletResponseIncludesProviderAddresses(t *testing.T) {
+	createdAt := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	wallet := &models.Wallet{
+		ID:                 uuid.New(),
+		UserID:             "customer_42",
+		ProductID:          "wallet:default",
+		BitcoinAddress:     "bc1qwallet",
+		EthereumAddress:    "0xeth",
+		AvalancheAddress:   "0xavax",
+		BinanceAddress:     "0xbnb",
+		BaseAddress:        "0xbase",
+		ArbitrumAddress:    "0xarb",
+		UnichainAddress:    "0xuni",
+		TronAddress:        "TWallet",
+		SolanaAddress:      "SoWallet",
+		ChilizAddress:      "0xchz",
+		ChilizSpicyAddress: "0xspicy",
+		CreatedAt:          createdAt,
+	}
+
+	resp := v1WalletResponse(wallet)
+	if resp["product_id"] != "wallet" {
+		t.Fatalf("product_id = %v, want wallet", resp["product_id"])
+	}
+	addresses, ok := resp["addresses"].(map[string]string)
+	if !ok {
+		t.Fatalf("addresses type = %T", resp["addresses"])
+	}
+	expected := map[string]string{
+		"bitcoin":      "bc1qwallet",
+		"ethereum":     "0xeth",
+		"avalanche":    "0xavax",
+		"bnbchain":     "0xbnb",
+		"base":         "0xbase",
+		"arbitrum":     "0xarb",
+		"unichain":     "0xuni",
+		"tron":         "TWallet",
+		"solana":       "SoWallet",
+		"chiliz":       "0xchz",
+		"chiliz_spicy": "0xspicy",
+	}
+	for chain, want := range expected {
+		if addresses[chain] != want {
+			t.Fatalf("address[%s] = %q, want %q", chain, addresses[chain], want)
+		}
+	}
+}
 
 func TestV1StaticAddressResponseReturnsSelectedChainAddress(t *testing.T) {
 	wallet := &models.Wallet{
@@ -33,6 +95,29 @@ func TestV1StaticAddressResponseReturnsSelectedChainAddress(t *testing.T) {
 	}
 	if resp["label"] != "Main wallet" {
 		t.Fatalf("label = %v", resp["label"])
+	}
+}
+
+func TestV1StaticWalletListItemParsesProductScope(t *testing.T) {
+	wallet := models.Wallet{
+		ID:              uuid.New(),
+		UserID:          "customer_42",
+		ProductID:       "static:1:USDT",
+		EthereumAddress: "0xeth",
+		CreatedAt:       time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC),
+	}
+	item := v1StaticWalletListItem(wallet)
+	if item["chain"] != constants.ChainName(constants.Ethereum) {
+		t.Fatalf("chain = %v", item["chain"])
+	}
+	if item["chain_id"] != int64(constants.Ethereum) {
+		t.Fatalf("chain_id = %v", item["chain_id"])
+	}
+	if item["symbol"] != "USDT" {
+		t.Fatalf("symbol = %v", item["symbol"])
+	}
+	if item["address"] != "0xeth" {
+		t.Fatalf("address = %v", item["address"])
 	}
 }
 

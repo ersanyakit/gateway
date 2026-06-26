@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"core/api/handlers"
+	"core/models"
 
 	"github.com/gofiber/template/html/v3"
 )
@@ -93,6 +95,118 @@ func TestDealerViewsRender(t *testing.T) {
 					t.Fatalf("%s output missing %q", view, expected)
 				}
 			}
+		}
+	}
+}
+
+func TestGatewayViewsRenderCriticalStates(t *testing.T) {
+	engine := html.New("./views", ".html")
+	session := &models.PaymentSession{
+		SessionToken:      "checkout-token",
+		OrderID:           "ORDER-1001",
+		Amount:            "25.00",
+		Currency:          "USD",
+		SelectedSymbol:    "USDT",
+		DepositAddress:    "0x1111111111111111111111111111111111111111",
+		ExpectedAmountRaw: "25000000",
+	}
+
+	tests := []struct {
+		name     string
+		view     string
+		data     any
+		expected []string
+	}{
+		{
+			name: "checkout asset grid with unavailable quote",
+			view: "gateway/checkout",
+			data: map[string]any{
+				"Session":        session,
+				"Lang":           "en",
+				"IsEnglish":      true,
+				"AssetGroups":    []handlers.CheckoutAssetGroup{{Symbol: "PEPPER", Name: "PEPPER", ChainCount: 1, URL: "/checkout/checkout-token?asset=PEPPER", QuoteAvailable: false}},
+				"SelectedSymbol": "",
+				"Assets":         []handlers.CheckoutAssetOption{},
+				"ExpiresAtUnix":  time.Now().Add(time.Hour).UnixMilli(),
+			},
+			expected: []string{"Price unavailable", "Gateway pricing", "PEPPER"},
+		},
+		{
+			name: "checkout selected asset with no usable networks",
+			view: "gateway/checkout",
+			data: map[string]any{
+				"Session":        session,
+				"Lang":           "en",
+				"IsEnglish":      true,
+				"AssetGroups":    []handlers.CheckoutAssetGroup{},
+				"SelectedSymbol": "PEPPER",
+				"Assets":         []handlers.CheckoutAssetOption{},
+				"ExpiresAtUnix":  time.Now().Add(time.Hour).UnixMilli(),
+			},
+			expected: []string{"No payment networks are available", "Change asset"},
+		},
+		{
+			name: "payment instruction page",
+			view: "gateway/pay",
+			data: map[string]any{
+				"Session":              session,
+				"Lang":                 "en",
+				"IsEnglish":            true,
+				"QRCodeURL":            "/checkout/checkout-token/qr.png",
+				"PaymentURI":           "ethereum:0x1111111111111111111111111111111111111111",
+				"ChainName":            "ethereum",
+				"ChainLogoURL":         "/static/chains/ethereumchain.svg",
+				"AmountDisplay":        "25 USDT",
+				"ExpiresAtUnix":        time.Now().Add(time.Hour).UnixMilli(),
+				"SelectedAssetLogoURL": "/static/coins/usdt.svg",
+			},
+			expected: []string{"Send exactly", "Payment QR", "Copy address"},
+		},
+		{
+			name: "payment result page",
+			view: "gateway/payment_result",
+			data: map[string]any{
+				"Title":      "Payment complete",
+				"Message":    "Payment received successfully.",
+				"Status":     "paid",
+				"ResultKind": "success",
+				"IsEnglish":  true,
+			},
+			expected: []string{"Payment complete", "Crypto Checkout", "paid"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := engine.Render(&buf, tt.view, tt.data); err != nil {
+				t.Fatalf("%s render failed: %v", tt.view, err)
+			}
+			output := buf.String()
+			if strings.TrimSpace(output) == "" {
+				t.Fatalf("%s rendered empty output", tt.view)
+			}
+			for _, expected := range tt.expected {
+				if !strings.Contains(output, expected) {
+					t.Fatalf("%s output missing %q", tt.view, expected)
+				}
+			}
+		})
+	}
+}
+
+func TestStandaloneDepositWalletProductClassification(t *testing.T) {
+	tests := map[string]bool{
+		"static:1:USDT":  true,
+		"wallet:default": true,
+		"wallet:app":     true,
+		"ORDER-1001":     false,
+		"wallet":         false,
+		"":               false,
+	}
+	for productID, expected := range tests {
+		if got := isStandaloneDepositWalletProduct(productID); got != expected {
+			t.Fatalf("isStandaloneDepositWalletProduct(%q) = %v, want %v", productID, got, expected)
 		}
 	}
 }

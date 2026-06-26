@@ -21,6 +21,12 @@ type V1StaticAddressRequest struct {
 	Label   string `json:"label,omitempty"    example:"Main wallet"  swaggertype:"string"`
 }
 
+// V1WalletCreateRequest is the request body for POST /api/v1/wallet/create.
+type V1WalletCreateRequest struct {
+	UserID    string `json:"user_id"              example:"customer_42"   swaggertype:"string"`
+	ProductID string `json:"product_id,omitempty" example:"wallet"        swaggertype:"string"`
+}
+
 // V1PayoutRequest is the request body for POST /api/v1/payout/create.
 type V1PayoutRequest struct {
 	Chain        string `json:"chain"                  example:"ethereum"                                      swaggertype:"string"`
@@ -260,6 +266,55 @@ type V1StaticAddressDetail struct {
 type V1StaticAddressListResponse struct {
 	Result string                  `json:"result" example:"ok"`
 	Data   []V1StaticAddressDetail `json:"data"`
+}
+
+// ─── Wallet provider responses ────────────────────────────────────────────────
+
+type V1WalletCreateResponse struct {
+	Result string         `json:"result" example:"ok"`
+	Data   V1WalletDetail `json:"data"`
+}
+
+type V1WalletInfoResponse struct {
+	Result string         `json:"result" example:"ok"`
+	Data   V1WalletDetail `json:"data"`
+}
+
+type V1WalletListResponse struct {
+	Result string           `json:"result" example:"ok"`
+	Total  int64            `json:"total"  example:"48"`
+	Page   int              `json:"page"   example:"1"`
+	Limit  int              `json:"limit"  example:"20"`
+	Data   []V1WalletDetail `json:"data"`
+}
+
+type V1WalletBalanceResponse struct {
+	Result string              `json:"result" example:"ok"`
+	Data   V1WalletBalanceData `json:"data"`
+}
+
+type V1WalletDetail struct {
+	WalletID  string            `json:"wallet_id"  example:"550e8400-e29b-41d4-a716-446655440000"`
+	UserID    string            `json:"user_id"    example:"customer_42"`
+	ProductID string            `json:"product_id" example:"wallet"`
+	Addresses map[string]string `json:"addresses"`
+	CreatedAt string            `json:"created_at" example:"2024-06-01T12:00:00Z"`
+}
+
+type V1WalletBalanceData struct {
+	Wallet   V1WalletDetail        `json:"wallet"`
+	Balances []V1WalletBalanceItem `json:"balances"`
+}
+
+type V1WalletBalanceItem struct {
+	Symbol     string `json:"symbol"      example:"USDT"`
+	Chain      string `json:"chain"       example:"ethereum"`
+	ChainID    int64  `json:"chain_id"    example:"1"`
+	Account    string `json:"account"     example:"merchant_available"`
+	Balance    string `json:"balance"     example:"12.5"`
+	BalanceRaw string `json:"balance_raw" example:"12500000"`
+	Decimals   uint8  `json:"decimals"    example:"6"`
+	LogoURL    string `json:"logo_url,omitempty" example:"/static/coins/usdt.svg"`
 }
 
 // ─── Payout responses ─────────────────────────────────────────────────────────

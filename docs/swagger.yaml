@@ -813,6 +813,113 @@ definitions:
         example: paid
         type: string
     type: object
+  types.V1WalletBalanceData:
+    properties:
+      balances:
+        items:
+          $ref: '#/definitions/types.V1WalletBalanceItem'
+        type: array
+      wallet:
+        $ref: '#/definitions/types.V1WalletDetail'
+    type: object
+  types.V1WalletBalanceItem:
+    properties:
+      account:
+        example: merchant_available
+        type: string
+      balance:
+        example: "12.5"
+        type: string
+      balance_raw:
+        example: "12500000"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      chain_id:
+        example: 1
+        type: integer
+      decimals:
+        example: 6
+        type: integer
+      logo_url:
+        example: /static/coins/usdt.svg
+        type: string
+      symbol:
+        example: USDT
+        type: string
+    type: object
+  types.V1WalletBalanceResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1WalletBalanceData'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1WalletCreateRequest:
+    properties:
+      product_id:
+        example: wallet
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+    type: object
+  types.V1WalletCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1WalletDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1WalletDetail:
+    properties:
+      addresses:
+        additionalProperties:
+          type: string
+        type: object
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
+      product_id:
+        example: wallet
+        type: string
+      user_id:
+        example: customer_42
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  types.V1WalletInfoResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1WalletDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1WalletListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/types.V1WalletDetail'
+        type: array
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      result:
+        example: ok
+        type: string
+      total:
+        example: 48
+        type: integer
+    type: object
   types.WalletCreateResponse:
     properties:
       arbitrum:
@@ -1674,6 +1781,171 @@ paths:
       summary: Rescan transaction
       tags:
       - Transaction
+  /api/v1/wallet/balance:
+    get:
+      description: Returns ledger balances scoped to one wallet-provider wallet.
+      parameters:
+      - description: Wallet UUID
+        in: query
+        name: wallet_id
+        type: string
+      - description: Merchant user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Wallet product scope. Defaults to wallet
+        in: query
+        name: product_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1WalletBalanceResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Wallet balance
+      tags:
+      - Wallet
+  /api/v1/wallet/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates or returns a reusable multi-chain wallet for a merchant
+        user. This endpoint is for wallet-provider integrations.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
+          sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Wallet create parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1WalletCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1WalletCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create wallet
+      tags:
+      - Wallet
+  /api/v1/wallet/info:
+    get:
+      description: Returns a wallet by wallet_id, or by user_id plus optional product_id
+        under the authenticated API domain.
+      parameters:
+      - description: Wallet UUID
+        in: query
+        name: wallet_id
+        type: string
+      - description: Merchant user ID
+        in: query
+        name: user_id
+        type: string
+      - description: Wallet product scope. Defaults to wallet
+        in: query
+        name: product_id
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1WalletInfoResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Wallet information
+      tags:
+      - Wallet
+  /api/v1/wallet/list:
+    get:
+      description: Lists wallet-provider wallets under the authenticated API domain,
+        optionally filtered by user_id.
+      parameters:
+      - description: Filter by user ID
+        in: query
+        name: user_id
+        type: string
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Items per page (max 100)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1WalletListResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Wallet list
+      tags:
+      - Wallet
   /auth/oidc/callback:
     get:
       description: Exchanges the OIDC authorization code for tokens, fetches userinfo,

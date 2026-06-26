@@ -299,6 +299,14 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/api/v1/common/fiat-currencies", handlers.HandleV1CommonFiatCurrencies(v1Deps))
 	r.fiber.Get("/api/v1/common/networks", handlers.HandleV1CommonNetworks(v1Deps))
 
+	// ── Wallet provider API ─────────────────────────────────────────────────
+	r.fiber.Post("/api/v1/wallet/create", handlers.HandleV1WalletCreate(v1Deps))
+	r.fiber.Get("/api/v1/wallet/info", handlers.HandleV1WalletInfo(v1Deps))
+	r.fiber.Get("/api/v1/wallet/addresses", handlers.HandleV1WalletInfo(v1Deps))
+	r.fiber.Get("/api/v1/wallet/list", handlers.HandleV1WalletList(v1Deps))
+	r.fiber.Get("/api/v1/wallet/balance", handlers.HandleV1WalletBalance(v1Deps))
+	r.fiber.Get("/api/v1/wallets", handlers.HandleV1WalletList(v1Deps))
+
 	// ── Payment API ──────────────────────────────────────────────────────────
 	r.fiber.Post("/api/v1/payment/create", handlers.HandleV1PaymentCreate(v1Deps))
 	r.fiber.Post("/api/v1/payment/white-label", handlers.HandleV1PaymentWhiteLabel(v1Deps))
