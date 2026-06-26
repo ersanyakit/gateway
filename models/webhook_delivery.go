@@ -23,6 +23,10 @@ type WebhookDelivery struct {
 
 	EventID   string `gorm:"size:256;not null;index" json:"event_id"`
 	EventType string `gorm:"size:80;not null;index" json:"event_type"`
+	EventVersion string `gorm:"size:16;not null;default:v1" json:"event_version"`
+	EntityType   string `gorm:"size:40;index" json:"entity_type,omitempty"`
+	EntityID     *uuid.UUID `gorm:"type:uuid;index" json:"entity_id,omitempty"`
+	PayloadJSON  string `gorm:"type:text" json:"payload_json,omitempty"`
 	TargetURL string `gorm:"size:500;not null" json:"target_url"`
 	Status    string `gorm:"size:24;not null;index" json:"status"`
 

@@ -31,6 +31,12 @@ func (f failingPriceOracle) Price(context.Context, string, string) (*big.Rat, er
 	return nil, errors.New("pricing unavailable")
 }
 
+type panicPriceOracle struct{}
+
+func (p panicPriceOracle) Price(context.Context, string, string) (*big.Rat, error) {
+	panic("checkout asset groups should not call the price oracle")
+}
+
 func TestCheckoutCanonicalSymbolAliases(t *testing.T) {
 	tests := map[string]string{
 		"WBTC": "BTC",
@@ -54,7 +60,7 @@ func TestCheckoutTemplateParses(t *testing.T) {
 	}
 }
 
-func TestCheckoutAssetsRemainVisibleWhenPriceUnavailable(t *testing.T) {
+func TestCheckoutAssetSelectionDoesNotCallPriceOracle(t *testing.T) {
 	registry := asset.NewRegistry()
 	registry.Register(asset.NewERC20(
 		constants.Ethereum,
@@ -73,27 +79,29 @@ func TestCheckoutAssetsRemainVisibleWhenPriceUnavailable(t *testing.T) {
 	}
 	deps := PaymentHandlerDeps{
 		AssetRegistry: registry,
-		PriceOracle:   failingPriceOracle{},
+		PriceOracle:   panicPriceOracle{},
 	}
 
 	options := checkoutAssetOptions(context.Background(), deps, session, "PEPPER")
 	if len(options) != 1 {
 		t.Fatalf("options = %d, want 1", len(options))
 	}
-	if options[0].Available {
-		t.Fatal("asset with unavailable quote should not be selectable")
+	if !options[0].Available {
+		t.Fatal("asset with an address should be selectable before the final quote step")
 	}
 	if options[0].QuoteAvailable {
-		t.Fatal("quote should be marked unavailable")
+		t.Fatal("asset options should not quote during route rendering")
 	}
-	if options[0].UnavailableReason != "quote" {
-		t.Fatalf("unavailable reason = %q, want quote", options[0].UnavailableReason)
+	if options[0].UnavailableReason != "" {
+		t.Fatalf("unavailable reason = %q, want empty", options[0].UnavailableReason)
 	}
 	if options[0].AmountDisplay != "" {
 		t.Fatalf("amount display = %q, want empty", options[0].AmountDisplay)
 	}
 
-	groups := checkoutAssetGroups(context.Background(), deps, session)
+	groupDeps := deps
+	groupDeps.PriceOracle = panicPriceOracle{}
+	groups := checkoutAssetGroups(context.Background(), groupDeps, session)
 	if len(groups) != 1 {
 		t.Fatalf("groups = %d, want 1", len(groups))
 	}

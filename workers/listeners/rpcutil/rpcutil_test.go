@@ -43,6 +43,9 @@ func TestIsRetryable(t *testing.T) {
 	if !IsRetryable(errors.New("Post \"https://base.drpc.org\": context deadline exceeded")) {
 		t.Fatal("wrapped timeout message should be retryable")
 	}
+	if !IsRetryable(errors.New(`rpc error: code = Unavailable desc = unexpected HTTP status code received from server: 429 (Too Many Requests); transport: received unexpected content-type "application/octet-stream"`)) {
+		t.Fatal("gRPC 429 message should be retryable")
+	}
 	if IsRetryable(errors.New("method not found")) {
 		t.Fatal("non-transient RPC error should not be retryable")
 	}

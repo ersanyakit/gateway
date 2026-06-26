@@ -38,6 +38,7 @@ const (
 	pollInterval           = 6 * time.Second
 	maxBlocksPerPoll       = int64(5)
 	safeBlockConfirmations = int64(12)
+	receiptBatchSize       = 50
 	zeroAddress            = "0x0000000000000000000000000000000000000000"
 )
 
@@ -60,6 +61,8 @@ type RpcListener struct {
 
 	blockReceiptsUnavailable bool
 	lastBlockReceiptsWarning time.Time
+	batchReceiptsUnavailable bool
+	lastBatchReceiptsWarning time.Time
 	throttleErrors           int
 }
 
@@ -204,7 +207,15 @@ func (r *RpcListener) latestBlockNumber(ctx context.Context) (int64, error) {
 	return hexToInt64(result), nil
 }
 
+type jsonRPCRequest struct {
+	JSONRPC string        `json:"jsonrpc"`
+	ID      int64         `json:"id"`
+	Method  string        `json:"method"`
+	Params  []interface{} `json:"params"`
+}
+
 type jsonRPCResponse struct {
+	ID     int64           `json:"id,omitempty"`
 	Result json.RawMessage `json:"result"`
 	Error  *jsonRPCError   `json:"error"`
 }
@@ -293,6 +304,102 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	return lastErr
 }
 
+func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCRequest) (map[int64]json.RawMessage, error) {
+	if len(requests) == 0 {
+		return map[int64]json.RawMessage{}, nil
+	}
+
+	body, err := json.Marshal(requests)
+	if err != nil {
+		return nil, err
+	}
+
+	var lastErr error
+	var throttleErr error
+	for _, rpcURL := range r.chain.RPCs() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := r.client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		respBody, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			err := fmt.Errorf("%s %s returned HTTP %d: %s", r.chain.Name(), rpcURL, resp.StatusCode, string(respBody))
+			if rpcutil.StatusThrottled(resp.StatusCode) {
+				lastErr = rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header))
+				throttleErr = lastErr
+			} else {
+				lastErr = err
+			}
+			continue
+		}
+
+		var rpcResponses []jsonRPCResponse
+		if err := json.Unmarshal(respBody, &rpcResponses); err != nil {
+			var rpcResp jsonRPCResponse
+			if singleErr := json.Unmarshal(respBody, &rpcResp); singleErr == nil && rpcResp.Error != nil {
+				err := fmt.Errorf("%s RPC batch error %d: %s", r.chain.Name(), rpcResp.Error.Code, rpcResp.Error.Message)
+				if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
+					lastErr = rpcutil.NewThrottleError(err, 0)
+					throttleErr = lastErr
+				} else {
+					lastErr = err
+				}
+				continue
+			}
+			lastErr = err
+			continue
+		}
+		if len(rpcResponses) == 0 {
+			lastErr = fmt.Errorf("%s returned empty JSON-RPC batch response", r.chain.Name())
+			continue
+		}
+
+		results := make(map[int64]json.RawMessage, len(rpcResponses))
+		failed := false
+		for _, rpcResp := range rpcResponses {
+			if rpcResp.Error != nil {
+				err := fmt.Errorf("%s RPC batch error %d: %s", r.chain.Name(), rpcResp.Error.Code, rpcResp.Error.Message)
+				if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
+					lastErr = rpcutil.NewThrottleError(err, 0)
+					throttleErr = lastErr
+				} else {
+					lastErr = err
+				}
+				failed = true
+				break
+			}
+			results[rpcResp.ID] = rpcResp.Result
+		}
+		if failed {
+			continue
+		}
+
+		return results, nil
+	}
+
+	if throttleErr != nil {
+		return nil, throttleErr
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no RPC endpoint configured")
+	}
+	return nil, lastErr
+}
+
 type Block struct {
 	Number       string  `json:"number"`
 	Hash         string  `json:"hash"`
@@ -350,6 +457,12 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 	receiptsByHash, err := r.receiptsByBlock(ctx, blockHex)
 	if err != nil {
 		return err
+	}
+	if receiptsByHash == nil {
+		receiptsByHash, err = r.receiptsByTransactions(ctx, block.Transactions)
+		if err != nil {
+			return err
+		}
 	}
 	for idx, tx := range block.Transactions {
 		if tx.Hash == "" {
@@ -453,6 +566,78 @@ func (r *RpcListener) receiptsByBlock(ctx context.Context, blockHex string) (map
 			continue
 		}
 		byHash[strings.ToLower(receipt.TransactionHash)] = receipt
+	}
+	return byHash, nil
+}
+
+func (r *RpcListener) receiptsByTransactions(ctx context.Context, txs []RawTx) (map[string]Receipt, error) {
+	if r.batchReceiptsUnavailable || len(txs) == 0 {
+		return nil, nil
+	}
+
+	byHash := make(map[string]Receipt, len(txs))
+	for start := 0; start < len(txs); start += receiptBatchSize {
+		end := start + receiptBatchSize
+		if end > len(txs) {
+			end = len(txs)
+		}
+
+		requests := make([]jsonRPCRequest, 0, end-start)
+		idToHash := make(map[int64]string, end-start)
+		nextID := int64(1)
+		for _, tx := range txs[start:end] {
+			if tx.Hash == "" {
+				continue
+			}
+			requests = append(requests, jsonRPCRequest{
+				JSONRPC: "2.0",
+				ID:      nextID,
+				Method:  "eth_getTransactionReceipt",
+				Params:  []interface{}{tx.Hash},
+			})
+			idToHash[nextID] = strings.ToLower(tx.Hash)
+			nextID++
+		}
+		if len(requests) == 0 {
+			continue
+		}
+
+		results, err := r.rpcBatchCall(ctx, requests)
+		if err != nil {
+			if rpcutil.IsRetryable(err) {
+				return nil, err
+			}
+			if isBatchReceiptsUnavailableError(err) {
+				r.batchReceiptsUnavailable = true
+			}
+			if time.Since(r.lastBatchReceiptsWarning) >= time.Minute {
+				r.lastBatchReceiptsWarning = time.Now()
+				log.Printf("[%s] batch receipt fetch failed; falling back to per-transaction receipts: %v\n", r.chain.Name(), err)
+			}
+			return nil, nil
+		}
+
+		for id, raw := range results {
+			if len(raw) == 0 || string(raw) == "null" {
+				continue
+			}
+			var receipt Receipt
+			if err := json.Unmarshal(raw, &receipt); err != nil {
+				if time.Since(r.lastBatchReceiptsWarning) >= time.Minute {
+					r.lastBatchReceiptsWarning = time.Now()
+					log.Printf("[%s] batch receipt decode failed; falling back to per-transaction receipts: %v\n", r.chain.Name(), err)
+				}
+				return nil, nil
+			}
+			receiptHash := strings.ToLower(receipt.TransactionHash)
+			if receiptHash == "" {
+				receiptHash = idToHash[id]
+				receipt.TransactionHash = receiptHash
+			}
+			if receiptHash != "" {
+				byHash[receiptHash] = receipt
+			}
+		}
 	}
 	return byHash, nil
 }
@@ -649,6 +834,21 @@ func isBlockReceiptsUnavailableError(err error) bool {
 		strings.Contains(msg, "method not found") ||
 		strings.Contains(msg, "not supported") ||
 		strings.Contains(msg, "-32601")
+}
+
+func isBatchReceiptsUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "batch") {
+		return false
+	}
+	return strings.Contains(msg, "not supported") ||
+		strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "not available") ||
+		strings.Contains(msg, "method not found") ||
+		strings.Contains(msg, "invalid request")
 }
 
 func (r *RpcListener) normalizeTokenAddress(address string) string {

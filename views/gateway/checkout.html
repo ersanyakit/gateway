@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/assets/style.css">
   <script src="/assets/checkout.js" defer></script>
 </head>
-<body class="crypto-page">
+<body class="crypto-page crypto-checkout-page">
   <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
 
   <main class="crypto-container">
@@ -90,7 +90,7 @@
                   </span>
                 </span>
                 <span class="crypto-network-right">
-                  <strong>{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Price unavailable{{else}}Fiyat alınamadı{{end}}{{end}}</strong>
+                  <strong>{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Select{{else}}Seç{{end}}{{end}}</strong>
                   <small>
                     {{if .Available}}
                       {{if $.IsEnglish}}Continue{{else}}Devam et{{end}}
@@ -125,7 +125,7 @@
               {{end}}
               <span class="crypto-symbol">{{.Symbol}}</span>
               <span class="crypto-name">{{.Name}}</span>
-              <span class="crypto-amount">{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Price unavailable{{else}}Fiyat alınamadı{{end}}{{end}}</span>
+              {{if .QuoteAvailable}}<span class="crypto-amount">{{.AmountDisplay}}</span>{{end}}
               <span class="crypto-network-count">{{.ChainCount}} network</span>
             </a>
             {{else}}

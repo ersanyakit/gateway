@@ -3,6 +3,7 @@ package bitcoin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"core/types"
 	"core/workers/dispatcher"
 	listenerconfig "core/workers/listeners"
+	"core/workers/listeners/rpcutil"
 )
 
 const (
@@ -40,6 +42,8 @@ type RpcListener struct {
 	quit    chan struct{}
 	running bool
 	events  chan interface{}
+
+	throttleErrors int
 }
 
 func NewRpcListener(
@@ -99,18 +103,26 @@ func (r *RpcListener) Events() <-chan interface{} {
 }
 
 func (r *RpcListener) pollLoop() {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
 	for {
+		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[%s] listener catch-up error: %v\n", r.chain.Name(), err)
+			if rpcutil.IsRetryable(err) {
+				r.throttleErrors++
+				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
+			} else {
+				r.throttleErrors = 0
+			}
+		} else {
+			r.throttleErrors = 0
 		}
 
+		timer := time.NewTimer(delay)
 		select {
 		case <-r.quit:
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
@@ -197,7 +209,12 @@ func (r *RpcListener) get(path string) ([]byte, error) {
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("bitcoin API returned HTTP %d: %s", resp.StatusCode, string(body))
+			err := &bitcoinAPIError{statusCode: resp.StatusCode, body: strings.TrimSpace(string(body))}
+			if rpcutil.StatusThrottled(resp.StatusCode) {
+				lastErr = rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header))
+			} else {
+				lastErr = err
+			}
 			continue
 		}
 
@@ -208,6 +225,18 @@ func (r *RpcListener) get(path string) ([]byte, error) {
 		lastErr = fmt.Errorf("no bitcoin API endpoint configured")
 	}
 	return nil, lastErr
+}
+
+type bitcoinAPIError struct {
+	statusCode int
+	body       string
+}
+
+func (e *bitcoinAPIError) Error() string {
+	if e.body == "" {
+		return fmt.Sprintf("bitcoin API returned HTTP %d", e.statusCode)
+	}
+	return fmt.Sprintf("bitcoin API returned HTTP %d: %s", e.statusCode, e.body)
 }
 
 type Tx struct {
@@ -254,6 +283,9 @@ func (r *RpcListener) processBlock(height int64) error {
 	for offset := 0; ; offset += 25 {
 		body, err := r.get(fmt.Sprintf("/block/%s/txs/%d", blockHash, offset))
 		if err != nil {
+			if isBitcoinTxPageEOF(err) {
+				return nil
+			}
 			return err
 		}
 
@@ -275,6 +307,15 @@ func (r *RpcListener) processBlock(height int64) error {
 			return nil
 		}
 	}
+}
+
+func isBitcoinTxPageEOF(err error) bool {
+	var apiErr *bitcoinAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.statusCode == http.StatusNotFound &&
+		strings.Contains(strings.ToLower(apiErr.body), "start index out of range")
 }
 
 func (r *RpcListener) handleTx(height int64, blockHash string, nativeAsset asset.Asset, tx Tx) error {

@@ -268,7 +268,6 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
@@ -279,7 +278,10 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
 		lang := checkoutLanguage(c)
-		options := checkoutAssetOptions(c.Context(), deps, *session, selectedSymbol)
+		var options []CheckoutAssetOption
+		if selectedSymbol != "" {
+			options = checkoutAssetOptions(c.Context(), deps, *session, selectedSymbol)
+		}
 		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 		return c.Render("gateway/checkout", fiber.Map{
 			"Session":            session,
@@ -318,7 +320,6 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
@@ -337,6 +338,10 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		assetInfo, err := findCheckoutAsset(deps.AssetRegistry, constants.ChainID(chainID), symbol, token)
 		if err != nil {
 			return renderCheckoutWithError(c, deps, session, err.Error())
+		}
+
+		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
+			session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		}
 
 		amountRaw, quotePrice, quoteSource, err := checkoutExpectedQuote(c.Context(), deps.PriceOracle, *session, assetInfo)
@@ -705,13 +710,6 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 		}
 		seenChains[symbol][assetInfo.GetChainID()] = struct{}{}
 		group.ChainCount = len(seenChains[symbol])
-		if !group.QuoteAvailable {
-			amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
-			if err == nil && amountRaw != "" {
-				group.AmountDisplay = formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), symbol)
-				group.QuoteAvailable = true
-			}
-		}
 		bySymbol[symbol] = group
 	}
 	groups := make([]CheckoutAssetGroup, 0, len(bySymbol))
@@ -735,22 +733,14 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 		if selectedSymbol != "" && !strings.EqualFold(canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol()), selectedSymbol) {
 			continue
 		}
-		amountRaw, err := checkoutExpectedAmountRaw(ctx, deps.PriceOracle, session, assetInfo)
-		quoteAvailable := err == nil && amountRaw != ""
 		addressAvailable := paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) != ""
 		unavailableReason := ""
 		if !addressAvailable {
 			unavailableReason = "address"
-		} else if !quoteAvailable {
-			unavailableReason = "quote"
 		}
 		token := ""
 		if !assetInfo.IsNative() {
 			token = assetInfo.GetIdentifier()
-		}
-		amountDisplay := ""
-		if quoteAvailable {
-			amountDisplay = formatPaymentAmount(amountRaw, assetInfo.GetDecimals(), assetInfo.GetSymbol())
 		}
 		options = append(options, CheckoutAssetOption{
 			ChainID:           int64(assetInfo.GetChainID()),
@@ -760,11 +750,11 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 			Name:              assetInfo.GetName(),
 			Token:             token,
 			Decimals:          assetInfo.GetDecimals(),
-			AmountRaw:         amountRaw,
-			AmountDisplay:     amountDisplay,
+			AmountRaw:         "",
+			AmountDisplay:     "",
 			Native:            assetInfo.IsNative(),
-			Available:         addressAvailable && quoteAvailable,
-			QuoteAvailable:    quoteAvailable,
+			Available:         addressAvailable,
+			QuoteAvailable:    false,
 			UnavailableReason: unavailableReason,
 			LogoURL:           deps.AssetRegistry.LogoURL(assetInfo.GetSymbol()),
 		})

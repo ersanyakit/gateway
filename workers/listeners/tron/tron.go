@@ -22,6 +22,7 @@ import (
 	"core/types"
 	"core/workers/dispatcher"
 	listenerconfig "core/workers/listeners"
+	"core/workers/listeners/rpcutil"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	goproto "github.com/golang/protobuf/proto"
@@ -56,6 +57,8 @@ type RpcListener struct {
 	quit    chan struct{}
 	running bool
 	events  chan interface{}
+
+	throttleErrors int
 }
 
 type walletClient struct {
@@ -267,19 +270,30 @@ func tronGRPCEndpoints() []string {
 }
 
 func (r *RpcListener) pollLoop() {
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
-
 	for {
+		delay := pollInterval
 		if err := r.catchUp(); err != nil {
 			log.Printf("[tron] listener catch-up error: %v", err)
-			r.reconnect()
+			if rpcutil.IsRetryable(err) {
+				r.throttleErrors++
+				delay = rpcutil.ThrottleDelay(err, r.throttleErrors, pollInterval)
+				if !rpcutil.IsThrottle(err) {
+					r.reconnect()
+				}
+			} else {
+				r.throttleErrors = 0
+				r.reconnect()
+			}
+		} else {
+			r.throttleErrors = 0
 		}
 
+		timer := time.NewTimer(delay)
 		select {
 		case <-r.quit:
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
