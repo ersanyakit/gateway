@@ -4,6 +4,8 @@ import (
 	"context"
 	"core/models"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +16,8 @@ import (
 type WithdrawalRequestRepo struct {
 	db *gorm.DB
 }
+
+var ErrWithdrawalWalletBusy = errors.New("withdrawal wallet has an active processing transfer")
 
 func NewWithdrawalRequestRepo(db *gorm.DB) *WithdrawalRequestRepo {
 	return &WithdrawalRequestRepo{db: db}
@@ -300,6 +304,21 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 			return err
 		}
 
+		lockKey := withdrawalWalletChainLockKey(request.WalletID, request.Chain)
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error; err != nil {
+			return err
+		}
+
+		var activeCount int64
+		if err := tx.Model(&models.WithdrawalRequest{}).
+			Where("wallet_id = ? AND chain = ? AND status = ? AND id <> ?", request.WalletID, request.Chain, models.WithdrawalStatusProcessing, request.ID).
+			Count(&activeCount).Error; err != nil {
+			return err
+		}
+		if activeCount > 0 {
+			return ErrWithdrawalWalletBusy
+		}
+
 		now := time.Now()
 		result := tx.Model(&models.WithdrawalRequest{}).
 			Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
@@ -376,4 +395,8 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		return &request, err
 	}
 	return &request, nil
+}
+
+func withdrawalWalletChainLockKey(walletID uuid.UUID, chain string) string {
+	return fmt.Sprintf("withdrawal-wallet-chain:%s:%s", walletID, strings.ToLower(strings.TrimSpace(chain)))
 }

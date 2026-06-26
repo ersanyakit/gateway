@@ -68,13 +68,49 @@ func (r *SweepJobRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Dur
 	lockUntil := now.Add(lockFor)
 	var jobs []models.SweepJob
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusFailed}).
-			Where("next_run_at IS NULL OR next_run_at <= ?", now).
-			Where("locked_until IS NULL OR locked_until < ?", now).
-			Order("created_at ASC").
-			Limit(limit).
-			Find(&jobs).Error; err != nil {
+		if err := tx.Raw(`
+			WITH ranked_due AS (
+				SELECT
+					sj.id,
+					sj.created_at,
+					ROW_NUMBER() OVER (
+						PARTITION BY sj.wallet_id, sj.chain_id
+						ORDER BY sj.created_at ASC
+					) AS wallet_rank
+				FROM sweep_jobs sj
+				WHERE sj.status IN ?
+				  AND (sj.next_run_at IS NULL OR sj.next_run_at <= ?)
+				  AND (sj.locked_until IS NULL OR sj.locked_until < ?)
+				  AND NOT EXISTS (
+					SELECT 1
+					FROM sweep_jobs active
+					WHERE active.wallet_id = sj.wallet_id
+					  AND active.chain_id = sj.chain_id
+					  AND active.status = ?
+					  AND active.locked_until IS NOT NULL
+					  AND active.locked_until >= ?
+				  )
+			),
+			due AS (
+				SELECT id
+				FROM ranked_due
+				WHERE wallet_rank = 1
+				ORDER BY created_at ASC
+				LIMIT ?
+			)
+			SELECT sj.*
+			FROM sweep_jobs sj
+			JOIN due ON due.id = sj.id
+			ORDER BY sj.created_at ASC
+			FOR UPDATE OF sj SKIP LOCKED
+		`,
+			[]string{models.SweepJobStatusPending, models.SweepJobStatusFailed},
+			now,
+			now,
+			models.SweepJobStatusProcessing,
+			now,
+			limit,
+		).Scan(&jobs).Error; err != nil {
 			return err
 		}
 		if len(jobs) == 0 {
@@ -93,6 +129,34 @@ func (r *SweepJobRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Dur
 			}).Error
 	})
 	return jobs, err
+}
+
+func (r *SweepJobRepo) MarkPrefunded(ctx context.Context, id uuid.UUID) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"prefund_attempts":   gorm.Expr("prefund_attempts + 1"),
+			"prefund_last_error": "",
+			"prefunded_at":       &now,
+			"updated_at":         now,
+		}).Error
+}
+
+func (r *SweepJobRepo) MarkPrefundFailed(ctx context.Context, id uuid.UUID, err error) error {
+	lastErr := ""
+	if err != nil {
+		lastErr = err.Error()
+	}
+	return r.db.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"prefund_attempts":   gorm.Expr("prefund_attempts + 1"),
+			"prefund_last_error": lastErr,
+			"updated_at":         time.Now(),
+		}).Error
 }
 
 func (r *SweepJobRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, txHash string) error {

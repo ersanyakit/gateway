@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	reserveIssueNone        reserveIssueKind = ""
-	reserveIssueDeficit     reserveIssueKind = "deficit"
-	reserveIssueMissing     reserveIssueKind = "missing_component"
-	reserveIssueUnreadable  reserveIssueKind = "unreadable_component"
-	reserveReasonMaxLength                   = 120
+	reserveIssueNone       reserveIssueKind = ""
+	reserveIssueDeficit    reserveIssueKind = "deficit"
+	reserveIssueMissing    reserveIssueKind = "missing_component"
+	reserveIssueUnreadable reserveIssueKind = "unreadable_component"
+	reserveReasonMaxLength                  = 120
 )
 
 type reserveIssueKind string
@@ -33,15 +33,15 @@ type ReserveService struct {
 }
 
 type ReserveReport struct {
-	WalletsChecked      int
-	BalanceQueries      int
-	JobsOpened          int
-	Deficits            int
-	MissingComponents   int
-	UnreadableBalances  int
-	QueryErrors         int
-	MissingAddresses    int
-	UnavailableChains   int
+	WalletsChecked     int
+	BalanceQueries     int
+	JobsOpened         int
+	Deficits           int
+	MissingComponents  int
+	UnreadableBalances int
+	QueryErrors        int
+	MissingAddresses   int
+	UnavailableChains  int
 }
 
 type reserveExpectedBalance struct {

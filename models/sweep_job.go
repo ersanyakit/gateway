@@ -33,6 +33,10 @@ type SweepJob struct {
 	LockedUntil *time.Time `gorm:"index" json:"locked_until,omitempty"`
 	SweepTxHash string     `gorm:"size:128;index" json:"sweep_tx_hash,omitempty"`
 
+	PrefundAttempts  uint       `gorm:"not null;default:0" json:"prefund_attempts"`
+	PrefundLastError string     `gorm:"type:text" json:"prefund_last_error,omitempty"`
+	PrefundedAt      *time.Time `gorm:"index" json:"prefunded_at,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

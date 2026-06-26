@@ -6,8 +6,8 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
-	reconsvc "core/services/reconciliation"
 	"core/services/realtime"
+	reconsvc "core/services/reconciliation"
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"core/types"
@@ -107,6 +107,18 @@ func sweepJobLockTimeout() time.Duration {
 		return 2 * time.Minute
 	}
 	return timeout
+}
+
+func sweepPrefundRetryAfter() time.Duration {
+	raw := os.Getenv("SWEEP_PREFUND_RETRY_AFTER")
+	if raw == "" {
+		return 10 * time.Minute
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 10 * time.Minute
+	}
+	return interval
 }
 
 func reconciliationInterval() time.Duration {
@@ -426,6 +438,14 @@ func autoSweepDeposit(txModel *models.Transaction) {
 
 // executeAutoSweepDeposit moves funds from a user wallet (HDAddressId > 0) to the merchant reserve wallet.
 func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
+	return executeAutoSweepDepositWithJob(ctx, txModel, nil)
+}
+
+func executeSweepJob(ctx context.Context, job models.SweepJob, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
+	return executeAutoSweepDepositWithJob(ctx, txModel, &job)
+}
+
+func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transaction, job *models.SweepJob) (*blockchain.TransactionResult, error) {
 	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return nil, nil
 	}
@@ -463,12 +483,16 @@ func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (
 		if err != nil {
 			return nil, fmt.Errorf("re-derive reserve wallet failed: %w", err)
 		}
-		prefunded, err := chain.PrefundGas(ctx, *reserveDetails, userDetails.Address)
-		if err != nil {
-			log.Printf("auto-sweep: gas prefund [chain=%d addr=%s]: %v", txModel.ChainID, userDetails.Address, err)
-		} else if prefunded {
-			log.Printf("auto-sweep: gas prefunded to %s on chain %d", userDetails.Address, txModel.ChainID)
-			time.Sleep(5 * time.Second)
+		if shouldAttemptSweepPrefund(job) {
+			prefunded, err := chain.PrefundGas(ctx, *reserveDetails, userDetails.Address)
+			if err != nil {
+				markSweepPrefundFailed(ctx, job, err)
+				log.Printf("auto-sweep: gas prefund [chain=%d addr=%s]: %v", txModel.ChainID, userDetails.Address, err)
+			} else if prefunded {
+				markSweepPrefunded(ctx, job)
+				log.Printf("auto-sweep: gas prefunded to %s on chain %d", userDetails.Address, txModel.ChainID)
+				time.Sleep(5 * time.Second)
+			}
 		}
 		result, err := chain.SweepERC20To(ctx, *userDetails, *txModel.Token, reserveAddr)
 		if err != nil {
@@ -482,6 +506,31 @@ func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (
 		return nil, fmt.Errorf("sweep native [chain=%d]: %w", txModel.ChainID, err)
 	}
 	return result, nil
+}
+
+func shouldAttemptSweepPrefund(job *models.SweepJob) bool {
+	if job == nil || job.PrefundedAt == nil {
+		return true
+	}
+	return time.Since(*job.PrefundedAt) >= sweepPrefundRetryAfter()
+}
+
+func markSweepPrefunded(ctx context.Context, job *models.SweepJob) {
+	if job == nil || coreApplication.CORE.Router.SweepJobRepo == nil {
+		return
+	}
+	if err := coreApplication.CORE.Router.SweepJobRepo.MarkPrefunded(ctx, job.ID); err != nil {
+		log.Printf("auto-sweep: mark prefunded job=%s: %v", job.ID, err)
+	}
+}
+
+func markSweepPrefundFailed(ctx context.Context, job *models.SweepJob, prefundErr error) {
+	if job == nil || coreApplication.CORE.Router.SweepJobRepo == nil {
+		return
+	}
+	if err := coreApplication.CORE.Router.SweepJobRepo.MarkPrefundFailed(ctx, job.ID, prefundErr); err != nil {
+		log.Printf("auto-sweep: mark prefund failed job=%s: %v", job.ID, err)
+	}
 }
 
 func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, txModel *models.Transaction) {
@@ -891,7 +940,7 @@ func processSweepJobs(ctx context.Context) {
 			continue
 		}
 		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-		result, err := executeAutoSweepDeposit(jobCtx, txModel)
+		result, err := executeSweepJob(jobCtx, job, txModel)
 		cancel()
 		if err != nil {
 			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
