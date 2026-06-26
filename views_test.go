@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"core/api/handlers"
 	"core/models"
 
@@ -159,6 +161,13 @@ func TestGatewayViewsRenderCriticalStates(t *testing.T) {
 				"AmountDisplay":        "25 USDT",
 				"ExpiresAtUnix":        time.Now().Add(time.Hour).UnixMilli(),
 				"SelectedAssetLogoURL": "/static/coins/usdt.svg",
+				"CheckoutState": map[string]any{
+					"Status":  "active",
+					"Payable": true,
+				},
+				"StatusMode":  "detecting",
+				"StatusTitle": "Waiting for payment",
+				"StatusBody":  "Send the exact amount to the address below.",
 			},
 			expected: []string{"Send exactly", "Payment QR", "Copy address"},
 		},
@@ -208,5 +217,44 @@ func TestStandaloneDepositWalletProductClassification(t *testing.T) {
 		if got := isStandaloneDepositWalletProduct(productID); got != expected {
 			t.Fatalf("isStandaloneDepositWalletProduct(%q) = %v, want %v", productID, got, expected)
 		}
+	}
+}
+
+func TestPaymentRealtimeBroadcastEventMarksPaidTerminal(t *testing.T) {
+	txHash := "0xabc"
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusPaid,
+		TxHash:       &txHash,
+	}
+	event := paymentRealtimeBroadcastEvent(session)
+	if event.Status != models.PaymentStatusPaid || !event.Paid || !event.Terminal || event.Payable {
+		t.Fatalf("event state = %#v, want paid terminal non-payable", event)
+	}
+	if event.PaymentID != session.ID.String() || event.TxHash != txHash {
+		t.Fatalf("event identifiers = %#v", event)
+	}
+	if event.SuccessPath != "/checkout/checkout-token/return/success" || event.CancelPath != "/checkout/checkout-token/cancel" {
+		t.Fatalf("event paths = %#v", event)
+	}
+}
+
+func TestPaymentRealtimeBroadcastEventMapsAwaitingPaymentToPayerState(t *testing.T) {
+	txHash := "0xabc"
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusAwaitingPayment,
+		TxHash:       &txHash,
+	}
+	event := paymentRealtimeBroadcastEvent(session)
+	if event.Status != "confirming" || !event.Payable || event.Terminal || event.Paid {
+		t.Fatalf("event state = %#v, want confirming payable nonterminal", event)
+	}
+	session.TxHash = nil
+	event = paymentRealtimeBroadcastEvent(session)
+	if event.Status != "active" || !event.Payable || event.Terminal || event.Paid {
+		t.Fatalf("event state without tx = %#v, want active payable nonterminal", event)
 	}
 }

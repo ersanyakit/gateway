@@ -2852,16 +2852,34 @@ h1 {
   color: #059669;
 }
 
+.crypto-status-box.paid {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #047857;
+}
+
 .crypto-status-box.offline {
   border-color: #fed7aa;
   background: #fff7ed;
   color: #c2410c;
 }
 
-.crypto-status-box.expired {
+.crypto-status-box.expired,
+.crypto-status-box.canceled,
+.crypto-status-box.failed {
   border-color: #fecaca;
   background: #fef2f2;
   color: #b91c1c;
+}
+
+.crypto-status-box.underpaid {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.checkout-terminal [data-payable-action] {
+  display: none !important;
 }
 
 .crypto-status-box span {

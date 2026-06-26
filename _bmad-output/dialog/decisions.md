@@ -26,4 +26,11 @@
 - **Buyer vs end-user distinction:** external buyer is usually founder/owner/business decision-maker; technical champion is founder/CTO/integration lead; users include developer integrators, merchant/exchange operators, platform/admin operators, custody/security owners, checkout payers, and wallet end users.
 - **Current onboarding decision:** ersan owns all first-phase sales/onboarding roles: business selection, technical evaluation, pilot approval, and commercial decision.
 - **Decision criteria:** safe integration, money lifecycle trust, controlled beta limits, launch readiness visibility, tenant isolation, auditability, redaction, and recovery paths.
+
+## Target User Definition
+
+- **Primary users:** developer integrator, merchant/exchange operator, and platform/admin operator.
+- **Secondary users:** checkout payer, custody/security owner, platform owner, and downstream wallet end user.
+- **Non-users for v1:** high-volume regulated exchanges needing production custody before readiness gates, self-custody wallet consumers, fiat/card/bank settlement users, and general-purpose blockchain indexer users.
+- **Basis:** derived from finalized PRD and UX flows in `_bmad-output`, without asking additional questions because the source folder contained enough detail.
 - WDS development lane will wrap implementation work: code changes should trace back to PRD, UX handoff, architecture spine, epics, sprint status, story files, and `_bmad-output/project-context.md`.

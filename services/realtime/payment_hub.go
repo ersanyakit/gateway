@@ -17,6 +17,8 @@ type PaymentEvent struct {
 	TxHash       string `json:"tx_hash,omitempty"`
 	SuccessPath  string `json:"success_path,omitempty"`
 	CancelPath   string `json:"cancel_path,omitempty"`
+	Payable      bool   `json:"payable"`
+	Terminal     bool   `json:"terminal"`
 	UpdatedAt    int64  `json:"updated_at"`
 }
 

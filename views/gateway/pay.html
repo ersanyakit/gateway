@@ -41,8 +41,8 @@
         {{end}}
         <div class="crypto-flex-between crypto-align-start">
           <div>
-            <p class="crypto-label">{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}</p>
-            <div class="crypto-send-amount">{{.AmountDisplay}}</div>
+            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Odeme durumu{{end}}{{end}}</p>
+            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{.AmountDisplay}}{{else}}{{.StatusTitle}}{{end}}</div>
             <p class="crypto-muted">Order {{.Session.OrderID}} · {{.Session.Amount}} {{.Session.Currency}}</p>
           </div>
           <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
@@ -51,9 +51,19 @@
           </div>
         </div>
 
-        <div class="crypto-progress-bar"><span data-progress-fill data-countdown-unix="{{.ExpiresAtUnix}}"></span></div>
+        <section class="crypto-status-box {{.StatusMode}}" id="statusLabel" data-checkout-status="{{.CheckoutState.Status}}">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          <span>
+            <strong id="statusTitle">{{.StatusTitle}}</strong>
+            <small id="statusBody">{{.StatusBody}}</small>
+          </span>
+          {{if not .CheckoutState.Terminal}}<span class="crypto-bouncing-dots"><i></i><i></i><i></i></span>{{end}}
+        </section>
 
-        <section class="crypto-qr-wrap">
+        {{if not .CheckoutState.Terminal}}
+        <div class="crypto-progress-bar" data-payable-action><span data-progress-fill data-countdown-unix="{{.ExpiresAtUnix}}"></span></div>
+
+        <section class="crypto-qr-wrap" data-payable-action>
           <div class="crypto-qr-outer">
             <img src="{{.QRCodeURL}}" alt="Payment QR">
             {{if .SelectedAssetLogoURL}}
@@ -71,7 +81,7 @@
           <p>{{if .IsEnglish}}Scan with your wallet app to pay{{else}}Ödeme için wallet uygulamanla QR kodu tara{{end}}</p>
         </section>
 
-        <section class="crypto-live-panel">
+        <section class="crypto-live-panel" data-payable-action>
           <div class="crypto-live-row">
             <span class="crypto-live-pulse"></span>
             <span>
@@ -86,7 +96,7 @@
           </ol>
         </section>
 
-        <section class="crypto-copy-section">
+        <section class="crypto-copy-section" data-payable-action>
           <div class="crypto-copy-header">
             <p class="crypto-label">{{if .IsEnglish}}Wallet address{{else}}Wallet adresi{{end}}</p>
             <button class="crypto-copy-btn" type="button" data-copy-target="depositAddress">
@@ -97,7 +107,7 @@
           <code class="crypto-copy-value" id="depositAddress">{{.Session.DepositAddress}}</code>
         </section>
 
-        <section class="crypto-copy-section">
+        <section class="crypto-copy-section" data-payable-action>
           <div class="crypto-copy-header">
             <p class="crypto-label">{{if .IsEnglish}}Exact amount{{else}}Tam tutar{{end}}</p>
             <button class="crypto-copy-btn" type="button" data-copy-value="{{.AmountDisplay}}">
@@ -108,32 +118,32 @@
           <code class="crypto-copy-value no-bg">{{.AmountDisplay}}</code>
         </section>
 
-        <section class="crypto-copy-section">
+        <section class="crypto-copy-section" data-payable-action>
           <div class="crypto-copy-header">
             <p class="crypto-label">Payment URI</p>
           </div>
           <code class="crypto-copy-value">{{.PaymentURI}}</code>
         </section>
 
-        <section class="crypto-status-box detecting" id="statusLabel">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
-          <span>
-            <strong id="statusTitle">{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}</strong>
-            <small id="statusBody">{{if .IsEnglish}}Live connection is opening. Send the exact amount to the address above.{{else}}Canlı bağlantı açılıyor. Yukarıdaki adrese tam tutarı gönder.{{end}}</small>
-          </span>
-          <span class="crypto-bouncing-dots"><i></i><i></i><i></i></span>
-        </section>
-
-        <section class="crypto-warning">
+        <section class="crypto-warning" data-payable-action>
           <span>!</span>
           <p>{{if .IsEnglish}}Send only{{else}}Sadece{{end}} <strong>{{.Session.SelectedSymbol}}</strong> {{if .IsEnglish}}on the{{else}}assetini{{end}} <strong>{{.ChainName}}</strong> {{if .IsEnglish}}network. Sending other assets may result in permanent loss.{{else}}network üzerinde gönder. Farklı asset göndermek kalıcı kayba yol açabilir.{{end}}</p>
         </section>
 
-        <div>
+        <div data-payable-action>
           <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
           <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/change">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
           <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/cancel">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
         </div>
+        {{else}}
+        <section class="crypto-summary-card">
+          <div class="crypto-summary-body">
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Expected amount{{else}}Beklenen tutar{{end}}</span><strong>{{.AmountDisplay}}</strong></div>
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network{{else}}Network{{end}}</span><strong>{{.ChainName}}</strong></div>
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Order{{else}}Siparis{{end}}</span><strong>{{.Session.OrderID}}</strong></div>
+          </div>
+        </section>
+        {{end}}
       </div>
     </section>
 
@@ -155,18 +165,41 @@
       if (!data) return false;
       if (data.paid) {
         setPaymentStatus(
-          "confirming",
+          "paid",
           "{{if .IsEnglish}}Payment confirmed{{else}}Ödeme onaylandı{{end}}",
           "{{if .IsEnglish}}Redirecting to the success page.{{else}}Başarı sayfasına yönlendiriliyorsun.{{end}}"
         );
         window.location.href = data.success_path || "/checkout/{{.Session.SessionToken}}/return/success";
         return true;
       }
-      if (data.status === "expired" || data.status === "canceled" || data.status === "failed") {
+      if (data.status === "confirming") {
         setPaymentStatus(
-          "expired",
-          "{{if .IsEnglish}}Payment {{else}}Ödeme {{end}}" + data.status,
-          "{{if .IsEnglish}}This checkout can no longer receive a payment.{{else}}Bu checkout artık ödeme alamaz.{{end}}"
+          "confirming",
+          "{{if .IsEnglish}}Payment confirming{{else}}Ödeme onaylanıyor{{end}}",
+          "{{if .IsEnglish}}A transaction was detected and is waiting for final settlement.{{else}}İşlem algılandı ve final onay bekleniyor.{{end}}"
+        );
+        return false;
+      }
+      if (data.status === "active" || data.status === "pending") {
+        setPaymentStatus(
+          "detecting",
+          "{{if .IsEnglish}}Waiting for payment{{else}}Ödeme bekleniyor{{end}}",
+          "{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}"
+        );
+        return false;
+      }
+      if (data.status === "expired" || data.status === "canceled" || data.status === "failed" || data.status === "underpaid") {
+        document.body.classList.add("checkout-terminal");
+        var terminalTitle = data.status === "underpaid"
+          ? "{{if .IsEnglish}}Underpaid{{else}}Eksik ödeme{{end}}"
+          : "{{if .IsEnglish}}Payment {{else}}Ödeme {{end}}" + data.status;
+        var terminalBody = data.status === "underpaid"
+          ? "{{if .IsEnglish}}The received amount is below the expected amount.{{else}}Alınan tutar beklenen tutarın altında.{{end}}"
+          : "{{if .IsEnglish}}This checkout can no longer receive a payment.{{else}}Bu checkout artık ödeme alamaz.{{end}}";
+        setPaymentStatus(
+          data.status,
+          terminalTitle,
+          terminalBody
         );
         return true;
       }

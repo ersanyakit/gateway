@@ -2,17 +2,24 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"core/asset"
+	"core/blockchain"
 	"core/constants"
 	"core/models"
+	"core/types"
 
 	fiber "github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func TestV1WalletProductIDDefaultsToWallet(t *testing.T) {
@@ -77,7 +84,9 @@ func TestV1WalletResponseIncludesProviderAddresses(t *testing.T) {
 
 func TestV1StaticAddressResponseReturnsSelectedChainAddress(t *testing.T) {
 	wallet := &models.Wallet{
+		ID:                 uuid.New(),
 		UserID:             "customer_42",
+		ProductID:          "static:88888:CHZ",
 		EthereumAddress:    "0xeth",
 		ChilizSpicyAddress: "0xspicy",
 	}
@@ -98,11 +107,229 @@ func TestV1StaticAddressResponseReturnsSelectedChainAddress(t *testing.T) {
 	}
 }
 
+func TestV1ResolveStaticAddressScopeDefaultsNativeAsset(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	chainID := int64(constants.Ethereum)
+
+	scope, err := v1ResolveStaticAddressScope(registry, types.V1StaticAddressRequest{ChainID: &chainID})
+	if err != nil {
+		t.Fatalf("resolve scope: %v", err)
+	}
+	if scope.Symbol != "ETH" {
+		t.Fatalf("symbol = %q, want ETH", scope.Symbol)
+	}
+	if scope.Token != "" {
+		t.Fatalf("token = %q, want empty", scope.Token)
+	}
+	if scope.ProductID != "static:1:ETH" {
+		t.Fatalf("product id = %q, want static:1:ETH", scope.ProductID)
+	}
+}
+
+func TestV1ResolveStaticAddressScopeRequiresAssetRegistry(t *testing.T) {
+	chainID := int64(constants.Ethereum)
+
+	_, err := v1ResolveStaticAddressScope(nil, types.V1StaticAddressRequest{
+		ChainID: &chainID,
+		Symbol:  "ETH",
+	})
+	if err == nil || !strings.Contains(err.Error(), "asset registry is not configured") {
+		t.Fatalf("err = %v, want asset registry not configured", err)
+	}
+}
+
+func TestV1ResolveStaticAddressScopeRequiresTokenForNonNativeAsset(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewERC20(constants.Ethereum, "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "USDC", "USD Coin", 6))
+	chainID := int64(constants.Ethereum)
+
+	_, err := v1ResolveStaticAddressScope(registry, types.V1StaticAddressRequest{
+		ChainID: &chainID,
+		Symbol:  "USDC",
+	})
+	if err == nil || !strings.Contains(err.Error(), "token is required") {
+		t.Fatalf("err = %v, want token required", err)
+	}
+}
+
+func TestV1ResolveStaticAddressScopeIncludesTokenAndProduct(t *testing.T) {
+	registry := asset.NewRegistry()
+	token := "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+	registry.Register(asset.NewERC20(constants.Ethereum, token, "USDC", "USD Coin", 6))
+	chainID := int64(constants.Ethereum)
+
+	scope, err := v1ResolveStaticAddressScope(registry, types.V1StaticAddressRequest{
+		ChainID:   &chainID,
+		Symbol:    "usdc",
+		Token:     token,
+		ProductID: "checkout",
+	})
+	if err != nil {
+		t.Fatalf("resolve scope: %v", err)
+	}
+	wantToken := strings.ToLower(token)
+	if scope.Symbol != "USDC" {
+		t.Fatalf("symbol = %q, want USDC", scope.Symbol)
+	}
+	if scope.Token != wantToken {
+		t.Fatalf("token = %q, want %q", scope.Token, wantToken)
+	}
+	wantProduct := "static:1:USDC:token:" + wantToken + ":product:checkout"
+	if scope.ProductID != wantProduct {
+		t.Fatalf("product id = %q, want %q", scope.ProductID, wantProduct)
+	}
+}
+
+func TestV1ValidateStaticAddressChainReadyRejectsUnavailableChain(t *testing.T) {
+	if err := v1ValidateStaticAddressChainReady(nil, constants.Ethereum); err == nil || !strings.Contains(err.Error(), "not ready") {
+		t.Fatalf("nil factory err = %v, want not ready", err)
+	}
+	factory := blockchain.NewChainFactory()
+	if err := v1ValidateStaticAddressChainReady(factory, constants.Ethereum); err == nil || !strings.Contains(err.Error(), "unsupported chain_id") {
+		t.Fatalf("empty factory err = %v, want unsupported chain_id", err)
+	}
+}
+
+func TestV1StaticAddressResponseIncludesScopeMetadata(t *testing.T) {
+	createdAt := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	scope := v1StaticAddressScope{
+		ChainID:   constants.Ethereum,
+		Symbol:    "USDC",
+		Token:     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+		ProductID: "static:1:USDC:token:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48:product:checkout",
+	}
+	wallet := &models.Wallet{
+		ID:              uuid.New(),
+		UserID:          "customer_42",
+		ProductID:       scope.ProductID,
+		EthereumAddress: "0xeth",
+		CreatedAt:       createdAt,
+	}
+
+	resp, err := v1StaticAddressResponseForScope(wallet, scope, "Main wallet")
+	if err != nil {
+		t.Fatalf("response: %v", err)
+	}
+	if resp["product_id"] != scope.ProductID {
+		t.Fatalf("product_id = %v, want %s", resp["product_id"], scope.ProductID)
+	}
+	if resp["chain_id"] != int64(constants.Ethereum) {
+		t.Fatalf("chain_id = %v, want %d", resp["chain_id"], constants.Ethereum)
+	}
+	if resp["token"] != scope.Token {
+		t.Fatalf("token = %v, want %s", resp["token"], scope.Token)
+	}
+	if resp["created_at"] != createdAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("created_at = %v", resp["created_at"])
+	}
+}
+
+func TestV1StaticAddressResponseRequiresRequestedChainAddress(t *testing.T) {
+	wallet := &models.Wallet{
+		ID:     uuid.New(),
+		UserID: "customer_42",
+	}
+
+	_, err := v1StaticAddressResponseForScope(wallet, v1StaticAddressScope{
+		ChainID:   constants.Solana,
+		Symbol:    "SOL",
+		ProductID: "static:501:SOL",
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "address unavailable") {
+		t.Fatalf("err = %v, want address unavailable", err)
+	}
+}
+
+func TestV1ValidateStaticAddressChainReadyFailsBeforeWalletMutation(t *testing.T) {
+	if err := v1ValidateStaticAddressChainReady(nil, constants.Ethereum); err == nil || !strings.Contains(err.Error(), "chain factory is not ready") {
+		t.Fatalf("nil chain factory err = %v, want not ready", err)
+	}
+
+	factory := blockchain.NewChainFactory()
+	if err := v1ValidateStaticAddressChainReady(factory, constants.Ethereum); err == nil || !strings.Contains(err.Error(), "unsupported chain_id") {
+		t.Fatalf("unregistered chain err = %v, want unsupported chain_id", err)
+	}
+}
+
+func TestV1CreateStaticAddressWalletConcurrentSameScopeCreatesOneWallet(t *testing.T) {
+	repo := newFakeStaticWalletRepo()
+	domain := &models.Domain{ID: uuid.New(), MerchantID: uuid.New()}
+	scope := v1StaticAddressScope{
+		ChainID:   constants.Ethereum,
+		Symbol:    "ETH",
+		ProductID: "static:1:ETH",
+	}
+
+	const workers = 20
+	var wg sync.WaitGroup
+	ids := make(chan uuid.UUID, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			wallet, err := v1CreateStaticAddressWallet(context.Background(), repo, nil, domain, "customer_42", scope)
+			if err != nil {
+				errs <- err
+				return
+			}
+			ids <- wallet.ID
+		}()
+	}
+	wg.Wait()
+	close(ids)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("create static wallet: %v", err)
+	}
+	var first uuid.UUID
+	for id := range ids {
+		if first == uuid.Nil {
+			first = id
+			continue
+		}
+		if id != first {
+			t.Fatalf("wallet id = %s, want %s", id, first)
+		}
+	}
+	if repo.createCount != 1 {
+		t.Fatalf("create count = %d, want 1", repo.createCount)
+	}
+}
+
+func TestV1CreateStaticAddressWalletScopesByDomain(t *testing.T) {
+	repo := newFakeStaticWalletRepo()
+	scope := v1StaticAddressScope{
+		ChainID:   constants.Ethereum,
+		Symbol:    "ETH",
+		ProductID: "static:1:ETH",
+	}
+	domainA := &models.Domain{ID: uuid.New(), MerchantID: uuid.New()}
+	domainB := &models.Domain{ID: uuid.New(), MerchantID: domainA.MerchantID}
+
+	walletA, err := v1CreateStaticAddressWallet(context.Background(), repo, nil, domainA, "customer_42", scope)
+	if err != nil {
+		t.Fatalf("create domain A: %v", err)
+	}
+	walletB, err := v1CreateStaticAddressWallet(context.Background(), repo, nil, domainB, "customer_42", scope)
+	if err != nil {
+		t.Fatalf("create domain B: %v", err)
+	}
+	if walletA.ID == walletB.ID {
+		t.Fatalf("same wallet id for different domains: %s", walletA.ID)
+	}
+	if repo.createCount != 2 {
+		t.Fatalf("create count = %d, want 2", repo.createCount)
+	}
+}
+
 func TestV1StaticWalletListItemParsesProductScope(t *testing.T) {
 	wallet := models.Wallet{
 		ID:              uuid.New(),
 		UserID:          "customer_42",
-		ProductID:       "static:1:USDT",
+		ProductID:       "static:1:USDT:token:0xdac17f958d2ee523a2206206994597c13d831ec7:product:checkout",
 		EthereumAddress: "0xeth",
 		CreatedAt:       time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC),
 	}
@@ -116,9 +343,76 @@ func TestV1StaticWalletListItemParsesProductScope(t *testing.T) {
 	if item["symbol"] != "USDT" {
 		t.Fatalf("symbol = %v", item["symbol"])
 	}
+	if item["token"] != "0xdac17f958d2ee523a2206206994597c13d831ec7" {
+		t.Fatalf("token = %v", item["token"])
+	}
 	if item["address"] != "0xeth" {
 		t.Fatalf("address = %v", item["address"])
 	}
+}
+
+type fakeStaticWalletRepo struct {
+	mu          sync.Mutex
+	wallets     map[string]*models.Wallet
+	byID        map[uuid.UUID]*models.Wallet
+	createCount int
+}
+
+func newFakeStaticWalletRepo() *fakeStaticWalletRepo {
+	return &fakeStaticWalletRepo{
+		wallets: make(map[string]*models.Wallet),
+		byID:    make(map[uuid.UUID]*models.Wallet),
+	}
+}
+
+func (r *fakeStaticWalletRepo) Create(params types.WalletParams) (*models.Wallet, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	key := strings.Join([]string{*params.MerchantId, *params.DomainId, *params.ProductId, *params.UserId}, "|")
+	if existing := r.wallets[key]; existing != nil {
+		clone := *existing
+		return &clone, nil
+	}
+
+	merchantID, err := uuid.Parse(*params.MerchantId)
+	if err != nil {
+		return nil, err
+	}
+	domainID, err := uuid.Parse(*params.DomainId)
+	if err != nil {
+		return nil, err
+	}
+	r.createCount++
+	wallet := &models.Wallet{
+		ID:              uuid.New(),
+		MerchantID:      merchantID,
+		DomainID:        domainID,
+		ProductID:       *params.ProductId,
+		UserID:          *params.UserId,
+		HDAddressId:     uint32(r.createCount),
+		EthereumAddress: "0xeth",
+		CreatedAt:       time.Now().UTC(),
+	}
+	r.wallets[key] = wallet
+	r.byID[wallet.ID] = wallet
+	clone := *wallet
+	return &clone, nil
+}
+
+func (r *fakeStaticWalletRepo) EnsureAllAddresses(context.Context, uuid.UUID, *blockchain.ChainFactory) error {
+	return nil
+}
+
+func (r *fakeStaticWalletRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Wallet, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	wallet := r.byID[id]
+	if wallet == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	clone := *wallet
+	return &clone, nil
 }
 
 func TestHandleV1CommonAddressQRCodeReturnsPNG(t *testing.T) {

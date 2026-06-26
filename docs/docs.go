@@ -37,11 +37,6 @@ const docTemplate = `{
         },
         "/api/v1/common/balance": {
             "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
                 "description": "Returns the ledger balance for each asset held under the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -63,16 +58,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/common/currencies": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/common/currencies": {
+            "get": {
                 "description": "Lists all supported crypto assets with chain, decimals, and logo URLs.",
                 "produces": [
                     "application/json"
@@ -94,16 +89,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/common/fiat-currencies": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/common/fiat-currencies": {
+            "get": {
                 "description": "Lists all fiat currencies accepted as payment amount denomination.",
                 "produces": [
                     "application/json"
@@ -125,16 +120,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/common/networks": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/common/networks": {
+            "get": {
                 "description": "Lists all supported blockchain networks with chain IDs and logo URLs.",
                 "produces": [
                     "application/json"
@@ -156,16 +151,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/common/prices": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/common/prices": {
+            "get": {
                 "description": "Returns current prices for all supported crypto assets in the requested fiat currency.",
                 "produces": [
                     "application/json"
@@ -202,7 +197,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ]
             }
         },
         "/api/v1/common/qrcode": {
@@ -257,11 +257,6 @@ const docTemplate = `{
         },
         "/api/v1/common/readiness": {
             "get": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
                 "description": "Validates database access, chain registration, listener registration, live RPC access, and Trust Wallet Core HD wallet derivation.",
                 "produces": [
                     "application/json"
@@ -289,16 +284,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ReadinessResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/common/status": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/common/status": {
+            "get": {
                 "description": "Returns current operational status of the gateway.",
                 "produces": [
                     "application/json"
@@ -320,7 +315,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ]
             }
         },
         "/api/v1/payment/assets": {
@@ -345,11 +345,6 @@ const docTemplate = `{
         },
         "/api/v1/payment/create": {
             "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ],
                 "description": "Creates a hosted checkout payment session. Returns a checkout URL the customer visits to complete payment.",
                 "consumes": [
                     "application/json"
@@ -418,16 +413,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/currencies": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/currencies": {
+            "get": {
                 "description": "Lists all crypto currencies that can be accepted as payment.",
                 "produces": [
                     "application/json"
@@ -449,16 +444,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/history": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/history": {
+            "get": {
                 "description": "Returns paginated payment session history for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -489,7 +484,8 @@ const docTemplate = `{
                             "paid",
                             "expired",
                             "canceled",
-                            "failed"
+                            "failed",
+                            "underpaid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
@@ -510,16 +506,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/info": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/info": {
+            "get": {
                 "description": "Retrieves detailed payment session info by track_id (session token) or order_id.",
                 "produces": [
                     "application/json"
@@ -569,17 +565,17 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/static-address": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
-                "description": "Creates a permanent deposit wallet for a user. Subsequent calls with the same user_id and chain return the existing address.",
+                ]
+            }
+        },
+        "/api/v1/payment/static-address": {
+            "post": {
+                "description": "Creates a permanent deposit wallet for a user and asset scope. Subsequent calls with the same domain, product_id, user_id, chain, symbol, and token return the existing address.",
                 "consumes": [
                     "application/json"
                 ],
@@ -641,16 +637,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/static-addresses": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/static-addresses": {
+            "get": {
                 "description": "Lists static deposit wallets under the authenticated API domain, optionally filtered by user_id.",
                 "produces": [
                     "application/json"
@@ -695,16 +691,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/statistics": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/statistics": {
+            "get": {
                 "description": "Returns count of payments grouped by status for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -726,16 +722,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/status-table": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/status-table": {
+            "get": {
                 "description": "Returns all possible payment statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
@@ -757,16 +753,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payment/white-label": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payment/white-label": {
+            "post": {
                 "description": "Creates a white label hosted checkout session. Identical to Generate Invoice but returns a branded URL.",
                 "consumes": [
                     "application/json"
@@ -835,16 +831,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payout/create": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payout/create": {
+            "post": {
                 "description": "Creates a withdrawal (payout) request from the merchant's wallet to the specified address. Requires admin approval before execution.",
                 "consumes": [
                     "application/json"
@@ -907,16 +903,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payout/history": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payout/history": {
+            "get": {
                 "description": "Returns paginated payout (withdrawal) history for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -954,16 +950,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payout/info": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payout/info": {
+            "get": {
                 "description": "Returns details of a specific payout request by payout_id.",
                 "produces": [
                     "application/json"
@@ -1007,16 +1003,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/payout/status-table": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/payout/status-table": {
+            "get": {
                 "description": "Returns all possible payout statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
@@ -1038,16 +1034,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/refund/create": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/refund/create": {
+            "post": {
                 "description": "Creates a refund request for a paid payment. Provide payment_id OR order_id to identify the payment. Admin approval broadcasts the on-chain refund.",
                 "consumes": [
                     "application/json"
@@ -1110,16 +1106,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/refund/history": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/refund/history": {
+            "get": {
                 "description": "Returns paginated refund requests for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1157,16 +1153,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/refund/info": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/refund/info": {
+            "get": {
                 "description": "Returns a refund request owned by the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1210,16 +1206,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/transaction/rescan": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/transaction/rescan": {
+            "post": {
                 "description": "Re-fetches a transaction from the selected blockchain and replays it through wallet matching, payment, ledger, and webhook processing.",
                 "consumes": [
                     "application/json"
@@ -1292,16 +1288,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/wallet/balance": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/wallet/balance": {
+            "get": {
                 "description": "Returns ledger balances scoped to one wallet-provider wallet.",
                 "produces": [
                     "application/json"
@@ -1355,16 +1351,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/wallet/create": {
-            "post": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/wallet/create": {
+            "post": {
                 "description": "Creates or returns a reusable multi-chain wallet for a merchant user. This endpoint is for wallet-provider integrations.",
                 "consumes": [
                     "application/json"
@@ -1427,16 +1423,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/wallet/info": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/wallet/info": {
+            "get": {
                 "description": "Returns a wallet by wallet_id, or by user_id plus optional product_id under the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1490,16 +1486,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
-            }
-        },
-        "/api/v1/wallet/list": {
-            "get": {
+                },
                 "security": [
                     {
                         "ApiKeyAuth": []
                     }
-                ],
+                ]
+            }
+        },
+        "/api/v1/wallet/list": {
+            "get": {
                 "description": "Lists wallet-provider wallets under the authenticated API domain, optionally filtered by user_id.",
                 "produces": [
                     "application/json"
@@ -1543,7 +1539,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ]
             }
         },
         "/auth/oidc/callback": {
@@ -2453,14 +2454,6 @@ const docTemplate = `{
         },
         "/payments/create": {
             "post": {
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "BearerAuth": []
-                    }
-                ],
                 "description": "Creates a checkout session for a merchant order and returns a hosted checkout URL.",
                 "consumes": [
                     "application/json"
@@ -2541,7 +2534,15 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.ErrorResponse"
                         }
                     }
-                }
+                },
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ]
             }
         }
     },
@@ -2771,6 +2772,12 @@ const docTemplate = `{
                 "paid": {
                     "type": "boolean"
                 },
+                "payable": {
+                    "type": "boolean"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -2778,6 +2785,12 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "success_path": {
+                    "type": "string"
+                },
+                "terminal": {
+                    "type": "boolean"
+                },
+                "tx_hash": {
                     "type": "string"
                 }
             }
@@ -3765,6 +3778,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "USDT"
                 },
+                "token": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+                },
                 "user_id": {
                     "type": "string",
                     "example": "customer_42"
@@ -3821,9 +3838,17 @@ const docTemplate = `{
                     "type": "string",
                     "example": "Main wallet"
                 },
+                "product_id": {
+                    "type": "string",
+                    "example": "checkout"
+                },
                 "symbol": {
                     "type": "string",
                     "example": "USDT"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 },
                 "user_id": {
                     "type": "string",

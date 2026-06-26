@@ -148,11 +148,19 @@ definitions:
         type: string
       paid:
         type: boolean
+      payable:
+        type: boolean
+      payment_id:
+        type: string
       status:
         type: string
       success:
         type: boolean
       success_path:
+        type: string
+      terminal:
+        type: boolean
+      tx_hash:
         type: string
     type: object
   types.V1AssetCatalogItem:
@@ -854,6 +862,9 @@ definitions:
       symbol:
         example: USDT
         type: string
+      token:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
       user_id:
         example: customer_42
         type: string
@@ -893,8 +904,14 @@ definitions:
       label:
         example: Main wallet
         type: string
+      product_id:
+        example: checkout
+        type: string
       symbol:
         example: USDT
+        type: string
+      token:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
         type: string
       user_id:
         example: customer_42
@@ -1418,6 +1435,7 @@ paths:
         - expired
         - canceled
         - failed
+        - underpaid
         in: query
         name: status
         type: string
@@ -1480,8 +1498,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Creates a permanent deposit wallet for a user. Subsequent calls
-        with the same user_id and chain return the existing address.
+      description: Creates a permanent deposit wallet for a user and asset scope.
+        Subsequent calls with the same domain, product_id, user_id, chain, symbol,
+        and token return the existing address.
       parameters:
       - description: API secret returned when the domain was created or rotated
         in: header

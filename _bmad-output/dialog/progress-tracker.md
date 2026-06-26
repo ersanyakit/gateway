@@ -31,7 +31,7 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - [x] Initial Context — crypto wallet provider and payment gateway framing
 - [x] Client Profile — one-person product / technical ownership confirmed
 - [x] Vision Capture — what we're building and why
-- [ ] User Definition — who we're building for
+- [x] User Definition — who we're building for
 - [ ] Product Concept — the founding structural idea
 - [ ] Core Features — essential functionality
 - [ ] Inspiration & References — visual preferences and references
@@ -55,6 +55,7 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 5. Positioning confirmed from `_bmad-output`: B2B crypto payment gateway + wallet-provider infrastructure on one shared money core.
 6. Business model determined from `_bmad-output`: B2B infrastructure platform; direct customers are merchant/dealer and wallet/exchange tenants.
 7. Business customer profile captured: external buyer roles exist, but first onboarding/sales decision is founder-led by ersan.
+8. Target users captured from `_bmad-output`: developer integrator, merchant/exchange operator, platform/admin operator, checkout payer, custody/security owner, platform owner, and downstream wallet end user.
 
 ---
 
@@ -66,5 +67,6 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - `_bmad-output/dialog/client-profile.md`
 - `_bmad-output/dialog/decisions.md`
 - `_bmad-output/dialog/02-vision.md`
+- `_bmad-output/dialog/03-users.md`
 - `_bmad-output/dialog/07-positioning.md`
 - `_bmad-output/A-Product-Brief/project-brief.md`

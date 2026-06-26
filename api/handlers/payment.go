@@ -463,13 +463,151 @@ func copySessionSelectedFields(dst fiber.Map, session models.PaymentSession) {
 
 func paymentSessionResponseStatus(session models.PaymentSession, now time.Time) string {
 	switch session.Status {
-	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed:
+	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
 		return session.Status
 	}
 	if !now.IsZero() && session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
 		return models.PaymentStatusExpired
 	}
 	return session.Status
+}
+
+const (
+	checkoutStateActive     = "active"
+	checkoutStatePending    = "pending"
+	checkoutStateConfirming = "confirming"
+	checkoutStatePaid       = "paid"
+	checkoutStateExpired    = "expired"
+	checkoutStateCanceled   = "canceled"
+	checkoutStateFailed     = "failed"
+	checkoutStateUnderpaid  = "underpaid"
+)
+
+type checkoutPaymentState struct {
+	Status      string
+	Mode        string
+	TitleEN     string
+	TitleTR     string
+	BodyEN      string
+	BodyTR      string
+	Paid        bool
+	Payable     bool
+	Terminal    bool
+	PaymentID   string
+	TxHash      string
+	SuccessPath string
+	CancelPath  string
+}
+
+func checkoutPayerState(session models.PaymentSession, now time.Time) checkoutPaymentState {
+	state := checkoutPaymentState{
+		PaymentID:   uuidString(session.ID),
+		TxHash:      valueOrDefault(session.TxHash, ""),
+		SuccessPath: "/checkout/" + session.SessionToken + "/return/success",
+		CancelPath:  "/checkout/" + session.SessionToken + "/cancel",
+	}
+	status := paymentSessionResponseStatus(session, now)
+	switch status {
+	case models.PaymentStatusPaid:
+		state.Status = checkoutStatePaid
+		state.Mode = "paid"
+		state.Paid = true
+		state.Terminal = true
+		state.TitleEN = "Paid"
+		state.TitleTR = "Odendi"
+		state.BodyEN = "Payment received successfully."
+		state.BodyTR = "Odeme basariyla alindi."
+	case models.PaymentStatusExpired:
+		state.Status = checkoutStateExpired
+		state.Mode = "expired"
+		state.Terminal = true
+		state.TitleEN = "Expired"
+		state.TitleTR = "Suresi doldu"
+		state.BodyEN = "This checkout can no longer receive a payment."
+		state.BodyTR = "Bu checkout artik odeme alamaz."
+	case models.PaymentStatusCanceled:
+		state.Status = checkoutStateCanceled
+		state.Mode = "canceled"
+		state.Terminal = true
+		state.TitleEN = "Canceled"
+		state.TitleTR = "Iptal edildi"
+		state.BodyEN = "This checkout was canceled."
+		state.BodyTR = "Bu checkout iptal edildi."
+	case models.PaymentStatusFailed:
+		state.Status = checkoutStateFailed
+		state.Mode = "failed"
+		state.Terminal = true
+		state.TitleEN = "Failed"
+		state.TitleTR = "Basarisiz"
+		state.BodyEN = "The payment could not be completed."
+		state.BodyTR = "Odeme tamamlanamadi."
+	case models.PaymentStatusUnderpaid:
+		state.Status = checkoutStateUnderpaid
+		state.Mode = "underpaid"
+		state.Terminal = true
+		state.TitleEN = "Underpaid"
+		state.TitleTR = "Eksik odeme"
+		state.BodyEN = "The received amount is below the expected amount."
+		state.BodyTR = "Alinan tutar beklenen tutarin altinda."
+	case models.PaymentStatusAwaitingPayment:
+		if strings.TrimSpace(state.TxHash) != "" || session.ConfirmedAt != nil {
+			state.Status = checkoutStateConfirming
+			state.Mode = "confirming"
+			state.Payable = true
+			state.TitleEN = "Payment confirming"
+			state.TitleTR = "Odeme onaylaniyor"
+			state.BodyEN = "A transaction was detected and is waiting for final settlement."
+			state.BodyTR = "Islem algilandi ve final onay bekleniyor."
+			return state
+		}
+		state.Status = checkoutStateActive
+		state.Mode = "detecting"
+		state.Payable = true
+		state.TitleEN = "Waiting for payment"
+		state.TitleTR = "Odeme bekleniyor"
+		state.BodyEN = "Send the exact amount to the address below."
+		state.BodyTR = "Tam tutari asagidaki adrese gonder."
+	default:
+		state.Status = checkoutStatePending
+		state.Mode = "detecting"
+		state.TitleEN = "Waiting for asset selection"
+		state.TitleTR = "Asset secimi bekleniyor"
+		state.BodyEN = "Choose an asset and network to continue."
+		state.BodyTR = "Devam etmek icin asset ve network sec."
+	}
+	return state
+}
+
+func checkoutStatusPayload(session models.PaymentSession, now time.Time) fiber.Map {
+	state := checkoutPayerState(session, now)
+	payload := fiber.Map{
+		"success":      true,
+		"status":       state.Status,
+		"paid":         state.Paid,
+		"payment_id":   state.PaymentID,
+		"success_path": state.SuccessPath,
+		"cancel_path":  state.CancelPath,
+		"payable":      state.Payable,
+		"terminal":     state.Terminal,
+	}
+	if state.TxHash != "" {
+		payload["tx_hash"] = state.TxHash
+	}
+	return payload
+}
+
+func checkoutRealtimeEvent(session models.PaymentSession, now time.Time) realtime.PaymentEvent {
+	state := checkoutPayerState(session, now)
+	return realtime.PaymentEvent{
+		Status:      state.Status,
+		Paid:        state.Paid,
+		PaymentID:   state.PaymentID,
+		TxHash:      state.TxHash,
+		SuccessPath: state.SuccessPath,
+		CancelPath:  state.CancelPath,
+		Payable:     state.Payable,
+		Terminal:    state.Terminal,
+	}
 }
 
 // HandleCheckout renders the asset selection page for a checkout session.
@@ -488,12 +626,13 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid {
+		checkoutState := checkoutPayerState(*session, time.Now())
+		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid || checkoutState.Terminal {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
-			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
+			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
 
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
@@ -669,7 +808,8 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		}
 		if isSessionExpired(session) && session.Status != models.PaymentStatusPaid {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
-			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
+			session.Status = models.PaymentStatusExpired
+			return renderCheckoutStateResult(c, fiber.StatusGone, checkoutPayerState(*session, time.Now()))
 		}
 		if session.Status == models.PaymentStatusPaid {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
@@ -678,8 +818,21 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			return c.Redirect().To("/checkout/" + session.SessionToken)
 		}
 
+		checkoutState := checkoutPayerState(*session, time.Now())
+		if session.SelectedChainID == nil || session.SelectedSymbol == "" || session.DepositAddress == "" {
+			if checkoutState.Terminal {
+				return renderCheckoutStateResult(c, fiber.StatusOK, checkoutState)
+			}
+			return c.Redirect().To("/checkout/" + session.SessionToken)
+		}
 		amountDisplay := formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)
 		lang := checkoutLanguage(c)
+		statusTitle := checkoutState.TitleTR
+		statusBody := checkoutState.BodyTR
+		if lang == "en" {
+			statusTitle = checkoutState.TitleEN
+			statusBody = checkoutState.BodyEN
+		}
 		qrURL := "/checkout/" + session.SessionToken + "/qr.png"
 		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 		selectedLogoURL := ""
@@ -700,6 +853,10 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			"ProductDescription":   productDesc,
 			"ProductLogoURL":       productLogo,
 			"SelectedAssetLogoURL": selectedLogoURL,
+			"CheckoutState":        checkoutState,
+			"StatusMode":           checkoutState.Mode,
+			"StatusTitle":          statusTitle,
+			"StatusBody":           statusBody,
 		})
 	}
 }
@@ -728,14 +885,7 @@ func HandleCheckoutSocket(deps PaymentHandlerDeps) fiber.Handler {
 			return c.SendStatus(fiber.StatusGone)
 		}
 		return upgrader.Upgrade(c.RequestCtx(), func(conn *websocket.Conn) {
-			deps.PaymentHub.Subscribe(session.SessionToken, conn, realtime.PaymentEvent{
-				Status:      session.Status,
-				Paid:        session.Status == models.PaymentStatusPaid,
-				PaymentID:   session.ID.String(),
-				TxHash:      valueOrDefault(session.TxHash, ""),
-				SuccessPath: "/checkout/" + session.SessionToken + "/return/success",
-				CancelPath:  "/checkout/" + session.SessionToken + "/cancel",
-			})
+			deps.PaymentHub.Subscribe(session.SessionToken, conn, checkoutRealtimeEvent(*session, time.Now()))
 		})
 	}
 }
@@ -788,13 +938,7 @@ func HandleCheckoutStatus(deps PaymentHandlerDeps) fiber.Handler {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			session.Status = models.PaymentStatusExpired
 		}
-		return c.JSON(fiber.Map{
-			"success":      true,
-			"status":       session.Status,
-			"paid":         session.Status == models.PaymentStatusPaid,
-			"success_path": "/checkout/" + session.SessionToken + "/return/success",
-			"cancel_path":  "/checkout/" + session.SessionToken + "/cancel",
-		})
+		return c.JSON(checkoutStatusPayload(*session, time.Now()))
 	}
 }
 
@@ -1207,6 +1351,30 @@ func renderPaymentError(c fiber.Ctx, status int, message string) error {
 		"Status":     "error",
 		"ResultKind": "error",
 		"IsEnglish":  checkoutLanguage(c) == "en",
+	})
+}
+
+func renderCheckoutStateResult(c fiber.Ctx, status int, state checkoutPaymentState) error {
+	lang := checkoutLanguage(c)
+	title := state.TitleTR
+	body := state.BodyTR
+	if lang == "en" {
+		title = state.TitleEN
+		body = state.BodyEN
+	}
+	resultKind := "error"
+	if state.Status == checkoutStateCanceled {
+		resultKind = "canceled"
+	}
+	if state.Paid {
+		resultKind = "success"
+	}
+	return c.Status(status).Render("gateway/payment_result", fiber.Map{
+		"Title":      title,
+		"Message":    body,
+		"Status":     state.Status,
+		"ResultKind": resultKind,
+		"IsEnglish":  lang == "en",
 	})
 }
 

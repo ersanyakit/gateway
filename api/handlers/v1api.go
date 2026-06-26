@@ -720,7 +720,7 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 
 // HandleV1PaymentStaticAddressCreate godoc
 // @Summary Generate static address
-// @Description Creates a permanent deposit wallet for a user. Subsequent calls with the same user_id and chain return the existing address.
+// @Description Creates a permanent deposit wallet for a user and asset scope. Subsequent calls with the same domain, product_id, user_id, chain, symbol, and token return the existing address.
 // @Tags Payment
 // @Accept json
 // @Produce json
@@ -739,6 +739,9 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 		if err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
+		if deps.WalletRepo == nil {
+			return v1Err(c, fiber.StatusInternalServerError, "wallet repository is not ready")
+		}
 
 		var body types.V1StaticAddressRequest
 		if err := c.Bind().Body(&body); err != nil {
@@ -748,46 +751,34 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 		if userID == "" {
 			return v1Err(c, fiber.StatusBadRequest, "user_id is required")
 		}
-		if body.ChainID == nil {
-			return v1Err(c, fiber.StatusBadRequest, "chain_id is required")
+		if len(userID) > 128 {
+			return v1Err(c, fiber.StatusBadRequest, "user_id must be at most 128 characters")
 		}
-		chainID := constants.ChainID(*body.ChainID)
-		if !constants.IsSupportedChainID(chainID) {
-			return v1Err(c, fiber.StatusBadRequest, "unsupported chain_id")
-		}
-		symbol := strings.TrimSpace(body.Symbol)
-		if symbol == "" {
-			if deps.AssetRegistry != nil {
-				if native, ok := deps.AssetRegistry.GetNative(chainID); ok {
-					symbol = native.GetSymbol()
-				}
-			}
-		}
-		if symbol == "" {
-			return v1Err(c, fiber.StatusBadRequest, "symbol is required")
-		}
-		if deps.AssetRegistry != nil {
-			if _, ok := deps.AssetRegistry.GetBySymbol(chainID, symbol); !ok {
-				return v1Err(c, fiber.StatusBadRequest, "unsupported asset for chain_id")
-			}
-		}
-		productID := "static:" + strconv.FormatInt(int64(chainID), 10) + ":" + strings.ToUpper(symbol)
-
-		merchantIDStr := domain.MerchantID.String()
-		domainIDStr := domain.ID.String()
-
-		wallet, err := deps.WalletRepo.Create(types.WalletParams{
-			Context:    c.Context(),
-			MerchantId: &merchantIDStr,
-			DomainId:   &domainIDStr,
-			ProductId:  &productID,
-			UserId:     &userID,
-		})
+		scope, err := v1ResolveStaticAddressScope(deps.AssetRegistry, body)
 		if err != nil {
-			return v1Err(c, fiber.StatusInternalServerError, "wallet creation failed: "+err.Error())
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		if err := v1ValidateStaticAddressChainReady(deps.Blockchains, scope.ChainID); err != nil {
+			status := fiber.StatusBadRequest
+			if strings.Contains(err.Error(), "not ready") {
+				status = fiber.StatusInternalServerError
+			}
+			return v1Err(c, status, err.Error())
+		}
+		if len(scope.ProductID) > 128 {
+			return v1Err(c, fiber.StatusBadRequest, "product_id scope must be at most 128 characters")
 		}
 
-		return v1OK(c, v1StaticAddressResponse(wallet, chainID, symbol, body.Label))
+		wallet, err := v1CreateStaticAddressWallet(c.Context(), deps.WalletRepo, deps.Blockchains, domain, userID, scope)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		resp, err := v1StaticAddressResponseForScope(wallet, scope, body.Label)
+		if err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return v1OK(c, resp)
 	}
 }
 
@@ -883,7 +874,7 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page (max 100)" default(20)
-// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed)
+// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed,underpaid)
 // @Success 200 {object} types.V1PaymentHistoryResponse
 // @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/history [get]
@@ -950,6 +941,7 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 			models.PaymentStatusCanceled,
 			models.PaymentStatusExpired,
 			models.PaymentStatusFailed,
+			models.PaymentStatusUnderpaid,
 		}
 		var total int64
 		for _, s := range statuses {
@@ -1013,6 +1005,7 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 			{"status": "expired", "description": "Payment window elapsed without deposit."},
 			{"status": "canceled", "description": "Manually canceled by the customer or merchant."},
 			{"status": "failed", "description": "Deposit detected but amount or confirmations did not match."},
+			{"status": "underpaid", "description": "Deposit amount is below the expected payment amount."},
 		}
 		return v1OK(c, fiber.Map{"statuses": table})
 	}
@@ -1485,6 +1478,152 @@ func v1WalletDisplayProductID(productID string) string {
 	return productID
 }
 
+type v1StaticAddressScope struct {
+	ChainID   constants.ChainID
+	Symbol    string
+	Token     string
+	ProductID string
+}
+
+type v1StaticWalletProductScope struct {
+	ChainID constants.ChainID
+	Symbol  string
+	Token   string
+	Product string
+}
+
+type v1StaticWalletRepository interface {
+	Create(types.WalletParams) (*models.Wallet, error)
+	EnsureAllAddresses(context.Context, uuid.UUID, *blockchain.ChainFactory) error
+	FindByID(context.Context, uuid.UUID) (*models.Wallet, error)
+}
+
+func v1ResolveStaticAddressScope(registry *asset.Registry, body types.V1StaticAddressRequest) (v1StaticAddressScope, error) {
+	if body.ChainID == nil {
+		return v1StaticAddressScope{}, fmt.Errorf("chain_id is required")
+	}
+	chainID := constants.ChainID(*body.ChainID)
+	if !constants.IsSupportedChainID(chainID) {
+		return v1StaticAddressScope{}, fmt.Errorf("unsupported chain_id")
+	}
+	if registry == nil {
+		return v1StaticAddressScope{}, fmt.Errorf("asset registry is not configured")
+	}
+
+	symbol := strings.TrimSpace(body.Symbol)
+	token := strings.TrimSpace(body.Token)
+	resolved, normalizedToken, err := v1ResolveStaticAddressAsset(registry, chainID, symbol, token)
+	if err != nil {
+		return v1StaticAddressScope{}, err
+	}
+	symbol = resolved.GetSymbol()
+	token = normalizedToken
+
+	return v1StaticAddressScope{
+		ChainID:   chainID,
+		Symbol:    strings.ToUpper(strings.TrimSpace(symbol)),
+		Token:     token,
+		ProductID: v1StaticWalletProductID(body.ProductID, chainID, symbol, token),
+	}, nil
+}
+
+func v1ResolveStaticAddressAsset(registry *asset.Registry, chainID constants.ChainID, symbol string, token string) (asset.Asset, string, error) {
+	symbol = strings.TrimSpace(symbol)
+	token = strings.TrimSpace(token)
+	if token != "" {
+		resolved, ok := registry.Get(chainID, token)
+		if !ok {
+			return nil, "", fmt.Errorf("unsupported asset for chain_id")
+		}
+		if symbol != "" && !strings.EqualFold(resolved.GetSymbol(), symbol) {
+			return nil, "", fmt.Errorf("unsupported asset for chain_id")
+		}
+		if resolved.IsNative() {
+			return resolved, "", nil
+		}
+		return resolved, registry.Normalize(resolved.GetIdentifier()), nil
+	}
+	if symbol == "" {
+		native, ok := registry.GetNative(chainID)
+		if !ok {
+			return nil, "", fmt.Errorf("symbol is required")
+		}
+		return native, "", nil
+	}
+	resolved, ok := registry.GetBySymbol(chainID, symbol)
+	if !ok {
+		return nil, "", fmt.Errorf("unsupported asset for chain_id")
+	}
+	if !resolved.IsNative() {
+		return nil, "", fmt.Errorf("token is required for non-native asset")
+	}
+	return resolved, "", nil
+}
+
+func v1StaticWalletProductID(productID string, chainID constants.ChainID, symbol string, token string) string {
+	parts := []string{
+		"static",
+		strconv.FormatInt(int64(chainID), 10),
+		strings.ToUpper(strings.TrimSpace(symbol)),
+	}
+	if token = v1StaticScopePart(token); token != "" {
+		parts = append(parts, "token", token)
+	}
+	if productID = v1StaticScopePart(productID); productID != "" && productID != "static" {
+		parts = append(parts, "product", productID)
+	}
+	return strings.Join(parts, ":")
+}
+
+func v1ValidateStaticAddressChainReady(blockchains *blockchain.ChainFactory, chainID constants.ChainID) error {
+	if blockchains == nil {
+		return fmt.Errorf("chain factory is not ready")
+	}
+	if _, err := blockchains.GetChainByID(chainID); err != nil {
+		return fmt.Errorf("unsupported chain_id")
+	}
+	return nil
+}
+
+func v1CreateStaticAddressWallet(ctx context.Context, repo v1StaticWalletRepository, blockchains *blockchain.ChainFactory, domain *models.Domain, userID string, scope v1StaticAddressScope) (*models.Wallet, error) {
+	if repo == nil {
+		return nil, fmt.Errorf("wallet repository is not ready")
+	}
+	if domain == nil {
+		return nil, fmt.Errorf("domain is required")
+	}
+	merchantIDStr := domain.MerchantID.String()
+	domainIDStr := domain.ID.String()
+	wallet, err := repo.Create(types.WalletParams{
+		Context:    ctx,
+		MerchantId: &merchantIDStr,
+		DomainId:   &domainIDStr,
+		ProductId:  &scope.ProductID,
+		UserId:     &userID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("wallet creation failed: %w", err)
+	}
+	if strings.TrimSpace(repositories.WalletAddressForChainID(*wallet, scope.ChainID)) == "" && blockchains != nil {
+		if err := repo.EnsureAllAddresses(ctx, wallet.ID, blockchains); err != nil {
+			return nil, fmt.Errorf("wallet address backfill failed: %w", err)
+		}
+		if refreshed, err := repo.FindByID(ctx, wallet.ID); err == nil {
+			wallet = refreshed
+		}
+	}
+	if strings.TrimSpace(repositories.WalletAddressForChainID(*wallet, scope.ChainID)) == "" {
+		return nil, fmt.Errorf("wallet address unavailable for chain_id")
+	}
+	return wallet, nil
+}
+
+func v1StaticScopePart(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, ":", "_")
+	return value
+}
+
 func v1FindDomainWallet(ctx context.Context, deps V1APIDeps, domain *models.Domain, c fiber.Ctx) (*models.Wallet, error) {
 	if deps.WalletRepo == nil {
 		return nil, fmt.Errorf("wallet repository is not ready")
@@ -1556,41 +1695,62 @@ func v1WalletBalances(ctx context.Context, deps V1APIDeps, domain *models.Domain
 }
 
 func v1StaticWalletListItem(w models.Wallet) fiber.Map {
-	chainID, symbol, ok := parseStaticWalletProductID(w.ProductID)
+	scope, ok := parseStaticWalletProductScope(w.ProductID)
 	address := ""
 	chain := ""
 	var chainIDValue any
 	if ok {
-		chain = constants.ChainName(chainID)
-		address = walletAddressForChain(w, chainID)
-		chainIDValue = int64(chainID)
+		chain = constants.ChainName(scope.ChainID)
+		address = repositories.WalletAddressForChainID(w, scope.ChainID)
+		chainIDValue = int64(scope.ChainID)
 	}
-	return fiber.Map{
+	item := fiber.Map{
 		"wallet_id":  w.ID.String(),
 		"user_id":    w.UserID,
 		"product_id": w.ProductID,
 		"chain":      chain,
 		"chain_id":   chainIDValue,
-		"symbol":     symbol,
+		"symbol":     scope.Symbol,
 		"address":    address,
 		"created_at": w.CreatedAt.UTC().Format(time.RFC3339),
 	}
+	if scope.Token != "" {
+		item["token"] = scope.Token
+	}
+	return item
 }
 
 func parseStaticWalletProductID(productID string) (constants.ChainID, string, bool) {
+	scope, ok := parseStaticWalletProductScope(productID)
+	return scope.ChainID, scope.Symbol, ok
+}
+
+func parseStaticWalletProductScope(productID string) (v1StaticWalletProductScope, bool) {
 	parts := strings.Split(strings.TrimSpace(productID), ":")
 	if len(parts) < 3 || parts[0] != "static" {
-		return 0, "", false
+		return v1StaticWalletProductScope{}, false
 	}
 	chainIDRaw, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return 0, "", false
+		return v1StaticWalletProductScope{}, false
 	}
 	chainID := constants.ChainID(chainIDRaw)
 	if !constants.IsSupportedChainID(chainID) {
-		return 0, "", false
+		return v1StaticWalletProductScope{}, false
 	}
-	return chainID, strings.ToUpper(strings.TrimSpace(parts[2])), true
+	scope := v1StaticWalletProductScope{
+		ChainID: chainID,
+		Symbol:  strings.ToUpper(strings.TrimSpace(parts[2])),
+	}
+	for i := 3; i+1 < len(parts); i += 2 {
+		switch strings.ToLower(strings.TrimSpace(parts[i])) {
+		case "token":
+			scope.Token = strings.TrimSpace(parts[i+1])
+		case "product":
+			scope.Product = strings.TrimSpace(parts[i+1])
+		}
+	}
+	return scope, true
 }
 
 func formatV1Amount(raw string, decimals uint8) string {
@@ -1745,15 +1905,55 @@ func v1WalletResponse(w *models.Wallet) fiber.Map {
 }
 
 func v1StaticAddressResponse(w *models.Wallet, chainID constants.ChainID, symbol string, label string) fiber.Map {
-	chain := constants.ChainName(chainID)
-	return fiber.Map{
+	scope := v1StaticAddressScope{
+		ChainID:   chainID,
+		Symbol:    strings.ToUpper(strings.TrimSpace(symbol)),
+		ProductID: w.ProductID,
+	}
+	if parsed, ok := parseStaticWalletProductScope(w.ProductID); ok {
+		scope.Token = parsed.Token
+	}
+	resp, err := v1StaticAddressResponseForScope(w, scope, label)
+	if err != nil {
+		return fiber.Map{
+			"wallet_id": w.ID.String(),
+			"user_id":   w.UserID,
+			"chain":     constants.ChainName(chainID),
+			"symbol":    strings.ToUpper(strings.TrimSpace(symbol)),
+			"address":   "",
+			"label":     strings.TrimSpace(label),
+		}
+	}
+	return resp
+}
+
+func v1StaticAddressResponseForScope(w *models.Wallet, scope v1StaticAddressScope, label string) (fiber.Map, error) {
+	if w == nil {
+		return nil, fmt.Errorf("wallet is required")
+	}
+	address := strings.TrimSpace(repositories.WalletAddressForChainID(*w, scope.ChainID))
+	if address == "" {
+		return nil, fmt.Errorf("wallet address unavailable for chain_id")
+	}
+	resp := fiber.Map{
 		"wallet_id": w.ID.String(),
 		"user_id":   w.UserID,
-		"chain":     chain,
-		"symbol":    strings.ToUpper(strings.TrimSpace(symbol)),
-		"address":   walletAddressForChain(*w, chainID),
+		"chain":     constants.ChainName(scope.ChainID),
+		"chain_id":  int64(scope.ChainID),
+		"symbol":    strings.ToUpper(strings.TrimSpace(scope.Symbol)),
+		"address":   address,
 		"label":     strings.TrimSpace(label),
 	}
+	if scope.ProductID != "" {
+		resp["product_id"] = scope.ProductID
+	}
+	if scope.Token != "" {
+		resp["token"] = scope.Token
+	}
+	if !w.CreatedAt.IsZero() {
+		resp["created_at"] = w.CreatedAt.UTC().Format(time.RFC3339)
+	}
+	return resp, nil
 }
 
 func v1AssetCatalog(registry *asset.Registry) []fiber.Map {

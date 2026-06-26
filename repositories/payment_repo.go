@@ -348,10 +348,7 @@ func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.Payment
 			First(&session, "session_token = ?", token).Error; err != nil {
 			return err
 		}
-		if session.Status == models.PaymentStatusPaid {
-			return nil
-		}
-		if session.Status == models.PaymentStatusCanceled || session.Status == models.PaymentStatusExpired || session.Status == models.PaymentStatusFailed {
+		if paymentStatusBlocksCancel(session.Status) {
 			return nil
 		}
 
@@ -364,6 +361,15 @@ func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.Payment
 		return nil, false, err
 	}
 	return &session, session.WebhookEvent == "payment_failed" && session.WebhookSentAt == nil, nil
+}
+
+func paymentStatusBlocksCancel(status string) bool {
+	switch status {
+	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.Transaction) (*models.PaymentSession, bool, error) {

@@ -18,10 +18,12 @@ type V1InvoiceRequest struct {
 
 // V1StaticAddressRequest is the request body for POST /api/v1/payment/static-address.
 type V1StaticAddressRequest struct {
-	UserID  string `json:"user_id"            example:"customer_42"  swaggertype:"string"`
-	ChainID *int64 `json:"chain_id"           example:"1"            swaggertype:"integer"`
-	Symbol  string `json:"symbol"             example:"USDT"         swaggertype:"string"`
-	Label   string `json:"label,omitempty"    example:"Main wallet"  swaggertype:"string"`
+	UserID    string `json:"user_id"              example:"customer_42"  swaggertype:"string"`
+	ProductID string `json:"product_id,omitempty" example:"checkout"     swaggertype:"string"`
+	ChainID   *int64 `json:"chain_id"             example:"1"            swaggertype:"integer"`
+	Symbol    string `json:"symbol"               example:"USDT"         swaggertype:"string"`
+	Token     string `json:"token,omitempty"      example:"0xdAC17F958D2ee523a2206206994597C13D831ec7" swaggertype:"string"`
+	Label     string `json:"label,omitempty"      example:"Main wallet"  swaggertype:"string"`
 }
 
 // V1WalletCreateRequest is the request body for POST /api/v1/wallet/create.
@@ -294,6 +296,7 @@ type V1StaticAddressDetail struct {
 	Chain     string `json:"chain"                 example:"ethereum"`
 	ChainID   int64  `json:"chain_id,omitempty"    example:"1"`
 	Symbol    string `json:"symbol"                example:"USDT"`
+	Token     string `json:"token,omitempty"       example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
 	Address   string `json:"address"               example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
 	Label     string `json:"label,omitempty"       example:"Main wallet"`
 	CreatedAt string `json:"created_at,omitempty"  example:"2024-06-01T12:00:00Z"`
