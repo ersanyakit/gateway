@@ -177,11 +177,78 @@ UX design contract bulunamadı; bu step'te ayrı UX-DR çıkarılmadı.
 
 ### FR Coverage Map
 
-{{requirements_coverage_map}}
+FR1: Epic 1 - Partner Integration & Payment Intake Hardening
+FR2: Epic 1 - Partner Integration & Payment Intake Hardening
+FR3: Epic 1 - Partner Integration & Payment Intake Hardening
+FR4: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR5: Epic 1 - Partner Integration & Payment Intake Hardening
+FR6: Epic 1 - Partner Integration & Payment Intake Hardening
+FR7: Epic 1 - Partner Integration & Payment Intake Hardening
+FR8: Epic 1 - Partner Integration & Payment Intake Hardening
+FR9: Epic 1 - Partner Integration & Payment Intake Hardening
+FR10: Epic 1 - Partner Integration & Payment Intake Hardening
+FR11: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR12: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR13: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR14: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR15: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR16: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR17: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR18: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR19: Epic 4 - Safe Outbound Funds & Custody Controls
+FR20: Epic 4 - Safe Outbound Funds & Custody Controls
+FR21: Epic 4 - Safe Outbound Funds & Custody Controls
+FR22: Epic 4 - Safe Outbound Funds & Custody Controls
+FR23: Epic 4 - Safe Outbound Funds & Custody Controls
+FR24: Epic 4 - Safe Outbound Funds & Custody Controls
+FR25: Epic 4 - Safe Outbound Funds & Custody Controls
+FR26: Epic 2 - Reliable Money Event Delivery
+FR27: Epic 2 - Reliable Money Event Delivery
+FR28: Epic 2 - Reliable Money Event Delivery
+FR29: Epic 2 - Reliable Money Event Delivery
+FR30: Epic 2 - Reliable Money Event Delivery
+FR31: Epic 2 - Reliable Money Event Delivery
+FR32: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR33: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR34: Epic 3 - Trustworthy Deposit Settlement & Ledger Balances
+FR35: Epic 4 - Safe Outbound Funds & Custody Controls
+FR36: Epic 5 - Production Operations & Scale Readiness
+FR37: Epic 5 - Production Operations & Scale Readiness
+FR38: Epic 5 - Production Operations & Scale Readiness
+FR39: Epic 4 - Safe Outbound Funds & Custody Controls
+FR40: Epic 1 - Partner Integration & Payment Intake Hardening
 
 ## Epic List
 
-{{epics_list}}
+### Epic 1: Partner Integration & Payment Intake Hardening
+
+Merchant ve exchange partnerleri güvenli şekilde API kullanabilir, payment session veya static wallet oluşturabilir, hosted checkout ile ödeme alabilir ve integration contract'ına güvenebilir.
+
+**FRs covered:** FR1, FR2, FR3, FR5, FR6, FR7, FR8, FR9, FR10, FR40
+
+### Epic 2: Reliable Money Event Delivery
+
+Merchant ve exchange partnerleri payment, deposit, withdrawal, refund, sweep ve correction lifecycle event'lerini versioned, replay-safe ve geriye uyumlu webhook/outbox kontratlarıyla alabilir.
+
+**FRs covered:** FR26, FR27, FR28, FR29, FR30, FR31
+
+### Epic 3: Trustworthy Deposit Settlement & Ledger Balances
+
+Merchant, exchange ve operatörler deposit finality, payment settlement, ledger-derived balances, reorg correction ve reconciliation sayesinde bakiye ve ödeme durumuna güvenebilir.
+
+**FRs covered:** FR4, FR11, FR12, FR13, FR14, FR15, FR16, FR17, FR18, FR32, FR33, FR34
+
+### Epic 4: Safe Outbound Funds & Custody Controls
+
+Operatörler withdrawal, payout, refund ve sweep işlemlerini reservation, approval, signer boundary, nonce/UTXO/resource policy ve audit kontrolleriyle güvenli şekilde yürütebilir.
+
+**FRs covered:** FR19, FR20, FR21, FR22, FR23, FR24, FR25, FR35, FR39
+
+### Epic 5: Production Operations & Scale Readiness
+
+Operatörler sistemi production'da izleyebilir, provider sorunlarını yakalayabilir, migration/observability/runbook disiplinini işletebilir ve exchange-grade ölçeğe hazırlanabilir.
+
+**FRs covered:** FR36, FR37, FR38
 
 <!-- Repeat for each epic in epics_list (N = 1, 2, 3...) -->
 
