@@ -2,14 +2,15 @@
 story_id: "1.2"
 story_key: "1-2-idempotent-payment-session-creation"
 epic: "Epic 1: Partner Integration & Payment Intake Hardening"
-status: ready-for-dev
+status: in-progress
 created: 2026-06-27
 updated: 2026-06-27
+baseline_commit: ca49fb274a9b1581c935363fc0cb0a4c18647459
 ---
 
 # Story 1.2: Idempotent Payment Session Creation
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 
