@@ -1,8 +1,12 @@
 package application
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"core/asset"
 	"core/constants"
 )
 
@@ -93,5 +97,30 @@ func TestNewAssetRegistryDefinitionsHaveLogos(t *testing.T) {
 		if got := registry.LogoURL(definition.Symbol); got == "" {
 			t.Fatalf("missing logo for asset %s", definition.Symbol)
 		}
+	}
+}
+
+func TestStaticLogoFilesExist(t *testing.T) {
+	registry := NewAssetRegistry()
+	for _, definition := range registry.ListDefinitions() {
+		assertStaticAssetFile(t, registry.LogoURL(definition.Symbol))
+	}
+	for _, chainID := range constants.AllChainIDs() {
+		assertStaticAssetFile(t, asset.ChainLogoURL(chainID))
+	}
+}
+
+func assertStaticAssetFile(t *testing.T, url string) {
+	t.Helper()
+	if !strings.HasPrefix(url, "/static/") {
+		t.Fatalf("static asset URL %q must start with /static/", url)
+	}
+	path := filepath.Join("..", "..", "static", strings.TrimPrefix(url, "/static/"))
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("static asset %q is missing at %s: %v", url, path, err)
+	}
+	if info.IsDir() {
+		t.Fatalf("static asset %q points to a directory: %s", url, path)
 	}
 }
