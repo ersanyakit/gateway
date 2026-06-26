@@ -90,8 +90,6 @@ func (e *EVMCompatibleChain) ValidateAddress(address string) bool {
 }
 
 func (e *EVMCompatibleChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", e.Name())
-
 	mnemonic, err := e.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
@@ -111,8 +109,6 @@ func (e *EVMCompatibleChain) Create(ctx context.Context) (*blockchain.WalletDeta
 }
 
 func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating HD wallet\n", e.Name())
-
 	mnemonic, err := e.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
@@ -127,8 +123,6 @@ func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hd
 	if !e.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid ethereum address format")
 	}
-
-	fmt.Printf("WALLET:%s --- %s \n", e.BaseChain.Name(), wallet.Address)
 
 	return wallet, nil
 }
@@ -210,7 +204,6 @@ func (e *EVMCompatibleChain) BatchBalances(ctx context.Context, addresses []stri
 
 		for _, addr := range batch {
 			if invalidErr := invalidAddresses[addr]; invalidErr != nil {
-				fmt.Printf("[%s] balance %s ERROR: %v\n", e.Name(), addr, invalidErr)
 				out = append(out, models.BalanceResult{
 					Address: addr,
 					Balance: fmt.Sprintf("%s:%s | %s:%s", e.NativeSymbol, formatWei(big.NewInt(0)), e.TokenSymbol, formatWei(big.NewInt(0))),
@@ -234,18 +227,6 @@ func (e *EVMCompatibleChain) BatchBalances(ctx context.Context, addresses []stri
 			if callErr == nil && nativeBalance.Sign() == 0 && tokenBalance.Sign() == 0 {
 				continue
 			}
-
-			fmt.Printf(
-				"[%s] balance %s %s=%s wei (%s) %s=%s wei (%s)\n",
-				e.Name(),
-				addr,
-				e.NativeSymbol,
-				nativeBalance.String(),
-				formatWei(nativeBalance),
-				e.TokenSymbol,
-				tokenBalance.String(),
-				formatWei(tokenBalance),
-			)
 
 			out = append(out, models.BalanceResult{
 				Address: addr,

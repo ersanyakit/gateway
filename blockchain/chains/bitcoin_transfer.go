@@ -13,13 +13,18 @@ import (
 	"time"
 
 	blockchain "core/blockchain"
+	"core/blockchain/walletcore"
+	"core/constants"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	twbitcoin "tw/protos/bitcoin"
+	twcommon "tw/protos/common"
 )
 
 type btcUTXO struct {
@@ -91,15 +96,22 @@ func btcBroadcast(ctx context.Context, rpcURLs []string, rawTxHex string) (strin
 		}
 		return strings.TrimSpace(string(body)), nil
 	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no bitcoin API endpoint configured")
+	}
 	return "", lastErr
 }
 
 func btcEstimateFee(inputCount, outputCount int) int64 {
 	// P2WPKH: ~68 vbytes per input, ~31 vbytes per output, ~10 vbytes overhead
 	vsize := int64(10 + inputCount*68 + outputCount*31)
-	const satPerVbyte int64 = 10 // conservative 10 sat/vbyte
-	return vsize * satPerVbyte
+	return vsize * btcFeeRateSatPerVByte
 }
+
+const (
+	btcFeeRateSatPerVByte      int64  = 10
+	trustWalletCoinTypeBitcoin uint32 = 0
+)
 
 func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string, sendSat int64) (*blockchain.TransactionResult, error) {
 	if sendSat <= 0 {
@@ -110,7 +122,7 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	if err != nil {
 		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
 	}
-	privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 
 	utxos, err := btcFetchUTXOs(ctx, b.RPCs(), wallet.Address)
 	if err != nil {
@@ -152,68 +164,22 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	if err != nil {
 		return nil, fmt.Errorf("invalid bitcoin destination address: %w", err)
 	}
-	destScript, err := txscript.PayToAddrScript(destAddr)
-	if err != nil {
-		return nil, fmt.Errorf("bitcoin dest pkScript: %w", err)
+	if destAddr == nil {
+		return nil, fmt.Errorf("invalid bitcoin destination address")
 	}
-
-	changeScript := []byte(nil)
-	if includeChange {
-		changeAddr, err := btcutil.DecodeAddress(wallet.Address, b.Params)
-		if err != nil {
-			return nil, fmt.Errorf("invalid bitcoin change address: %w", err)
-		}
-		changeScript, err = txscript.PayToAddrScript(changeAddr)
-		if err != nil {
-			return nil, fmt.Errorf("bitcoin change pkScript: %w", err)
-		}
+	if _, _, err := b.bitcoinSourceScript(wallet, pubKey); err != nil {
+		return nil, err
 	}
-
-	fromScript, taprootSpend, err := b.bitcoinSourceScript(wallet, pubKey)
+	rawTxHex, fallbackTxID, err := b.signBitcoinWithTrustWallet(wallet, privKeyBytes, pubKey, toAddress, sendSat, false, selected)
 	if err != nil {
 		return nil, err
 	}
-
-	msgTx := wire.NewMsgTx(wire.TxVersion)
-	msgTx.LockTime = 0
-	for _, u := range selected {
-		hash, err := chainhash.NewHashFromStr(u.Txid)
-		if err != nil {
-			return nil, fmt.Errorf("bitcoin txid parse: %w", err)
-		}
-		msgTx.AddTxIn(&wire.TxIn{
-			PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: u.Vout},
-			Sequence:         math.MaxUint32 - 2,
-		})
-	}
-	msgTx.AddTxOut(&wire.TxOut{Value: sendSat, PkScript: destScript})
-	if includeChange {
-		msgTx.AddTxOut(&wire.TxOut{Value: changeSat, PkScript: changeScript})
-	}
-
-	prevOutMap := make(map[wire.OutPoint]*wire.TxOut, len(selected))
-	for _, u := range selected {
-		hash, _ := chainhash.NewHashFromStr(u.Txid)
-		op := wire.OutPoint{Hash: *hash, Index: u.Vout}
-		prevOutMap[op] = &wire.TxOut{Value: u.Value, PkScript: fromScript}
-	}
-	fetcher := txscript.NewMultiPrevOutFetcher(prevOutMap)
-	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
-	for i, u := range selected {
-		witness, err := bitcoinWitness(msgTx, sigHashes, i, u.Value, fromScript, privKey, pubKey, taprootSpend)
-		if err != nil {
-			return nil, fmt.Errorf("bitcoin sign input %d: %w", i, err)
-		}
-		msgTx.TxIn[i].Witness = witness
-	}
-
-	var buf bytes.Buffer
-	if err := msgTx.Serialize(&buf); err != nil {
-		return nil, fmt.Errorf("bitcoin tx serialize: %w", err)
-	}
-	txID, err := btcBroadcast(ctx, b.RPCs(), hex.EncodeToString(buf.Bytes()))
+	txID, err := btcBroadcast(ctx, b.RPCs(), rawTxHex)
 	if err != nil {
 		return nil, err
+	}
+	if txID == "" {
+		txID = fallbackTxID
 	}
 	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
 }
@@ -223,7 +189,7 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 	if err != nil {
 		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
 	}
-	privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
+	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 
 	utxos, err := btcFetchUTXOs(ctx, b.RPCs(), wallet.Address)
 	if err != nil {
@@ -254,62 +220,22 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 	if err != nil {
 		return nil, fmt.Errorf("invalid bitcoin destination address: %w", err)
 	}
-	pkScript, err := txscript.PayToAddrScript(destAddr)
-	if err != nil {
-		return nil, fmt.Errorf("bitcoin dest pkScript: %w", err)
+	if destAddr == nil {
+		return nil, fmt.Errorf("invalid bitcoin destination address")
 	}
-
-	fromScript, taprootSpend, err := b.bitcoinSourceScript(wallet, pubKey)
+	if _, _, err := b.bitcoinSourceScript(wallet, pubKey); err != nil {
+		return nil, err
+	}
+	rawTxHex, fallbackTxID, err := b.signBitcoinWithTrustWallet(wallet, privKeyBytes, pubKey, toAddress, totalSat, true, confirmed)
 	if err != nil {
 		return nil, err
 	}
-
-	// Build transaction
-	msgTx := wire.NewMsgTx(wire.TxVersion)
-	msgTx.LockTime = 0
-
-	for _, u := range confirmed {
-		hash, err := chainhash.NewHashFromStr(u.Txid)
-		if err != nil {
-			return nil, fmt.Errorf("bitcoin txid parse: %w", err)
-		}
-		msgTx.AddTxIn(&wire.TxIn{
-			PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: u.Vout},
-			Sequence:         math.MaxUint32 - 2,
-		})
-	}
-
-	msgTx.AddTxOut(&wire.TxOut{Value: sendSat, PkScript: pkScript})
-
-	// Build prevout fetcher for all inputs (needed by NewTxSigHashes for segwit)
-	prevOutMap := make(map[wire.OutPoint]*wire.TxOut, len(confirmed))
-	for _, u := range confirmed {
-		hash, _ := chainhash.NewHashFromStr(u.Txid)
-		op := wire.OutPoint{Hash: *hash, Index: u.Vout}
-		prevOutMap[op] = &wire.TxOut{Value: u.Value, PkScript: fromScript}
-	}
-	fetcher := txscript.NewMultiPrevOutFetcher(prevOutMap)
-
-	// Sign each input
-	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
-	for i, u := range confirmed {
-		witness, err := bitcoinWitness(msgTx, sigHashes, i, u.Value, fromScript, privKey, pubKey, taprootSpend)
-		if err != nil {
-			return nil, fmt.Errorf("bitcoin sign input %d: %w", i, err)
-		}
-		msgTx.TxIn[i].Witness = witness
-	}
-
-	// Serialize
-	var buf bytes.Buffer
-	if err := msgTx.Serialize(&buf); err != nil {
-		return nil, fmt.Errorf("bitcoin tx serialize: %w", err)
-	}
-	rawHex := hex.EncodeToString(buf.Bytes())
-
-	txID, err := btcBroadcast(ctx, b.RPCs(), rawHex)
+	txID, err := btcBroadcast(ctx, b.RPCs(), rawTxHex)
 	if err != nil {
 		return nil, err
+	}
+	if txID == "" {
+		txID = fallbackTxID
 	}
 	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
 }
@@ -354,6 +280,188 @@ func (b *BitcoinChain) bitcoinSourceScript(wallet blockchain.WalletDetails, pubK
 	}
 }
 
+func (b *BitcoinChain) signBitcoinWithTrustWallet(wallet blockchain.WalletDetails, privateKey []byte, pubKey *btcec.PublicKey, toAddress string, amountSat int64, useMax bool, utxos []btcUTXO) (string, string, error) {
+	if amountSat <= 0 {
+		return "", "", fmt.Errorf("bitcoin amount must be greater than zero")
+	}
+	sourceScript, taprootSpend, err := b.bitcoinSourceScript(wallet, pubKey)
+	if err != nil {
+		return "", "", err
+	}
+	variant := twbitcoin.TransactionVariant_P2WPKH
+	if taprootSpend {
+		return signBitcoinManually(b.Params, wallet, privateKey, pubKey, toAddress, amountSat, useMax, utxos, sourceScript, taprootSpend)
+	}
+
+	twUTXOs := make([]*twbitcoin.UnspentTransaction, 0, len(utxos))
+	for _, utxo := range utxos {
+		twUTXO, err := bitcoinTrustWalletUTXO(utxo, sourceScript, variant)
+		if err != nil {
+			return "", "", err
+		}
+		twUTXOs = append(twUTXOs, twUTXO)
+	}
+	if len(twUTXOs) == 0 {
+		return "", "", fmt.Errorf("bitcoin no confirmed UTXOs for %s", wallet.Address)
+	}
+
+	input := &twbitcoin.SigningInput{
+		HashType:      uint32(txscript.SigHashAll),
+		Amount:        amountSat,
+		ByteFee:       btcFeeRateSatPerVByte,
+		ToAddress:     toAddress,
+		ChangeAddress: wallet.Address,
+		PrivateKey:    [][]byte{privateKey},
+		Utxo:          twUTXOs,
+		UseMaxAmount:  useMax,
+		CoinType:      trustWalletCoinTypeBitcoin,
+	}
+
+	var output twbitcoin.SigningOutput
+	if err := walletcore.Sign(input, &output, constants.Bitcoin); err != nil {
+		return "", "", fmt.Errorf("bitcoin Trust Wallet Core signing failed: %w", err)
+	}
+	if output.GetError() != twcommon.SigningError_OK {
+		msg := strings.TrimSpace(output.GetErrorMessage())
+		if msg == "" {
+			msg = output.GetError().String()
+		}
+		return "", "", fmt.Errorf("bitcoin Trust Wallet Core signing error: %s", msg)
+	}
+	encoded := output.GetEncoded()
+	if len(encoded) == 0 {
+		return "", "", fmt.Errorf("bitcoin Trust Wallet Core signing returned empty transaction")
+	}
+	txID := strings.TrimSpace(output.GetTransactionId())
+	if txID == "" {
+		txID = bitcoinTxIDFromRaw(encoded)
+	}
+	return hex.EncodeToString(encoded), txID, nil
+}
+
+func bitcoinTrustWalletUTXO(utxo btcUTXO, script []byte, variant twbitcoin.TransactionVariant) (*twbitcoin.UnspentTransaction, error) {
+	if utxo.Value <= 0 {
+		return nil, fmt.Errorf("bitcoin UTXO amount must be positive")
+	}
+	hash, err := bitcoinTrustWalletOutPointHash(utxo.Txid)
+	if err != nil {
+		return nil, err
+	}
+	return &twbitcoin.UnspentTransaction{
+		OutPoint: &twbitcoin.OutPoint{
+			Hash:     hash,
+			Index:    utxo.Vout,
+			Sequence: math.MaxUint32 - 2,
+		},
+		Script:  script,
+		Amount:  utxo.Value,
+		Variant: variant,
+	}, nil
+}
+
+func bitcoinTrustWalletOutPointHash(txid string) ([]byte, error) {
+	hash, err := chainhash.NewHashFromStr(strings.TrimSpace(txid))
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin txid parse: %w", err)
+	}
+	return hash.CloneBytes(), nil
+}
+
+func signBitcoinManually(params *chaincfg.Params, wallet blockchain.WalletDetails, privateKey []byte, pubKey *btcec.PublicKey, toAddress string, amountSat int64, useMax bool, utxos []btcUTXO, sourceScript []byte, taprootSpend bool) (string, string, error) {
+	if len(utxos) == 0 {
+		return "", "", fmt.Errorf("bitcoin no confirmed UTXOs for %s", wallet.Address)
+	}
+	privKey, _ := btcec.PrivKeyFromBytes(privateKey)
+
+	totalSat := int64(0)
+	for _, utxo := range utxos {
+		if utxo.Value <= 0 {
+			return "", "", fmt.Errorf("bitcoin UTXO amount must be positive")
+		}
+		totalSat += utxo.Value
+	}
+
+	const dustSat int64 = 546
+	outputCount := 2
+	if useMax {
+		outputCount = 1
+	}
+	fee := btcEstimateFee(len(utxos), outputCount)
+	sendSat := amountSat
+	changeSat := totalSat - sendSat - fee
+	includeChange := !useMax && changeSat >= dustSat
+	if useMax {
+		sendSat = totalSat - fee
+		changeSat = 0
+	} else if !includeChange {
+		fee = totalSat - sendSat
+		changeSat = 0
+	}
+	if sendSat <= 0 || totalSat < sendSat+fee {
+		return "", "", fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, fee)
+	}
+
+	destAddr, err := btcutil.DecodeAddress(toAddress, params)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid bitcoin destination address: %w", err)
+	}
+	destScript, err := txscript.PayToAddrScript(destAddr)
+	if err != nil {
+		return "", "", fmt.Errorf("bitcoin dest pkScript: %w", err)
+	}
+
+	var changeScript []byte
+	if includeChange {
+		changeAddr, err := btcutil.DecodeAddress(wallet.Address, params)
+		if err != nil {
+			return "", "", fmt.Errorf("invalid bitcoin change address: %w", err)
+		}
+		changeScript, err = txscript.PayToAddrScript(changeAddr)
+		if err != nil {
+			return "", "", fmt.Errorf("bitcoin change pkScript: %w", err)
+		}
+	}
+
+	msgTx := wire.NewMsgTx(wire.TxVersion)
+	for _, utxo := range utxos {
+		hash, err := chainhash.NewHashFromStr(utxo.Txid)
+		if err != nil {
+			return "", "", fmt.Errorf("bitcoin txid parse: %w", err)
+		}
+		msgTx.AddTxIn(&wire.TxIn{
+			PreviousOutPoint: wire.OutPoint{Hash: *hash, Index: utxo.Vout},
+			Sequence:         math.MaxUint32 - 2,
+		})
+	}
+	msgTx.AddTxOut(&wire.TxOut{Value: sendSat, PkScript: destScript})
+	if includeChange {
+		msgTx.AddTxOut(&wire.TxOut{Value: changeSat, PkScript: changeScript})
+	}
+
+	prevOutMap := make(map[wire.OutPoint]*wire.TxOut, len(utxos))
+	for _, utxo := range utxos {
+		hash, _ := chainhash.NewHashFromStr(utxo.Txid)
+		op := wire.OutPoint{Hash: *hash, Index: utxo.Vout}
+		prevOutMap[op] = &wire.TxOut{Value: utxo.Value, PkScript: sourceScript}
+	}
+	fetcher := txscript.NewMultiPrevOutFetcher(prevOutMap)
+	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
+	for i, utxo := range utxos {
+		witness, err := bitcoinWitness(msgTx, sigHashes, i, utxo.Value, sourceScript, privKey, pubKey, taprootSpend)
+		if err != nil {
+			return "", "", fmt.Errorf("bitcoin sign input %d: %w", i, err)
+		}
+		msgTx.TxIn[i].Witness = witness
+	}
+
+	var buf bytes.Buffer
+	if err := msgTx.Serialize(&buf); err != nil {
+		return "", "", fmt.Errorf("bitcoin tx serialize: %w", err)
+	}
+	raw := buf.Bytes()
+	return hex.EncodeToString(raw), bitcoinTxIDFromRaw(raw), nil
+}
+
 func bitcoinWitness(msgTx *wire.MsgTx, sigHashes *txscript.TxSigHashes, inputIndex int, value int64, pkScript []byte, privKey *btcec.PrivateKey, pubKey *btcec.PublicKey, taprootSpend bool) (wire.TxWitness, error) {
 	if taprootSpend {
 		sig, err := txscript.RawTxInTaprootSignature(
@@ -374,6 +482,14 @@ func bitcoinWitness(msgTx *wire.MsgTx, sigHashes *txscript.TxSigHashes, inputInd
 		return nil, err
 	}
 	return wire.TxWitness{sig, pubKey.SerializeCompressed()}, nil
+}
+
+func bitcoinTxIDFromRaw(raw []byte) string {
+	var tx wire.MsgTx
+	if err := tx.Deserialize(bytes.NewReader(raw)); err != nil {
+		return ""
+	}
+	return tx.TxHash().String()
 }
 
 // PrefundGas is not applicable for Bitcoin — transaction fees come from UTXOs.

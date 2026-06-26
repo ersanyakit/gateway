@@ -74,8 +74,6 @@ func (s *ChilizChain) ValidateAddress(address string) bool {
 }
 
 func (s *ChilizChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
-
 	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
@@ -96,8 +94,6 @@ func (s *ChilizChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 }
 
 func (s *ChilizChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
-
 	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
@@ -113,8 +109,6 @@ func (s *ChilizChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletI
 		return nil, errors.New("invalid ethereum address format")
 
 	}
-	fmt.Printf("WALLET:%s --- %s \n", s.BaseChain.Name(), wallet.Address)
-
 	return wallet, nil
 }
 
@@ -199,7 +193,6 @@ func (e *ChilizChain) BatchBalances(ctx context.Context, addresses []string, wor
 
 		for _, addr := range batch {
 			if invalidErr := invalidAddresses[addr]; invalidErr != nil {
-				fmt.Printf("[%s] balance %s ERROR: %v\n", e.Name(), addr, invalidErr)
 				out = append(out, models.BalanceResult{
 					Address: addr,
 					Balance: fmt.Sprintf("%s:%s | %s:%s", CHILIZ_SYMBOL, formatWei(big.NewInt(0)), WCHZ_SYMBOL, formatWei(big.NewInt(0))),
@@ -223,18 +216,6 @@ func (e *ChilizChain) BatchBalances(ctx context.Context, addresses []string, wor
 			if callErr == nil && chzBalance.Sign() == 0 && wchzBalance.Sign() == 0 {
 				continue
 			}
-
-			fmt.Printf(
-				"[%s] balance %s %s=%s wei (%s) %s=%s wei (%s)\n",
-				e.Name(),
-				addr,
-				CHILIZ_SYMBOL,
-				chzBalance.String(),
-				formatWei(chzBalance),
-				WCHZ_SYMBOL,
-				wchzBalance.String(),
-				formatWei(wchzBalance),
-			)
 
 			out = append(out, models.BalanceResult{
 				Address: addr,

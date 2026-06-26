@@ -1,6 +1,52 @@
 # Gateway — Implementation Roadmap
 
-Audit date: 2026-06-05  
+Latest audit date: 2026-06-26
+Latest detailed report: [`docs/product-readiness-audit.md`](docs/product-readiness-audit.md)
+
+---
+
+## 2026-06-26 — Platform Readiness Delta
+
+Verdict: the project is a credible merchant/dealer payment-gateway MVP, but it is not yet a production-grade wallet provider and it is not ready for Binance-level exchange wallet tracking.
+
+Trust Wallet Core truth:
+
+- Wallet/address generation uses Trust Wallet Core for all supported chains through `BaseChain.GetDerivedWallet`.
+- EVM-family native/ERC-20 transfers use Trust Wallet Core signing.
+- Bitcoin P2WPKH transfers use Trust Wallet Core signing; current generated Taproot Bitcoin wallets use a manual `btcd/txscript` signing fallback.
+- Solana and TRON wallets are generated through Trust Wallet Core, but transfers are signed with Solana/TRON SDKs, not Trust Wallet Core.
+
+### New P0 Blockers
+
+| ID | Gap | Evidence | Acceptance criteria |
+|---|---|---|---|
+| P0-20260626-1 | Real production signer is missing | `blockchain/basechain.go`, `blockchain/walletcore/provider_trustwalletcore.go` | Implement KMS/HSM/MPC signer interface; production no longer depends on env mnemonic or in-process private-key signing. |
+| P0-20260626-2 | Listener first start can miss history | `workers/listeners/evm/listener.go`, `workers/listeners/bitcoin/bitcoin.go`, `workers/listeners/solana/listener.go`, `workers/listeners/tron/tron.go` | Add explicit start block/slot, historical backfill mode, and safe resume semantics per chain. |
+| P0-20260626-3 | Catch-up throughput is too low for exchange workload | same listener files | Make listeners horizontally scalable and configurable; expose per-chain lag metrics; process large downtime windows safely. |
+| P0-20260626-4 | Reorg accounting is incomplete | listener/repository/finality flow | Store canonical block hashes, detect reorgs, reverse ledger entries, and emit correction webhooks. |
+| P0-20260626-5 | Sweeps are not durable jobs | `main.go:autoSweepDeposit` | Persist sweep jobs with status, retries, locks, idempotency, dead-letter state, and reconciliation. |
+| P0-20260626-6 | Fee/gas policy is too simple | `blockchain/chains/evm_transfer.go`, `blockchain/chains/bitcoin_transfer.go`, `blockchain/chains/solana_transfer.go`, `blockchain/chains/tron_transfer.go` | Add EIP-1559, BTC fee estimator/RBF/CPFP, Solana priority fee/rent handling, and TRON resource/energy policy. |
+| P0-20260626-7 | Single-process architecture is a scaling ceiling | `main.go`, `workers/dispatcher`, `workers/indexer/address_index.go`, `api/middleware/ratelimit.go` | Move chain events, webhook delivery, and sweep/finality processing to durable queues; replace per-process rate limiting and in-memory-only indexing. |
+| P0-20260626-8 | Observability is insufficient | broad use of `log.Printf` / `fmt.Println` | Add structured logs, Prometheus metrics, traces, chain lag alerts, webhook SLOs, signer alerts, and reconciliation dashboards. |
+
+### New P1/P2 Work
+
+| ID | Gap | Acceptance criteria |
+|---|---|---|
+| P1-20260626-1 | Production migrations | Replace production startup `AutoMigrate` with versioned migrations, migration locks, rollback docs, and schema drift checks. |
+| P1-20260626-2 | DB-level invariants | Add status checks/enums, unique idempotency constraints, partial unique indexes for pending jobs/withdrawals, and ledger balance invariants. |
+| P1-20260626-3 | RPC provider strategy | Add provider health scoring, failover, archive-node requirements, and quorum/canonical-head checks. |
+| P1-20260626-4 | Nonce/UTXO concurrency | Add per-wallet nonce manager, UTXO reservation, stuck transaction replacement, and concurrent withdrawal tests. |
+| P1-20260626-5 | Webhook hardening | Add event version catalog, exponential backoff, dead-letter state, merchant delivery diagnostics, and replay idempotency. |
+| P2-20260626-1 | Exchange-grade sharding | Partition listeners by chain/block/address range; support multi-worker deployment with leader/lease ownership. |
+| P2-20260626-2 | Custody policy platform | Add hot/warm/cold wallet tiers, approval policy engine, velocity limits, emergency freeze, and signer audit logs. |
+| P2-20260626-3 | Continuous reconciliation | Compare chain balances, ledger balances, sweep jobs, webhook state, and withdrawals continuously. |
+
+Older audit sections below remain for historical continuity; some statuses may have changed after the latest implementation work.
+
+---
+
+Audit date: 2026-06-05
 Auditor: Senior payment systems architect / Go backend engineer
 
 ---

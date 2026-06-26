@@ -77,8 +77,6 @@ func InitDB() error {
 }
 
 func Migrate(app *application.App) error {
-	fmt.Println("EnableExtensions:Begin")
-
 	extensions := map[string]string{
 		"uuid-ossp": "public",
 	}
@@ -86,9 +84,6 @@ func Migrate(app *application.App) error {
 	if err := EnableExtensions(context.Background(), app.DB, extensions); err != nil {
 		return err
 	}
-	fmt.Println("EnableExtensions:End")
-
-	fmt.Println("Migration:Begin")
 
 	err := app.DB.AutoMigrate(
 
@@ -169,7 +164,5 @@ func ReconcileChainStates(ctx context.Context, db *gorm.DB) error {
 }
 
 func Seed(app *application.App) error {
-	fmt.Println("Seed:Begin")
-
 	return nil
 }

@@ -394,6 +394,89 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 	return &blockchain.TransactionResult{TxHash: signedTx.Hash().Hex(), Success: true}, nil
 }
 
+func evmSignNativeWithTrustWallet(chainName string, chainID constants.ChainID, privateKey *ecdsa.PrivateKey, nonce uint64, gasPrice *big.Int, amount *big.Int, toAddress string) (*types.Transaction, error) {
+	input := &twethereum.SigningInput{
+		ChainId:    evmBigIntBytes(big.NewInt(int64(chainID))),
+		Nonce:      evmUint64Bytes(nonce),
+		TxMode:     twethereum.TransactionMode_Legacy,
+		GasPrice:   evmBigIntBytes(gasPrice),
+		GasLimit:   evmUint64Bytes(evmNativeTransferGasLimit),
+		ToAddress:  toAddress,
+		PrivateKey: crypto.FromECDSA(privateKey),
+		Transaction: &twethereum.Transaction{
+			TransactionOneof: &twethereum.Transaction_Transfer_{
+				Transfer: &twethereum.Transaction_Transfer{
+					Amount: evmBigIntBytes(amount),
+					Data:   []byte{},
+				},
+			},
+		},
+	}
+	var output twethereum.SigningOutput
+	if err := walletcore.Sign(input, &output, chainID); err != nil {
+		return nil, fmt.Errorf("%s Trust Wallet Core native signing failed: %w", chainName, err)
+	}
+	return evmTransactionFromTrustWalletOutput(chainName, "native", &output)
+}
+
+func evmSignERC20WithTrustWallet(chainName string, chainID constants.ChainID, privateKey *ecdsa.PrivateKey, nonce uint64, gasPrice *big.Int, contractAddr string, amount *big.Int, toAddress string) (*types.Transaction, error) {
+	input := &twethereum.SigningInput{
+		ChainId:    evmBigIntBytes(big.NewInt(int64(chainID))),
+		Nonce:      evmUint64Bytes(nonce),
+		TxMode:     twethereum.TransactionMode_Legacy,
+		GasPrice:   evmBigIntBytes(gasPrice),
+		GasLimit:   evmUint64Bytes(erc20TransferGasLimit),
+		ToAddress:  common.HexToAddress(contractAddr).Hex(),
+		PrivateKey: crypto.FromECDSA(privateKey),
+		Transaction: &twethereum.Transaction{
+			TransactionOneof: &twethereum.Transaction_Erc20Transfer{
+				Erc20Transfer: &twethereum.Transaction_ERC20Transfer{
+					To:     toAddress,
+					Amount: evmBigIntBytes(amount),
+				},
+			},
+		},
+	}
+	var output twethereum.SigningOutput
+	if err := walletcore.Sign(input, &output, chainID); err != nil {
+		return nil, fmt.Errorf("%s Trust Wallet Core ERC-20 signing failed: %w", chainName, err)
+	}
+	return evmTransactionFromTrustWalletOutput(chainName, "ERC-20", &output)
+}
+
+func evmTransactionFromTrustWalletOutput(chainName string, kind string, output *twethereum.SigningOutput) (*types.Transaction, error) {
+	if output.GetError() != twcommon.SigningError_OK {
+		msg := strings.TrimSpace(output.GetErrorMessage())
+		if msg == "" {
+			msg = output.GetError().String()
+		}
+		return nil, fmt.Errorf("%s Trust Wallet Core %s signing error: %s", chainName, kind, msg)
+	}
+	encoded := output.GetEncoded()
+	if len(encoded) == 0 {
+		return nil, fmt.Errorf("%s Trust Wallet Core %s signing returned empty transaction", chainName, kind)
+	}
+	signedTx := new(types.Transaction)
+	if err := signedTx.UnmarshalBinary(encoded); err != nil {
+		return nil, fmt.Errorf("%s Trust Wallet Core %s transaction decode failed: %w", chainName, kind, err)
+	}
+	return signedTx, nil
+}
+
+func evmUint64Bytes(value uint64) []byte {
+	return evmBigIntBytes(new(big.Int).SetUint64(value))
+}
+
+func evmBigIntBytes(value *big.Int) []byte {
+	if value == nil {
+		return nil
+	}
+	if value.Sign() == 0 {
+		return []byte{0}
+	}
+	return value.Bytes()
+}
+
 // evmPrefundGas sends minGas wei from reserveWallet to userAddress if the user's native balance is below threshold.
 // Returns true if a prefund transfer was actually sent.
 func evmPrefundGas(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, reserveWallet blockchain.WalletDetails, userAddress string, threshold, prefundAmount *big.Int) (bool, error) {

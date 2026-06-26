@@ -74,8 +74,6 @@ func (s *EthereumChain) ValidateAddress(address string) bool {
 }
 
 func (s *EthereumChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
-
 	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
@@ -96,8 +94,6 @@ func (s *EthereumChain) Create(ctx context.Context) (*blockchain.WalletDetails, 
 }
 
 func (s *EthereumChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
-
 	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
@@ -113,8 +109,6 @@ func (s *EthereumChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalle
 		return nil, errors.New("invalid ethereum address format")
 
 	}
-	fmt.Printf("WALLET:%s --- %s \n", s.BaseChain.Name(), wallet.Address)
-
 	return wallet, nil
 }
 
@@ -200,7 +194,6 @@ func (e *EthereumChain) BatchBalances(ctx context.Context, addresses []string, w
 
 		for _, addr := range batch {
 			if invalidErr := invalidAddresses[addr]; invalidErr != nil {
-				fmt.Printf("[%s] balance %s ERROR: %v\n", e.Name(), addr, invalidErr)
 				out = append(out, models.BalanceResult{
 					Address: addr,
 					Balance: fmt.Sprintf("ETH:%s | %s:%s", formatWei(big.NewInt(0)), ERC20_SYMBOL, formatWei(big.NewInt(0))),
@@ -224,17 +217,6 @@ func (e *EthereumChain) BatchBalances(ctx context.Context, addresses []string, w
 			if callErr == nil && ethBalance.Sign() == 0 && erc20Balance.Sign() == 0 {
 				continue
 			}
-
-			fmt.Printf(
-				"[%s] balance %s ETH=%s wei (%s) %s=%s wei (%s)\n",
-				e.Name(),
-				addr,
-				ethBalance.String(),
-				formatWei(ethBalance),
-				ERC20_SYMBOL,
-				erc20Balance.String(),
-				formatWei(erc20Balance),
-			)
 
 			out = append(out, models.BalanceResult{
 				Address: addr,

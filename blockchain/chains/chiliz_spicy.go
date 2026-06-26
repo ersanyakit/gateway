@@ -69,7 +69,6 @@ func (s *ChilizSpicyChain) ValidateAddress(address string) bool {
 }
 
 func (s *ChilizSpicyChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating wallet\n", s.Name())
 	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
 	if err != nil {
 		return nil, err
@@ -86,7 +85,6 @@ func (s *ChilizSpicyChain) Create(ctx context.Context) (*blockchain.WalletDetail
 }
 
 func (s *ChilizSpicyChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	fmt.Printf("[%s]: Creating HD wallet\n", s.Name())
 	mnemonic, err := s.BaseChain.GetMnemonic()
 	if err != nil {
 		return nil, err
@@ -99,7 +97,6 @@ func (s *ChilizSpicyChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWa
 	if !s.ValidateAddress(wallet.Address) {
 		return nil, errors.New("invalid address format")
 	}
-	fmt.Printf("WALLET:%s --- %s \n", s.BaseChain.Name(), wallet.Address)
 	return wallet, nil
 }
 
