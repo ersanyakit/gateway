@@ -1,0 +1,16 @@
+project: gateway
+module: wds
+status: in_progress
+config:
+  brief_level: complete
+  project_type: digital_product
+  design_system_mode: none
+  product_languages:
+    - en
+current_phase: A-Product-Brief
+current_step: client-profile-complete
+notes:
+  - "Brownfield WDS flow initialized from existing PRD, UX, architecture, and readiness audit artifacts."
+  - "Product domain: crypto currency wallet provider and payment gateway."
+  - "Primary design surfaces: merchant/dealer portal and admin/operator portal."
+  - "Development lane D active alongside product brief work; Story 1.1 is done and Story 1.2 is next."

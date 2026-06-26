@@ -378,7 +378,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -601,7 +601,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -774,6 +774,27 @@ const docTemplate = `{
                 "summary": "Generate white label payment",
                 "parameters": [
                     {
+                        "type": "string",
+                        "description": "API secret returned when the domain was created or rotated",
+                        "name": "X-API-Secret",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Unix timestamp used in HMAC signature",
+                        "name": "X-Gateway-Timestamp",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
+                        "name": "X-Gateway-Signature",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
                         "description": "Invoice parameters",
                         "name": "payload",
                         "in": "body",
@@ -840,7 +861,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -1043,7 +1064,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -1215,7 +1236,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -1360,7 +1381,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
@@ -2456,7 +2477,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256=",
+                        "description": "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256=",
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true

@@ -1275,8 +1275,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -1424,8 +1424,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -1539,6 +1539,22 @@ paths:
       description: Creates a white label hosted checkout session. Identical to Generate
         Invoice but returns a branded URL.
       parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
       - description: Invoice parameters
         in: body
         name: payload
@@ -1582,8 +1598,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -1717,8 +1733,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -1830,8 +1846,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -1926,8 +1942,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
@@ -2667,8 +2683,8 @@ paths:
         name: X-Gateway-Timestamp
         required: true
         type: string
-      - description: HMAC-SHA256 over timestamp + raw body, optionally prefixed with
-          sha256=
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
         in: header
         name: X-Gateway-Signature
         required: true
