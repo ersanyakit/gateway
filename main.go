@@ -84,6 +84,42 @@ func transactionFinalityInterval() time.Duration {
 	return interval
 }
 
+func sweepJobInterval() time.Duration {
+	raw := os.Getenv("SWEEP_JOB_INTERVAL")
+	if raw == "" {
+		return 15 * time.Second
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 15 * time.Second
+	}
+	return interval
+}
+
+func sweepJobLockTimeout() time.Duration {
+	raw := os.Getenv("SWEEP_JOB_LOCK_TIMEOUT")
+	if raw == "" {
+		return 2 * time.Minute
+	}
+	timeout, err := time.ParseDuration(raw)
+	if err != nil || timeout <= 0 {
+		return 2 * time.Minute
+	}
+	return timeout
+}
+
+func reconciliationInterval() time.Duration {
+	raw := os.Getenv("RECONCILIATION_INTERVAL")
+	if raw == "" {
+		return 5 * time.Minute
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 5 * time.Minute
+	}
+	return interval
+}
+
 func gatewayShutdownTimeout() time.Duration {
 	raw := os.Getenv("GATEWAY_SHUTDOWN_TIMEOUT")
 	if raw == "" {
@@ -255,7 +291,7 @@ func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, ev
 		}
 	}()
 
-	go autoSweepDeposit(txModel)
+	enqueueSweepJob(ctx, txModel)
 
 	return txModel, nil
 }
@@ -309,7 +345,7 @@ func finalizePendingTransactions(ctx context.Context, notifier *webhooksvc.Notif
 			continue
 		}
 		handlePaymentDeposit(ctx, notifier, finalized)
-		go autoSweepDeposit(finalized)
+		enqueueSweepJob(ctx, finalized)
 	}
 }
 
@@ -331,83 +367,104 @@ func ensureMerchantReserveWallet(ctx context.Context, merchantID uuid.UUID) (*mo
 	return coreApplication.CORE.Router.WalletRepo.FindByID(ctx, wallet.ID)
 }
 
-// autoSweepDeposit moves funds from a user wallet (HDAddressId > 0) to the merchant's reserve wallet.
-// For ERC-20 deposits it prefunds gas from the reserve wallet first if the user wallet is low on native balance.
-// Runs asynchronously — errors are logged, not propagated.
-func autoSweepDeposit(txModel *models.Transaction) {
+func enqueueSweepJob(ctx context.Context, txModel *models.Transaction) {
 	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
 	userWallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
 	if err != nil || userWallet == nil {
-		log.Printf("auto-sweep: wallet %s not found: %v", txModel.WalletID, err)
+		log.Printf("sweep enqueue: wallet %s not found: %v", txModel.WalletID, err)
 		return
 	}
 	if userWallet.HDAddressId == 0 {
-		return // reserve wallet — never sweep from it
+		return
+	}
+	if coreApplication.CORE.Router.SweepJobRepo == nil {
+		go autoSweepDeposit(txModel)
+		return
+	}
+	job, created, err := coreApplication.CORE.Router.SweepJobRepo.EnqueueForTransaction(ctx, *txModel)
+	if err != nil {
+		log.Printf("sweep enqueue: tx=%s error=%v", txModel.UniqueHash, err)
+		return
+	}
+	if created && job != nil {
+		log.Printf("sweep enqueue: job=%s tx=%s chain=%d", job.ID, txModel.UniqueHash, txModel.ChainID)
+	}
+}
+
+// autoSweepDeposit is the legacy fire-and-forget fallback used only if the sweep job repo is unavailable.
+func autoSweepDeposit(txModel *models.Transaction) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	result, err := executeAutoSweepDeposit(ctx, txModel)
+	if err != nil {
+		log.Printf("auto-sweep: %v", err)
+		return
+	}
+	if result != nil {
+		log.Printf("auto-sweep: swept to reserve tx=%s", result.TxHash)
+	}
+}
+
+// executeAutoSweepDeposit moves funds from a user wallet (HDAddressId > 0) to the merchant reserve wallet.
+func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
+	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
+		return nil, nil
+	}
+
+	userWallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
+	if err != nil || userWallet == nil {
+		return nil, fmt.Errorf("wallet %s not found: %w", txModel.WalletID, err)
+	}
+	if userWallet.HDAddressId == 0 {
+		return nil, nil
 	}
 
 	chain, err := coreApplication.CORE.Router.Blockchains().GetChainByID(txModel.ChainID)
 	if err != nil {
-		log.Printf("auto-sweep: chain %d not found: %v", txModel.ChainID, err)
-		return
+		return nil, fmt.Errorf("chain %d not found: %w", txModel.ChainID, err)
 	}
 
 	reserveWallet, err := ensureMerchantReserveWallet(ctx, *txModel.MerchantID)
 	if err != nil {
-		log.Printf("auto-sweep: no reserve wallet for merchant %s: %v", txModel.MerchantID, err)
-		return
+		return nil, fmt.Errorf("no reserve wallet for merchant %s: %w", txModel.MerchantID, err)
 	}
 
 	reserveAddr := repositories.WalletAddressForChainID(*reserveWallet, txModel.ChainID)
 	if reserveAddr == "" {
-		log.Printf("auto-sweep: reserve wallet has no address for chain %d", txModel.ChainID)
-		return
+		return nil, fmt.Errorf("reserve wallet has no address for chain %d", txModel.ChainID)
 	}
 
-	// Re-derive user wallet private key from mnemonic
 	userDetails, err := chain.CreateHDWallet(ctx, int(userWallet.HDAccountID), int(userWallet.HDAddressId))
 	if err != nil {
-		log.Printf("auto-sweep: re-derive wallet [acct=%d idx=%d] failed: %v", userWallet.HDAccountID, userWallet.HDAddressId, err)
-		return
+		return nil, fmt.Errorf("re-derive wallet [acct=%d idx=%d] failed: %w", userWallet.HDAccountID, userWallet.HDAddressId, err)
 	}
 
 	if txModel.Token != nil && *txModel.Token != "" {
-		// ERC-20 deposit: ensure user wallet has enough native gas first
 		reserveDetails, err := chain.CreateHDWallet(ctx, int(reserveWallet.HDAccountID), int(reserveWallet.HDAddressId))
 		if err != nil {
-			log.Printf("auto-sweep: re-derive reserve wallet failed: %v", err)
-			return
+			return nil, fmt.Errorf("re-derive reserve wallet failed: %w", err)
 		}
 		prefunded, err := chain.PrefundGas(ctx, *reserveDetails, userDetails.Address)
 		if err != nil {
 			log.Printf("auto-sweep: gas prefund [chain=%d addr=%s]: %v", txModel.ChainID, userDetails.Address, err)
-			// Continue anyway — maybe there's already enough gas
 		} else if prefunded {
 			log.Printf("auto-sweep: gas prefunded to %s on chain %d", userDetails.Address, txModel.ChainID)
-			// Brief pause for the prefund tx to be picked up before sweeping
 			time.Sleep(5 * time.Second)
 		}
 		result, err := chain.SweepERC20To(ctx, *userDetails, *txModel.Token, reserveAddr)
 		if err != nil {
-			log.Printf("auto-sweep ERC-20 [chain=%d token=%s]: %v", txModel.ChainID, *txModel.Token, err)
-			return
+			return nil, fmt.Errorf("sweep token [chain=%d token=%s]: %w", txModel.ChainID, *txModel.Token, err)
 		}
-		log.Printf("auto-sweep ERC-20 [chain=%d token=%s]: swept to reserve tx=%s", txModel.ChainID, *txModel.Token, result.TxHash)
-		return
+		return result, nil
 	}
 
-	// Native deposit sweep
 	result, err := chain.SweepTo(ctx, *userDetails, reserveAddr)
 	if err != nil {
-		log.Printf("auto-sweep native [chain=%d]: %v", txModel.ChainID, err)
-		return
+		return nil, fmt.Errorf("sweep native [chain=%d]: %w", txModel.ChainID, err)
 	}
-	log.Printf("auto-sweep native [chain=%d]: swept to reserve tx=%s", txModel.ChainID, result.TxHash)
+	return result, nil
 }
 
 func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, txModel *models.Transaction) {
@@ -710,6 +767,97 @@ func startTransactionFinalityWorker(ctx context.Context, notifier *webhooksvc.No
 	}
 }
 
+func processSweepJobs(ctx context.Context) {
+	router := coreApplication.CORE.Router
+	if router.SweepJobRepo == nil || router.TransactionRepo == nil {
+		return
+	}
+	jobs, err := router.SweepJobRepo.ClaimDue(ctx, 25, sweepJobLockTimeout())
+	if err != nil {
+		log.Println("Sweep job claim error:", err)
+		return
+	}
+	for _, job := range jobs {
+		txModel, err := router.TransactionRepo.FindByUniqueHash(ctx, job.TransactionUniqueHash)
+		if err != nil {
+			log.Printf("Sweep job transaction lookup error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
+			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
+			continue
+		}
+		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		result, err := executeAutoSweepDeposit(jobCtx, txModel)
+		cancel()
+		if err != nil {
+			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
+			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
+			continue
+		}
+		txHash := ""
+		if result != nil {
+			txHash = result.TxHash
+		}
+		if err := router.SweepJobRepo.MarkSucceeded(ctx, job.ID, txHash); err != nil {
+			log.Printf("Sweep job mark succeeded error job=%s: %v\n", job.ID, err)
+			continue
+		}
+		log.Printf("Sweep job succeeded job=%s tx=%s sweep_tx=%s\n", job.ID, job.TransactionUniqueHash, txHash)
+	}
+}
+
+func startSweepJobWorker(ctx context.Context) {
+	ticker := time.NewTicker(sweepJobInterval())
+	defer ticker.Stop()
+	processSweepJobs(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			processSweepJobs(ctx)
+		}
+	}
+}
+
+func runLedgerInvariantReconciliation(ctx context.Context) {
+	router := coreApplication.CORE.Router
+	if router.LedgerRepo == nil || router.ReconciliationRepo == nil {
+		return
+	}
+	issues, err := router.LedgerRepo.FindInvariantIssues(ctx, 200)
+	if err != nil {
+		log.Println("Ledger invariant reconciliation error:", err)
+		return
+	}
+	if len(issues) == 0 {
+		return
+	}
+	for _, issue := range issues {
+		reason := "ledger_invariant:" + issue.IdempotencyKey
+		if len(reason) > 120 {
+			reason = reason[:120]
+		}
+		if _, created, err := router.ReconciliationRepo.CreateOpenIfMissing(ctx, constants.ChainID(issue.ChainID), 0, 0, reason); err != nil {
+			log.Printf("Reconciliation job create error key=%s: %v\n", issue.IdempotencyKey, err)
+		} else if created {
+			log.Printf("Reconciliation job opened key=%s chain=%d net=%s\n", issue.IdempotencyKey, issue.ChainID, issue.NetRaw)
+		}
+	}
+}
+
+func startReconciliationWorker(ctx context.Context) {
+	ticker := time.NewTicker(reconciliationInterval())
+	defer ticker.Stop()
+	runLedgerInvariantReconciliation(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runLedgerInvariantReconciliation(ctx)
+		}
+	}
+}
+
 func finalizeProcessingTransfers(ctx context.Context) {
 	router := coreApplication.CORE.Router
 	if router.WithdrawalRepo != nil {
@@ -863,6 +1011,8 @@ func main() {
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)
 	go startTransactionFinalityWorker(mainCtx, webhookNotifier)
+	go startSweepJobWorker(mainCtx)
+	go startReconciliationWorker(mainCtx)
 	go startTransferFinalizationWorker(mainCtx)
 
 	var isEnabled = true

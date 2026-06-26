@@ -21,6 +21,7 @@ import (
 	"core/models"
 	"core/types"
 	"core/workers/dispatcher"
+	listenerconfig "core/workers/listeners"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	goproto "github.com/golang/protobuf/proto"
@@ -319,7 +320,14 @@ func (r *RpcListener) catchUp() error {
 	}
 
 	from := r.chainState.LastProcessedBlock + 1
-	if from <= 1 {
+	configuredStart := false
+	if r.chainState.LastProcessedBlock <= 0 {
+		if configured, ok := listenerconfig.ConfiguredStartBlock(r.chain); ok {
+			from = configured
+			configuredStart = true
+		}
+	}
+	if from <= 1 && !configuredStart {
 		from = safeLatest
 	}
 	if from > safeLatest {

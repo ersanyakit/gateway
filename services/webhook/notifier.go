@@ -49,6 +49,7 @@ func IsPermanent(err error) bool {
 type Payload struct {
 	EventID       string `json:"event_id"`
 	EventType     string `json:"event_type"`
+	EventVersion  string `json:"event_version"`
 	TransactionID string `json:"transaction_id"`
 
 	MerchantID string `json:"merchant_id"`
@@ -73,8 +74,9 @@ type Payload struct {
 }
 
 type PaymentPayload struct {
-	EventID   string `json:"event_id"`
-	EventType string `json:"event_type"`
+	EventID      string `json:"event_id"`
+	EventType    string `json:"event_type"`
+	EventVersion string `json:"event_version"`
 
 	PaymentID    string `json:"payment_id"`
 	SessionToken string `json:"session_token"`
@@ -121,6 +123,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	payload := Payload{
 		EventID:       tx.UniqueHash,
 		EventType:     tx.EventType,
+		EventVersion:  "v1",
 		TransactionID: tx.ID.String(),
 		ProductID:     tx.ProductID,
 		UserID:        tx.UserID,
@@ -169,6 +172,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "gateway-webhook/1.0")
 	req.Header.Set("X-Gateway-Event", tx.EventType)
+	req.Header.Set("X-Gateway-Event-Version", "v1")
 	req.Header.Set("X-Gateway-Event-Id", tx.UniqueHash)
 	req.Header.Set("X-Gateway-Timestamp", timestamp)
 	req.Header.Set("X-Gateway-Signature", "sha256="+signature)
@@ -212,6 +216,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	payload := PaymentPayload{
 		EventID:           session.ID.String() + ":" + session.WebhookEvent,
 		EventType:         session.WebhookEvent,
+		EventVersion:      "v1",
 		PaymentID:         session.ID.String(),
 		SessionToken:      session.SessionToken,
 		OrderID:           session.OrderID,
@@ -255,6 +260,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "gateway-webhook/1.0")
 	req.Header.Set("X-Gateway-Event", session.WebhookEvent)
+	req.Header.Set("X-Gateway-Event-Version", "v1")
 	req.Header.Set("X-Gateway-Event-Id", payload.EventID)
 	req.Header.Set("X-Gateway-Timestamp", timestamp)
 	req.Header.Set("X-Gateway-Signature", "sha256="+signature)

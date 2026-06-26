@@ -14,6 +14,7 @@ const (
 	LedgerEntryTypeWithdrawalRelease = "withdrawal_release"
 	LedgerEntryTypeWithdrawalDebit   = "withdrawal_debit"
 	LedgerEntryTypeRefundDebit       = "refund_debit"
+	LedgerEntryTypeReorgReversal     = "reorg_reversal"
 	LedgerEntryTypeAdjustment        = "adjustment"
 
 	LedgerDirectionCredit = "credit"

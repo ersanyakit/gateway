@@ -2,10 +2,12 @@ package repositories
 
 import (
 	"context"
+	"core/constants"
 	"core/models"
 	"core/types"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +73,9 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}
 
 		now := time.Now()
+		if err := r.markBlockHashConflictsWithDB(params.Context, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
+			return err
+		}
 		txModel := &models.Transaction{
 			ID:          uuid.New(),
 			ChainID:     params.ChainID,
@@ -109,6 +114,82 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 
 		return nil
 	})
+}
+
+func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber string, blockHash string, currentUniqueHash string, now time.Time) error {
+	blockNumber = strings.TrimSpace(blockNumber)
+	blockHash = strings.TrimSpace(blockHash)
+	if blockNumber == "" || blockHash == "" {
+		return nil
+	}
+
+	var conflicts []models.Transaction
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("chain_id = ?", chainID).
+		Where("block_number = ?", blockNumber).
+		Where("block_hash <> ''").
+		Where("block_hash <> ?", blockHash).
+		Where("unique_hash <> ?", currentUniqueHash).
+		Where("status <> ?", models.TransactionStatusReorged).
+		Find(&conflicts).Error; err != nil {
+		return err
+	}
+	if len(conflicts) == 0 {
+		return nil
+	}
+
+	uniqueHashes := make([]string, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		uniqueHashes = append(uniqueHashes, conflict.UniqueHash)
+		if err := NewLedgerRepo(tx).PostTransactionReversalWithDB(ctx, tx, conflict); err != nil {
+			return err
+		}
+		if err := NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, conflict.UniqueHash); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.WithContext(ctx).
+		Model(&models.Transaction{}).
+		Where("unique_hash IN ?", uniqueHashes).
+		Updates(map[string]any{
+			"status":               models.TransactionStatusReorged,
+			"event_type":           "transaction_reorged",
+			"reorged_at":           &now,
+			"webhook_sent_at":      nil,
+			"webhook_attempts":     0,
+			"webhook_last_error":   "",
+			"webhook_locked_until": nil,
+			"updated_at":           now,
+		}).Error; err != nil {
+		return err
+	}
+
+	if err := tx.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("transaction_unique_hash IN ?", uniqueHashes).
+		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
+		Updates(map[string]any{
+			"status":       models.SweepJobStatusDeadLetter,
+			"last_error":   "source transaction was reorged",
+			"next_run_at":  nil,
+			"locked_until": nil,
+			"updated_at":   now,
+		}).Error; err != nil {
+		return err
+	}
+
+	fromBlock, parseErr := strconv.ParseInt(blockNumber, 10, 64)
+	if parseErr != nil {
+		fromBlock = 0
+	}
+	reason := fmt.Sprintf("reorg_detected:%d:%s", chainID, blockNumber)
+	if len(reason) > 120 {
+		reason = reason[:120]
+	}
+	_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, chainID, fromBlock, fromBlock, reason)
+	return err
 }
 
 func (r *TransactionRepo) FindByUniqueHash(ctx context.Context, uniqueHash string) (*models.Transaction, error) {
@@ -156,6 +237,11 @@ func (r *TransactionRepo) BindWallet(ctx context.Context, uniqueHash, eventType 
 }
 
 func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash string, delivered bool, lastErr error) error {
+	var current models.Transaction
+	if err := r.DB().WithContext(ctx).Select("webhook_attempts").First(&current, "unique_hash = ?", uniqueHash).Error; err != nil {
+		return err
+	}
+	attempts := current.WebhookAttempts + 1
 	updates := map[string]interface{}{
 		"webhook_attempts":     gorm.Expr("webhook_attempts + 1"),
 		"webhook_locked_until": nil,
@@ -168,6 +254,10 @@ func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash str
 		updates["webhook_last_error"] = ""
 	} else if lastErr != nil {
 		updates["webhook_last_error"] = lastErr.Error()
+		if attempts < webhookMaxAttempts() {
+			lockUntil := time.Now().Add(webhookRetryBackoff(attempts))
+			updates["webhook_locked_until"] = &lockUntil
+		}
 	}
 
 	return r.DB().WithContext(ctx).
@@ -239,8 +329,9 @@ func (r *TransactionRepo) ListPendingWebhooks(ctx context.Context, limit int) ([
 			Joins("JOIN domains ON domains.id = transactions.domain_id").
 			Where("domains.webhook_url <> ''").
 			Where("domains.webhook_secret <> ''").
-			Where("status = ?", models.TransactionStatusConfirmed).
+			Where("status IN ?", []string{models.TransactionStatusConfirmed, models.TransactionStatusReorged}).
 			Where("webhook_sent_at IS NULL").
+			Where("webhook_attempts < ?", webhookMaxAttempts()).
 			Where("webhook_locked_until IS NULL OR webhook_locked_until < ?", now).
 			Order("transactions.created_at ASC").
 			Limit(limit).

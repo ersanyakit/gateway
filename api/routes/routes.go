@@ -50,6 +50,8 @@ type Router struct {
 	LedgerRepo          *repositories.LedgerRepo
 	IdempotencyRepo     *repositories.IdempotencyRepo
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
+	SweepJobRepo        *repositories.SweepJobRepo
+	ReconciliationRepo  *repositories.ReconciliationRepo
 	RefundRepo          *repositories.RefundRepo
 	ActivityLogRepo     *repositories.ActivityLogRepo
 	AdminRepo           *repositories.AdminRepo
@@ -133,6 +135,8 @@ func NewRouter(db *gorm.DB) *Router {
 	r.LedgerRepo = repositories.NewLedgerRepo(r.db)
 	r.IdempotencyRepo = repositories.NewIdempotencyRepo(r.db)
 	r.WebhookDeliveryRepo = repositories.NewWebhookDeliveryRepo(r.db)
+	r.SweepJobRepo = repositories.NewSweepJobRepo(r.db)
+	r.ReconciliationRepo = repositories.NewReconciliationRepo(r.db)
 	r.RefundRepo = repositories.NewRefundRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
 	r.AdminRepo = repositories.NewAdminRepo(r.db)

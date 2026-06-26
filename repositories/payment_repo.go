@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"core/constants"
@@ -465,6 +466,11 @@ func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.
 }
 
 func (r *PaymentRepo) MarkWebhookAttempt(ctx context.Context, sessionID uuid.UUID, delivered bool, lastErr error) error {
+	var current models.PaymentSession
+	if err := r.db.WithContext(ctx).Select("webhook_attempts").First(&current, "id = ?", sessionID).Error; err != nil {
+		return err
+	}
+	attempts := current.WebhookAttempts + 1
 	updates := map[string]interface{}{
 		"webhook_attempts":     gorm.Expr("webhook_attempts + 1"),
 		"webhook_locked_until": nil,
@@ -476,12 +482,36 @@ func (r *PaymentRepo) MarkWebhookAttempt(ctx context.Context, sessionID uuid.UUI
 		updates["webhook_last_error"] = ""
 	} else if lastErr != nil {
 		updates["webhook_last_error"] = lastErr.Error()
+		if attempts < webhookMaxAttempts() {
+			lockUntil := time.Now().Add(webhookRetryBackoff(attempts))
+			updates["webhook_locked_until"] = &lockUntil
+		}
 	}
 
 	return r.db.WithContext(ctx).
 		Model(&models.PaymentSession{}).
 		Where("id = ?", sessionID).
 		Updates(updates).Error
+}
+
+func (r *PaymentRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *gorm.DB, uniqueHash string) error {
+	if strings.TrimSpace(uniqueHash) == "" {
+		return nil
+	}
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.PaymentSession{}).
+		Where("tx_unique_hash = ?", uniqueHash).
+		Where("status = ?", models.PaymentStatusPaid).
+		Updates(map[string]any{
+			"status":               models.PaymentStatusFailed,
+			"webhook_event":        "payment_failed",
+			"webhook_sent_at":      nil,
+			"webhook_attempts":     0,
+			"webhook_last_error":   "",
+			"webhook_locked_until": nil,
+			"updated_at":           now,
+		}).Error
 }
 
 func (r *PaymentRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]models.PaymentSession, error) {
@@ -500,6 +530,7 @@ func (r *PaymentRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]mod
 			Where("domains.webhook_secret <> ''").
 			Where("webhook_event <> ''").
 			Where("webhook_sent_at IS NULL").
+			Where("webhook_attempts < ?", webhookMaxAttempts()).
 			Where("webhook_locked_until IS NULL OR webhook_locked_until < ?", now).
 			Order("payment_sessions.updated_at ASC").
 			Limit(limit).

@@ -1,7 +1,7 @@
 # Gateway — Implementation Roadmap
 
 Latest audit date: 2026-06-26
-Latest detailed report: [`docs/product-readiness-audit.md`](docs/product-readiness-audit.md)
+Latest detailed report: [`docs/payment-gateway-wallet-provider-audit.md`](docs/payment-gateway-wallet-provider-audit.md)
 
 ---
 
@@ -41,6 +41,24 @@ Trust Wallet Core truth:
 | P2-20260626-1 | Exchange-grade sharding | Partition listeners by chain/block/address range; support multi-worker deployment with leader/lease ownership. |
 | P2-20260626-2 | Custody policy platform | Add hot/warm/cold wallet tiers, approval policy engine, velocity limits, emergency freeze, and signer audit logs. |
 | P2-20260626-3 | Continuous reconciliation | Compare chain balances, ledger balances, sweep jobs, webhook state, and withdrawals continuously. |
+
+### 2026-06-26 Implementation Update
+
+Completed in this pass:
+
+- P0-20260626-5: auto-sweep is now persisted through `sweep_jobs` with idempotent enqueue, claim locks, retry attempts, exponential backoff, dead-letter state, and sweep tx hash recording.
+- P1-20260626-5: webhook deliveries now include event versioning (`event_version`, `X-Gateway-Event-Version`) and failed transaction/payment webhook retries use exponential backoff with max-attempt gating.
+- P0-20260626-2 partial: listeners now support explicit chain start block env vars (`CHAIN_<id>_START_BLOCK`, `<CHAIN_NAME>_START_BLOCK`, `START_BLOCK_<CHAIN_NAME>`, `CHAIN_START_BLOCK_DEFAULT`) instead of always jumping to safe/latest on first start.
+- P0-20260626-4 partial: same-chain/same-height block hash conflicts now mark old transactions as `reorged`, enqueue `transaction_reorged` webhooks, reverse linked ledger entries with idempotent `reorg_reversal` entries, fail linked paid sessions with correction webhooks, dead-letter pending sweep jobs, and open reconciliation jobs.
+- P2-20260626-3 partial: ledger invariant scanning now opens reconciliation jobs when a non-zero debit/credit imbalance is detected by idempotency key.
+
+Still open:
+
+- P0-20260626-1: real KMS/HSM/MPC signer integration requires a selected signer provider and credentials.
+- P0-20260626-3/P0-20260626-7: horizontal chain indexing and durable event bus are architectural work beyond the monolith worker patch.
+- P0-20260626-4: full reorg accounting still needs canonical parent/child block hash storage, proactive rollback-window scanning, and fork simulation tests.
+- P0-20260626-6/P1-20260626-4: advanced fee, nonce, UTXO, stuck transaction, RBF/CPFP, priority fee, and TRON resource policies are still open.
+- P2-20260626-2: custody policy platform remains open.
 
 Older audit sections below remain for historical continuity; some statuses may have changed after the latest implementation work.
 
@@ -98,7 +116,7 @@ Auditor: Senior payment systems architect / Go backend engineer
 | T3-2 | Merchant balance API endpoint — serve real-time balance from ledger, not full-table scan | `api/handlers/`, `repositories/ledger_repo.go` (new) | ❌ Open |
 | T3-3 | Webhook delivery log — `webhook_deliveries` table with per-attempt request/response/latency + replay endpoint | `models/webhook_delivery.go` (new), `services/webhook/notifier.go` | ❌ Open |
 | T3-4 | Refund workflow — reverse ledger entry + track on-chain return tx + `payment.refunded` webhook event | `models/`, `api/handlers/`, `services/` | ❌ Open |
-| T3-5 | Block reorg handling — detect reorged txs, mark transactions `reorged`, reverse affected sessions | `workers/listeners/`, `repositories/transaction_repo.go` | ❌ Open |
+| T3-5 | Block reorg handling — detect reorged txs, mark transactions `reorged`, reverse affected sessions | `workers/listeners/`, `repositories/transaction_repo.go` | 🟡 Partial |
 
 ---
 

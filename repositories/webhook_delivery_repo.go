@@ -2,8 +2,6 @@ package repositories
 
 import (
 	"context"
-	"os"
-	"strconv"
 	"time"
 
 	"core/models"
@@ -63,7 +61,7 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		if status == models.WebhookDeliveryStatusDeadLetter {
 			updates["next_retry_at"] = nil
 		} else {
-			next := time.Now().Add(time.Minute)
+			next := time.Now().Add(webhookRetryBackoff(current.Attempts + 1))
 			updates["next_retry_at"] = &next
 		}
 	}
@@ -74,15 +72,7 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 }
 
 func webhookMaxAttempts() uint {
-	raw := os.Getenv("WEBHOOK_MAX_ATTEMPTS")
-	if raw == "" {
-		return 8
-	}
-	value, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil || value == 0 {
-		return 8
-	}
-	return uint(value)
+	return uintFromEnv("WEBHOOK_MAX_ATTEMPTS", 8)
 }
 
 func (r *WebhookDeliveryRepo) ListPage(ctx context.Context, page, limit int, status string) ([]models.WebhookDelivery, int64, error) {

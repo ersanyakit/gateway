@@ -23,6 +23,7 @@ import (
 	"core/models"
 	"core/types"
 	"core/workers/dispatcher"
+	listenerconfig "core/workers/listeners"
 	"core/workers/listeners/rpcutil"
 
 	"github.com/btcsuite/btcd/btcutil/base58"
@@ -159,7 +160,14 @@ func (r *RpcListener) catchUp() error {
 	}
 
 	from := r.chainState.LastProcessedBlock + 1
-	if from <= 1 {
+	configuredStart := false
+	if r.chainState.LastProcessedBlock <= 0 {
+		if configured, ok := listenerconfig.ConfiguredStartBlock(r.chain); ok {
+			from = configured
+			configuredStart = true
+		}
+	}
+	if from <= 1 && !configuredStart {
 		from = safeLatest
 	}
 	if from > safeLatest {

@@ -540,6 +540,79 @@ func (r *LedgerRepo) existsWithDB(ctx context.Context, tx *gorm.DB, key string) 
 	return count > 0, err
 }
 
+func reverseLedgerDirection(direction string) string {
+	if direction == models.LedgerDirectionCredit {
+		return models.LedgerDirectionDebit
+	}
+	return models.LedgerDirectionCredit
+}
+
+func (r *LedgerRepo) PostTransactionReversal(ctx context.Context, txModel models.Transaction) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.PostTransactionReversalWithDB(ctx, tx, txModel)
+	})
+}
+
+func (r *LedgerRepo) PostTransactionReversalWithDB(ctx context.Context, tx *gorm.DB, txModel models.Transaction) error {
+	if txModel.UniqueHash == "" {
+		return nil
+	}
+	var originals []models.LedgerEntry
+	if err := tx.WithContext(ctx).
+		Where("transaction_unique_hash = ?", txModel.UniqueHash).
+		Where("status <> ?", models.LedgerStatusVoided).
+		Where("entry_type <> ?", models.LedgerEntryTypeReorgReversal).
+		Where("amount_raw ~ '^[0-9]+$'").
+		Find(&originals).Error; err != nil {
+		return err
+	}
+	if len(originals) == 0 {
+		return nil
+	}
+	now := time.Now()
+	reversals := make([]models.LedgerEntry, 0, len(originals))
+	for _, original := range originals {
+		key := "reorg-reversal:" + original.ID.String()
+		exists, err := r.existsWithDB(ctx, tx, key)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		reversals = append(reversals, models.LedgerEntry{
+			ID:                    uuid.New(),
+			MerchantID:            original.MerchantID,
+			DomainID:              original.DomainID,
+			WalletID:              original.WalletID,
+			PaymentID:             original.PaymentID,
+			TransactionUniqueHash: original.TransactionUniqueHash,
+			TransactionHash:       original.TransactionHash,
+			WithdrawalID:          original.WithdrawalID,
+			RefundID:              original.RefundID,
+			ChainID:               original.ChainID,
+			Token:                 original.Token,
+			Symbol:                original.Symbol,
+			Decimals:              original.Decimals,
+			EntryType:             models.LedgerEntryTypeReorgReversal,
+			Account:               original.Account,
+			Direction:             reverseLedgerDirection(original.Direction),
+			Status:                models.LedgerStatusPosted,
+			AmountRaw:             original.AmountRaw,
+			IdempotencyKey:        key,
+			Reference:             txModel.UniqueHash,
+			Description:           "Reorg reversal for ledger entry " + original.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		})
+	}
+	if len(reversals) == 0 {
+		return nil
+	}
+	return tx.WithContext(ctx).Create(&reversals).Error
+}
+
 func (r *LedgerRepo) lockLedgerAsset(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, domainID *uuid.UUID, chainID constants.ChainID, token *string) error {
 	tokenKey := "native"
 	if token != nil && strings.TrimSpace(*token) != "" {
@@ -705,6 +778,37 @@ type LedgerBalanceRow struct {
 	Decimals   uint8
 	Account    string
 	BalanceRaw string
+}
+
+type LedgerInvariantIssue struct {
+	IdempotencyKey string
+	ChainID        int64
+	Token          *string
+	Symbol         string
+	NetRaw         string
+}
+
+func (r *LedgerRepo) FindInvariantIssues(ctx context.Context, limit int) ([]LedgerInvariantIssue, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var rows []LedgerInvariantIssue
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT idempotency_key,
+		       chain_id,
+		       token,
+		       symbol,
+		       SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END)::text AS net_raw
+		FROM ledger_entries
+		WHERE idempotency_key <> ''
+		  AND status <> 'voided'
+		  AND amount_raw ~ '^[0-9]+$'
+		GROUP BY idempotency_key, chain_id, token, symbol
+		HAVING SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END) <> 0
+		ORDER BY idempotency_key ASC
+		LIMIT ?
+	`, limit).Scan(&rows).Error
+	return rows, err
 }
 
 func (r *LedgerRepo) MerchantBalances(ctx context.Context, merchantID uuid.UUID) ([]LedgerBalanceRow, error) {
