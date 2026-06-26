@@ -3,6 +3,7 @@ package blockchain
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,8 @@ import (
 
 type testChain struct {
 	BaseChain
-	createErr error
+	createErr   error
+	hdCreateErr error
 }
 
 func newTestChain(id constants.ChainID, name string) *testChain {
@@ -27,6 +29,9 @@ func (t *testChain) Create(ctx context.Context) (*WalletDetails, error) {
 }
 
 func (t *testChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*WalletDetails, error) {
+	if t.hdCreateErr != nil {
+		return nil, t.hdCreateErr
+	}
 	return &WalletDetails{Address: t.Name() + "-hd-address"}, nil
 }
 
@@ -112,6 +117,23 @@ func TestChainFactoryCreateWalletsSeparatesErrors(t *testing.T) {
 	}
 	if errs["solana"] == nil {
 		t.Fatal("solana error should be recorded")
+	}
+}
+
+func TestChainFactoryCreateHDWalletsSeparatesErrors(t *testing.T) {
+	factory := NewChainFactory()
+	factory.RegisterChain("ethereum", newTestChain(constants.Ethereum, "ethereum"))
+	factory.RegisterChain("solana", &testChain{BaseChain: BaseChain{ID: constants.Solana, ChainName: "solana"}, hdCreateErr: errors.New("walletcorefallback cannot derive wallet addresses")})
+
+	wallets, errs := factory.CreateHDWallets(context.Background(), 1, 2)
+	if wallets["ethereum"] == nil {
+		t.Fatal("ethereum HD wallet should be created")
+	}
+	if wallets["solana"] != nil {
+		t.Fatal("solana HD wallet should not be created after derivation error")
+	}
+	if errs["solana"] == nil || !strings.Contains(errs["solana"].Error(), "walletcorefallback") {
+		t.Fatalf("solana error = %v, want walletcorefallback", errs["solana"])
 	}
 }
 
