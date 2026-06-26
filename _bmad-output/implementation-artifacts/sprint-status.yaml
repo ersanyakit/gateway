@@ -49,8 +49,8 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   epic-1: in-progress
-  1-1-secure-partner-api-request-authentication: review
-  1-2-idempotent-payment-session-creation: backlog
+  1-1-secure-partner-api-request-authentication: done
+  1-2-idempotent-payment-session-creation: done
   1-3-deterministic-static-wallet-issuance-for-partner-scopes: backlog
   1-4-hosted-checkout-payment-state-experience: backlog
   1-5-stable-partner-api-contract-and-integration-evidence: backlog

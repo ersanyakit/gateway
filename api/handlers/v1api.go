@@ -86,12 +86,12 @@ func v1ResolveSignedDomain(c fiber.Ctx, domainRepo v1DomainLookup) (*models.Doma
 	}
 	secretDomain, err := domainRepo.FindByAPISecret(types.DomainParams{Context: c.Context(), APISecret: &apiSecret})
 	if err != nil {
-		err := fmt.Errorf("invalid API secret")
+		err := fmt.Errorf("invalid API credentials")
 		v1LogAuthFailure(c, domain, "invalid_api_secret", err)
 		return nil, err
 	}
 	if secretDomain.ID != domain.ID {
-		err := fmt.Errorf("API key and secret do not match")
+		err := fmt.Errorf("invalid API credentials")
 		v1LogAuthFailure(c, domain, "api_key_secret_mismatch", err)
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func v1ResolveSignedDomain(c fiber.Ctx, domainRepo v1DomainLookup) (*models.Doma
 		v1LogAuthFailure(c, domain, "missing_signature", err)
 		return nil, err
 	}
-	if !helpers.VerifyRequestSignature(apiSecret, c.Method(), c.Path(), timestamp, c.Body(), signature) {
+	if !helpers.VerifyRequestSignature(apiSecret, c.Method(), v1CanonicalRequestTarget(c), timestamp, c.Body(), signature) {
 		err := fmt.Errorf("invalid request signature")
 		v1LogAuthFailure(c, domain, "invalid_signature", err)
 		return nil, err
@@ -487,7 +487,7 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1WalletCreateRequest true "Wallet create parameters"
 // @Success 201 {object} types.V1WalletCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -676,31 +676,26 @@ func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
+// @Failure 409 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/create [post]
 func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
-	// Delegate to the existing payment create handler logic
-	inner := HandlePaymentCreate(PaymentHandlerDeps{
-		DomainRepo:      deps.DomainRepo,
-		WalletRepo:      deps.WalletRepo,
-		PaymentRepo:     deps.PaymentRepo,
-		AssetRegistry:   deps.AssetRegistry,
-		Blockchains:     deps.Blockchains,
-		PriceOracle:     deps.PriceOracle,
-		Notifier:        deps.Notifier,
-		PaymentHub:      deps.PaymentHub,
-		IdempotencyRepo: deps.IdempotencyRepo,
-	})
-	return func(c fiber.Ctx) error {
-		if _, err := v1ResolveSignedDomain(c, deps.DomainRepo); err != nil {
-			return v1Err(c, fiber.StatusUnauthorized, err.Error())
-		}
-		return inner(c)
-	}
+	return handlePaymentCreate(PaymentHandlerDeps{
+		DomainRepo:       deps.DomainRepo,
+		WalletRepo:       deps.WalletRepo,
+		PaymentRepo:      deps.PaymentRepo,
+		AssetRegistry:    deps.AssetRegistry,
+		Blockchains:      deps.Blockchains,
+		PriceOracle:      deps.PriceOracle,
+		Notifier:         deps.Notifier,
+		PaymentHub:       deps.PaymentHub,
+		IdempotencyRepo:  deps.IdempotencyRepo,
+		RequireSignature: true,
+	}, paymentCreateModeV1)
 }
 
 // HandleV1PaymentWhiteLabel godoc
@@ -710,10 +705,14 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 // @Accept json
 // @Produce json
 // @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
+// @Failure 409 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/white-label [post]
 func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 	return HandleV1PaymentCreate(deps)
@@ -728,7 +727,7 @@ func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1StaticAddressRequest true "Static address parameters"
 // @Success 200 {object} types.V1StaticAddressResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -1032,7 +1031,7 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1PayoutRequest true "Payout parameters"
 // @Success 201 {object} types.V1PayoutCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -1230,7 +1229,7 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body types.V1RefundRequest true "Refund parameters"
 // @Success 201 {object} types.V1RefundCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -1626,17 +1625,23 @@ func v1PaymentResponse(s models.PaymentSession) fiber.Map {
 		v := int64(*s.SelectedChainID)
 		chainID = &v
 	}
+	token := ""
+	if s.SelectedToken != nil {
+		token = *s.SelectedToken
+	}
 	return fiber.Map{
 		"payment_id":          s.ID.String(),
 		"track_id":            s.SessionToken,
 		"order_id":            s.OrderID,
 		"product_id":          s.ProductID,
 		"user_id":             s.UserID,
-		"status":              s.Status,
+		"status":              paymentSessionResponseStatus(s, time.Now()),
 		"amount":              s.Amount,
 		"currency":            s.Currency,
 		"chain_id":            chainID,
 		"symbol":              s.SelectedSymbol,
+		"token":               token,
+		"decimals":            s.SelectedDecimals,
 		"deposit_address":     s.DepositAddress,
 		"expected_amount_raw": s.ExpectedAmountRaw,
 		"tx_hash":             s.TxHash,

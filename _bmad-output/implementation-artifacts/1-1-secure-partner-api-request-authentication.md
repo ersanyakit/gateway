@@ -2,7 +2,7 @@
 story_id: "1.1"
 story_key: "1-1-secure-partner-api-request-authentication"
 epic: "Epic 1: Partner Integration & Payment Intake Hardening"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: db47e732f1b3a802ac7759132b95c7ca2e868559
@@ -10,7 +10,7 @@ baseline_commit: db47e732f1b3a802ac7759132b95c7ca2e868559
 
 # Story 1.1: Secure Partner API Request Authentication
 
-Status: review
+Status: done
 
 ## Story
 
@@ -24,6 +24,7 @@ so that only authorized merchant or exchange tenants can perform actions against
 - **NFRs:** NFR2, NFR11, NFR13, NFR14, NFR18
 - **PRD:** `_bmad-output/planning-artifacts/prds/prd-gateway-2026-06-27/prd.md`
 - **UX:** `_bmad-output/planning-artifacts/ux-designs/ux-gateway-2026-06-27/EXPERIENCE.md`
+- **Project Context:** `_bmad-output/project-context.md`
 
 ## Acceptance Criteria
 
@@ -65,6 +66,17 @@ so that only authorized merchant or exchange tenants can perform actions against
   - [x] Run `go test ./...`.
   - [x] Run `go vet ./...` if it is currently passing in the repo state.
   - [x] Update Dev Agent Record, File List, Change Log, and story status according to `bmad-dev-story`.
+
+### Review Findings
+
+- [x] [Review][Patch] Bind query string in canonical signed request target — fixed by verifying and replay-keying signed v1 requests with `OriginalURL()` fallback.
+- [x] [Review][Patch] Redact sensitive auth log values — fixed by replacing sensitive header/token patterns before logging auth errors.
+- [x] [Review][Patch] Avoid API key/secret mismatch oracle — fixed by returning a generic invalid credential error while retaining internal log category.
+- [x] [Review][Patch] Bound replay guard memory and cleanup cost — fixed by adding a hard entry cap, oldest-entry eviction, and interval-based TTL cleanup.
+- [x] [Review][Patch] Document white-label signed-auth headers — fixed by adding signature headers and regenerating OpenAPI docs.
+- [x] [Review][Patch] Guarantee auth failure correlation ID — fixed by generating `X-Request-ID` when missing and including it in auth logs.
+- [x] [Review][Patch] Add required handler negative tests — fixed with v1 envelope assertions for missing key, missing secret, timestamp failures, and missing signature.
+- [x] [Review][Patch] Complete story File List — fixed by listing all story-touched implementation, docs, and BMAD tracking files.
 
 ## Dev Notes
 
@@ -139,7 +151,7 @@ so that only authorized merchant or exchange tenants can perform actions against
 ## Project Structure Notes
 
 - Current v1 API auth lives inside `api/handlers/v1api.go`, not middleware. Keep changes local unless a minimal helper improves reuse.
-- No `project-context.md` file exists in the repo at story creation time.
+- `_bmad-output/project-context.md` exists and must be read before implementation.
 - Recent git commits are generic `fixes`; do not infer story-specific implementation patterns from commit messages alone.
 
 ## Dev Agent Record
@@ -154,25 +166,39 @@ Codex
 - Targeted validation: `go test ./helpers ./api/handlers` passed after implementation.
 - Full regression: `go test ./...` passed.
 - Static check: `go vet ./...` passed.
+- Review validation: `go test -count=1 ./helpers ./api/handlers` passed after code-review fixes.
+- Review full regression: `go test -count=1 ./...` passed after code-review fixes.
+- Review static check: `go vet ./...` passed after code-review fixes.
 
 ### Completion Notes List
 
-- Added method/path/timestamp/body request signing helpers while preserving existing webhook `GenerateSignature` and `VerifySignature` behavior.
+- Added method/path/query/timestamp/body request signing helpers while preserving existing webhook `GenerateSignature` and `VerifySignature` behavior.
 - Added v1 auth lookup seam for focused handler tests without changing repository lookup semantics.
-- Added in-memory signed request replay guard scoped by domain, method, path, timestamp, and signature with TTL cleanup.
-- Integrated canonical request signature verification and sanitized auth failure logging for v1 signed auth.
-- Added tests for API key auth, bearer auth, canonical signature binding, replay rejection, and modified-path rejection.
+- Added bounded in-memory signed request replay guard scoped by domain, method, path/query, timestamp, and signature with TTL cleanup.
+- Integrated canonical request signature verification, generated correlation IDs, generic credential failures, and sanitized auth failure logging for v1 signed auth.
+- Added tests for API key auth, bearer auth, canonical signature binding, replay rejection, modified path/query/method/body rejection, negative auth envelopes, redaction, and domain-scope hiding.
+- Regenerated OpenAPI docs for the updated partner request signature contract.
+- Dismissed the multi-instance replay-store note as out of scope for this story because the story explicitly requires a no-new-dependency guard suitable for the current monolith phase.
 
 ### File List
 
 - `helpers/credentials.go`
 - `helpers/credentials_test.go`
+- `api/handlers/payment.go`
+- `api/handlers/txrescan.go`
+- `api/handlers/v1api.go`
 - `api/handlers/v1_auth.go`
 - `api/handlers/v1_auth_test.go`
+- `docs/docs.go`
+- `docs/swagger.json`
+- `docs/swagger.yaml`
 - `_bmad-output/implementation-artifacts/1-1-secure-partner-api-request-authentication.md`
+- `_bmad-output/implementation-artifacts/1-1-secure-partner-api-request-authentication-validation.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
 ### Change Log
 
 - 2026-06-27: Story created with canonical PRD, UX, architecture, epics, and current-code context.
+- 2026-06-27: Story validation updated references to include generated project context.
 - 2026-06-27: Implemented Story 1.1 auth hardening; status ready for review.
+- 2026-06-27: Resolved fresh-context code-review findings and moved Story 1.1 to done.

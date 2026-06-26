@@ -30,18 +30,73 @@ import (
 )
 
 type PaymentHandlerDeps struct {
-	DomainRepo          *repositories.DomainRepo
-	WalletRepo          *repositories.WalletRepo
-	PaymentRepo         *repositories.PaymentRepo
-	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
-	ProductRepo         *repositories.ProductRepo
-	IdempotencyRepo     *repositories.IdempotencyRepo
+	DomainRepo          paymentDomainLookup
+	WalletRepo          paymentWalletRepository
+	PaymentRepo         paymentSessionRepository
+	WebhookDeliveryRepo paymentWebhookDeliveryRepository
+	ProductRepo         paymentProductRepository
+	IdempotencyRepo     paymentIdempotencyRepository
 	AssetRegistry       *asset.Registry
 	Blockchains         *blockchain.ChainFactory
 	PriceOracle         pricing.PriceOracle
 	Notifier            *webhooksvc.Notifier
 	PaymentHub          *realtime.PaymentHub
 	RequireSignature    bool
+}
+
+type paymentDomainLookup interface {
+	v1DomainLookup
+}
+
+type paymentWalletRepository interface {
+	Create(types.WalletParams) (*models.Wallet, error)
+	EnsureAllAddresses(context.Context, uuid.UUID, *blockchain.ChainFactory) error
+}
+
+type paymentSessionRepository interface {
+	Create(context.Context, *models.PaymentSession) error
+	FindByID(context.Context, uuid.UUID) (*models.PaymentSession, error)
+	FindByToken(context.Context, string) (*models.PaymentSession, error)
+	SelectAsset(context.Context, string, constants.ChainID, string, *string, uint8, string, string, *models.PriceQuote) (*models.PaymentSession, error)
+	ResetSelection(context.Context, string) (*models.PaymentSession, error)
+	Cancel(context.Context, string) (*models.PaymentSession, bool, error)
+	DB() *gorm.DB
+	MarkWebhookAttempt(context.Context, uuid.UUID, bool, error) error
+}
+
+type paymentIdempotencyRepository interface {
+	RequestHash(any) (string, error)
+	Begin(context.Context, uuid.UUID, uuid.UUID, string, string, time.Duration) (*models.IdempotencyKey, bool, error)
+	Complete(context.Context, uuid.UUID, uuid.UUID, string) error
+	Fail(context.Context, uuid.UUID, string) error
+}
+
+type paymentProductRepository interface {
+	FindByID(context.Context, uuid.UUID) (*models.Product, error)
+}
+
+type paymentWebhookDeliveryRepository interface {
+	EnqueuePayment(context.Context, models.Domain, models.PaymentSession) (*models.WebhookDelivery, bool, error)
+	MarkAttempt(context.Context, uuid.UUID, bool, error) error
+}
+
+type paymentCreateMode int
+
+const (
+	paymentCreateModeLegacy paymentCreateMode = iota
+	paymentCreateModeV1
+)
+
+type paymentCreateAssetSelection struct {
+	chainID           constants.ChainID
+	symbol            string
+	token             *string
+	decimals          uint8
+	expectedAmountRaw string
+	priceSource       string
+	price             string
+	quotedAt          time.Time
+	quoteExpiresAt    time.Time
 }
 
 func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, productID string) (name, description, logoURL string) {
@@ -96,46 +151,39 @@ type CheckoutAssetGroup struct {
 // @Security BearerAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param Idempotency-Key header string false "Idempotency key. If omitted, order_id is used within the domain scope."
 // @Param payload body types.PaymentCreateParams true "Payment create payload"
 // @Success 201 {object} types.PaymentCreateResponse
 // @Failure 400 {object} types.ErrorResponse
 // @Failure 401 {object} types.ErrorResponse
+// @Failure 409 {object} types.ErrorResponse
 // @Failure 500 {object} types.ErrorResponse
 // @Router /payments/create [post]
 func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
+	return handlePaymentCreate(deps, paymentCreateModeLegacy)
+}
+
+func handlePaymentCreate(deps PaymentHandlerDeps, mode paymentCreateMode) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		if deps.RequireSignature {
 			if _, err := v1ResolveSignedDomain(c, deps.DomainRepo); err != nil {
-				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-					"success": false,
-					"error":   err.Error(),
-				})
+				return paymentCreateError(c, mode, fiber.StatusUnauthorized, err.Error())
 			}
 		}
 
 		var params types.PaymentCreateParams
 		if err := c.Bind().Body(&params); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"success": false,
-				"error":   "Invalid JSON body: " + err.Error(),
-			})
+			return paymentCreateError(c, mode, fiber.StatusBadRequest, "Invalid JSON body: "+err.Error())
 		}
 		params.Context = c.Context()
 		if err := params.Validate(); err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"success": false,
-				"error":   err.Error(),
-			})
+			return paymentCreateError(c, mode, fiber.StatusBadRequest, err.Error())
 		}
 
 		domain, err := resolvePaymentDomain(c, deps.DomainRepo, params)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"success": false,
-				"error":   err.Error(),
-			})
+			return paymentCreateError(c, mode, fiber.StatusUnauthorized, err.Error())
 		}
 
 		idempotencyKey := paymentIdempotencyKey(c, params)
@@ -143,10 +191,7 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 		if deps.IdempotencyRepo != nil && idempotencyKey != "" {
 			requestHash, err := deps.IdempotencyRepo.RequestHash(params)
 			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"success": false,
-					"error":   "idempotency hash failed: " + err.Error(),
-				})
+				return paymentCreateError(c, mode, fiber.StatusInternalServerError, "idempotency hash failed: "+err.Error())
 			}
 			record, shouldCreate, err := deps.IdempotencyRepo.Begin(params.Context, domain.ID, domain.MerchantID, idempotencyKey, requestHash, 24*time.Hour)
 			if err != nil {
@@ -154,10 +199,7 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 				if errors.Is(err, repositories.ErrIdempotencyConflict) {
 					status = fiber.StatusConflict
 				}
-				return c.Status(status).JSON(fiber.Map{
-					"success": false,
-					"error":   err.Error(),
-				})
+				return paymentCreateError(c, mode, status, err.Error())
 			}
 			idempotencyRecord = record
 			if !shouldCreate {
@@ -169,22 +211,21 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 					session, err := deps.PaymentRepo.FindByID(params.Context, *record.PaymentSessionID)
 					if err == nil {
 						checkoutURL := baseURL(c) + "/checkout/" + session.SessionToken
-						return c.Status(fiber.StatusOK).JSON(fiber.Map{
-							"success":        true,
-							"payment_id":     session.ID,
-							"session_token":  session.SessionToken,
-							"checkout_url":   checkoutURL,
-							"status":         session.Status,
-							"expires_at":     session.ExpiresAt,
-							"deposit_wallet": session.WalletID,
-						})
+						return c.Status(fiber.StatusOK).JSON(paymentCreateResponseBody(mode, *session, checkoutURL, session.WalletID, time.Now()))
 					}
 				}
-				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-					"success": false,
-					"error":   "idempotency key is still in progress",
-				})
+				return paymentCreateError(c, mode, fiber.StatusConflict, "idempotency key is still in progress")
 			}
+		}
+
+		now := time.Now()
+		expiresAt := now.Add(paymentSessionTTL())
+		selection, err := preparePaymentCreateAssetSelection(params.Context, deps.AssetRegistry, deps.PriceOracle, params, expiresAt, now)
+		if err != nil {
+			if idempotencyRecord != nil {
+				_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
+			}
+			return paymentCreateError(c, mode, fiber.StatusBadRequest, err.Error())
 		}
 
 		productID := valueOrDefault(params.ProductID, *params.OrderID)
@@ -202,13 +243,9 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 			if idempotencyRecord != nil {
 				_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"success": false,
-				"error":   "wallet create failed: " + err.Error(),
-			})
+			return paymentCreateError(c, mode, fiber.StatusInternalServerError, "wallet create failed: "+err.Error())
 		}
 
-		expiresAt := time.Now().Add(paymentSessionTTL())
 		session := &models.PaymentSession{
 			MerchantID:     domain.MerchantID,
 			DomainID:       domain.ID,
@@ -228,22 +265,57 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 			if idempotencyRecord != nil {
 				_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
 			}
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"success": false,
-				"error":   "payment session create failed: " + err.Error(),
-			})
+			return paymentCreateError(c, mode, fiber.StatusInternalServerError, "payment session create failed: "+err.Error())
+		}
+
+		if selection != nil {
+			depositAddress := paymentDepositAddressForChain(*wallet, selection.chainID)
+			if depositAddress == "" {
+				err := errors.New("deposit address is not available for this network")
+				if idempotencyRecord != nil {
+					_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
+				}
+				return paymentCreateError(c, mode, fiber.StatusInternalServerError, err.Error())
+			}
+			quote := &models.PriceQuote{
+				ChainID:           selection.chainID,
+				Token:             selection.token,
+				Symbol:            selection.symbol,
+				Decimals:          selection.decimals,
+				FiatCurrency:      strings.ToUpper(strings.TrimSpace(session.Currency)),
+				FiatAmount:        strings.TrimSpace(session.Amount),
+				ExpectedAmountRaw: selection.expectedAmountRaw,
+				PriceSource:       selection.priceSource,
+				Price:             selection.price,
+				QuotedAt:          selection.quotedAt,
+				ExpiresAt:         selection.quoteExpiresAt,
+				CreatedAt:         selection.quotedAt,
+				UpdatedAt:         selection.quotedAt,
+			}
+			if quote.FiatCurrency == "" {
+				quote.FiatCurrency = "USD"
+			}
+			session, err = deps.PaymentRepo.SelectAsset(
+				params.Context,
+				session.SessionToken,
+				selection.chainID,
+				selection.symbol,
+				selection.token,
+				selection.decimals,
+				selection.expectedAmountRaw,
+				depositAddress,
+				quote,
+			)
+			if err != nil {
+				if idempotencyRecord != nil {
+					_ = deps.IdempotencyRepo.Fail(params.Context, idempotencyRecord.ID, err.Error())
+				}
+				return paymentCreateError(c, mode, fiber.StatusInternalServerError, "asset selection failed: "+err.Error())
+			}
 		}
 
 		checkoutURL := baseURL(c) + "/checkout/" + session.SessionToken
-		response := fiber.Map{
-			"success":        true,
-			"payment_id":     session.ID,
-			"session_token":  session.SessionToken,
-			"checkout_url":   checkoutURL,
-			"status":         session.Status,
-			"expires_at":     session.ExpiresAt,
-			"deposit_wallet": wallet.ID,
-		}
+		response := paymentCreateResponseBody(mode, *session, checkoutURL, wallet.ID, now)
 		if idempotencyRecord != nil {
 			if body, err := json.Marshal(response); err == nil {
 				_ = deps.IdempotencyRepo.Complete(params.Context, idempotencyRecord.ID, session.ID, string(body))
@@ -251,6 +323,153 @@ func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 		}
 		return c.Status(fiber.StatusCreated).JSON(response)
 	}
+}
+
+func paymentCreateError(c fiber.Ctx, mode paymentCreateMode, status int, msg string) error {
+	if mode == paymentCreateModeV1 {
+		return v1Err(c, status, msg)
+	}
+	return c.Status(status).JSON(fiber.Map{
+		"success": false,
+		"error":   msg,
+	})
+}
+
+func preparePaymentCreateAssetSelection(ctx context.Context, registry *asset.Registry, oracle pricing.PriceOracle, params types.PaymentCreateParams, sessionExpiresAt time.Time, now time.Time) (*paymentCreateAssetSelection, error) {
+	if params.ChainID == nil && params.Symbol == nil && params.Token == nil {
+		return nil, nil
+	}
+	if registry == nil {
+		return nil, errors.New("asset registry is not configured")
+	}
+	if params.ChainID == nil || params.Symbol == nil || strings.TrimSpace(*params.Symbol) == "" {
+		return nil, errors.New("chain_id and symbol are required when selecting an asset")
+	}
+	chainID := constants.ChainID(*params.ChainID)
+	if !constants.IsSupportedChainID(chainID) {
+		return nil, errors.New("unsupported chain_id")
+	}
+	token := ""
+	if params.Token != nil {
+		token = strings.TrimSpace(*params.Token)
+	}
+	assetInfo, err := findCheckoutAsset(registry, chainID, *params.Symbol, token)
+	if err != nil {
+		return nil, err
+	}
+	tempSession := models.PaymentSession{
+		Amount:   valueOrDefault(params.Amount, ""),
+		Currency: valueOrDefault(params.Currency, "USD"),
+	}
+	amountRaw, quotePrice, quoteSource, err := checkoutExpectedQuote(ctx, oracle, tempSession, assetInfo)
+	if err != nil {
+		return nil, err
+	}
+	var selectedToken *string
+	if !assetInfo.IsNative() {
+		identifier := assetInfo.GetIdentifier()
+		selectedToken = &identifier
+	}
+	quoteExpiresAt := now.Add(15 * time.Minute)
+	if !sessionExpiresAt.IsZero() && sessionExpiresAt.Before(quoteExpiresAt) {
+		quoteExpiresAt = sessionExpiresAt
+	}
+	return &paymentCreateAssetSelection{
+		chainID:           assetInfo.GetChainID(),
+		symbol:            strings.ToUpper(strings.TrimSpace(assetInfo.GetSymbol())),
+		token:             selectedToken,
+		decimals:          assetInfo.GetDecimals(),
+		expectedAmountRaw: amountRaw,
+		priceSource:       quoteSource,
+		price:             quotePrice,
+		quotedAt:          now,
+		quoteExpiresAt:    quoteExpiresAt,
+	}, nil
+}
+
+func paymentCreateResponseBody(mode paymentCreateMode, session models.PaymentSession, checkoutURL string, walletID uuid.UUID, now time.Time) fiber.Map {
+	data := paymentCreateResponseData(session, checkoutURL, walletID, now)
+	if mode == paymentCreateModeV1 {
+		return fiber.Map{
+			"result": "ok",
+			"data":   data,
+		}
+	}
+	response := fiber.Map{
+		"success":        true,
+		"payment_id":     session.ID,
+		"session_token":  session.SessionToken,
+		"checkout_url":   checkoutURL,
+		"status":         data["status"],
+		"expires_at":     data["expires_at"],
+		"deposit_wallet": walletID,
+	}
+	copySelectedPaymentFields(response, data)
+	return response
+}
+
+func paymentCreateResponseData(session models.PaymentSession, checkoutURL string, walletID uuid.UUID, now time.Time) fiber.Map {
+	var expiresAt string
+	if session.ExpiresAt != nil {
+		expiresAt = session.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	data := fiber.Map{
+		"payment_id":    session.ID.String(),
+		"track_id":      session.SessionToken,
+		"session_token": session.SessionToken,
+		"checkout_url":  checkoutURL,
+		"status":        paymentSessionResponseStatus(session, now),
+		"expires_at":    expiresAt,
+		"order_id":      session.OrderID,
+		"amount":        session.Amount,
+		"currency":      session.Currency,
+		"wallet_id":     walletID.String(),
+	}
+	if session.SelectedChainID != nil {
+		data["chain_id"] = int64(*session.SelectedChainID)
+	}
+	copySessionSelectedFields(data, session)
+	return data
+}
+
+func copySelectedPaymentFields(dst fiber.Map, src fiber.Map) {
+	for _, key := range []string{"chain_id", "symbol", "token", "decimals", "expected_amount_raw", "deposit_address"} {
+		if value, ok := src[key]; ok {
+			dst[key] = value
+		}
+	}
+}
+
+func copySessionSelectedFields(dst fiber.Map, session models.PaymentSession) {
+	if session.SelectedSymbol == "" && session.ExpectedAmountRaw == "" && session.DepositAddress == "" {
+		return
+	}
+	if session.SelectedSymbol != "" {
+		dst["symbol"] = session.SelectedSymbol
+	}
+	if session.SelectedToken != nil {
+		dst["token"] = *session.SelectedToken
+	}
+	if session.SelectedDecimals != 0 {
+		dst["decimals"] = session.SelectedDecimals
+	}
+	if session.ExpectedAmountRaw != "" {
+		dst["expected_amount_raw"] = session.ExpectedAmountRaw
+	}
+	if session.DepositAddress != "" {
+		dst["deposit_address"] = session.DepositAddress
+	}
+}
+
+func paymentSessionResponseStatus(session models.PaymentSession, now time.Time) string {
+	switch session.Status {
+	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed:
+		return session.Status
+	}
+	if !now.IsZero() && session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
+		return models.PaymentStatusExpired
+	}
+	return session.Status
 }
 
 // HandleCheckout renders the asset selection page for a checkout session.
@@ -644,7 +863,7 @@ func HandleCheckoutSuccessReturn(deps PaymentHandlerDeps) fiber.Handler {
 	}
 }
 
-func resolvePaymentDomain(c fiber.Ctx, repo *repositories.DomainRepo, params types.PaymentCreateParams) (*models.Domain, error) {
+func resolvePaymentDomain(c fiber.Ctx, repo paymentDomainLookup, params types.PaymentCreateParams) (*models.Domain, error) {
 	apiKey := strings.TrimSpace(c.Get("X-API-Key"))
 	if apiKey == "" {
 		auth := strings.TrimSpace(c.Get("Authorization"))
@@ -653,6 +872,9 @@ func resolvePaymentDomain(c fiber.Ctx, repo *repositories.DomainRepo, params typ
 		}
 	}
 	if apiKey != "" {
+		if repo == nil {
+			return nil, errors.New("domain repository is not configured")
+		}
 		return repo.FindByAPIKey(types.DomainParams{
 			Context: params.Context,
 			APIKey:  &apiKey,
@@ -770,6 +992,9 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 }
 
 func findCheckoutAsset(registry *asset.Registry, chainID constants.ChainID, symbol string, token string) (asset.Asset, error) {
+	if registry == nil {
+		return nil, errors.New("Selected asset is not available.")
+	}
 	if token != "" {
 		if assetInfo, ok := registry.Get(chainID, token); ok && strings.EqualFold(assetInfo.GetSymbol(), symbol) {
 			return assetInfo, nil

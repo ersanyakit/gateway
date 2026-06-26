@@ -259,6 +259,8 @@ Merchant ve exchange partnerleri güvenli şekilde API kullanabilir, payment ses
 
 ### Story 1.1: Secure Partner API Request Authentication
 
+**Requirements:** FR9, FR10, FR39, FR40; NFR2, NFR11, NFR13, NFR14, NFR18
+
 As a developer integrator,
 I want partner API requests to be authenticated, scoped, and replay-resistant,
 So that only authorized merchant or exchange tenants can perform actions against their own resources.
@@ -300,6 +302,8 @@ So that only authorized merchant or exchange tenants can perform actions against
 **Then** it includes positive and negative tests for API key auth, bearer auth, HMAC validation, timestamp skew, replay/signature reuse, tenant scope isolation, and backwards-compatible error responses.
 
 ### Story 1.2: Idempotent Payment Session Creation
+
+**Requirements:** FR5, FR10, FR40; NFR2, NFR11, NFR14, NFR19
 
 As a developer integrator,
 I want to create payment sessions idempotently with a stable checkout URL and quote snapshot,
@@ -343,6 +347,8 @@ So that checkout creation is safe to retry and produces a predictable payment co
 
 ### Story 1.3: Deterministic Static Wallet Issuance for Partner Scopes
 
+**Requirements:** FR3, FR7, FR8, FR10; NFR2, NFR4, NFR7, NFR14, NFR18
+
 As a developer integrator,
 I want static deposit wallets to be issued deterministically for a dealer/merchant tenant, domain, product, and user scope,
 So that merchant and exchange integrations can safely request the same deposit wallet without duplicate address ownership.
@@ -384,6 +390,8 @@ So that merchant and exchange integrations can safely request the same deposit w
 **Then** they cover first issuance, idempotent repeat issuance, concurrent issuance, unsupported chain rejection, Trust Wallet Core provider usage, fallback production guard, dealer/merchant portal scope, and tenant scope isolation.
 
 ### Story 1.4: Hosted Checkout Payment State Experience
+
+**Requirements:** FR2, FR5, FR6, FR14, FR16; NFR11, NFR14, NFR15
 
 As a payer,
 I want the hosted checkout page to clearly show payment instructions and state changes,
@@ -428,6 +436,8 @@ So that I can complete a crypto payment without confusion and understand whether
 
 ### Story 1.5: Stable Partner API Contract and Integration Evidence
 
+**Requirements:** FR1, FR2, FR3, FR9, FR10, FR40; NFR11, NFR14, NFR15
+
 As a developer integrator,
 I want the partner API contract and integration examples to stay stable and test-backed,
 So that merchant, dealer, and exchange integrations can upgrade safely without guessing response formats or error behavior.
@@ -469,6 +479,8 @@ Merchant ve exchange partnerleri payment, deposit, withdrawal, refund, sweep ve 
 
 ### Story 2.1: Define Versioned Money Event Catalog
 
+**Requirements:** FR27, FR28, FR29; NFR11, NFR14
+
 As a developer integrator,
 I want all money lifecycle events to have a documented versioned event catalog,
 So that merchant and exchange consumers can handle payment, deposit, withdrawal, refund, sweep, and correction events consistently.
@@ -507,6 +519,8 @@ So that merchant and exchange consumers can handle payment, deposit, withdrawal,
 
 ### Story 2.2: Persist Money Events Through Postgres Outbox
 
+**Requirements:** FR30, FR31; NFR2, NFR5, NFR12, NFR14
+
 As a platform operator,
 I want money lifecycle events to be persisted through a Postgres outbox in the same transaction as state changes,
 So that event delivery is durable, replayable, and not lost when the process crashes.
@@ -543,6 +557,8 @@ So that event delivery is durable, replayable, and not lost when the process cra
 **Then** they cover same-transaction persistence, rollback, duplicate lifecycle retries, uniqueness constraints, and payload schema validation.
 
 ### Story 2.3: Deliver Webhooks from the Webhook Boundary
+
+**Requirements:** FR26, FR31; NFR5, NFR11, NFR13, NFR15
 
 As a merchant or exchange integrator,
 I want webhook delivery to be handled by a dedicated boundary with signing and retries,
@@ -581,6 +597,8 @@ So that money flows do not block on external callbacks and consumers receive ver
 
 ### Story 2.4: Support Replay, Dead-Letter, and Duplicate Delivery Safety
 
+**Requirements:** FR26, FR31; NFR2, NFR5, NFR13, NFR15
+
 As an operator,
 I want failed or uncertain webhook deliveries to be replayable and duplicate-safe,
 So that partner notifications can be recovered without causing duplicate fulfillment or silent data loss.
@@ -612,6 +630,8 @@ So that partner notifications can be recovered without causing duplicate fulfill
 **Then** they cover retry exhaustion, replay success, duplicate replay attempts, authorization failure, and operator-visible delivery state.
 
 ### Story 2.5: Verify Event Contract Compatibility
+
+**Requirements:** FR27, FR28, FR29, FR40; NFR11, NFR14
 
 As a developer integrator,
 I want event schemas and compatibility aliases to be test-backed,
@@ -649,6 +669,8 @@ Merchant, exchange ve operatörler deposit finality, payment settlement, ledger-
 
 ### Story 3.1: Emit Chain Facts Without Mutating Business State
 
+**Requirements:** FR11, FR12; NFR2, NFR7, NFR10, NFR14
+
 As a platform operator,
 I want chain indexers to produce durable chain facts instead of directly mutating payment or ledger state,
 So that deposit processing, settlement, and reconciliation are deterministic and replayable.
@@ -680,6 +702,8 @@ So that deposit processing, settlement, and reconciliation are deterministic and
 **Then** they cover supported chain families, duplicate tx/log detection, configured start block, progress persistence, and no direct business state mutation.
 
 ### Story 3.2: Match Deposits and Gate Settlement on Finality
+
+**Requirements:** FR13, FR14; NFR2, NFR6, NFR14
 
 As a merchant or exchange operator,
 I want detected deposits to be matched to owned wallets and gated by finality,
@@ -713,6 +737,8 @@ So that payment and wallet balances are not credited before the chain event is s
 
 ### Story 3.3: Enforce Ledger-Derived Balance Authority
 
+**Requirements:** FR17, FR18, FR33; NFR3, NFR14
+
 As a merchant or exchange tenant,
 I want balances to be derived from ledger entries only,
 So that available, pending, hold, transit, and adjustment balances are consistent across deposits, withdrawals, refunds, sweeps, and reconciliation.
@@ -744,6 +770,8 @@ So that available, pending, hold, transit, and adjustment balances are consisten
 **And** logs include correlation id and tenant/domain context without exposing sensitive values.
 
 ### Story 3.4: Model Payment Matching Outcomes Explicitly
+
+**Requirements:** FR15, FR16; NFR2, NFR11, NFR14
 
 As a merchant,
 I want payment matching outcomes to distinguish paid, expired, underpaid, overpaid, and partial-paid states,
@@ -777,6 +805,8 @@ So that checkout, API, and webhook consumers do not confuse uncertain payment st
 
 ### Story 3.5: Correct Reorgs with Compensating Events and Ledger Reversals
 
+**Requirements:** FR15, FR34; NFR6, NFR14
+
 As an operator,
 I want chain reorgs to correct affected deposits, payments, ledger entries, sweeps, and webhooks without destructive history edits,
 So that the system can recover from canonical chain changes while preserving auditability.
@@ -809,6 +839,8 @@ So that the system can recover from canonical chain changes while preserving aud
 
 ### Story 3.6: Open Scoped Reconciliation Jobs for Drift and Uncertainty
 
+**Requirements:** FR32, FR33, FR34; NFR5, NFR6, NFR9, NFR13
+
 As an operator,
 I want uncertain or drifting money states to open scoped reconciliation jobs,
 So that chain facts, ledger entries, lifecycle state, webhook delivery, and broadcast state can be compared before recovery action.
@@ -839,6 +871,8 @@ So that chain facts, ledger entries, lifecycle state, webhook delivery, and broa
 Operatörler withdrawal, payout, refund ve sweep işlemlerini reservation, approval, signer boundary, nonce/UTXO/resource policy ve audit kontrolleriyle güvenli şekilde yürütebilir.
 
 ### Story 4.1: Reserve Ledger Holds Before Outbound Money Movement
+
+**Requirements:** FR19, FR21; NFR2, NFR3, NFR13, NFR14
 
 As an operator,
 I want withdrawal, payout, refund, and sweep requests to reserve funds before signing,
@@ -872,6 +906,8 @@ So that outbound money movement cannot overdraw balances or double-spend funds.
 
 ### Story 4.2: Enforce External Signer Boundary and Production Software-Signer Guard
 
+**Requirements:** FR24, FR25; NFR4, NFR13, NFR17
+
 As a custody operator,
 I want outbound signing to go through a signer boundary with production software signing blocked,
 So that private keys and mnemonics do not leave the approved custody layer.
@@ -904,6 +940,8 @@ So that private keys and mnemonics do not leave the approved custody layer.
 
 ### Story 4.3: Reserve Chain Resources and Apply Fee/Gas Policy Before Broadcast
 
+**Requirements:** FR20, FR23, FR35; NFR2, NFR5, NFR14
+
 As an operator,
 I want nonce, UTXO, resource, and fee/gas policy to be reserved before outbound broadcast,
 So that concurrent payouts, refunds, and sweeps do not conflict or get stuck through blind retries.
@@ -935,6 +973,8 @@ So that concurrent payouts, refunds, and sweeps do not conflict or get stuck thr
 **Then** they cover nonce contention, UTXO contention, resource/gas policy failure, stuck tx replacement guard, and reservation release on terminal failure.
 
 ### Story 4.4: Run Auto-Sweeps as Durable Recoverable Jobs
+
+**Requirements:** FR22, FR23; NFR5, NFR14
 
 As an operator,
 I want auto-sweeps to run as durable jobs with retry and recovery state,
@@ -973,6 +1013,8 @@ So that finalized deposits can be consolidated without losing work or duplicatin
 
 ### Story 4.5: Complete Withdrawal, Payout, and Refund Lifecycle Events
 
+**Requirements:** FR21, FR26; NFR2, NFR5, NFR11, NFR13
+
 As a merchant or exchange operator,
 I want outbound withdrawal, payout, and refund lifecycles to have clear approval, broadcast, finalization, failure, and notification states,
 So that users and operators can understand where funds are and recover safely when something fails.
@@ -1005,6 +1047,8 @@ So that users and operators can understand where funds are and recover safely wh
 
 ### Story 4.6: Harden Admin Security, Limits, Whitelists, and Audit Trails
 
+**Requirements:** FR39; NFR13, NFR18
+
 As a platform owner,
 I want outbound money operations protected by admin security controls and immutable audit trails,
 So that high-risk actions can be reviewed, limited, and stopped before funds leave custody.
@@ -1036,6 +1080,8 @@ Operatörler sistemi production'da izleyebilir, provider sorunlarını yakalayab
 
 ### Story 5.1: Track Provider Health and RPC Failover Signals
 
+**Requirements:** FR36; NFR8, NFR9, NFR10
+
 As an operator,
 I want RPC/provider health, lag, and consistency to be measured,
 So that stale nodes, missed blocks, and provider outages are visible before they cause missed deposits or stuck withdrawals.
@@ -1062,6 +1108,8 @@ So that stale nodes, missed blocks, and provider outages are visible before they
 **Then** they cover healthy provider, timeout, stale head, inconsistent head, failover selection, and metric emission.
 
 ### Story 5.2: Prepare Address Lookup for Large Wallet Sets
+
+**Requirements:** FR37; NFR7, NFR14
 
 As an exchange or platform operator,
 I want address lookup to be partitioned or normalized for large wallet sets,
@@ -1090,6 +1138,8 @@ So that deposit matching can scale beyond small merchant MVP volumes.
 
 ### Story 5.3: Replace Production AutoMigrate Dependence with Versioned Migration Discipline
 
+**Requirements:** FR38; NFR12, NFR14
+
 As a platform operator,
 I want production database changes to use versioned migrations and release gates,
 So that money tables, indexes, and constraints change predictably and can be reviewed or rolled back.
@@ -1115,6 +1165,8 @@ So that money tables, indexes, and constraints change predictably and can be rev
 **Then** operators can identify which migrations are required for each story and how to verify them before production traffic.
 
 ### Story 5.4: Provide Money-Path Observability, SLOs, Alerts, and Runbooks
+
+**Requirements:** FR38; NFR8, NFR9, NFR13, NFR15, NFR17
 
 As an operator,
 I want money-path metrics, dashboards, alerts, and runbooks,
@@ -1146,6 +1198,8 @@ So that production incidents can be detected, triaged, and recovered before cust
 **Then** it confirms metrics/logs exist for Epic 2-4 money paths and that at least one dashboard or documented query set can surface each critical SLO.
 
 ### Story 5.5: Produce Controlled Launch and Exchange-Grade Readiness Evidence
+
+**Requirements:** FR38; NFR1, NFR16, NFR17, NFR20
 
 As a platform owner,
 I want launch gates and scale-readiness evidence before real customer funds or exchange-grade usage,

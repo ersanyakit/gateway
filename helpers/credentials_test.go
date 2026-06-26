@@ -117,6 +117,9 @@ func TestRequestSignatureBindsMethodPathTimestampAndBody(t *testing.T) {
 	if VerifyRequestSignature("secret", "POST", "/api/v1/payment/info", ts, body, signature) {
 		t.Fatal("request signature should reject modified path")
 	}
+	if VerifyRequestSignature("secret", "POST", "/api/v1/payment/create?currency=EUR", ts, body, signature) {
+		t.Fatal("request signature should reject modified query")
+	}
 	if VerifyRequestSignature("secret", "POST", "/api/v1/payment/create", ts, []byte(`{"amount":"2"}`), signature) {
 		t.Fatal("request signature should reject modified body")
 	}

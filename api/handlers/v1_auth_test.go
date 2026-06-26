@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -131,6 +133,132 @@ func TestV1ResolveSignedDomainRejectsReplay(t *testing.T) {
 	}
 }
 
+func TestV1ResolveSignedDomainRejectsAuthFailuresWithV1Envelope(t *testing.T) {
+	domain := &models.Domain{ID: uuid.New(), APIKey: "key-1"}
+	lookup := fakeV1DomainLookup{
+		byKey:    map[string]*models.Domain{"key-1": domain},
+		bySecret: map[string]*models.Domain{"secret-1": domain},
+	}
+	body := []byte(`{"amount":"1"}`)
+	now := time.Now()
+
+	app := fiber.New()
+	app.Post("/probe", func(c fiber.Ctx) error {
+		_, err := v1ResolveSignedDomain(c, lookup)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+
+	for name, configure := range map[string]struct {
+		configure func(*http.Request)
+		message   string
+	}{
+		"missing-key": {
+			configure: func(req *http.Request) {},
+			message:   "X-API-Key header or Authorization: Bearer <key> is required",
+		},
+		"missing-secret": {
+			configure: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "key-1")
+			},
+			message: "X-API-Secret header is required",
+		},
+		"malformed-timestamp": {
+			configure: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "key-1")
+				req.Header.Set("X-API-Secret", "secret-1")
+				req.Header.Set("X-Gateway-Timestamp", "not-a-timestamp")
+				req.Header.Set("X-Gateway-Signature", "sha256=unused")
+			},
+			message: "invalid timestamp",
+		},
+		"expired-timestamp": {
+			configure: func(req *http.Request) {
+				ts := strconv.FormatInt(now.Add(-2*time.Minute).Unix(), 10)
+				req.Header.Set("X-API-Key", "key-1")
+				req.Header.Set("X-API-Secret", "secret-1")
+				req.Header.Set("X-Gateway-Timestamp", ts)
+				req.Header.Set("X-Gateway-Signature", "sha256=unused")
+			},
+			message: "timestamp expired",
+		},
+		"future-timestamp": {
+			configure: func(req *http.Request) {
+				ts := strconv.FormatInt(now.Add(2*time.Minute).Unix(), 10)
+				req.Header.Set("X-API-Key", "key-1")
+				req.Header.Set("X-API-Secret", "secret-1")
+				req.Header.Set("X-Gateway-Timestamp", ts)
+				req.Header.Set("X-Gateway-Signature", "sha256=unused")
+			},
+			message: "timestamp expired",
+		},
+		"missing-signature": {
+			configure: func(req *http.Request) {
+				req.Header.Set("X-API-Key", "key-1")
+				req.Header.Set("X-API-Secret", "secret-1")
+				req.Header.Set("X-Gateway-Timestamp", strconv.FormatInt(now.Unix(), 10))
+			},
+			message: "X-Gateway-Signature header is required",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v1SignedReplayGuard = newV1SignatureReplayGuard(2 * time.Minute)
+
+			req := httptest.NewRequest(http.MethodPost, "/probe", bytesReader(body))
+			configure.configure(req)
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatalf("app.Test: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != fiber.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusUnauthorized)
+			}
+			envelope := readV1ErrorEnvelope(t, resp)
+			if envelope["result"] != "error" || envelope["message"] != configure.message {
+				t.Fatalf("envelope = %#v, want error/%q", envelope, configure.message)
+			}
+		})
+	}
+}
+
+func TestV1AuthFailureLogGeneratesCorrelationIDWhenMissing(t *testing.T) {
+	var logBuf bytes.Buffer
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&logBuf)
+	log.SetFlags(0)
+	defer log.SetOutput(oldWriter)
+	defer log.SetFlags(oldFlags)
+
+	app := fiber.New()
+	app.Get("/probe", func(c fiber.Ctx) error {
+		_, err := v1ResolveDomain(c, fakeV1DomainLookup{})
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/probe", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("X-Request-ID") == "" {
+		t.Fatal("X-Request-ID response header should be generated")
+	}
+	logged := logBuf.String()
+	if !strings.Contains(logged, `category="missing_api_key"`) {
+		t.Fatalf("log = %q, want missing_api_key category", logged)
+	}
+	if strings.Contains(logged, `request_id=""`) {
+		t.Fatalf("log should include generated request id: %q", logged)
+	}
+}
+
 func TestV1ResolveSignedDomainRejectsModifiedPath(t *testing.T) {
 	v1SignedReplayGuard = newV1SignatureReplayGuard(2 * time.Minute)
 
@@ -153,6 +281,42 @@ func TestV1ResolveSignedDomainRejectsModifiedPath(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/probe", bytesReader(body))
+	req.Header.Set("X-API-Key", "key-1")
+	req.Header.Set("X-API-Secret", "secret-1")
+	req.Header.Set("X-Gateway-Timestamp", ts)
+	req.Header.Set("X-Gateway-Signature", "sha256="+signature)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusUnauthorized)
+	}
+}
+
+func TestV1ResolveSignedDomainRejectsModifiedQuery(t *testing.T) {
+	v1SignedReplayGuard = newV1SignatureReplayGuard(2 * time.Minute)
+
+	domain := &models.Domain{ID: uuid.New(), APIKey: "key-1"}
+	lookup := fakeV1DomainLookup{
+		byKey:    map[string]*models.Domain{"key-1": domain},
+		bySecret: map[string]*models.Domain{"secret-1": domain},
+	}
+	body := []byte(`{"amount":"1"}`)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := helpers.GenerateRequestSignature("secret-1", http.MethodPost, "/probe?currency=EUR", ts, body)
+
+	app := fiber.New()
+	app.Post("/probe", func(c fiber.Ctx) error {
+		_, err := v1ResolveSignedDomain(c, lookup)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		return c.SendStatus(fiber.StatusNoContent)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/probe?currency=USD", bytesReader(body))
 	req.Header.Set("X-API-Key", "key-1")
 	req.Header.Set("X-API-Secret", "secret-1")
 	req.Header.Set("X-Gateway-Timestamp", ts)
@@ -261,10 +425,50 @@ func TestV1ResolveSignedDomainRejectsAPIKeySecretMismatchWithoutLeakingSecrets(t
 		t.Fatalf("read response: %v", err)
 	}
 	bodyText := string(respBody)
+	if !strings.Contains(bodyText, "invalid API credentials") {
+		t.Fatalf("response = %s, want generic credential error", bodyText)
+	}
+	if strings.Contains(bodyText, "do not match") || strings.Contains(bodyText, "invalid API secret") {
+		t.Fatalf("response leaked credential oracle detail: %s", bodyText)
+	}
 	for _, sensitive := range []string{"secret-2", signature, string(body), domainB.ID.String()} {
 		if strings.Contains(bodyText, sensitive) {
 			t.Fatalf("response leaked sensitive value %q in %s", sensitive, bodyText)
 		}
+	}
+}
+
+func TestSanitizeV1AuthErrorRedactsSensitiveHeaderValues(t *testing.T) {
+	err := errors.New("X-API-Key=key-1 X-API-Secret: secret-1 X-Gateway-Signature=abc Authorization: Bearer token-1")
+	got := sanitizeV1AuthError(err)
+	for _, sensitive := range []string{"key-1", "secret-1", "abc", "token-1"} {
+		if strings.Contains(got, sensitive) {
+			t.Fatalf("sanitizeV1AuthError leaked %q in %q", sensitive, got)
+		}
+	}
+	if strings.Count(got, "[redacted]") != 4 {
+		t.Fatalf("sanitizeV1AuthError redaction count = %q", got)
+	}
+}
+
+func TestV1SignatureReplayGuardCapsEntries(t *testing.T) {
+	guard := newV1SignatureReplayGuard(time.Minute)
+	guard.maxEntries = 2
+
+	if !guard.Accept("domain", http.MethodPost, "/one", "1", "sig-1") {
+		t.Fatal("first request should be accepted")
+	}
+	if !guard.Accept("domain", http.MethodPost, "/two", "2", "sig-2") {
+		t.Fatal("second request should be accepted")
+	}
+	if !guard.Accept("domain", http.MethodPost, "/three", "3", "sig-3") {
+		t.Fatal("third request should be accepted after eviction")
+	}
+	if len(guard.entries) > guard.maxEntries {
+		t.Fatalf("entries = %d, want <= %d", len(guard.entries), guard.maxEntries)
+	}
+	if guard.Accept("domain", http.MethodPost, "/three", "3", "sig-3") {
+		t.Fatal("latest duplicate request should be rejected")
 	}
 }
 
@@ -312,4 +516,13 @@ func TestV1DomainScopedHandlerHidesOtherDomainResource(t *testing.T) {
 
 func bytesReader(b []byte) *bytes.Reader {
 	return bytes.NewReader(b)
+}
+
+func readV1ErrorEnvelope(t *testing.T, resp *http.Response) map[string]string {
+	t.Helper()
+	var envelope map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	return envelope
 }
