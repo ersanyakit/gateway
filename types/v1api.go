@@ -9,6 +9,9 @@ type V1InvoiceRequest struct {
 	Currency    string `json:"currency"              example:"USD"                          swaggertype:"string"`
 	Description string `json:"description,omitempty" example:"Product purchase"              swaggertype:"string"`
 	UserID      string `json:"user_id,omitempty"     example:"customer_42"                  swaggertype:"string"`
+	ChainID     *int64 `json:"chain_id,omitempty"    example:"1"                            swaggertype:"integer"`
+	Symbol      string `json:"symbol,omitempty"      example:"USDT"                         swaggertype:"string"`
+	Token       string `json:"token,omitempty"       example:"0xdAC17F958D2ee523a2206206994597C13D831ec7" swaggertype:"string"`
 	SuccessURL  string `json:"success_url,omitempty" example:"https://example.com/success"   swaggertype:"string"`
 	CancelURL   string `json:"cancel_url,omitempty"  example:"https://example.com/cancel"    swaggertype:"string"`
 }
@@ -194,15 +197,21 @@ type V1PaymentCreateResponse struct {
 }
 
 type V1PaymentCreatedData struct {
-	PaymentID    string `json:"payment_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
-	TrackID      string `json:"track_id"       example:"550e8400-e29b-41d4-a716-446655440000"`
-	SessionToken string `json:"session_token"  example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"`
-	CheckoutURL  string `json:"checkout_url"   example:"https://pay.example.com/checkout/eyJhbGci"`
-	Status       string `json:"status"         example:"pending"`
-	ExpiresAt    string `json:"expires_at"     example:"2024-06-01T12:30:00Z"`
-	OrderID      string `json:"order_id"       example:"ORD-2024-001"`
-	Amount       string `json:"amount"         example:"25.00"`
-	Currency     string `json:"currency"       example:"USD"`
+	PaymentID         string `json:"payment_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
+	TrackID           string `json:"track_id"       example:"550e8400-e29b-41d4-a716-446655440000"`
+	SessionToken      string `json:"session_token"  example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"`
+	CheckoutURL       string `json:"checkout_url"   example:"https://pay.example.com/checkout/eyJhbGci"`
+	Status            string `json:"status"         example:"pending"`
+	ExpiresAt         string `json:"expires_at"     example:"2024-06-01T12:30:00Z"`
+	OrderID           string `json:"order_id"       example:"ORD-2024-001"`
+	Amount            string `json:"amount"         example:"25.00"`
+	Currency          string `json:"currency"       example:"USD"`
+	ChainID           *int64 `json:"chain_id,omitempty" example:"1"`
+	Symbol            string `json:"symbol,omitempty" example:"USDT"`
+	Token             string `json:"token,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	Decimals          uint8  `json:"decimals,omitempty" example:"6"`
+	ExpectedAmountRaw string `json:"expected_amount_raw,omitempty" example:"25000000"`
+	DepositAddress    string `json:"deposit_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
 }
 
 // V1PaymentInfoResponse is returned by GET /api/v1/payment/info.
@@ -212,21 +221,27 @@ type V1PaymentInfoResponse struct {
 }
 
 type V1PaymentDetail struct {
-	PaymentID     string `json:"payment_id"      example:"550e8400-e29b-41d4-a716-446655440000"`
-	TrackID       string `json:"track_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
-	OrderID       string `json:"order_id"        example:"ORD-2024-001"`
-	Status        string `json:"status"          example:"paid"`
-	Amount        string `json:"amount"          example:"25.00"`
-	Currency      string `json:"currency"        example:"USD"`
-	UserID        string `json:"user_id"         example:"customer_42"`
-	SelectedAsset string `json:"selected_asset"  example:"USDT"`
-	SelectedChain string `json:"selected_chain"  example:"ethereum"`
-	DepositWallet string `json:"deposit_wallet"  example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	TxHash        string `json:"tx_hash"         example:"0xabc123..."`
-	PaidAt        string `json:"paid_at"         example:"2024-06-01T12:15:00Z"`
-	ExpiresAt     string `json:"expires_at"      example:"2024-06-01T12:30:00Z"`
-	CheckoutURL   string `json:"checkout_url"    example:"https://pay.example.com/checkout/eyJhbGci"`
-	CreatedAt     string `json:"created_at"      example:"2024-06-01T12:00:00Z"`
+	PaymentID         string `json:"payment_id"      example:"550e8400-e29b-41d4-a716-446655440000"`
+	TrackID           string `json:"track_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrderID           string `json:"order_id"        example:"ORD-2024-001"`
+	Status            string `json:"status"          example:"paid"`
+	Amount            string `json:"amount"          example:"25.00"`
+	Currency          string `json:"currency"        example:"USD"`
+	UserID            string `json:"user_id"         example:"customer_42"`
+	SelectedAsset     string `json:"selected_asset"  example:"USDT"`
+	SelectedChain     string `json:"selected_chain"  example:"ethereum"`
+	ChainID           *int64 `json:"chain_id,omitempty" example:"1"`
+	Symbol            string `json:"symbol,omitempty" example:"USDT"`
+	Token             string `json:"token,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	Decimals          uint8  `json:"decimals,omitempty" example:"6"`
+	ExpectedAmountRaw string `json:"expected_amount_raw,omitempty" example:"25000000"`
+	DepositAddress    string `json:"deposit_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	DepositWallet     string `json:"deposit_wallet"  example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	TxHash            string `json:"tx_hash"         example:"0xabc123..."`
+	PaidAt            string `json:"paid_at"         example:"2024-06-01T12:15:00Z"`
+	ExpiresAt         string `json:"expires_at"      example:"2024-06-01T12:30:00Z"`
+	CheckoutURL       string `json:"checkout_url"    example:"https://pay.example.com/checkout/eyJhbGci"`
+	CreatedAt         string `json:"created_at"      example:"2024-06-01T12:00:00Z"`
 }
 
 // V1PaymentHistoryResponse is returned by GET /api/v1/payment/history.

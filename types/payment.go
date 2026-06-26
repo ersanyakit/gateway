@@ -12,15 +12,19 @@ import (
 type PaymentCreateParams struct {
 	Context context.Context `json:"-"`
 
-	DomainID   *string `json:"domain_id,omitempty"`
-	MerchantID *string `json:"merchant_id,omitempty"`
-	OrderID    *string `json:"order_id,omitempty"`
-	ProductID  *string `json:"product_id,omitempty"`
-	UserID     *string `json:"user_id,omitempty"`
-	Amount     *string `json:"amount,omitempty"`
-	Currency   *string `json:"currency,omitempty"`
-	SuccessURL *string `json:"success_url,omitempty"`
-	CancelURL  *string `json:"cancel_url,omitempty"`
+	DomainID    *string `json:"domain_id,omitempty"`
+	MerchantID  *string `json:"merchant_id,omitempty"`
+	OrderID     *string `json:"order_id,omitempty"`
+	ProductID   *string `json:"product_id,omitempty"`
+	UserID      *string `json:"user_id,omitempty"`
+	Amount      *string `json:"amount,omitempty"`
+	Currency    *string `json:"currency,omitempty"`
+	Description *string `json:"description,omitempty"`
+	ChainID     *int64  `json:"chain_id,omitempty"`
+	Symbol      *string `json:"symbol,omitempty"`
+	Token       *string `json:"token,omitempty"`
+	SuccessURL  *string `json:"success_url,omitempty"`
+	CancelURL   *string `json:"cancel_url,omitempty"`
 }
 
 type PaymentSelectAssetParams struct {
@@ -32,13 +36,19 @@ type PaymentSelectAssetParams struct {
 }
 
 type PaymentCreateResponse struct {
-	Success       bool   `json:"success"`
-	PaymentID     string `json:"payment_id"`
-	SessionToken  string `json:"session_token"`
-	CheckoutURL   string `json:"checkout_url"`
-	Status        string `json:"status"`
-	ExpiresAt     string `json:"expires_at"`
-	DepositWallet string `json:"deposit_wallet"`
+	Success           bool   `json:"success"`
+	PaymentID         string `json:"payment_id"`
+	SessionToken      string `json:"session_token"`
+	CheckoutURL       string `json:"checkout_url"`
+	Status            string `json:"status"`
+	ExpiresAt         string `json:"expires_at"`
+	DepositWallet     string `json:"deposit_wallet"`
+	ChainID           *int64 `json:"chain_id,omitempty"`
+	Symbol            string `json:"symbol,omitempty"`
+	Token             string `json:"token,omitempty"`
+	Decimals          uint8  `json:"decimals,omitempty"`
+	ExpectedAmountRaw string `json:"expected_amount_raw,omitempty"`
+	DepositAddress    string `json:"deposit_address,omitempty"`
 }
 
 type PaymentStatusResponse struct {
@@ -109,6 +119,32 @@ func (p *PaymentCreateParams) Validate() error {
 	if p.Currency != nil {
 		currency := strings.ToUpper(strings.TrimSpace(*p.Currency))
 		p.Currency = &currency
+	}
+	p.Description = trim(p.Description)
+	assetRequested := p.ChainID != nil || (p.Symbol != nil && strings.TrimSpace(*p.Symbol) != "") || (p.Token != nil && strings.TrimSpace(*p.Token) != "")
+	if assetRequested {
+		if p.ChainID == nil {
+			return errors.New("ChainID is required when selecting an asset")
+		}
+		if *p.ChainID < 0 {
+			return errors.New("invalid ChainID")
+		}
+		if p.Symbol == nil || strings.TrimSpace(*p.Symbol) == "" {
+			return errors.New("Symbol is required when selecting an asset")
+		}
+		symbol := strings.ToUpper(strings.TrimSpace(*p.Symbol))
+		p.Symbol = &symbol
+		if p.Token != nil {
+			token := strings.TrimSpace(*p.Token)
+			if token == "" {
+				p.Token = nil
+			} else {
+				p.Token = &token
+			}
+		}
+	} else {
+		p.Symbol = nil
+		p.Token = nil
 	}
 	p.SuccessURL = trim(p.SuccessURL)
 	p.CancelURL = trim(p.CancelURL)

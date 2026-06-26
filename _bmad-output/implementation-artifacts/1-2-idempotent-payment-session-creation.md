@@ -2,7 +2,7 @@
 story_id: "1.2"
 story_key: "1-2-idempotent-payment-session-creation"
 epic: "Epic 1: Partner Integration & Payment Intake Hardening"
-status: in-progress
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: ca49fb274a9b1581c935363fc0cb0a4c18647459
@@ -10,7 +10,7 @@ baseline_commit: ca49fb274a9b1581c935363fc0cb0a4c18647459
 
 # Story 1.2: Idempotent Payment Session Creation
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -39,39 +39,45 @@ so that checkout creation is safe to retry and produces a predictable payment co
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Normalize payment create request and response contracts (AC: 1, 4, 7)
-  - [ ] Extend or map `types.PaymentCreateParams` and `types.V1InvoiceRequest` so create requests can include optional selected asset fields: `chain_id`, `symbol`, and `token`/token identifier without breaking the existing checkout-later flow.
-  - [ ] Keep existing public `/payments/create` behavior backwards-compatible for clients that omit asset selection; do not force checkout asset selection on legacy clients unless tests and docs are updated.
-  - [ ] Make `/api/v1/payment/create` and `/api/v1/payment/white-label` return the documented V1 envelope shape `{"result":"ok","data":...}` / `{"result":"error","message":"..."}` instead of leaking the legacy `{"success":...}` shape.
-  - [ ] Include stable create response fields for `payment_id`, `track_id`/`session_token`, `checkout_url`, `status`, `expires_at`, `order_id`, `amount`, `currency`, and selected asset fields when an asset is selected.
+- [x] Task 1: Normalize payment create request and response contracts (AC: 1, 4, 7)
+  - [x] Extend or map `types.PaymentCreateParams` and `types.V1InvoiceRequest` so create requests can include optional selected asset fields: `chain_id`, `symbol`, and `token`/token identifier without breaking the existing checkout-later flow.
+  - [x] Keep existing public `/payments/create` behavior backwards-compatible for clients that omit asset selection; do not force checkout asset selection on legacy clients unless tests and docs are updated.
+  - [x] Make `/api/v1/payment/create` and `/api/v1/payment/white-label` return the documented V1 envelope shape `{"result":"ok","data":...}` / `{"result":"error","message":"..."}` instead of leaking the legacy `{"success":...}` shape.
+  - [x] Include stable create response fields for `payment_id`, `track_id`/`session_token`, `checkout_url`, `status`, `expires_at`, `order_id`, `amount`, `currency`, and selected asset fields when an asset is selected.
 
-- [ ] Task 2: Apply idempotency before payment/wallet mutation (AC: 3, 4, 5, 7)
-  - [ ] Preserve current idempotency key source: `Idempotency-Key` header first, then `order:<order_id>` fallback.
-  - [ ] Ensure request hashing uses normalized request data and includes newly supported selected asset fields.
-  - [ ] On same key and same payload, return the cached original create response exactly enough that client-visible ids, checkout URL, expiry, selected asset fields, and status remain stable.
-  - [ ] On same key and different payload, return conflict without creating a new `PaymentSession`, wallet assignment, price quote, or other lifecycle state.
-  - [ ] Keep idempotency scope tenant/domain-based (`domain_id + key`) and do not broaden it to merchant-global or process-local state.
+- [x] Task 2: Apply idempotency before payment/wallet mutation (AC: 3, 4, 5, 7)
+  - [x] Preserve current idempotency key source: `Idempotency-Key` header first, then `order:<order_id>` fallback.
+  - [x] Ensure request hashing uses normalized request data and includes newly supported selected asset fields.
+  - [x] On same key and same payload, return the cached original create response exactly enough that client-visible ids, checkout URL, expiry, selected asset fields, and status remain stable.
+  - [x] On same key and different payload, return conflict without creating a new `PaymentSession`, wallet assignment, price quote, or other lifecycle state.
+  - [x] Keep idempotency scope tenant/domain-based (`domain_id + key`) and do not broaden it to merchant-global or process-local state.
 
-- [ ] Task 3: Validate selected asset and quote before partial creation (AC: 1, 2, 5, 7)
-  - [ ] If `chain_id`/`symbol`/`token` are supplied, validate the asset via `asset.Registry` before creating payment session or wallet records.
-  - [ ] Reject unsupported chain/token, disabled/missing metadata, invalid decimals, or unavailable price provider before mutating payment/wallet state.
-  - [ ] For fiat-to-crypto conversion, calculate expected raw amount once and persist `models.PriceQuote` with `PaymentID`, chain, token, symbol, decimals, fiat currency, fiat amount, expected raw amount, price source, price, quoted_at, and expires_at.
-  - [ ] For crypto-denominated amount where currency matches the selected asset/canonical symbol, keep fixed price source behavior and raw amount conversion.
-  - [ ] Do not recalculate quote values in create retry responses; use persisted session/quote data or cached idempotency response.
+- [x] Task 3: Validate selected asset and quote before partial creation (AC: 1, 2, 5, 7)
+  - [x] If `chain_id`/`symbol`/`token` are supplied, validate the asset via `asset.Registry` before creating payment session or wallet records.
+  - [x] Reject unsupported chain/token, disabled/missing metadata, invalid decimals, or unavailable price provider before mutating payment/wallet state.
+  - [x] For fiat-to-crypto conversion, calculate expected raw amount once and persist `models.PriceQuote` with `PaymentID`, chain, token, symbol, decimals, fiat currency, fiat amount, expected raw amount, price source, price, quoted_at, and expires_at.
+  - [x] For crypto-denominated amount where currency matches the selected asset/canonical symbol, keep fixed price source behavior and raw amount conversion.
+  - [x] Do not recalculate quote values in create retry responses; use persisted session/quote data or cached idempotency response.
 
-- [ ] Task 4: Preserve checkout expiry and partner status consistency (AC: 6, 7)
-  - [ ] Keep `paymentSessionTTL()` behavior unless tests deliberately change it.
-  - [ ] Ensure partner API `payment/info` and checkout status surfaces report expired consistently when `ExpiresAt` is in the past and status is not terminal paid/canceled/failed.
-  - [ ] Avoid marking a payment paid or posting ledger entries in this story; finality and settlement belong to later deposit/ledger stories.
+- [x] Task 4: Preserve checkout expiry and partner status consistency (AC: 6, 7)
+  - [x] Keep `paymentSessionTTL()` behavior unless tests deliberately change it.
+  - [x] Ensure partner API `payment/info` and checkout status surfaces report expired consistently when `ExpiresAt` is in the past and status is not terminal paid/canceled/failed.
+  - [x] Avoid marking a payment paid or posting ledger entries in this story; finality and settlement belong to later deposit/ledger stories.
 
-- [ ] Task 5: Update contract docs and tests (AC: 1-7)
-  - [ ] Update Swagger comments and regenerate `docs/docs.go`, `docs/swagger.json`, and `docs/swagger.yaml` if public request/response structs change.
-  - [ ] Add focused tests for create success with selected asset, idempotent retry, idempotency conflict, unsupported asset rejection before mutation, quote snapshot persistence, expiry status behavior, and V1 response envelope compatibility.
-  - [ ] Add repository or helper tests around `IdempotencyRepo.RequestHash`/conflict behavior where DB-backed testing is not required.
-  - [ ] Run targeted package tests for changed handlers/repositories/types.
-  - [ ] Run `go test ./...`.
-  - [ ] Run `go vet ./...` if the repo state supports it.
-  - [ ] Update Dev Agent Record, File List, Change Log, and story status according to `bmad-dev-story`.
+- [x] Task 5: Update contract docs and tests (AC: 1-7)
+  - [x] Update Swagger comments and regenerate `docs/docs.go`, `docs/swagger.json`, and `docs/swagger.yaml` if public request/response structs change.
+  - [x] Add focused tests for create success with selected asset, idempotent retry, idempotency conflict, unsupported asset rejection before mutation, quote snapshot persistence, expiry status behavior, and V1 response envelope compatibility.
+  - [x] Add repository or helper tests around `IdempotencyRepo.RequestHash`/conflict behavior where DB-backed testing is not required.
+  - [x] Run targeted package tests for changed handlers/repositories/types.
+  - [x] Run `go test ./...`.
+  - [x] Run `go vet ./...` if the repo state supports it.
+  - [x] Update Dev Agent Record, File List, Change Log, and story status according to `bmad-dev-story`.
+
+### Review Findings
+
+- [x] [Review][Patch] Require token identifier for non-native selected assets [api/handlers/payment.go:993] — Removed the create-time `GetBySymbol` fallback so ERC20/TRC20/SPL selections cannot bind an arbitrary registry entry when token is omitted; added a regression test.
+- [x] [Review][Patch] Document actual v1 payment detail `deposit_address` field [types/v1api.go:238] — Added `deposit_address` to `V1PaymentDetail` and regenerated Swagger so partner info/history docs include the field returned by `v1PaymentResponse`.
+- [x] [Review][Patch] Document idempotency conflict responses [api/handlers/payment.go:160, api/handlers/v1api.go:684] — Added 409 Swagger annotations for legacy and v1 create endpoints and regenerated Swagger.
 
 ## Dev Notes
 
@@ -200,10 +206,47 @@ Codex
 
 ### Debug Log References
 
+- `go test ./api/handlers ./repositories ./types`
+- `swag init -g main.go -o docs`
+- `go test ./...`
+- `go vet ./...`
+
+### Implementation Plan
+
+- Keep `/payments/create` backwards-compatible while extracting a shared create core that can render either legacy or v1 response envelopes.
+- Validate and quote selected create-time assets before wallet/session mutation, then reuse `PaymentRepo.SelectAsset` so selected session fields and `PriceQuote` persist transactionally.
+- Preserve DB-backed idempotency through `IdempotencyRepo.Begin`/`Complete`; extend normalized request hashing by adding selected asset fields to `PaymentCreateParams`.
+- Report expired status consistently through a shared response-status helper without marking paid, posting ledger entries, or emitting lifecycle webhooks.
+
 ### Completion Notes List
 
+- Extended `types.PaymentCreateParams`, `types.V1InvoiceRequest`, `types.PaymentCreateResponse`, `types.V1PaymentCreatedData`, and `types.V1PaymentDetail` with selected asset contract fields and normalized validation.
+- Refactored payment creation into a shared core with legacy and v1 modes; `/api/v1/payment/create` and `/api/v1/payment/white-label` now return v1 success/error envelopes.
+- Added create-time selected asset validation and quote preparation before wallet/session creation, then persisted selected session fields and `models.PriceQuote` through `PaymentRepo.SelectAsset`.
+- Preserved idempotency key sourcing and DB-backed domain/key scope; cached create responses remain raw JSON and request hashes now include normalized selected asset fields.
+- Added response status handling so pending/awaiting sessions with past expiry report `expired` through create/info response helpers while terminal statuses remain unchanged.
+- Regenerated Swagger docs for the public contract changes, including selected asset fields and idempotency conflict responses.
+- Added helper-level tests for selected asset quote preparation, non-native token requirement, unsupported asset rejection before mutation, v1 success/error envelopes, expiry response status, and idempotency request hashing.
+- Added handler-level integration tests with in-memory repo boundaries covering selected-asset create success, quote snapshot persistence, cached idempotent retry without quote recalculation, idempotency conflict without duplicate wallet/session/quote mutation, unsupported asset rejection before mutation, and v1 success/conflict envelopes.
+- Validation passed: `go test ./api/handlers ./repositories ./types`, `go test ./...`, and `go vet ./...`.
+
 ### File List
+
+- `api/handlers/payment.go`
+- `api/handlers/payment_test.go`
+- `api/handlers/v1api.go`
+- `repositories/idempotency_repo_test.go`
+- `types/payment.go`
+- `types/v1api.go`
+- `types/validation_test.go`
+- `docs/docs.go`
+- `docs/swagger.json`
+- `docs/swagger.yaml`
+- `_bmad-output/implementation-artifacts/1-2-idempotent-payment-session-creation.md`
+- `_bmad-output/implementation-artifacts/sprint-status.yaml`
 
 ### Change Log
 
 - 2026-06-27: Story created with PRD, UX, architecture, project-context, previous-story, and current-code context.
+- 2026-06-27: Implemented idempotent selected-asset payment session creation, v1 response contract, expiry response consistency, contract docs, and tests.
+- 2026-06-27: Addressed code review findings - 3 items resolved.

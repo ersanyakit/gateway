@@ -681,26 +681,21 @@ func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
+// @Failure 409 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/create [post]
 func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
-	// Delegate to the existing payment create handler logic
-	inner := HandlePaymentCreate(PaymentHandlerDeps{
-		DomainRepo:      deps.DomainRepo,
-		WalletRepo:      deps.WalletRepo,
-		PaymentRepo:     deps.PaymentRepo,
-		AssetRegistry:   deps.AssetRegistry,
-		Blockchains:     deps.Blockchains,
-		PriceOracle:     deps.PriceOracle,
-		Notifier:        deps.Notifier,
-		PaymentHub:      deps.PaymentHub,
-		IdempotencyRepo: deps.IdempotencyRepo,
-	})
-	return func(c fiber.Ctx) error {
-		if _, err := v1ResolveSignedDomain(c, deps.DomainRepo); err != nil {
-			return v1Err(c, fiber.StatusUnauthorized, err.Error())
-		}
-		return inner(c)
-	}
+	return handlePaymentCreate(PaymentHandlerDeps{
+		DomainRepo:       deps.DomainRepo,
+		WalletRepo:       deps.WalletRepo,
+		PaymentRepo:      deps.PaymentRepo,
+		AssetRegistry:    deps.AssetRegistry,
+		Blockchains:      deps.Blockchains,
+		PriceOracle:      deps.PriceOracle,
+		Notifier:         deps.Notifier,
+		PaymentHub:       deps.PaymentHub,
+		IdempotencyRepo:  deps.IdempotencyRepo,
+		RequireSignature: true,
+	}, paymentCreateModeV1)
 }
 
 // HandleV1PaymentWhiteLabel godoc
@@ -717,6 +712,7 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
+// @Failure 409 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/white-label [post]
 func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 	return HandleV1PaymentCreate(deps)
@@ -1629,17 +1625,23 @@ func v1PaymentResponse(s models.PaymentSession) fiber.Map {
 		v := int64(*s.SelectedChainID)
 		chainID = &v
 	}
+	token := ""
+	if s.SelectedToken != nil {
+		token = *s.SelectedToken
+	}
 	return fiber.Map{
 		"payment_id":          s.ID.String(),
 		"track_id":            s.SessionToken,
 		"order_id":            s.OrderID,
 		"product_id":          s.ProductID,
 		"user_id":             s.UserID,
-		"status":              s.Status,
+		"status":              paymentSessionResponseStatus(s, time.Now()),
 		"amount":              s.Amount,
 		"currency":            s.Currency,
 		"chain_id":            chainID,
 		"symbol":              s.SelectedSymbol,
+		"token":               token,
+		"decimals":            s.SelectedDecimals,
 		"deposit_address":     s.DepositAddress,
 		"expected_amount_raw": s.ExpectedAmountRaw,
 		"tx_hash":             s.TxHash,

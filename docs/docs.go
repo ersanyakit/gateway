@@ -411,6 +411,12 @@ const docTemplate = `{
                         "schema": {
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
                     }
                 }
             }
@@ -819,6 +825,12 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
@@ -2517,6 +2529,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.ErrorResponse"
                         }
                     },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -2665,7 +2683,13 @@ const docTemplate = `{
                 "cancel_url": {
                     "type": "string"
                 },
+                "chain_id": {
+                    "type": "integer"
+                },
                 "currency": {
+                    "type": "string"
+                },
+                "description": {
                     "type": "string"
                 },
                 "domain_id": {
@@ -2683,6 +2707,12 @@ const docTemplate = `{
                 "success_url": {
                     "type": "string"
                 },
+                "symbol": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
                 "user_id": {
                     "type": "string"
                 }
@@ -2691,10 +2721,22 @@ const docTemplate = `{
         "types.PaymentCreateResponse": {
             "type": "object",
             "properties": {
+                "chain_id": {
+                    "type": "integer"
+                },
                 "checkout_url": {
                     "type": "string"
                 },
+                "decimals": {
+                    "type": "integer"
+                },
+                "deposit_address": {
+                    "type": "string"
+                },
                 "deposit_wallet": {
+                    "type": "string"
+                },
+                "expected_amount_raw": {
                     "type": "string"
                 },
                 "expires_at": {
@@ -2711,6 +2753,12 @@ const docTemplate = `{
                 },
                 "success": {
                     "type": "boolean"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
                 }
             }
         },
@@ -2997,6 +3045,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "https://example.com/cancel"
                 },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
                 "currency": {
                     "type": "string",
                     "example": "USD"
@@ -3012,6 +3064,14 @@ const docTemplate = `{
                 "success_url": {
                     "type": "string",
                     "example": "https://example.com/success"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 },
                 "user_id": {
                     "type": "string",
@@ -3078,6 +3138,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "25.00"
                 },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
                 "checkout_url": {
                     "type": "string",
                     "example": "https://pay.example.com/checkout/eyJhbGci"
@@ -3085,6 +3149,18 @@ const docTemplate = `{
                 "currency": {
                     "type": "string",
                     "example": "USD"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "deposit_address": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "expected_amount_raw": {
+                    "type": "string",
+                    "example": "25000000"
                 },
                 "expires_at": {
                     "type": "string",
@@ -3106,6 +3182,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "pending"
                 },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+                },
                 "track_id": {
                     "type": "string",
                     "example": "550e8400-e29b-41d4-a716-446655440000"
@@ -3119,6 +3203,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "25.00"
                 },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
                 "checkout_url": {
                     "type": "string",
                     "example": "https://pay.example.com/checkout/eyJhbGci"
@@ -3131,9 +3219,21 @@ const docTemplate = `{
                     "type": "string",
                     "example": "USD"
                 },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "deposit_address": {
+                    "type": "string",
+                    "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
                 "deposit_wallet": {
                     "type": "string",
                     "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
+                },
+                "expected_amount_raw": {
+                    "type": "string",
+                    "example": "25000000"
                 },
                 "expires_at": {
                     "type": "string",
@@ -3162,6 +3262,14 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "paid"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDT"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xdAC17F958D2ee523a2206206994597C13D831ec7"
                 },
                 "track_id": {
                     "type": "string",
