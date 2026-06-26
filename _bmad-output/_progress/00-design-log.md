@@ -4,6 +4,8 @@
 
 - WDS Project Brief flow started for a crypto wallet provider and payment gateway.
 - Vision Capture completed and confirmed.
+- Positioning completed and confirmed from `_bmad-output` sources.
+- Business Model completed from `_bmad-output` sources.
 - Existing BMad artifacts are available and should be treated as source context:
   - `_bmad-output/planning-artifacts/prd.md`
   - `_bmad-output/planning-artifacts/ux.md`
@@ -22,11 +24,14 @@
 - Design work must expose operational truth for risky money workflows: finality, ledger authority, signer boundary, webhook delivery, reconciliation, and approval audit trails.
 - Business pressure is broad: live readiness, merchant/partner acquisition, wallet-provider growth, investor/partner readiness, and productization all matter.
 - Confirmed vision: one shared money core for merchant/dealer payment gateway and wallet-provider-as-a-service; controlled merchant/dealer beta first, wallet-provider expansion only when operational gates are strong enough.
+- Confirmed positioning: B2B crypto payment gateway + wallet-provider infrastructure, differentiated by shared money core across payment lifecycle, static wallet, ledger, webhook, reconciliation, and admin recovery.
+- Business model: B2B infrastructure platform. Merchant/dealer and wallet/exchange tenants are paying customers; checkout payers and wallet end users are downstream users.
 
 ## Backlog
 
 - Confirm whether "bayi" means merchant, reseller, exchange client, or internal dealer.
 - Define target users and roles for merchant/dealer and admin/operator portals.
+- Define pricing/commercial packaging later; `_bmad-output` does not specify it.
 - Create Product Brief, then Trigger Map, then Outline Scenarios.
 
 ## WDS Development Integration - 2026-06-27

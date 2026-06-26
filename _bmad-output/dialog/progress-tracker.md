@@ -35,7 +35,8 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - [ ] Product Concept — the founding structural idea
 - [ ] Core Features — essential functionality
 - [ ] Inspiration & References — visual preferences and references
-- [ ] Positioning — market position and differentiation
+- [x] Positioning — market position and differentiation
+- [x] Business Model — B2B infrastructure platform
 - [ ] Success Metrics — how we measure success
 - [ ] Constraints — limitations and boundaries
 - [ ] Launch Requirements — what's needed to ship
@@ -50,6 +51,8 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 2. "Bayi" is currently treated as merchant/dealer/partner until renamed or narrowed.
 3. Admin design must prioritize operational safety, auditability, and money-state recovery.
 4. Organisation is a one-person product / technical team; ersan owns product and technical decisions.
+5. Positioning confirmed from `_bmad-output`: B2B crypto payment gateway + wallet-provider infrastructure on one shared money core.
+6. Business model determined from `_bmad-output`: B2B infrastructure platform; direct customers are merchant/dealer and wallet/exchange tenants.
 
 ---
 
@@ -61,4 +64,5 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - `_bmad-output/dialog/client-profile.md`
 - `_bmad-output/dialog/decisions.md`
 - `_bmad-output/dialog/02-vision.md`
+- `_bmad-output/dialog/07-positioning.md`
 - `_bmad-output/A-Product-Brief/project-brief.md`

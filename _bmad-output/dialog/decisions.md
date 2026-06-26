@@ -9,4 +9,14 @@
 - Decision culture: fast individual decisions, suitable for iterative WDS work.
 - Internal driver combines live readiness, merchant/partner acquisition, wallet-provider growth, investor/partner readiness, and productizing the existing platform.
 - Vision confirmed: one shared money core for crypto payment gateway and wallet-provider surfaces, with merchant/dealer beta first and wallet-provider growth gated by custody, signer, reconciliation, compliance, observability, and operational readiness.
+- Positioning confirmed: B2B crypto payment gateway + wallet-provider infrastructure for merchant/dealer teams, developers, and small/mid wallet or exchange platforms; differentiated by one shared money core rather than checkout-only processing or fragmented in-house wallet operations.
+- Business model determined from `_bmad-output`: B2B infrastructure platform. Merchant/dealer tenants and wallet/exchange platform tenants are the paying business customers; checkout payers and wallet end users are downstream users, not direct Gateway buyers. Pricing/commercial packaging is not defined in `_bmad-output` and remains deferred.
+
+## Business Model Decision Detail
+
+- **Opening basis:** Per product-owner instruction, business model was derived from `_bmad-output` rather than re-asked.
+- **Evidence:** PRD, positioning, architecture, UX, and epics consistently describe partner-facing tenant/domain infrastructure for merchant/dealer and wallet/exchange customers.
+- **Final decision:** B2B infrastructure platform.
+- **Rationale:** The system sells operational crypto payment/wallet infrastructure to tenants that integrate APIs, configure webhooks, manage payments/wallets, and operate money-state workflows.
+- **Implications:** Design must prioritize tenant onboarding, developer integration, credentials, webhook diagnostics, operational dashboards, audit trails, launch readiness, and clear separation between direct business customers and checkout/end-wallet users.
 - WDS development lane will wrap implementation work: code changes should trace back to PRD, UX handoff, architecture spine, epics, sprint status, story files, and `_bmad-output/project-context.md`.
