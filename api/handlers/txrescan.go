@@ -73,7 +73,7 @@ func HandleAdminTxRescan(deps DealerDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
-// @Param X-Gateway-Signature header string true "HMAC-SHA256 over timestamp + raw body, optionally prefixed with sha256="
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path + timestamp + raw body, optionally prefixed with sha256="
 // @Param payload body map[string]string true "chain and tx_hash"
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} types.V1ErrorResponse

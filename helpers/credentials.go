@@ -111,6 +111,23 @@ func VerifySignature(secret string, timestamp string, body []byte, received stri
 	) == 1
 }
 
+func GenerateRequestSignature(secret string, method string, path string, timestamp string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(strings.ToUpper(strings.TrimSpace(method))))
+	mac.Write([]byte("\n"))
+	mac.Write([]byte(strings.TrimSpace(path)))
+	mac.Write([]byte("\n"))
+	mac.Write([]byte(timestamp))
+	mac.Write([]byte("\n"))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func VerifyRequestSignature(secret string, method string, path string, timestamp string, body []byte, received string) bool {
+	expected := GenerateRequestSignature(secret, method, path, timestamp, body)
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(received)) == 1
+}
+
 func ValidateTimestamp(ts string) error {
 
 	t, err := strconv.ParseInt(ts, 10, 64)
