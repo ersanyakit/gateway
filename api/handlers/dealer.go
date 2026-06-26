@@ -2263,9 +2263,9 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		}
 		walletID := reserveWallet.ID.String()
 		chain := constants.ChainName(*session.SelectedChainID)
-		claimedRefund, err := deps.RefundRepo.ClaimPending(c.Context(), id, adminEmail)
+		claimedRefund, err := deps.RefundRepo.ClaimPendingWithHold(c.Context(), id, adminEmail, *session, deps.LedgerRepo)
 		if err != nil {
-			return redirectWithError(c, "/admin/refunds", "Refund başka bir işlem tarafından alınmış veya artık pending değil.")
+			return redirectWithError(c, "/admin/refunds", "Refund başka bir işlem tarafından alınmış, artık pending değil veya ledger rezervasyonu yapılamadı: "+err.Error())
 		}
 		amountRaw := claimedRefund.AmountRaw
 		params := types.TransferParams{

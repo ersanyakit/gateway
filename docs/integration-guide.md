@@ -359,6 +359,8 @@ Refund statuses:
 - `rejected`
 - `failed`
 
+Creating a refund request reserves the refundable amount in the ledger. Rejected refunds or refunds that fail before broadcast release that reservation.
+
 Refund lifecycle events are sent as webhooks when a domain webhook is configured:
 
 - `refund.requested.v1`

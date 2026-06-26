@@ -19,6 +19,8 @@ type LedgerRepo struct {
 	db *gorm.DB
 }
 
+var ErrInsufficientAvailableBalance = errors.New("insufficient available balance")
+
 func NewLedgerRepo(db *gorm.DB) *LedgerRepo {
 	return &LedgerRepo{db: db}
 }
@@ -358,7 +360,7 @@ func (r *LedgerRepo) CreateWithdrawalHoldWithDB(ctx context.Context, tx *gorm.DB
 }
 
 func (r *LedgerRepo) createWithdrawalHold(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest) error {
-	key := "withdrawal-hold:" + request.ID.String()
+	key := withdrawalHoldKey(request.ID)
 	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
@@ -441,7 +443,7 @@ func (r *LedgerRepo) PostWithdrawalDebitWithDB(ctx context.Context, tx *gorm.DB,
 }
 
 func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest, txHash string) error {
-	key := "withdrawal-debit:" + request.ID.String()
+	key := withdrawalDebitKey(request.ID)
 	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
@@ -658,17 +660,53 @@ func (r *LedgerRepo) ensureAvailableBalance(ctx context.Context, tx *gorm.DB, me
 		return fmt.Errorf("invalid available balance: %s", raw)
 	}
 	if available.Cmp(requested) < 0 {
-		return fmt.Errorf("insufficient available balance: available=%s amount=%s", available.String(), requested.String())
+		return fmt.Errorf("%w: available=%s amount=%s", ErrInsufficientAvailableBalance, available.String(), requested.String())
 	}
 	return nil
 }
 
-func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
-	return r.PostRefundDebitWithDB(ctx, r.db, refund, session, txHash)
+func withdrawalHoldKey(id uuid.UUID) string {
+	return "withdrawal-hold:" + id.String()
 }
 
-func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession, txHash string) error {
-	key := "refund-debit:" + refund.ID.String()
+func withdrawalDebitKey(id uuid.UUID) string {
+	return "withdrawal-debit:" + id.String()
+}
+
+func refundHoldKey(id uuid.UUID) string {
+	return "refund-hold:" + id.String()
+}
+
+func refundDebitKey(id uuid.UUID) string {
+	return "refund-debit:" + id.String()
+}
+
+func ledgerRefundAssetFromSession(session models.PaymentSession) (constants.ChainID, string, uint8, error) {
+	if session.SelectedChainID == nil {
+		return 0, "", 0, errors.New("refund payment asset chain is missing")
+	}
+	if !constants.IsSupportedChainID(*session.SelectedChainID) {
+		return 0, "", 0, errors.New("refund payment asset chain is unsupported")
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(session.SelectedSymbol))
+	if symbol == "" {
+		symbol = strings.ToUpper(constants.ChainName(*session.SelectedChainID))
+	}
+	return *session.SelectedChainID, symbol, session.SelectedDecimals, nil
+}
+
+func (r *LedgerRepo) CreateRefundHold(ctx context.Context, refund models.Refund, session models.PaymentSession) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.createRefundHold(ctx, tx, refund, session)
+	})
+}
+
+func (r *LedgerRepo) CreateRefundHoldWithDB(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession) error {
+	return r.createRefundHold(ctx, tx, refund, session)
+}
+
+func (r *LedgerRepo) createRefundHold(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession) error {
+	key := refundHoldKey(refund.ID)
 	exists, err := r.existsWithDB(ctx, tx, key)
 	if err != nil || exists {
 		return err
@@ -676,18 +714,123 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 	if !r.amountIsPositive(refund.AmountRaw) {
 		return errors.New("refund amount must be positive")
 	}
+	if refund.PaymentID != session.ID {
+		return errors.New("refund payment mismatch")
+	}
+	if refund.MerchantID != session.MerchantID || refund.DomainID != session.DomainID {
+		return errors.New("refund payment merchant/domain mismatch")
+	}
+	chainID, symbol, decimals, err := ledgerRefundAssetFromSession(session)
+	if err != nil {
+		return err
+	}
+	domainID := refund.DomainID
+	refundID := refund.ID
+	paymentID := session.ID
+	walletID := session.WalletID
+	if err := r.lockLedgerAsset(ctx, tx, refund.MerchantID, &domainID, chainID, session.SelectedToken); err != nil {
+		return err
+	}
+	if err := r.ensureAvailableBalance(ctx, tx, refund.MerchantID, &domainID, chainID, session.SelectedToken, refund.AmountRaw); err != nil {
+		return err
+	}
+	now := time.Now()
+	entries := []models.LedgerEntry{
+		{
+			ID:             uuid.New(),
+			MerchantID:     refund.MerchantID,
+			DomainID:       &domainID,
+			WalletID:       &walletID,
+			PaymentID:      &paymentID,
+			RefundID:       &refundID,
+			ChainID:        chainID,
+			Token:          session.SelectedToken,
+			Symbol:         symbol,
+			Decimals:       decimals,
+			EntryType:      models.LedgerEntryTypeRefundHold,
+			Account:        models.LedgerAccountMerchantAvailable,
+			Direction:      models.LedgerDirectionDebit,
+			Status:         models.LedgerStatusPending,
+			AmountRaw:      refund.AmountRaw,
+			IdempotencyKey: key,
+			Reference:      refund.ID.String(),
+			PostedAt:       &now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+		{
+			ID:             uuid.New(),
+			MerchantID:     refund.MerchantID,
+			DomainID:       &domainID,
+			WalletID:       &walletID,
+			PaymentID:      &paymentID,
+			RefundID:       &refundID,
+			ChainID:        chainID,
+			Token:          session.SelectedToken,
+			Symbol:         symbol,
+			Decimals:       decimals,
+			EntryType:      models.LedgerEntryTypeRefundHold,
+			Account:        models.LedgerAccountRefundTransit,
+			Direction:      models.LedgerDirectionCredit,
+			Status:         models.LedgerStatusPending,
+			AmountRaw:      refund.AmountRaw,
+			IdempotencyKey: key,
+			Reference:      refund.ID.String(),
+			PostedAt:       &now,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+		},
+	}
+	return tx.WithContext(ctx).Create(&entries).Error
+}
+
+func (r *LedgerRepo) VoidRefundHold(ctx context.Context, refundID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.voidRefundHold(ctx, tx, refundID)
+	})
+}
+
+func (r *LedgerRepo) VoidRefundHoldWithDB(ctx context.Context, tx *gorm.DB, refundID uuid.UUID) error {
+	return r.voidRefundHold(ctx, tx, refundID)
+}
+
+func (r *LedgerRepo) voidRefundHold(ctx context.Context, tx *gorm.DB, refundID uuid.UUID) error {
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("refund_id = ? AND entry_type = ? AND status = ?", refundID, models.LedgerEntryTypeRefundHold, models.LedgerStatusPending).
+		Updates(map[string]any{
+			"status":     models.LedgerStatusVoided,
+			"voided_at":  &now,
+			"updated_at": now,
+		}).Error
+}
+
+func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
+	return r.PostRefundDebitWithDB(ctx, r.db, refund, session, txHash)
+}
+
+func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession, txHash string) error {
+	key := refundDebitKey(refund.ID)
+	exists, err := r.existsWithDB(ctx, tx, key)
+	if err != nil || exists {
+		return err
+	}
+	if !r.amountIsPositive(refund.AmountRaw) {
+		return errors.New("refund amount must be positive")
+	}
+	if err := r.createRefundHold(ctx, tx, refund, session); err != nil {
+		return err
+	}
 	now := time.Now()
 	refundID := refund.ID
 	paymentID := session.ID
 	walletID := session.WalletID
-	chainID := constants.ChainID(0)
-	if session.SelectedChainID != nil {
-		chainID = *session.SelectedChainID
-	}
-	if err := r.lockLedgerAsset(ctx, tx, refund.MerchantID, &refund.DomainID, chainID, session.SelectedToken); err != nil {
+	chainID, symbol, decimals, err := ledgerRefundAssetFromSession(session)
+	if err != nil {
 		return err
 	}
-	if err := r.ensureAvailableBalance(ctx, tx, refund.MerchantID, &refund.DomainID, chainID, session.SelectedToken, refund.AmountRaw); err != nil {
+	if err := r.lockLedgerAsset(ctx, tx, refund.MerchantID, &refund.DomainID, chainID, session.SelectedToken); err != nil {
 		return err
 	}
 	entries := []models.LedgerEntry{
@@ -701,10 +844,10 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 			TransactionHash: txHash,
 			ChainID:         chainID,
 			Token:           session.SelectedToken,
-			Symbol:          session.SelectedSymbol,
-			Decimals:        session.SelectedDecimals,
+			Symbol:          symbol,
+			Decimals:        decimals,
 			EntryType:       models.LedgerEntryTypeRefundDebit,
-			Account:         models.LedgerAccountMerchantAvailable,
+			Account:         models.LedgerAccountRefundTransit,
 			Direction:       models.LedgerDirectionDebit,
 			Status:          models.LedgerStatusPosted,
 			AmountRaw:       refund.AmountRaw,
@@ -724,8 +867,8 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 			TransactionHash: txHash,
 			ChainID:         chainID,
 			Token:           session.SelectedToken,
-			Symbol:          session.SelectedSymbol,
-			Decimals:        session.SelectedDecimals,
+			Symbol:          symbol,
+			Decimals:        decimals,
 			EntryType:       models.LedgerEntryTypeRefundDebit,
 			Account:         models.LedgerAccountPlatformClearing,
 			Direction:       models.LedgerDirectionCredit,

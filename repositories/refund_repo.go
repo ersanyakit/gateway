@@ -4,6 +4,7 @@ import (
 	"context"
 	"core/models"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,24 @@ func (r *RefundRepo) Create(ctx context.Context, refund *models.Refund) error {
 		refund.Status = models.RefundStatusPending
 	}
 	return r.db.WithContext(ctx).Create(refund).Error
+}
+
+func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, session models.PaymentSession, ledger *LedgerRepo) error {
+	if refund.ID == uuid.Nil {
+		refund.ID = uuid.New()
+	}
+	if refund.Status == "" {
+		refund.Status = models.RefundStatusPending
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(refund).Error; err != nil {
+			return err
+		}
+		if ledger == nil {
+			return nil
+		}
+		return NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, *refund, session)
+	})
 }
 
 func (r *RefundRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.Refund, error) {
@@ -190,6 +209,47 @@ func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy 
 	return &claimed, nil
 }
 
+func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, reviewedBy string, session models.PaymentSession, ledger *LedgerRepo) (*models.Refund, error) {
+	var claimed models.Refund
+	now := time.Now()
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, "id = ? AND status = ?", id, models.RefundStatusPending).Error; err != nil {
+			return err
+		}
+		if ledger != nil {
+			if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, refund, session); err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status = ?", id, models.RefundStatusPending).
+			Updates(map[string]any{
+				"status":      models.RefundStatusProcessing,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       "",
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		refund.Status = models.RefundStatusProcessing
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.Error = ""
+		claimed = refund
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &claimed, nil
+}
+
 func (r *RefundRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
 	now := time.Now()
 	result := r.db.WithContext(ctx).Model(&models.Refund{}).
@@ -263,40 +323,52 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 
 func (r *RefundRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ? AND status = ?", id, models.RefundStatusPending).
-		Updates(map[string]any{
-			"status":      models.RefundStatusRejected,
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"error":       reason,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status = ?", id, models.RefundStatusPending).
+			Updates(map[string]any{
+				"status":      models.RefundStatusRejected,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       reason,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+	})
 }
 
 func (r *RefundRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy string, errText string) error {
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ? AND status IN ?", id, []string{models.RefundStatusPending, models.RefundStatusProcessing, models.RefundStatusApproved}).
-		Updates(map[string]any{
-			"status":      models.RefundStatusFailed,
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"error":       errText,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, "id = ? AND status IN ?", id, []string{models.RefundStatusPending, models.RefundStatusProcessing, models.RefundStatusApproved}).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status IN ?", id, []string{models.RefundStatusPending, models.RefundStatusProcessing, models.RefundStatusApproved}).
+			Updates(map[string]any{
+				"status":      models.RefundStatusFailed,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       errText,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if strings.TrimSpace(refund.TxHash) != "" {
+			return nil
+		}
+		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+	})
 }
 
 func (r *RefundRepo) SetProcessingError(ctx context.Context, id uuid.UUID, errText string) error {

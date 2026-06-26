@@ -1232,6 +1232,9 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		if session.Status != models.PaymentStatusPaid {
 			return v1Err(c, fiber.StatusBadRequest, "only paid payments can be refunded")
 		}
+		if session.SelectedChainID == nil || !constants.IsSupportedChainID(*session.SelectedChainID) {
+			return v1Err(c, fiber.StatusBadRequest, "payment chain is missing or unsupported")
+		}
 		amountRaw := strings.TrimSpace(body.AmountRaw)
 		if amountRaw == "" {
 			amountRaw = session.ExpectedAmountRaw
@@ -1260,8 +1263,12 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 			Status:      models.RefundStatusPending,
 			RequestedBy: "api",
 		}
-		if err := deps.RefundRepo.Create(c.Context(), refund); err != nil {
-			return v1Err(c, fiber.StatusInternalServerError, "refund creation failed: "+err.Error())
+		if err := deps.RefundRepo.CreateWithHold(c.Context(), refund, *session, deps.LedgerRepo); err != nil {
+			status := fiber.StatusInternalServerError
+			if errors.Is(err, repositories.ErrInsufficientAvailableBalance) {
+				status = fiber.StatusBadRequest
+			}
+			return v1Err(c, status, "refund creation failed: "+err.Error())
 		}
 		if deps.WebhookDeliveryRepo != nil {
 			payload := webhooksvc.NewRefundPayload(constants.WebhookEventRefundRequestedV1, *refund)

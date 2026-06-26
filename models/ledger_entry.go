@@ -13,6 +13,7 @@ const (
 	LedgerEntryTypeWithdrawalHold    = "withdrawal_hold"
 	LedgerEntryTypeWithdrawalRelease = "withdrawal_release"
 	LedgerEntryTypeWithdrawalDebit   = "withdrawal_debit"
+	LedgerEntryTypeRefundHold        = "refund_hold"
 	LedgerEntryTypeRefundDebit       = "refund_debit"
 	LedgerEntryTypeReorgReversal     = "reorg_reversal"
 	LedgerEntryTypeAdjustment        = "adjustment"
@@ -28,6 +29,7 @@ const (
 	LedgerAccountMerchantAvailable = "merchant_available"
 	LedgerAccountPlatformClearing  = "platform_clearing"
 	LedgerAccountWithdrawalTransit = "withdrawal_transit"
+	LedgerAccountRefundTransit     = "refund_transit"
 )
 
 type LedgerEntry struct {
