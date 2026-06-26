@@ -254,18 +254,28 @@ type V1StaticAddressResponse struct {
 }
 
 type V1StaticAddressDetail struct {
-	WalletID string `json:"wallet_id"  example:"550e8400-e29b-41d4-a716-446655440000"`
-	UserID   string `json:"user_id"    example:"customer_42"`
-	Chain    string `json:"chain"      example:"ethereum"`
-	Symbol   string `json:"symbol"     example:"USDT"`
-	Address  string `json:"address"    example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	Label    string `json:"label"      example:"Main wallet"`
+	WalletID  string `json:"wallet_id"             example:"550e8400-e29b-41d4-a716-446655440000"`
+	UserID    string `json:"user_id"               example:"customer_42"`
+	ProductID string `json:"product_id,omitempty"  example:"static:1:USDT"`
+	Chain     string `json:"chain"                 example:"ethereum"`
+	ChainID   int64  `json:"chain_id,omitempty"    example:"1"`
+	Symbol    string `json:"symbol"                example:"USDT"`
+	Address   string `json:"address"               example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	Label     string `json:"label,omitempty"       example:"Main wallet"`
+	CreatedAt string `json:"created_at,omitempty"  example:"2024-06-01T12:00:00Z"`
 }
 
 // V1StaticAddressListResponse is returned by GET /api/v1/payment/static-addresses.
 type V1StaticAddressListResponse struct {
 	Result string                  `json:"result" example:"ok"`
-	Data   []V1StaticAddressDetail `json:"data"`
+	Data   V1StaticAddressListData `json:"data"`
+}
+
+type V1StaticAddressListData struct {
+	Wallets []V1StaticAddressDetail `json:"wallets"`
+	Total   int64                   `json:"total" example:"12"`
+	Page    int                     `json:"page"  example:"1"`
+	Limit   int                     `json:"limit" example:"20"`
 }
 
 // ─── Wallet provider responses ────────────────────────────────────────────────
@@ -282,10 +292,14 @@ type V1WalletInfoResponse struct {
 
 type V1WalletListResponse struct {
 	Result string           `json:"result" example:"ok"`
-	Total  int64            `json:"total"  example:"48"`
-	Page   int              `json:"page"   example:"1"`
-	Limit  int              `json:"limit"  example:"20"`
-	Data   []V1WalletDetail `json:"data"`
+	Data   V1WalletListData `json:"data"`
+}
+
+type V1WalletListData struct {
+	Wallets []V1WalletDetail `json:"wallets"`
+	Total   int64            `json:"total"  example:"48"`
+	Page    int              `json:"page"   example:"1"`
+	Limit   int              `json:"limit"  example:"20"`
 }
 
 type V1WalletBalanceResponse struct {

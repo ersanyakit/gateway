@@ -738,8 +738,17 @@ definitions:
       chain:
         example: ethereum
         type: string
+      chain_id:
+        example: 1
+        type: integer
+      created_at:
+        example: "2024-06-01T12:00:00Z"
+        type: string
       label:
         example: Main wallet
+        type: string
+      product_id:
+        example: static:1:USDT
         type: string
       symbol:
         example: USDT
@@ -751,12 +760,26 @@ definitions:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
     type: object
-  types.V1StaticAddressListResponse:
+  types.V1StaticAddressListData:
     properties:
-      data:
+      limit:
+        example: 20
+        type: integer
+      page:
+        example: 1
+        type: integer
+      total:
+        example: 12
+        type: integer
+      wallets:
         items:
           $ref: '#/definitions/types.V1StaticAddressDetail'
         type: array
+    type: object
+  types.V1StaticAddressListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1StaticAddressListData'
       result:
         example: ok
         type: string
@@ -901,24 +924,29 @@ definitions:
         example: ok
         type: string
     type: object
-  types.V1WalletListResponse:
+  types.V1WalletListData:
     properties:
-      data:
-        items:
-          $ref: '#/definitions/types.V1WalletDetail'
-        type: array
       limit:
         example: 20
         type: integer
       page:
         example: 1
         type: integer
-      result:
-        example: ok
-        type: string
       total:
         example: 48
         type: integer
+      wallets:
+        items:
+          $ref: '#/definitions/types.V1WalletDetail'
+        type: array
+    type: object
+  types.V1WalletListResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1WalletListData'
+      result:
+        example: ok
+        type: string
     type: object
   types.WalletCreateResponse:
     properties:

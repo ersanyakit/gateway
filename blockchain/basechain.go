@@ -49,6 +49,7 @@ type Chain interface {
 
 	AddWorker(listener Worker) error
 	RemoveWorker(listener Worker) error
+	WorkerCount() int
 	BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult
 	StartWorkers(ctx context.Context) error
 	StopWorkers() error
@@ -244,6 +245,10 @@ func (b *BaseChain) RemoveWorker(listener Worker) error {
 		}
 	}
 	return errors.New("listener not found")
+}
+
+func (b *BaseChain) WorkerCount() int {
+	return len(b.Workers)
 }
 
 func (b *BaseChain) StartWorkers(ctx context.Context) error {

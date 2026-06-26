@@ -3527,9 +3527,21 @@ const docTemplate = `{
                     "type": "string",
                     "example": "ethereum"
                 },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2024-06-01T12:00:00Z"
+                },
                 "label": {
                     "type": "string",
                     "example": "Main wallet"
+                },
+                "product_id": {
+                    "type": "string",
+                    "example": "static:1:USDT"
                 },
                 "symbol": {
                     "type": "string",
@@ -3545,14 +3557,34 @@ const docTemplate = `{
                 }
             }
         },
-        "types.V1StaticAddressListResponse": {
+        "types.V1StaticAddressListData": {
             "type": "object",
             "properties": {
-                "data": {
+                "limit": {
+                    "type": "integer",
+                    "example": 20
+                },
+                "page": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "total": {
+                    "type": "integer",
+                    "example": 12
+                },
+                "wallets": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/types.V1StaticAddressDetail"
                     }
+                }
+            }
+        },
+        "types.V1StaticAddressListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1StaticAddressListData"
                 },
                 "result": {
                     "type": "string",
@@ -3762,15 +3794,9 @@ const docTemplate = `{
                 }
             }
         },
-        "types.V1WalletListResponse": {
+        "types.V1WalletListData": {
             "type": "object",
             "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/types.V1WalletDetail"
-                    }
-                },
                 "limit": {
                     "type": "integer",
                     "example": 20
@@ -3779,13 +3805,27 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 1
                 },
-                "result": {
-                    "type": "string",
-                    "example": "ok"
-                },
                 "total": {
                     "type": "integer",
                     "example": 48
+                },
+                "wallets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1WalletDetail"
+                    }
+                }
+            }
+        },
+        "types.V1WalletListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1WalletListData"
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
                 }
             }
         },
