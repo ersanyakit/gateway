@@ -57,29 +57,29 @@ func lookupCheckoutProduct(ctx context.Context, deps PaymentHandlerDeps, product
 }
 
 type CheckoutAssetOption struct {
-	ChainID       int64
-	ChainName     string
-	ChainLogoURL  string
-	Symbol        string
-	Name          string
-	Token         string
-	Decimals      uint8
-	AmountRaw     string
-	AmountDisplay string
-	Native        bool
-	Available     bool
-	QuoteAvailable bool
+	ChainID           int64
+	ChainName         string
+	ChainLogoURL      string
+	Symbol            string
+	Name              string
+	Token             string
+	Decimals          uint8
+	AmountRaw         string
+	AmountDisplay     string
+	Native            bool
+	Available         bool
+	QuoteAvailable    bool
 	UnavailableReason string
-	LogoURL       string
+	LogoURL           string
 }
 
 type CheckoutAssetGroup struct {
-	Symbol        string
-	Name          string
-	AmountDisplay string
-	ChainCount    int
-	URL           string
-	LogoURL       string
+	Symbol         string
+	Name           string
+	AmountDisplay  string
+	ChainCount     int
+	URL            string
+	LogoURL        string
 	QuoteAvailable bool
 }
 
@@ -837,6 +837,9 @@ func checkoutExpectedQuote(ctx context.Context, oracle pricing.PriceOracle, sess
 	price, err := oracle.Price(ctx, symbol, currency)
 	if err != nil {
 		return "", "", "", err
+	}
+	if price == nil || price.Sign() <= 0 {
+		return "", "", "", errors.New("price provider returned an invalid price")
 	}
 	tokenAmount := new(big.Rat).Quo(fiatAmount, price)
 	raw, err := ratToRawCeil(tokenAmount, assetInfo.GetDecimals())

@@ -2410,6 +2410,10 @@ h1 {
   line-height: 1.5;
 }
 
+.crypto-grid > .crypto-alert {
+  grid-column: 1 / -1;
+}
+
 .crypto-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

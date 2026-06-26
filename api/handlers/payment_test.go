@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"errors"
+	"html/template"
 	"math/big"
 	"testing"
 
@@ -23,6 +25,12 @@ func (f fakePriceOracle) Price(_ context.Context, symbol string, currency string
 	return rat, nil
 }
 
+type failingPriceOracle struct{}
+
+func (f failingPriceOracle) Price(context.Context, string, string) (*big.Rat, error) {
+	return nil, errors.New("pricing unavailable")
+}
+
 func TestCheckoutCanonicalSymbolAliases(t *testing.T) {
 	tests := map[string]string{
 		"WBTC": "BTC",
@@ -37,6 +45,66 @@ func TestCheckoutCanonicalSymbolAliases(t *testing.T) {
 		if got := checkoutCanonicalSymbol(input); got != expected {
 			t.Fatalf("checkoutCanonicalSymbol(%q) = %q, want %q", input, got, expected)
 		}
+	}
+}
+
+func TestCheckoutTemplateParses(t *testing.T) {
+	if _, err := template.ParseFiles("../../views/gateway/checkout.html"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckoutAssetsRemainVisibleWhenPriceUnavailable(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewERC20(
+		constants.Ethereum,
+		"0x1111111111111111111111111111111111111111",
+		"PEPPER",
+		"PEPPER",
+		18,
+	))
+	session := models.PaymentSession{
+		SessionToken: "checkout-token",
+		Amount:       "10",
+		Currency:     "USD",
+		Wallet: models.Wallet{
+			EthereumAddress: "0x2222222222222222222222222222222222222222",
+		},
+	}
+	deps := PaymentHandlerDeps{
+		AssetRegistry: registry,
+		PriceOracle:   failingPriceOracle{},
+	}
+
+	options := checkoutAssetOptions(context.Background(), deps, session, "PEPPER")
+	if len(options) != 1 {
+		t.Fatalf("options = %d, want 1", len(options))
+	}
+	if options[0].Available {
+		t.Fatal("asset with unavailable quote should not be selectable")
+	}
+	if options[0].QuoteAvailable {
+		t.Fatal("quote should be marked unavailable")
+	}
+	if options[0].UnavailableReason != "quote" {
+		t.Fatalf("unavailable reason = %q, want quote", options[0].UnavailableReason)
+	}
+	if options[0].AmountDisplay != "" {
+		t.Fatalf("amount display = %q, want empty", options[0].AmountDisplay)
+	}
+
+	groups := checkoutAssetGroups(context.Background(), deps, session)
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, want 1", len(groups))
+	}
+	if groups[0].Symbol != "PEPPER" {
+		t.Fatalf("group symbol = %q, want PEPPER", groups[0].Symbol)
+	}
+	if groups[0].QuoteAvailable {
+		t.Fatal("group quote should be marked unavailable")
+	}
+	if groups[0].ChainCount != 1 {
+		t.Fatalf("chain count = %d, want 1", groups[0].ChainCount)
 	}
 }
 

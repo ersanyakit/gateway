@@ -176,6 +176,7 @@ Opsiyonel servis değişkenleri:
 | `COINGECKO_BASE_URL` | CoinGecko API adresi. Varsayılan: `https://api.coingecko.com/api/v3`. |
 | `COINGECKO_CACHE_TTL` | Fiyat cache süresi. |
 | `COINGECKO_API_KEY` | CoinGecko API anahtarı. |
+| `PRICE_<SYMBOL>_<CURRENCY>` | CoinGecko'da olmayan özel token fiyatı. Örnek: `PRICE_PEPPER_USD=0.0001`. |
 | `OIDC_CLIENT_ID` | Merchant portal OIDC login için client ID. |
 | `OIDC_CLIENT_SECRET` | Merchant portal OIDC login için client secret. |
 | `OIDC_REDIRECT_URI` | OIDC callback adresi. |

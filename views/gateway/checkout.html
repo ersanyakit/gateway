@@ -90,11 +90,25 @@
                   </span>
                 </span>
                 <span class="crypto-network-right">
-                  <strong>{{.AmountDisplay}}</strong>
-                  <small>{{if .Available}}{{if $.IsEnglish}}Continue{{else}}Devam et{{end}}{{else}}{{if $.IsEnglish}}Unavailable{{else}}Uygun değil{{end}}{{end}}</small>
+                  <strong>{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Price unavailable{{else}}Fiyat alınamadı{{end}}{{end}}</strong>
+                  <small>
+                    {{if .Available}}
+                      {{if $.IsEnglish}}Continue{{else}}Devam et{{end}}
+                    {{else if eq .UnavailableReason "quote"}}
+                      {{if $.IsEnglish}}Try again{{else}}Tekrar dene{{end}}
+                    {{else if eq .UnavailableReason "address"}}
+                      {{if $.IsEnglish}}Address unavailable{{else}}Adres yok{{end}}
+                    {{else}}
+                      {{if $.IsEnglish}}Unavailable{{else}}Uygun değil{{end}}
+                    {{end}}
+                  </small>
                 </span>
               </button>
             </form>
+            {{else}}
+            <div class="crypto-alert">
+              {{if $.IsEnglish}}No payment networks are available for this asset. Please select another currency or try again shortly.{{else}}Bu asset için kullanılabilir ödeme network'ü bulunamadı. Lütfen başka bir para birimi seçin veya biraz sonra tekrar deneyin.{{end}}
+            </div>
             {{end}}
           </div>
         </section>
@@ -111,16 +125,20 @@
               {{end}}
               <span class="crypto-symbol">{{.Symbol}}</span>
               <span class="crypto-name">{{.Name}}</span>
-              <span class="crypto-amount">{{.AmountDisplay}}</span>
+              <span class="crypto-amount">{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Price unavailable{{else}}Fiyat alınamadı{{end}}{{end}}</span>
               <span class="crypto-network-count">{{.ChainCount}} network</span>
             </a>
+            {{else}}
+            <div class="crypto-alert">
+              {{if .IsEnglish}}No payment assets are available for this checkout. Please try again shortly.{{else}}Bu ödeme için kullanılabilir asset bulunamadı. Lütfen biraz sonra tekrar deneyin.{{end}}
+            </div>
             {{end}}
           </div>
         </section>
         {{end}}
 
         <section class="crypto-section">
-          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>CoinGecko</strong></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>Gateway pricing</strong></div>
           <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network fee{{else}}Network ücreti{{end}}</span><strong class="green">{{if .IsEnglish}}Included{{else}}Dahil{{end}}</strong></div>
           <div class="crypto-divider"></div>
           <div class="crypto-summary-row"><span>{{if .IsEnglish}}Total{{else}}Toplam{{end}}</span><strong>{{.Session.Amount}} {{.Session.Currency}}</strong></div>
