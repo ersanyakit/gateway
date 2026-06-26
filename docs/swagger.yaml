@@ -653,6 +653,42 @@ definitions:
         example: ok
         type: string
     type: object
+  types.V1ReadinessCheck:
+    properties:
+      details:
+        example: latest block 22500000
+        type: string
+      error:
+        example: ""
+        type: string
+      name:
+        example: chain.ethereum.rpc_live
+        type: string
+      ok:
+        example: true
+        type: boolean
+    type: object
+  types.V1ReadinessData:
+    properties:
+      checks:
+        items:
+          $ref: '#/definitions/types.V1ReadinessCheck'
+        type: array
+      ready:
+        example: true
+        type: boolean
+      timestamp:
+        example: "2026-06-26T12:00:00Z"
+        type: string
+    type: object
+  types.V1ReadinessResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1ReadinessData'
+      result:
+        example: ok
+        type: string
+    type: object
   types.V1RefundCreateResponse:
     properties:
       data:
@@ -1163,6 +1199,30 @@ paths:
           schema:
             $ref: '#/definitions/types.V1ErrorResponse'
       summary: Address QR code
+      tags:
+      - Common
+  /api/v1/common/readiness:
+    get:
+      description: Validates database access, chain registration, listener registration,
+        live RPC access, and Trust Wallet Core HD wallet derivation.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.V1ReadinessResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/types.V1ReadinessResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Production readiness
       tags:
       - Common
   /api/v1/common/status:

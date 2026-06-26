@@ -291,6 +291,7 @@ func NewRouter(db *gorm.DB) *Router {
 
 	// ── Common API ───────────────────────────────────────────────────────────
 	r.fiber.Get("/api/v1/common/status", handlers.HandleV1CommonStatus(v1Deps))
+	r.fiber.Get("/api/v1/common/readiness", handlers.HandleV1CommonReadiness(v1Deps))
 	r.fiber.Get("/api/v1/common/balance", handlers.HandleV1CommonBalance(v1Deps))
 	r.fiber.Get("/api/v1/common/prices", handlers.HandleV1CommonPrices(v1Deps))
 	r.fiber.Get("/api/v1/common/currencies", handlers.HandleV1CommonCurrencies(v1Deps))

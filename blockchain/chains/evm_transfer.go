@@ -109,6 +109,17 @@ func evmSendNativeWithClient(ctx context.Context, client *ethclient.Client, priv
 	if amountWei == nil || amountWei.Sign() <= 0 {
 		return nil, errors.New("amount must be greater than zero")
 	}
+	if gasPrice == nil || gasPrice.Sign() <= 0 {
+		return nil, fmt.Errorf("%s gas price must be greater than zero", chainName)
+	}
+	if err := evmVerifyChainID(ctx, client, chainName, chainID); err != nil {
+		return nil, err
+	}
+	gasCost := new(big.Int).Mul(new(big.Int).Set(gasPrice), new(big.Int).SetUint64(evmNativeTransferGasLimit))
+	requiredBalance := new(big.Int).Add(new(big.Int).Set(amountWei), gasCost)
+	if err := evmEnsureNativeBalance(ctx, client, from, requiredBalance, chainName); err != nil {
+		return nil, err
+	}
 
 	nonce, err := client.PendingNonceAt(ctx, from)
 	if err != nil {
@@ -233,12 +244,45 @@ func evmSweepNativeTo(ctx context.Context, chainName string, chainID constants.C
 
 // evmNativeBalance returns the current native balance (in wei) for address.
 func evmNativeBalance(ctx context.Context, rpcs []string, address string) (*big.Int, error) {
+	if !common.IsHexAddress(address) {
+		return nil, fmt.Errorf("invalid EVM address: %s", address)
+	}
 	client, err := dialFirstEVMRPC(ctx, rpcs)
 	if err != nil {
 		return nil, err
 	}
 	defer client.Close()
 	return client.BalanceAt(ctx, common.HexToAddress(address), nil)
+}
+
+func evmVerifyChainID(ctx context.Context, client *ethclient.Client, chainName string, chainID constants.ChainID) error {
+	got, err := client.ChainID(ctx)
+	if err != nil {
+		return fmt.Errorf("%s chain id fetch failed: %w", chainName, err)
+	}
+	want := big.NewInt(int64(chainID))
+	if got == nil || got.Cmp(want) != 0 {
+		gotText := "<nil>"
+		if got != nil {
+			gotText = got.String()
+		}
+		return fmt.Errorf("%s RPC chain id mismatch: expected %s got %s", chainName, want.String(), gotText)
+	}
+	return nil
+}
+
+func evmEnsureNativeBalance(ctx context.Context, client *ethclient.Client, from common.Address, required *big.Int, chainName string) error {
+	if required == nil || required.Sign() < 0 {
+		return fmt.Errorf("%s required balance is invalid", chainName)
+	}
+	balance, err := client.BalanceAt(ctx, from, nil)
+	if err != nil {
+		return fmt.Errorf("%s native balance fetch failed: %w", chainName, err)
+	}
+	if balance.Cmp(required) < 0 {
+		return fmt.Errorf("%s native balance is not enough: balance=%s required=%s", chainName, balance.String(), required.String())
+	}
+	return nil
 }
 
 const erc20TransferGasLimit uint64 = 65000
@@ -326,6 +370,9 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 	if balance == nil || balance.Cmp(amount) < 0 {
 		return nil, fmt.Errorf("%s ERC-20 balance is not enough: balance=%s amount=%s", chainName, balance.String(), amount.String())
 	}
+	if err := evmVerifyChainID(ctx, client, chainName, chainID); err != nil {
+		return nil, err
+	}
 
 	tokenABI, err := erc20.ERC20MetaData.GetAbi()
 	if err != nil {
@@ -343,6 +390,13 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 	gasPrice, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
+	}
+	if gasPrice == nil || gasPrice.Sign() <= 0 {
+		return nil, fmt.Errorf("%s gas price must be greater than zero", chainName)
+	}
+	gasCost := new(big.Int).Mul(new(big.Int).Set(gasPrice), new(big.Int).SetUint64(erc20TransferGasLimit))
+	if err := evmEnsureNativeBalance(ctx, client, from, gasCost, chainName); err != nil {
+		return nil, err
 	}
 
 	tx := types.NewTransaction(nonce, tokenContract, big.NewInt(0), erc20TransferGasLimit, gasPrice, data)

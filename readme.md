@@ -263,6 +263,7 @@ X-Gateway-Signature: sha256=<hmac_sha256(timestamp + raw_body)>
 Common endpoint'ler:
 
 - `GET /api/v1/common/status`
+- `GET /api/v1/common/readiness`
 - `GET /api/v1/common/balance`
 - `GET /api/v1/common/prices`
 - `GET /api/v1/common/currencies`
@@ -404,6 +405,8 @@ Uygulama başlarken şu arka plan süreçlerini başlatır:
 - Bitcoin, Ethereum/EVM, Solana ve TRON listener worker'ları
 
 Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispatcher event'i ilgili wallet ile eşleştirir, transaction kaydını oluşturur, payment session durumunu günceller ve gerekiyorsa webhook gönderir.
+
+Canlı ortamda gateway ve wallet provider hazırlığını doğrulamak için `GET /api/v1/common/readiness` kullanılmalıdır. Endpoint DB erişimini, tüm chain kayıtlarını, listener worker kayıtlarını, Trust Wallet Core HD wallet türetmesini ve canlı RPC/gRPC son blok erişimini kontrol eder; eksik veya bozuk bağımlılık varsa `503` döner.
 
 ## Güvenlik Notları
 

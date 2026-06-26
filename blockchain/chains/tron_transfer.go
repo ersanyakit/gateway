@@ -58,6 +58,9 @@ func tronGetBlockRef(ctx context.Context, apiBase string) (*tronBlockRef, error)
 	if err != nil {
 		return nil, err
 	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("tron getnowblock HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 
 	var result struct {
 		BlockID     string `json:"blockID"`
@@ -108,11 +111,18 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 		return 0, fmt.Errorf("tron eth_getBalance: %w", err)
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("tron eth_getBalance HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 
 	var res struct {
 		Result string `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.Unmarshal(body, &res); err != nil {
 		return 0, err
 	}
 
@@ -123,6 +133,9 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 	v, ok := new(big.Int).SetString(hexStr, 16)
 	if !ok {
 		return 0, fmt.Errorf("tron parse balance hex: %s", res.Result)
+	}
+	if !v.IsInt64() {
+		return 0, fmt.Errorf("tron balance exceeds int64 SUN: %s", v.String())
 	}
 	return v.Int64(), nil
 }
@@ -169,11 +182,18 @@ func tronGetTRC20Balance(ctx context.Context, rpcURL, contractAddr, ownerAddr st
 		return nil, err
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("tron eth_call HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 
 	var res struct {
 		Result string `json:"result"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
 	}
 
@@ -203,6 +223,9 @@ func tronBroadcast(ctx context.Context, apiBase, signedTxHex string) (string, er
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("tron broadcast HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	var res struct {
 		Result  bool   `json:"result"`
 		Txid    string `json:"txid"`
@@ -222,9 +245,15 @@ func tronPrivateKey(wallet blockchain.WalletDetails) (*btcec.PrivateKey, error) 
 	if err != nil {
 		return nil, fmt.Errorf("invalid tron private key hex: %w", err)
 	}
-	privKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
+	privKey, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 	if privKey == nil {
 		return nil, fmt.Errorf("failed to parse tron private key")
+	}
+	if wallet.Address != "" {
+		derivedAddress := tronSDK.GetAddress(pubKey)
+		if derivedAddress != wallet.Address {
+			return nil, fmt.Errorf("private key does not match wallet address: expected %s got %s", wallet.Address, derivedAddress)
+		}
 	}
 	return privKey, nil
 }
@@ -267,6 +296,9 @@ func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails
 	if !s.ValidateAddress(toAddress) {
 		return nil, fmt.Errorf("invalid tron address: %s", toAddress)
 	}
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, fmt.Errorf("invalid tron wallet address: %s", wallet.Address)
+	}
 	amount, err := nativeAmountRaw(amountRaw)
 	if err != nil {
 		return nil, err
@@ -304,6 +336,9 @@ func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails
 }
 
 func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, amountRaw, toAddress string) (*blockchain.TransactionResult, error) {
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, fmt.Errorf("invalid tron wallet address: %s", wallet.Address)
+	}
 	if !s.ValidateAddress(contractAddr) {
 		return nil, fmt.Errorf("invalid TRC-20 contract address: %s", contractAddr)
 	}
@@ -357,12 +392,19 @@ func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetai
 }
 
 func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, fmt.Errorf("invalid tron wallet address: %s", wallet.Address)
+	}
 	if !s.ValidateAddress(toAddress) {
 		return nil, fmt.Errorf("invalid tron address: %s", toAddress)
 	}
 
-	rpcURL := s.RPCs()[0]
-	apiBase := tronAPIBase(s.RPCs())
+	rpcs := s.RPCs()
+	if len(rpcs) == 0 {
+		return nil, fmt.Errorf("no tron RPC endpoint configured")
+	}
+	rpcURL := rpcs[0]
+	apiBase := tronAPIBase(rpcs)
 
 	balance, err := tronGetTRXBalance(ctx, rpcURL, wallet.Address)
 	if err != nil {
@@ -400,6 +442,9 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 }
 
 func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, fmt.Errorf("invalid tron wallet address: %s", wallet.Address)
+	}
 	if !s.ValidateAddress(contractAddr) {
 		return nil, fmt.Errorf("invalid TRC-20 contract address: %s", contractAddr)
 	}
@@ -407,8 +452,12 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 		return nil, fmt.Errorf("invalid tron destination address: %s", toAddress)
 	}
 
-	rpcURL := s.RPCs()[0]
-	apiBase := tronAPIBase(s.RPCs())
+	rpcs := s.RPCs()
+	if len(rpcs) == 0 {
+		return nil, fmt.Errorf("no tron RPC endpoint configured")
+	}
+	rpcURL := rpcs[0]
+	apiBase := tronAPIBase(rpcs)
 
 	balance, err := tronGetTRC20Balance(ctx, rpcURL, contractAddr, wallet.Address)
 	if err != nil {
@@ -446,8 +495,18 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 }
 
 func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {
-	rpcURL := s.RPCs()[0]
-	apiBase := tronAPIBase(s.RPCs())
+	if !s.ValidateAddress(reserveWallet.Address) {
+		return false, fmt.Errorf("invalid tron reserve wallet address: %s", reserveWallet.Address)
+	}
+	if !s.ValidateAddress(userAddress) {
+		return false, fmt.Errorf("invalid tron user address: %s", userAddress)
+	}
+	rpcs := s.RPCs()
+	if len(rpcs) == 0 {
+		return false, fmt.Errorf("no tron RPC endpoint configured")
+	}
+	rpcURL := rpcs[0]
+	apiBase := tronAPIBase(rpcs)
 
 	balance, err := tronGetTRXBalance(ctx, rpcURL, userAddress)
 	if err != nil {

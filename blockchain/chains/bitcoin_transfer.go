@@ -15,6 +15,7 @@ import (
 	blockchain "core/blockchain"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -168,13 +169,9 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 		}
 	}
 
-	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
-	fromScript, err := txscript.NewScriptBuilder().
-		AddOp(txscript.OP_0).
-		AddData(pubKeyHash).
-		Script()
+	fromScript, taprootSpend, err := b.bitcoinSourceScript(wallet, pubKey)
 	if err != nil {
-		return nil, fmt.Errorf("bitcoin p2wpkh script build: %w", err)
+		return nil, err
 	}
 
 	msgTx := wire.NewMsgTx(wire.TxVersion)
@@ -203,14 +200,11 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	fetcher := txscript.NewMultiPrevOutFetcher(prevOutMap)
 	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
 	for i, u := range selected {
-		sig, err := txscript.RawTxInWitnessSignature(
-			msgTx, sigHashes, i, u.Value, fromScript,
-			txscript.SigHashAll, privKey,
-		)
+		witness, err := bitcoinWitness(msgTx, sigHashes, i, u.Value, fromScript, privKey, pubKey, taprootSpend)
 		if err != nil {
 			return nil, fmt.Errorf("bitcoin sign input %d: %w", i, err)
 		}
-		msgTx.TxIn[i].Witness = wire.TxWitness{sig, pubKey.SerializeCompressed()}
+		msgTx.TxIn[i].Witness = witness
 	}
 
 	var buf bytes.Buffer
@@ -265,14 +259,9 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 		return nil, fmt.Errorf("bitcoin dest pkScript: %w", err)
 	}
 
-	// Build P2WPKH script for signing
-	pubKeyHash := btcutil.Hash160(pubKey.SerializeCompressed())
-	fromScript, err := txscript.NewScriptBuilder().
-		AddOp(txscript.OP_0).
-		AddData(pubKeyHash).
-		Script()
+	fromScript, taprootSpend, err := b.bitcoinSourceScript(wallet, pubKey)
 	if err != nil {
-		return nil, fmt.Errorf("bitcoin p2wpkh script build: %w", err)
+		return nil, err
 	}
 
 	// Build transaction
@@ -304,14 +293,11 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 	// Sign each input
 	sigHashes := txscript.NewTxSigHashes(msgTx, fetcher)
 	for i, u := range confirmed {
-		sig, err := txscript.RawTxInWitnessSignature(
-			msgTx, sigHashes, i, u.Value, fromScript,
-			txscript.SigHashAll, privKey,
-		)
+		witness, err := bitcoinWitness(msgTx, sigHashes, i, u.Value, fromScript, privKey, pubKey, taprootSpend)
 		if err != nil {
 			return nil, fmt.Errorf("bitcoin sign input %d: %w", i, err)
 		}
-		msgTx.TxIn[i].Witness = wire.TxWitness{sig, pubKey.SerializeCompressed()}
+		msgTx.TxIn[i].Witness = witness
 	}
 
 	// Serialize
@@ -331,6 +317,63 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 // SweepERC20To is not applicable for Bitcoin — Bitcoin has no ERC-20 tokens.
 func (b *BitcoinChain) SweepERC20To(_ context.Context, _ blockchain.WalletDetails, _, _ string) (*blockchain.TransactionResult, error) {
 	return nil, fmt.Errorf("bitcoin does not support token sweep")
+}
+
+func (b *BitcoinChain) bitcoinSourceScript(wallet blockchain.WalletDetails, pubKey *btcec.PublicKey) ([]byte, bool, error) {
+	sourceAddr, err := btcutil.DecodeAddress(wallet.Address, b.Params)
+	if err != nil {
+		return nil, false, fmt.Errorf("invalid bitcoin source address: %w", err)
+	}
+	sourceScript, err := txscript.PayToAddrScript(sourceAddr)
+	if err != nil {
+		return nil, false, fmt.Errorf("bitcoin source pkScript: %w", err)
+	}
+
+	switch sourceAddr.(type) {
+	case *btcutil.AddressWitnessPubKeyHash:
+		expectedAddr, err := btcutil.NewAddressWitnessPubKeyHash(btcutil.Hash160(pubKey.SerializeCompressed()), b.Params)
+		if err != nil {
+			return nil, false, fmt.Errorf("bitcoin derive p2wpkh address: %w", err)
+		}
+		if expectedAddr.EncodeAddress() != sourceAddr.EncodeAddress() {
+			return nil, false, fmt.Errorf("private key does not match bitcoin wallet address: expected %s got %s", wallet.Address, expectedAddr.EncodeAddress())
+		}
+		return sourceScript, false, nil
+	case *btcutil.AddressTaproot:
+		taprootKey := txscript.ComputeTaprootKeyNoScript(pubKey)
+		expectedAddr, err := btcutil.NewAddressTaproot(schnorr.SerializePubKey(taprootKey), b.Params)
+		if err != nil {
+			return nil, false, fmt.Errorf("bitcoin derive taproot address: %w", err)
+		}
+		if expectedAddr.EncodeAddress() != sourceAddr.EncodeAddress() {
+			return nil, false, fmt.Errorf("private key does not match bitcoin wallet address: expected %s got %s", wallet.Address, expectedAddr.EncodeAddress())
+		}
+		return sourceScript, true, nil
+	default:
+		return nil, false, fmt.Errorf("unsupported bitcoin source address type %T; only native segwit and taproot are supported", sourceAddr)
+	}
+}
+
+func bitcoinWitness(msgTx *wire.MsgTx, sigHashes *txscript.TxSigHashes, inputIndex int, value int64, pkScript []byte, privKey *btcec.PrivateKey, pubKey *btcec.PublicKey, taprootSpend bool) (wire.TxWitness, error) {
+	if taprootSpend {
+		sig, err := txscript.RawTxInTaprootSignature(
+			msgTx, sigHashes, inputIndex, value, pkScript, nil,
+			txscript.SigHashDefault, privKey,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return wire.TxWitness{sig}, nil
+	}
+
+	sig, err := txscript.RawTxInWitnessSignature(
+		msgTx, sigHashes, inputIndex, value, pkScript,
+		txscript.SigHashAll, privKey,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return wire.TxWitness{sig, pubKey.SerializeCompressed()}, nil
 }
 
 // PrefundGas is not applicable for Bitcoin — transaction fees come from UTXOs.

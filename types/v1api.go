@@ -58,6 +58,25 @@ type V1StatusData struct {
 	Version string `json:"version"  example:"1.0.0"`
 }
 
+// V1ReadinessResponse is returned by GET /api/v1/common/readiness.
+type V1ReadinessResponse struct {
+	Result string          `json:"result" example:"ok"`
+	Data   V1ReadinessData `json:"data"`
+}
+
+type V1ReadinessData struct {
+	Ready     bool               `json:"ready"     example:"true"`
+	Timestamp string             `json:"timestamp" example:"2026-06-26T12:00:00Z"`
+	Checks    []V1ReadinessCheck `json:"checks"`
+}
+
+type V1ReadinessCheck struct {
+	Name    string `json:"name"              example:"chain.ethereum.rpc_live"`
+	OK      bool   `json:"ok"                example:"true"`
+	Details string `json:"details,omitempty" example:"latest block 22500000"`
+	Error   string `json:"error,omitempty"   example:""`
+}
+
 // V1BalanceResponse is returned by GET /api/v1/common/balance.
 type V1BalanceResponse struct {
 	Result string        `json:"result" example:"ok"`

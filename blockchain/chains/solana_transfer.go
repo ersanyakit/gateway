@@ -2,6 +2,7 @@ package chains
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -15,6 +16,8 @@ import (
 	spltoken "github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
 )
+
+const solanaTransferFeeLamports uint64 = 5000
 
 func solanaGasThresholdLamports() uint64 {
 	if raw := strings.TrimSpace(os.Getenv("SOLANA_GAS_THRESHOLD_LAMPORTS")); raw != "" {
@@ -50,12 +53,11 @@ func (s *SolanaChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, fmt.Errorf("solana balance fetch failed: %w", err)
 	}
 
-	const feeLamports uint64 = 5000
-	if balance.Value <= feeLamports {
+	if balance.Value <= solanaTransferFeeLamports {
 		return nil, fmt.Errorf("solana sweep balance not enough for fee: balance=%d", balance.Value)
 	}
 
-	return s.sendLamportsWithClient(ctx, rpcClient, privateKey, from, balance.Value-feeLamports, toAddress)
+	return s.sendLamportsWithClient(ctx, rpcClient, privateKey, from, balance.Value-solanaTransferFeeLamports, toAddress)
 }
 
 // SweepERC20To sweeps all SPL tokens (mint = contractAddr) from wallet to toAddress.
@@ -104,6 +106,10 @@ func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.Wallet
 	if !ok || amount.Sign() <= 0 {
 		return nil, fmt.Errorf("invalid SPL token amount: %s", balResult.Value.Amount)
 	}
+	transferAmount, err := solanaTokenAmountUint64(amount)
+	if err != nil {
+		return nil, err
+	}
 
 	// Check if destination ATA already exists
 	instructions := make([]solana.Instruction, 0, 2)
@@ -117,7 +123,7 @@ func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.Wallet
 
 	instructions = append(instructions,
 		spltoken.NewTransferInstruction(
-			amount.Uint64(),
+			transferAmount,
 			srcATA,
 			dstATA,
 			from,
@@ -159,6 +165,10 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 	}
 	if !amount.IsUint64() {
 		return nil, fmt.Errorf("solana SPL amount_raw exceeds uint64")
+	}
+	transferAmount, err := solanaTokenAmountUint64(amount)
+	if err != nil {
+		return nil, err
 	}
 
 	rpcClient, err := s.solanaRPCClient()
@@ -210,7 +220,7 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 	}
 	instructions = append(instructions,
 		spltoken.NewTransferInstruction(
-			amount.Uint64(),
+			transferAmount,
 			srcATA,
 			dstATA,
 			from,
@@ -239,6 +249,16 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, fmt.Errorf("solana SPL tx broadcast failed: %w", err)
 	}
 	return &blockchain.TransactionResult{TxHash: signature.String(), Success: true}, nil
+}
+
+func solanaTokenAmountUint64(amount *big.Int) (uint64, error) {
+	if amount == nil || amount.Sign() <= 0 {
+		return 0, errors.New("solana token amount must be greater than zero")
+	}
+	if !amount.IsUint64() {
+		return 0, fmt.Errorf("solana token amount exceeds uint64")
+	}
+	return amount.Uint64(), nil
 }
 
 func (s *SolanaChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {

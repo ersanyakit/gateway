@@ -64,6 +64,8 @@ Signed endpoints include:
 
 Read endpoints generally require only `X-API-Key` or `Authorization: Bearer <api_key>`.
 
+Before sending production traffic, call `GET /api/v1/common/readiness` with the domain API key. It returns `200` only when the database, all configured chains, listener workers, Trust Wallet Core HD wallet derivation, and live RPC/gRPC block probes are ready; otherwise it returns `503` with the failing checks.
+
 ### Signature Algorithm
 
 ```text

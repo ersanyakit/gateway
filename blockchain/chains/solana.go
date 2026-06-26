@@ -175,6 +175,17 @@ func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc
 	if err != nil {
 		return nil, fmt.Errorf("invalid solana recipient address: %w", err)
 	}
+	if lamports > ^uint64(0)-solanaTransferFeeLamports {
+		return nil, errors.New("solana amount_raw plus fee exceeds uint64")
+	}
+	balance, err := rpcClient.GetBalance(ctx, from, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("%s balance fetch failed: %w", s.Name(), err)
+	}
+	required := lamports + solanaTransferFeeLamports
+	if balance.Value < required {
+		return nil, fmt.Errorf("%s balance is not enough: balance=%d required=%d", s.Name(), balance.Value, required)
+	}
 
 	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {

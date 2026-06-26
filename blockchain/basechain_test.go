@@ -33,3 +33,37 @@ func TestBaseChainDerivedPath(t *testing.T) {
 		t.Fatalf("derived path = %q", got)
 	}
 }
+
+func TestBaseChainWorkerCount(t *testing.T) {
+	chain := BaseChain{}
+	worker := &baseChainTestWorker{events: make(chan interface{})}
+
+	if got := chain.WorkerCount(); got != 0 {
+		t.Fatalf("initial worker count = %d, want 0", got)
+	}
+	if err := chain.AddWorker(worker); err != nil {
+		t.Fatal(err)
+	}
+	if got := chain.WorkerCount(); got != 1 {
+		t.Fatalf("worker count after add = %d, want 1", got)
+	}
+	if err := chain.RemoveWorker(worker); err != nil {
+		t.Fatal(err)
+	}
+	if got := chain.WorkerCount(); got != 0 {
+		t.Fatalf("worker count after remove = %d, want 0", got)
+	}
+	if err := chain.RemoveWorker(worker); err == nil {
+		t.Fatal("expected missing listener error")
+	}
+}
+
+type baseChainTestWorker struct {
+	events chan interface{}
+}
+
+func (w *baseChainTestWorker) Start() error { return nil }
+
+func (w *baseChainTestWorker) Stop() error { return nil }
+
+func (w *baseChainTestWorker) Events() <-chan interface{} { return w.events }

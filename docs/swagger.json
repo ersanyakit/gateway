@@ -248,6 +248,43 @@
                 }
             }
         },
+        "/api/v1/common/readiness": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "Validates database access, chain registration, listener registration, live RPC access, and Trust Wallet Core HD wallet derivation.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Common"
+                ],
+                "summary": "Production readiness",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ReadinessResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1ReadinessResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/common/status": {
             "get": {
                 "security": [
@@ -3393,6 +3430,58 @@
                     "items": {
                         "$ref": "#/definitions/types.V1PriceItem"
                     }
+                },
+                "result": {
+                    "type": "string",
+                    "example": "ok"
+                }
+            }
+        },
+        "types.V1ReadinessCheck": {
+            "type": "object",
+            "properties": {
+                "details": {
+                    "type": "string",
+                    "example": "latest block 22500000"
+                },
+                "error": {
+                    "type": "string",
+                    "example": ""
+                },
+                "name": {
+                    "type": "string",
+                    "example": "chain.ethereum.rpc_live"
+                },
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "types.V1ReadinessData": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1ReadinessCheck"
+                    }
+                },
+                "ready": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "timestamp": {
+                    "type": "string",
+                    "example": "2026-06-26T12:00:00Z"
+                }
+            }
+        },
+        "types.V1ReadinessResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1ReadinessData"
                 },
                 "result": {
                     "type": "string",
