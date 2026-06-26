@@ -19,4 +19,11 @@
 - **Final decision:** B2B infrastructure platform.
 - **Rationale:** The system sells operational crypto payment/wallet infrastructure to tenants that integrate APIs, configure webhooks, manage payments/wallets, and operate money-state workflows.
 - **Implications:** Design must prioritize tenant onboarding, developer integration, credentials, webhook diagnostics, operational dashboards, audit trails, launch readiness, and clear separation between direct business customers and checkout/end-wallet users.
+
+## Business Customer Definition
+
+- **Business customer profile:** small/mid merchant/dealer tenants and small/mid wallet or exchange platform tenants that need crypto payment gateway or wallet-provider infrastructure.
+- **Buyer vs end-user distinction:** external buyer is usually founder/owner/business decision-maker; technical champion is founder/CTO/integration lead; users include developer integrators, merchant/exchange operators, platform/admin operators, custody/security owners, checkout payers, and wallet end users.
+- **Current onboarding decision:** ersan owns all first-phase sales/onboarding roles: business selection, technical evaluation, pilot approval, and commercial decision.
+- **Decision criteria:** safe integration, money lifecycle trust, controlled beta limits, launch readiness visibility, tenant isolation, auditability, redaction, and recovery paths.
 - WDS development lane will wrap implementation work: code changes should trace back to PRD, UX handoff, architecture spine, epics, sprint status, story files, and `_bmad-output/project-context.md`.

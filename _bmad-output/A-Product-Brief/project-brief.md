@@ -66,6 +66,43 @@ The product is partner-facing infrastructure with tenant/domain ownership, API k
 
 ---
 
+## Business Customer Profile
+
+### Ideal Business Customers
+
+1. **Controlled beta merchant/dealer tenant**
+   - Small or mid-size merchant, dealer, or crypto-friendly commerce operation.
+   - Needs hosted checkout, static deposit addresses, payment sessions, API credentials, webhook delivery, refund/payout visibility, and ledger-backed balance confidence.
+   - Has enough technical capability to integrate API keys, HMAC signing, idempotency, and webhook callbacks.
+   - Fits controlled beta limits: small tenant count, limited chain/token set, capped balances/withdrawals, manual oversight, and explicit launch gates.
+
+2. **Small/mid wallet or exchange platform tenant**
+   - Needs user wallet, deterministic deposit wallet, deposit detection, ledger-derived balance, withdrawal/sweep lifecycle, webhook events, and reconciliation.
+   - Is not a high-volume regulated exchange-grade custody customer until signer, compliance, reconciliation, observability, and scale-readiness gates are complete.
+   - Values operational transparency over superficial dashboard simplicity.
+
+### Buying Roles
+
+| Role | Description |
+| --- | --- |
+| **Buyer** | For external customers: merchant/exchange founder, owner, or business decision-maker. For the first onboarding/sales motion: ersan owns the agreement and commercial decision. |
+| **Champion** | Technical founder, CTO, or integration lead who wants faster crypto payment/wallet infrastructure without building the full money core internally. In the current project phase, ersan acts as the internal champion. |
+| **User** | Developer integrator, merchant/exchange operator, platform/admin operator, custody/security owner, and downstream checkout payer or wallet end user. |
+
+### Decision Criteria
+
+- Can the tenant integrate safely with API key, HMAC signing, idempotency, and stable response contracts?
+- Can money lifecycle state be trusted across checkout, static wallet, deposit, ledger, webhook, refund/payout, sweep, and reconciliation?
+- Are operational limits clear enough for controlled beta?
+- Does the platform make launch readiness visible instead of implying production custody readiness too early?
+- Are tenant isolation, auditability, redaction, and recovery paths credible?
+
+### Current Onboarding Reality
+
+The first customer/onboarding decision path is founder-led and manual: ersan currently owns business selection, technical evaluation, pilot approval, and commercial decision. External buyer roles should still be designed for, but the immediate workflow does not require a multi-person procurement flow.
+
+---
+
 ## Additional Context
 
 Existing source artifacts:
@@ -84,7 +121,7 @@ Existing source artifacts:
 - [x] Vision Capture
 - [x] Positioning
 - [x] Business Model
-- [ ] Business Customer Profile
+- [x] Business Customer Profile
 - [ ] Target Users
 - [ ] Product Concept
 - [ ] Success Criteria

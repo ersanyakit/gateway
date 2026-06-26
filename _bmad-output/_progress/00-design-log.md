@@ -6,6 +6,7 @@
 - Vision Capture completed and confirmed.
 - Positioning completed and confirmed from `_bmad-output` sources.
 - Business Model completed from `_bmad-output` sources.
+- Business Customer Profile completed from `_bmad-output` sources plus user clarification.
 - Existing BMad artifacts are available and should be treated as source context:
   - `_bmad-output/planning-artifacts/prd.md`
   - `_bmad-output/planning-artifacts/ux.md`
@@ -26,6 +27,7 @@
 - Confirmed vision: one shared money core for merchant/dealer payment gateway and wallet-provider-as-a-service; controlled merchant/dealer beta first, wallet-provider expansion only when operational gates are strong enough.
 - Confirmed positioning: B2B crypto payment gateway + wallet-provider infrastructure, differentiated by shared money core across payment lifecycle, static wallet, ledger, webhook, reconciliation, and admin recovery.
 - Business model: B2B infrastructure platform. Merchant/dealer and wallet/exchange tenants are paying customers; checkout payers and wallet end users are downstream users.
+- Business customers: controlled-beta merchant/dealer tenants and small/mid wallet or exchange platform tenants. Initial onboarding and commercial decisions are founder-led by ersan.
 
 ## Backlog
 

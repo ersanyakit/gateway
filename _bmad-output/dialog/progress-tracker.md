@@ -37,6 +37,7 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 - [ ] Inspiration & References — visual preferences and references
 - [x] Positioning — market position and differentiation
 - [x] Business Model — B2B infrastructure platform
+- [x] Business Customer Profile — merchant/dealer and wallet/exchange tenants
 - [ ] Success Metrics — how we measure success
 - [ ] Constraints — limitations and boundaries
 - [ ] Launch Requirements — what's needed to ship
@@ -53,6 +54,7 @@ Collaborative and direct. Existing PRD, UX, architecture, and readiness audit ar
 4. Organisation is a one-person product / technical team; ersan owns product and technical decisions.
 5. Positioning confirmed from `_bmad-output`: B2B crypto payment gateway + wallet-provider infrastructure on one shared money core.
 6. Business model determined from `_bmad-output`: B2B infrastructure platform; direct customers are merchant/dealer and wallet/exchange tenants.
+7. Business customer profile captured: external buyer roles exist, but first onboarding/sales decision is founder-led by ersan.
 
 ---
 

@@ -8,16 +8,18 @@ config:
   product_languages:
     - en
 current_phase: A-Product-Brief
-current_step: business-model-complete
+current_step: business-customers-complete
 stepsCompleted:
   - step-01-init.md
   - step-01a-client-profile.md
   - step-02-vision.md
   - step-03-positioning.md
   - step-05-business-model.md
+  - step-06-business-customers.md
 vision: "Gateway will become a serious crypto currency wallet provider and payment gateway platform built around one shared money core for merchant payments and wallet-provider infrastructure."
 positioning: "Gateway is a B2B crypto payment gateway and wallet-provider infrastructure platform for merchant/dealer teams, payment integration developers, and small/mid wallet or exchange platforms, differentiated by one shared money core across payment lifecycle, static wallet, ledger, webhook, reconciliation, and admin recovery."
 business_model: "B2B infrastructure platform. Paying customers are merchant/dealer tenants and wallet/exchange platform tenants; checkout payers and wallet end users are downstream users."
+business_customers: "Controlled-beta merchant/dealer tenants and small/mid wallet or exchange platform tenants. External buyer/champion/user roles are designed for, but first onboarding and commercial decisions are founder-led by ersan."
 notes:
   - "Brownfield WDS flow initialized from existing PRD, UX, architecture, and readiness audit artifacts."
   - "Product domain: crypto currency wallet provider and payment gateway."
