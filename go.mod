@@ -32,7 +32,10 @@ require (
 	google.golang.org/grpc v1.79.3
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.1
+	tw v0.0.0
 )
+
+replace tw => ./third_party/trustwallet/wallet-core/samples/go
 
 require (
 	filippo.io/edwards25519 v1.0.0-rc.1 // indirect

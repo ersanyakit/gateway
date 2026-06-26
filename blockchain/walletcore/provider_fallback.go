@@ -16,6 +16,7 @@ import (
 
 	"github.com/okx/go-wallet-sdk/crypto/go-bip32"
 	"github.com/okx/go-wallet-sdk/crypto/go-bip39"
+	"google.golang.org/protobuf/proto"
 )
 
 var provider Provider = fallbackProvider{}
@@ -53,6 +54,10 @@ func (fallbackProvider) DerivePrivateKey(mnemonic, derivationPath string, chainI
 
 func (fallbackProvider) DeriveWallet(mnemonic, derivationPath string, chainID constants.ChainID) (*DerivedWallet, error) {
 	return nil, fmt.Errorf("walletcorefallback cannot derive wallet addresses; build with Trust Wallet Core")
+}
+
+func (fallbackProvider) Sign(input proto.Message, output proto.Message, chainID constants.ChainID) error {
+	return fmt.Errorf("walletcorefallback cannot sign transactions; build with Trust Wallet Core")
 }
 
 func deriveSolanaPrivateKey(mnemonic, derivationPath string) (string, error) {

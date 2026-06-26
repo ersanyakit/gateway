@@ -7,6 +7,7 @@ package walletcore
 #cgo LDFLAGS: -L../../third_party/trustwallet/wallet-core/build -L../../third_party/trustwallet/wallet-core/build/local/lib -L../../third_party/trustwallet/wallet-core/build/trezor-crypto -lTrustWalletCore -lwallet_core_rs -lprotobuf -lTrezorCrypto -lstdc++ -lm
 #include <stdlib.h>
 #include <TrustWalletCore/TWAnyAddress.h>
+#include <TrustWalletCore/TWAnySigner.h>
 #include <TrustWalletCore/TWCoinType.h>
 #include <TrustWalletCore/TWData.h>
 #include <TrustWalletCore/TWDerivation.h>
@@ -24,6 +25,8 @@ import (
 	"unsafe"
 
 	"core/constants"
+
+	"google.golang.org/protobuf/proto"
 )
 
 var provider Provider = trustWalletCoreProvider{}
@@ -78,6 +81,34 @@ func (trustWalletCoreProvider) DeriveWallet(mnemonic, derivationPath string, cha
 		PrivateKey: privateKey,
 		Address:    address,
 	}, nil
+}
+
+func (trustWalletCoreProvider) Sign(input proto.Message, output proto.Message, chainID constants.ChainID) error {
+	if input == nil {
+		return errors.New("trustwalletcore: signing input is required")
+	}
+	if output == nil {
+		return errors.New("trustwalletcore: signing output is required")
+	}
+
+	inputBytes, err := proto.Marshal(input)
+	if err != nil {
+		return err
+	}
+	inputData := twDataFromBytes(inputBytes)
+	defer C.TWDataDelete(inputData)
+
+	outputData := C.TWAnySignerSign(inputData, coinTypeForChain(chainID))
+	if outputData == nil {
+		return errors.New("trustwalletcore: signer returned nil output")
+	}
+	defer C.TWDataDelete(outputData)
+
+	outputBytes := twDataToBytes(outputData)
+	if len(outputBytes) == 0 {
+		return errors.New("trustwalletcore: signer returned empty output")
+	}
+	return proto.Unmarshal(outputBytes, output)
 }
 
 func deriveTrustWalletKey(mnemonic, derivationPath string, chainID constants.ChainID) (*C.struct_TWPrivateKey, C.enum_TWCoinType, error) {
@@ -144,6 +175,21 @@ func twString(value string) unsafe.Pointer {
 	cstr := C.CString(value)
 	defer C.free(unsafe.Pointer(cstr))
 	return C.TWStringCreateWithUTF8Bytes(cstr)
+}
+
+func twDataFromBytes(value []byte) unsafe.Pointer {
+	if len(value) == 0 {
+		return C.TWDataCreateWithSize(0)
+	}
+	return C.TWDataCreateWithBytes((*C.uint8_t)(unsafe.Pointer(&value[0])), C.size_t(len(value)))
+}
+
+func twDataToBytes(data unsafe.Pointer) []byte {
+	size := C.TWDataSize(data)
+	if size == 0 {
+		return nil
+	}
+	return C.GoBytes(unsafe.Pointer(C.TWDataBytes(data)), C.int(size))
 }
 
 func coinTypeForChain(chainID constants.ChainID) C.enum_TWCoinType {

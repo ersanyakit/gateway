@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"core/blockchain"
+	"core/blockchain/walletcore"
 	"core/constants"
 	"core/contracts/erc20"
 
@@ -18,6 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	twcommon "tw/protos/common"
+	twethereum "tw/protos/ethereum"
 )
 
 const evmNativeTransferGasLimit uint64 = 21000
@@ -126,18 +129,9 @@ func evmSendNativeWithClient(ctx context.Context, client *ethclient.Client, priv
 		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
 	}
 
-	tx := types.NewTransaction(
-		nonce,
-		common.HexToAddress(toAddress),
-		amountWei,
-		evmNativeTransferGasLimit,
-		gasPrice,
-		nil,
-	)
-
-	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(chainID))), privateKey)
+	signedTx, err := evmSignNativeWithTrustWallet(chainName, chainID, privateKey, nonce, gasPrice, amountWei, toAddress)
 	if err != nil {
-		return nil, fmt.Errorf("%s tx signing failed: %w", chainName, err)
+		return nil, err
 	}
 
 	if err := client.SendTransaction(ctx, signedTx); err != nil {
@@ -374,15 +368,6 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 		return nil, err
 	}
 
-	tokenABI, err := erc20.ERC20MetaData.GetAbi()
-	if err != nil {
-		return nil, fmt.Errorf("parse erc20 abi: %w", err)
-	}
-	data, err := tokenABI.Pack("transfer", common.HexToAddress(toAddress), amount)
-	if err != nil {
-		return nil, fmt.Errorf("pack transfer call: %w", err)
-	}
-
 	nonce, err := client.PendingNonceAt(ctx, from)
 	if err != nil {
 		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
@@ -399,10 +384,9 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 		return nil, err
 	}
 
-	tx := types.NewTransaction(nonce, tokenContract, big.NewInt(0), erc20TransferGasLimit, gasPrice, data)
-	signedTx, err := types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(int64(chainID))), privateKey)
+	signedTx, err := evmSignERC20WithTrustWallet(chainName, chainID, privateKey, nonce, gasPrice, contractAddr, amount, toAddress)
 	if err != nil {
-		return nil, fmt.Errorf("%s ERC-20 tx signing failed: %w", chainName, err)
+		return nil, err
 	}
 	if err := client.SendTransaction(ctx, signedTx); err != nil {
 		return nil, fmt.Errorf("%s ERC-20 tx broadcast failed: %w", chainName, err)
