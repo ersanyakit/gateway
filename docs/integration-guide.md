@@ -442,7 +442,7 @@ Event example: `native_transfer`
 
 ```json
 {
-  "event_id": "1-0xhash-log:0",
+  "event_id": "1-0xhash-log:0:native_transfer",
   "event_type": "native_transfer",
   "transaction_id": "uuid",
   "merchant_id": "uuid",
@@ -465,6 +465,8 @@ Event example: `native_transfer`
   "created_at": "2026-06-06T10:00:00Z"
 }
 ```
+
+Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction_reorged` correction for the same transaction has a distinct idempotency key.
 
 ### Payment Webhook Payload
 

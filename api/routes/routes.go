@@ -251,17 +251,18 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 
 	paymentDeps := handlers.PaymentHandlerDeps{
-		DomainRepo:       r.DomainRepo,
-		WalletRepo:       r.WalletRepo,
-		PaymentRepo:      r.PaymentRepo,
-		ProductRepo:      r.ProductRepo,
-		AssetRegistry:    r.assetRegistry,
-		Blockchains:      r.blockchains,
-		PriceOracle:      pricing.NewCoinGecko(),
-		Notifier:         webhooksvc.NewNotifier(),
-		PaymentHub:       r.PaymentHub,
-		IdempotencyRepo:  r.IdempotencyRepo,
-		RequireSignature: true,
+		DomainRepo:          r.DomainRepo,
+		WalletRepo:          r.WalletRepo,
+		PaymentRepo:         r.PaymentRepo,
+		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
+		ProductRepo:         r.ProductRepo,
+		AssetRegistry:       r.assetRegistry,
+		Blockchains:         r.blockchains,
+		PriceOracle:         pricing.NewCoinGecko(),
+		Notifier:            webhooksvc.NewNotifier(),
+		PaymentHub:          r.PaymentHub,
+		IdempotencyRepo:     r.IdempotencyRepo,
+		RequireSignature:    true,
 	}
 	r.fiber.Post("/payments/create", middleware.RateLimitPaymentCreate(), handlers.HandlePaymentCreate(paymentDeps))
 	r.fiber.Get("/payment-links/:token", handlers.HandlePaymentLink(dealerDeps))

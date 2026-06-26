@@ -6,6 +6,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
+	reconsvc "core/services/reconciliation"
 	"core/services/realtime"
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
@@ -118,6 +119,21 @@ func reconciliationInterval() time.Duration {
 		return 5 * time.Minute
 	}
 	return interval
+}
+
+func reserveReconciliationLimit() int {
+	raw := os.Getenv("RESERVE_RECONCILIATION_LIMIT")
+	if raw == "" {
+		return 200
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 200
+	}
+	if limit > 1000 {
+		return 1000
+	}
+	return limit
 }
 
 func gatewayShutdownTimeout() time.Duration {
@@ -945,16 +961,49 @@ func runLedgerInvariantReconciliation(ctx context.Context) {
 	}
 }
 
+func runReserveBalanceReconciliation(ctx context.Context) {
+	router := coreApplication.CORE.Router
+	if router.WalletRepo == nil || router.LedgerRepo == nil || router.ReconciliationRepo == nil || router.Blockchains() == nil {
+		return
+	}
+	service := reconsvc.NewReserveService(
+		router.WalletRepo,
+		router.LedgerRepo,
+		router.ReconciliationRepo,
+		router.Blockchains(),
+	)
+	report, err := service.RunOnce(ctx, reserveReconciliationLimit())
+	if err != nil {
+		log.Println("Reserve balance reconciliation error:", err)
+	}
+	if report.JobsOpened > 0 {
+		log.Printf(
+			"Reserve balance reconciliation opened %d jobs wallets=%d queries=%d deficits=%d missing=%d unreadable=%d query_errors=%d missing_addresses=%d unavailable_chains=%d\n",
+			report.JobsOpened,
+			report.WalletsChecked,
+			report.BalanceQueries,
+			report.Deficits,
+			report.MissingComponents,
+			report.UnreadableBalances,
+			report.QueryErrors,
+			report.MissingAddresses,
+			report.UnavailableChains,
+		)
+	}
+}
+
 func startReconciliationWorker(ctx context.Context) {
 	ticker := time.NewTicker(reconciliationInterval())
 	defer ticker.Stop()
 	runLedgerInvariantReconciliation(ctx)
+	runReserveBalanceReconciliation(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			runLedgerInvariantReconciliation(ctx)
+			runReserveBalanceReconciliation(ctx)
 		}
 	}
 }

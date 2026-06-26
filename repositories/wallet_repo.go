@@ -327,6 +327,22 @@ func (r *WalletRepo) ListReserveByMerchant(ctx context.Context, merchantID uuid.
 	return wallets, err
 }
 
+// ListReserveWallets returns system reserve wallets (_reserve_ domain, HD index 0) across merchants.
+func (r *WalletRepo) ListReserveWallets(ctx context.Context, limit int) ([]models.Wallet, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var wallets []models.Wallet
+	err := r.DB().WithContext(ctx).
+		Joins("JOIN domains ON domains.id = wallets.domain_id").
+		Preload("Domain").
+		Where("wallets.hd_address_id = 0 AND domains.domain_url = ?", "_reserve_").
+		Order("wallets.created_at ASC").
+		Limit(limit).
+		Find(&wallets).Error
+	return wallets, err
+}
+
 func (r *WalletRepo) List(ctx context.Context, limit int) ([]models.Wallet, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
