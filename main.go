@@ -702,16 +702,43 @@ func publishPaymentUpdate(session *models.PaymentSession) {
 	if session == nil || coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.PaymentHub == nil {
 		return
 	}
-	coreApplication.CORE.Router.PaymentHub.Broadcast(session.SessionToken, realtime.PaymentEvent{
+	coreApplication.CORE.Router.PaymentHub.Broadcast(session.SessionToken, paymentRealtimeBroadcastEvent(session))
+}
+
+func paymentRealtimeBroadcastEvent(session *models.PaymentSession) realtime.PaymentEvent {
+	if session == nil {
+		return realtime.PaymentEvent{}
+	}
+	paid := session.Status == models.PaymentStatusPaid
+	status := session.Status
+	payable := false
+	terminal := false
+	switch session.Status {
+	case models.PaymentStatusPaid:
+		terminal = true
+	case models.PaymentStatusExpired, models.PaymentStatusCanceled, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+		terminal = true
+	case models.PaymentStatusAwaitingPayment:
+		payable = true
+		status = "active"
+		if ptrValue(session.TxHash) != "" || session.ConfirmedAt != nil {
+			status = "confirming"
+		}
+	case models.PaymentStatusPending:
+		status = "pending"
+	}
+	return realtime.PaymentEvent{
 		Event:       "payment.updated",
-		Status:      session.Status,
-		Paid:        session.Status == models.PaymentStatusPaid,
+		Status:      status,
+		Paid:        paid,
+		Payable:     payable,
+		Terminal:    terminal,
 		PaymentID:   session.ID.String(),
 		TxHash:      ptrValue(session.TxHash),
 		SuccessPath: "/checkout/" + session.SessionToken + "/return/success",
 		CancelPath:  "/checkout/" + session.SessionToken + "/cancel",
 		UpdatedAt:   time.Now().UnixMilli(),
-	})
+	}
 }
 
 func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {

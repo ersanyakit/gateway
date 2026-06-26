@@ -14,6 +14,7 @@ const (
 	PaymentStatusCanceled        = "canceled"
 	PaymentStatusExpired         = "expired"
 	PaymentStatusFailed          = "failed"
+	PaymentStatusUnderpaid       = "underpaid"
 )
 
 type PaymentSession struct {

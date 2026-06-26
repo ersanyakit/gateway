@@ -477,7 +477,8 @@
                             "paid",
                             "expired",
                             "canceled",
-                            "failed"
+                            "failed",
+                            "underpaid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
@@ -2764,6 +2765,12 @@
                 "paid": {
                     "type": "boolean"
                 },
+                "payable": {
+                    "type": "boolean"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -2771,6 +2778,12 @@
                     "type": "boolean"
                 },
                 "success_path": {
+                    "type": "string"
+                },
+                "terminal": {
+                    "type": "boolean"
+                },
+                "tx_hash": {
                     "type": "string"
                 }
             }

@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -374,6 +375,309 @@ func TestPaymentSessionResponseStatusExpiresPendingSession(t *testing.T) {
 	session.Status = models.PaymentStatusPaid
 	if got := paymentSessionResponseStatus(session, now); got != models.PaymentStatusPaid {
 		t.Fatalf("paid status = %q, want paid", got)
+	}
+}
+
+func TestCheckoutPayerStateMapsLifecycleStates(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	past := now.Add(-time.Minute)
+	txHash := "0xabc"
+
+	tests := []struct {
+		name     string
+		session  models.PaymentSession
+		status   string
+		paid     bool
+		terminal bool
+		payable  bool
+		mode     string
+	}{
+		{
+			name: "pending asset selection",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusPending,
+				ExpiresAt: &future,
+			},
+			status: checkoutStatePending,
+			mode:   "detecting",
+		},
+		{
+			name: "active awaiting payment",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusAwaitingPayment,
+				ExpiresAt: &future,
+			},
+			status:  checkoutStateActive,
+			payable: true,
+			mode:    "detecting",
+		},
+		{
+			name: "confirming when chain transaction exists but not paid",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusAwaitingPayment,
+				TxHash:    &txHash,
+				ExpiresAt: &future,
+			},
+			status:  checkoutStateConfirming,
+			payable: true,
+			mode:    "confirming",
+		},
+		{
+			name: "paid stays terminal after expiry",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusPaid,
+				ExpiresAt: &past,
+			},
+			status:   checkoutStatePaid,
+			paid:     true,
+			terminal: true,
+			mode:     "paid",
+		},
+		{
+			name: "expired nonterminal",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusPending,
+				ExpiresAt: &past,
+			},
+			status:   checkoutStateExpired,
+			terminal: true,
+			mode:     "expired",
+		},
+		{
+			name: "failed terminal",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusFailed,
+				ExpiresAt: &future,
+			},
+			status:   checkoutStateFailed,
+			terminal: true,
+			mode:     "failed",
+		},
+		{
+			name: "underpaid terminal",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusUnderpaid,
+				ExpiresAt: &future,
+			},
+			status:   checkoutStateUnderpaid,
+			terminal: true,
+			mode:     "underpaid",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := checkoutPayerState(tt.session, now)
+			if state.Status != tt.status || state.Paid != tt.paid || state.Terminal != tt.terminal || state.Payable != tt.payable || state.Mode != tt.mode {
+				t.Fatalf("state = %#v, want status=%q paid=%v terminal=%v payable=%v mode=%q", state, tt.status, tt.paid, tt.terminal, tt.payable, tt.mode)
+			}
+		})
+	}
+}
+
+func TestCheckoutStatusPayloadUsesSafePayerState(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	txHash := "0xabc"
+	session := models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusAwaitingPayment,
+		TxHash:       &txHash,
+		ExpiresAt:    &future,
+	}
+
+	payload := checkoutStatusPayload(session, now)
+	if payload["success"] != true || payload["status"] != checkoutStateConfirming || payload["paid"] != false {
+		t.Fatalf("payload status = %#v", payload)
+	}
+	if payload["payment_id"] != session.ID.String() || payload["tx_hash"] != txHash {
+		t.Fatalf("payload identifiers = %#v", payload)
+	}
+	if payload["success_path"] != "/checkout/checkout-token/return/success" || payload["cancel_path"] != "/checkout/checkout-token/cancel" {
+		t.Fatalf("payload paths = %#v", payload)
+	}
+	if payload["terminal"] != false || payload["payable"] != true {
+		t.Fatalf("payload state flags = %#v", payload)
+	}
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "diagnostics", "webhook_last_error"} {
+		if _, ok := payload[forbidden]; ok {
+			t.Fatalf("payload leaked forbidden field %q: %#v", forbidden, payload)
+		}
+	}
+}
+
+func TestCheckoutRealtimeEventUsesSafePayerState(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	txHash := "0xabc"
+	session := models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusAwaitingPayment,
+		TxHash:       &txHash,
+		ExpiresAt:    &future,
+	}
+
+	event := checkoutRealtimeEvent(session, now)
+	if event.Status != checkoutStateConfirming || event.Paid || !event.Payable || event.Terminal {
+		t.Fatalf("event state = %#v", event)
+	}
+	if event.PaymentID != session.ID.String() || event.TxHash != txHash {
+		t.Fatalf("event identifiers = %#v", event)
+	}
+}
+
+func TestHandleCheckoutStatusUsesPayerStatePayload(t *testing.T) {
+	future := time.Now().Add(10 * time.Minute)
+	txHash := "0xabc"
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusAwaitingPayment,
+		TxHash:       &txHash,
+		ExpiresAt:    &future,
+	}
+	repo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	app := fiber.New()
+	app.Get("/checkout/:token/status.json", HandleCheckoutStatus(PaymentHandlerDeps{PaymentRepo: repo}))
+
+	req := httptest.NewRequest(http.MethodGet, "/checkout/checkout-token/status.json", nil)
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != checkoutStateConfirming || body["paid"] != false {
+		t.Fatalf("body state = %#v", body)
+	}
+	if body["payment_id"] != session.ID.String() || body["tx_hash"] != txHash {
+		t.Fatalf("body identifiers = %#v", body)
+	}
+}
+
+func TestHandleCheckoutRedirectsTerminalStateToPay(t *testing.T) {
+	future := time.Now().Add(10 * time.Minute)
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "checkout-token",
+		Status:       models.PaymentStatusUnderpaid,
+		ExpiresAt:    &future,
+	}
+	repo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	app := fiber.New()
+	app.Get("/checkout/:token", HandleCheckout(PaymentHandlerDeps{PaymentRepo: repo}))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout/checkout-token", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/checkout/checkout-token/pay" {
+		t.Fatalf("location = %q, want /checkout/checkout-token/pay", got)
+	}
+}
+
+func TestPayTemplateRendersStateCopyAndContractFields(t *testing.T) {
+	tmpl, err := template.ParseFiles("../../views/gateway/pay.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainID := constants.Ethereum
+	txHash := "0xabc"
+	session := models.PaymentSession{
+		SessionToken:      "checkout-token",
+		OrderID:           "order-1",
+		Amount:            "1",
+		Currency:          "USD",
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   &chainID,
+		SelectedSymbol:    "ETH",
+		SelectedDecimals:  18,
+		ExpectedAmountRaw: "500000000000000",
+		DepositAddress:    "0x2222222222222222222222222222222222222222",
+		TxHash:            &txHash,
+	}
+	state := checkoutPayerState(session, time.Now())
+	var rendered bytes.Buffer
+	err = tmpl.Execute(&rendered, fiber.Map{
+		"Session":       &session,
+		"Lang":          "en",
+		"IsEnglish":     true,
+		"QRCodeURL":     "/checkout/checkout-token/qr.png",
+		"PaymentURI":    paymentURI(session),
+		"ChainName":     constants.ChainName(chainID),
+		"AmountDisplay": formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol),
+		"CheckoutState": state,
+		"StatusMode":    state.Mode,
+		"StatusTitle":   state.TitleEN,
+		"StatusBody":    state.BodyEN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := rendered.String()
+	for _, want := range []string{
+		"0.0005 ETH",
+		"0x2222222222222222222222222222222222222222",
+		"/checkout/checkout-token/qr.png",
+		"data-copy-target=\"depositAddress\"",
+		"Payment confirming",
+		"data-checkout-status=\"confirming\"",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("rendered pay template missing %q in:\n%s", want, html)
+		}
+	}
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "diagnostics"} {
+		if strings.Contains(strings.ToLower(html), forbidden) {
+			t.Fatalf("rendered pay template leaked forbidden string %q", forbidden)
+		}
+	}
+
+	terminal := checkoutPaymentState{
+		Status:   checkoutStateUnderpaid,
+		Mode:     "underpaid",
+		TitleEN:  "Underpaid",
+		BodyEN:   "The received amount is below the expected amount.",
+		Terminal: true,
+	}
+	rendered.Reset()
+	err = tmpl.Execute(&rendered, fiber.Map{
+		"Session":       &session,
+		"Lang":          "en",
+		"IsEnglish":     true,
+		"QRCodeURL":     "/checkout/checkout-token/qr.png",
+		"PaymentURI":    paymentURI(session),
+		"ChainName":     constants.ChainName(chainID),
+		"AmountDisplay": formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol),
+		"CheckoutState": terminal,
+		"StatusMode":    terminal.Mode,
+		"StatusTitle":   terminal.TitleEN,
+		"StatusBody":    terminal.BodyEN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html = rendered.String()
+	if !strings.Contains(html, "data-checkout-status=\"underpaid\"") || !strings.Contains(html, "Underpaid") {
+		t.Fatalf("terminal pay template missing underpaid state:\n%s", html)
+	}
+	for _, forbidden := range []string{"data-copy-target=\"depositAddress\"", "/checkout/checkout-token/qr.png", "Send exactly"} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("terminal pay template still looks payable through %q:\n%s", forbidden, html)
+		}
 	}
 }
 

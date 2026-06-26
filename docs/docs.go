@@ -484,7 +484,8 @@ const docTemplate = `{
                             "paid",
                             "expired",
                             "canceled",
-                            "failed"
+                            "failed",
+                            "underpaid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
@@ -2771,6 +2772,12 @@ const docTemplate = `{
                 "paid": {
                     "type": "boolean"
                 },
+                "payable": {
+                    "type": "boolean"
+                },
+                "payment_id": {
+                    "type": "string"
+                },
                 "status": {
                     "type": "string"
                 },
@@ -2778,6 +2785,12 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "success_path": {
+                    "type": "string"
+                },
+                "terminal": {
+                    "type": "boolean"
+                },
+                "tx_hash": {
                     "type": "string"
                 }
             }

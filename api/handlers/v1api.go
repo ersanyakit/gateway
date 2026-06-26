@@ -874,7 +874,7 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page (max 100)" default(20)
-// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed)
+// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed,underpaid)
 // @Success 200 {object} types.V1PaymentHistoryResponse
 // @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/history [get]
@@ -941,6 +941,7 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 			models.PaymentStatusCanceled,
 			models.PaymentStatusExpired,
 			models.PaymentStatusFailed,
+			models.PaymentStatusUnderpaid,
 		}
 		var total int64
 		for _, s := range statuses {
@@ -1004,6 +1005,7 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 			{"status": "expired", "description": "Payment window elapsed without deposit."},
 			{"status": "canceled", "description": "Manually canceled by the customer or merchant."},
 			{"status": "failed", "description": "Deposit detected but amount or confirmations did not match."},
+			{"status": "underpaid", "description": "Deposit amount is below the expected payment amount."},
 		}
 		return v1OK(c, fiber.Map{"statuses": table})
 	}
