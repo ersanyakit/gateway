@@ -251,27 +251,212 @@ Operatörler sistemi production'da izleyebilir, provider sorunlarını yakalayab
 
 **FRs covered:** FR36, FR37, FR38
 
-<!-- Repeat for each epic in epics_list (N = 1, 2, 3...) -->
+## Epic 1: Partner Integration & Payment Intake Hardening
 
-## Epic {{N}}: {{epic_title_N}}
+Merchant ve exchange partnerleri güvenli şekilde API kullanabilir, payment session veya static wallet oluşturabilir, hosted checkout ile ödeme alabilir ve integration contract'ına güvenebilir.
 
-{{epic_goal_N}}
+### Story 1.1: Secure Partner API Request Authentication
 
-<!-- Repeat for each story (M = 1, 2, 3...) within epic N -->
-
-### Story {{N}}.{{M}}: {{story_title_N_M}}
-
-As a {{user_type}},
-I want {{capability}},
-So that {{value_benefit}}.
+As a developer integrator,
+I want partner API requests to be authenticated, scoped, and replay-resistant,
+So that only authorized merchant or exchange tenants can perform actions against their own resources.
 
 **Acceptance Criteria:**
 
-<!-- for each AC on this story -->
+**Given** a partner sends a request with a valid API key or bearer token
+**When** the request reaches a protected v1 API endpoint
+**Then** the system resolves the correct tenant/domain scope
+**And** the request cannot access resources outside that scope.
 
-**Given** {{precondition}}
-**When** {{action}}
-**Then** {{expected_outcome}}
-**And** {{additional_criteria}}
+**Given** a partner sends a mutating request
+**When** `X-API-Secret`, timestamp, and `X-Gateway-Signature` are present and valid
+**Then** the request is accepted for downstream handling
+**And** the signature verification uses the exact request method, path, timestamp, and body payload.
 
-<!-- End story repeat -->
+**Given** a mutating request has a missing, malformed, expired, or future-skewed timestamp
+**When** the authentication middleware validates the request
+**Then** the system rejects it with a backwards-compatible error envelope
+**And** the allowed clock-skew window is covered by tests.
+
+**Given** a previously accepted signed request is replayed with the same signature and timestamp
+**When** replay protection evaluates the request
+**Then** the duplicate request is rejected or safely treated as non-mutating according to endpoint policy
+**And** signature reuse behavior is covered by automated tests.
+
+**Given** an API key belongs to one tenant/domain
+**When** it is used to request another tenant/domain's payment, wallet, payout, refund, or webhook resource
+**Then** the system returns an authorization failure
+**And** the failure does not leak whether the target resource exists.
+
+**Given** an authentication or authorization failure occurs
+**When** the system logs the failure
+**Then** logs include tenant/domain context when known, endpoint, failure reason category, and request correlation id
+**And** logs do not include API secrets, raw signatures, private keys, mnemonics, or full sensitive payloads.
+
+**Given** the authentication changes are implemented
+**When** the test suite runs
+**Then** it includes positive and negative tests for API key auth, bearer auth, HMAC validation, timestamp skew, replay/signature reuse, tenant scope isolation, and backwards-compatible error responses.
+
+### Story 1.2: Idempotent Payment Session Creation
+
+As a developer integrator,
+I want to create payment sessions idempotently with a stable checkout URL and quote snapshot,
+So that checkout creation is safe to retry and produces a predictable payment contract for the merchant.
+
+**Acceptance Criteria:**
+
+**Given** a merchant or exchange tenant sends a valid authenticated payment session creation request
+**When** the request includes supported chain/token, amount, currency, callback metadata, and an idempotency key
+**Then** the system creates a payment session scoped to the tenant/domain
+**And** returns a stable session id, checkout URL, expiry, selected asset information, expected raw amount, and deposit address reference.
+
+**Given** the payment session requires pricing conversion
+**When** the quote is calculated
+**Then** the system stores a quote snapshot with price, currency, decimals, symbol/token metadata, and timestamp
+**And** later display or settlement logic does not recalculate the original fiat amount from current oracle prices.
+
+**Given** the same idempotency key and same request payload are submitted again
+**When** the create endpoint handles the retry
+**Then** the system returns the original payment session response
+**And** does not create a duplicate session, duplicate wallet assignment, or duplicate downstream lifecycle state.
+
+**Given** the same idempotency key is reused with a different request payload
+**When** the create endpoint validates idempotency
+**Then** the system rejects the request with a conflict response
+**And** the response uses the backwards-compatible error envelope.
+
+**Given** the selected chain/token is unsupported, disabled, or missing required token metadata
+**When** the create endpoint validates the request
+**Then** the system rejects the request before creating a payment session
+**And** records no partial payment session or wallet assignment.
+
+**Given** a session expiry is reached before settlement
+**When** the payment session status is queried through the partner API or checkout status surface
+**Then** the session reports an expired state consistently
+**And** expiry behavior is covered by automated tests.
+
+**Given** the payment session creation path is implemented
+**When** contract and integration tests run
+**Then** they cover successful creation, idempotent retry, idempotency conflict, unsupported asset rejection, quote snapshot persistence, expiry behavior, and response schema compatibility.
+
+### Story 1.3: Deterministic Static Wallet Issuance for Partner Scopes
+
+As a developer integrator,
+I want static deposit wallets to be issued deterministically for a dealer/merchant tenant, domain, product, and user scope,
+So that merchant and exchange integrations can safely request the same deposit wallet without duplicate address ownership.
+
+**Acceptance Criteria:**
+
+**Given** an authenticated partner or dealer portal action requests a static wallet for a dealer/merchant tenant, domain, product, and user scope
+**When** no wallet exists for that exact scope
+**Then** the system derives and stores a new wallet/address set for the supported chain family
+**And** the wallet is owned by the requesting tenant/domain scope.
+
+**Given** the same dealer/merchant tenant, domain, product, and user scope requests a wallet again
+**When** a wallet already exists
+**Then** the system returns the existing wallet/address set
+**And** does not increment HD index, create duplicate ownership, or create conflicting address records.
+
+**Given** two concurrent requests target the same wallet scope
+**When** wallet issuance runs
+**Then** only one wallet/address set is created
+**And** concurrency behavior is protected by transaction, lock, or uniqueness guarantees covered by tests.
+
+**Given** wallet derivation is performed for a supported chain
+**When** the address is generated
+**Then** the system uses the Trust Wallet Core derivation provider where supported by the current architecture
+**And** records enough chain/address metadata for later deposit matching.
+
+**Given** Trust Wallet Core derivation is unavailable or fallback provider would be used in production
+**When** the wallet issuance path executes
+**Then** the system fails safely before returning an address
+**And** fallback behavior cannot silently generate invalid or placeholder production wallets.
+
+**Given** a partner requests a wallet for a chain/token that is disabled or unsupported
+**When** validation runs
+**Then** the system rejects the request with a backwards-compatible error envelope
+**And** no partial wallet scope, HD index mutation, or address ownership record is committed.
+
+**Given** the wallet issuance story is implemented
+**When** automated tests run
+**Then** they cover first issuance, idempotent repeat issuance, concurrent issuance, unsupported chain rejection, Trust Wallet Core provider usage, fallback production guard, dealer/merchant portal scope, and tenant scope isolation.
+
+### Story 1.4: Hosted Checkout Payment State Experience
+
+As a payer,
+I want the hosted checkout page to clearly show payment instructions and state changes,
+So that I can complete a crypto payment without confusion and understand whether it is pending, paid, expired, failed, or underpaid.
+
+**Acceptance Criteria:**
+
+**Given** a payer opens a valid checkout URL
+**When** the payment session is active
+**Then** the checkout displays selected asset, chain/network, expected amount, deposit address, QR code, and expiry information
+**And** the displayed amount/address matches the payment session contract.
+
+**Given** a payer views checkout on desktop or mobile
+**When** the page renders
+**Then** the payment instructions, QR code, address copy action, amount, and status are usable without layout overlap
+**And** mobile rendering is covered by regression or view tests where feasible.
+
+**Given** a payment session is still waiting for chain detection or finality
+**When** the checkout status refreshes through polling, websocket, or existing status mechanism
+**Then** the checkout shows a pending or confirming state
+**And** does not show paid before required settlement/finality state is reached.
+
+**Given** the payment session succeeds
+**When** checkout status is refreshed
+**Then** the checkout shows a paid/succeeded state
+**And** the final state remains stable across page refresh.
+
+**Given** the payment session expires before settlement
+**When** the payer opens or refreshes checkout
+**Then** the checkout shows an expired state
+**And** prevents the payer from interpreting the invoice as still payable.
+
+**Given** the detected payment amount is below the expected amount or otherwise fails matching policy
+**When** checkout status is refreshed
+**Then** the checkout shows an underpaid or failed state according to product policy
+**And** the state is distinct from pending and paid.
+
+**Given** checkout state rendering is implemented
+**When** automated tests run
+**Then** they cover active, pending/confirming, paid, expired, failed, and underpaid states
+**And** tests verify the checkout does not expose secrets or internal-only diagnostic data.
+
+### Story 1.5: Stable Partner API Contract and Integration Evidence
+
+As a developer integrator,
+I want the partner API contract and integration examples to stay stable and test-backed,
+So that merchant, dealer, and exchange integrations can upgrade safely without guessing response formats or error behavior.
+
+**Acceptance Criteria:**
+
+**Given** partner-facing payment session, static wallet, checkout status, and authentication endpoints exist
+**When** OpenAPI or equivalent API documentation is generated or updated
+**Then** the documented request/response schemas match the implemented handlers
+**And** required auth, idempotency, error, and tenant/domain scope fields are documented.
+
+**Given** a partner receives an error response from authentication, validation, idempotency conflict, unsupported asset, expired session, or authorization failure
+**When** the response is serialized
+**Then** it follows a backwards-compatible error envelope
+**And** tests verify no sensitive implementation details or resource-existence leaks are exposed.
+
+**Given** existing merchant/dealer integrations use current API fields
+**When** the contract is updated for Epic 1 changes
+**Then** existing compatible fields remain available or are explicitly marked as deprecated
+**And** no breaking change is introduced without a documented migration note.
+
+**Given** a developer follows the integration guide
+**When** they create a payment session, retry with the same idempotency key, request a static wallet, and open checkout status
+**Then** the documented examples produce behavior consistent with automated contract tests
+**And** examples include at least one success path and one failure/conflict path.
+
+**Given** partner API contract tests run in CI or local verification
+**When** handlers, schemas, or response envelopes change
+**Then** tests fail if implemented responses drift from the documented contract
+**And** the verification includes `go test ./...` or the repo's equivalent targeted test command for the affected packages.
+
+**Given** Epic 1 is complete
+**When** a developer reviews the integration evidence
+**Then** they can identify covered endpoints, supported authentication modes, idempotency behavior, static wallet scope rules, checkout state semantics, and known production limitations.

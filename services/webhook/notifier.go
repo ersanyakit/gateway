@@ -122,7 +122,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	}
 
 	payload := Payload{
-		EventID:       tx.UniqueHash,
+		EventID:       TransactionEventID(tx),
 		EventType:     tx.EventType,
 		EventVersion:  "v1",
 		TransactionID: tx.ID.String(),
@@ -174,7 +174,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	req.Header.Set("User-Agent", "gateway-webhook/1.0")
 	req.Header.Set("X-Gateway-Event", tx.EventType)
 	req.Header.Set("X-Gateway-Event-Version", "v1")
-	req.Header.Set("X-Gateway-Event-Id", tx.UniqueHash)
+	req.Header.Set("X-Gateway-Event-Id", payload.EventID)
 	req.Header.Set("X-Gateway-Timestamp", timestamp)
 	req.Header.Set("X-Gateway-Signature", "sha256="+signature)
 
@@ -215,7 +215,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	}
 
 	payload := PaymentPayload{
-		EventID:           session.ID.String() + ":" + session.WebhookEvent,
+		EventID:           PaymentEventID(session),
 		EventType:         session.WebhookEvent,
 		EventVersion:      "v1",
 		PaymentID:         session.ID.String(),

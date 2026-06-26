@@ -536,17 +536,12 @@ func createTransactionWebhookDelivery(ctx context.Context, domain models.Domain,
 	if txModel.MerchantID == nil || txModel.DomainID == nil {
 		return uuid.Nil
 	}
-	delivery := &models.WebhookDelivery{
-		MerchantID:    *txModel.MerchantID,
-		DomainID:      *txModel.DomainID,
-		TransactionID: &txModel.ID,
-		EventID:       txModel.UniqueHash,
-		EventType:     txModel.EventType,
-		TargetURL:     domain.WebhookURL,
-		Status:        models.WebhookDeliveryStatusPending,
-	}
-	if err := coreApplication.CORE.Router.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+	delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueueTransaction(ctx, domain, txModel)
+	if err != nil {
 		log.Println("Webhook delivery log create error:", err)
+		return uuid.Nil
+	}
+	if delivery == nil {
 		return uuid.Nil
 	}
 	return delivery.ID
@@ -556,17 +551,12 @@ func createPaymentWebhookDelivery(ctx context.Context, domain models.Domain, ses
 	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
 		return uuid.Nil
 	}
-	delivery := &models.WebhookDelivery{
-		MerchantID: session.MerchantID,
-		DomainID:   session.DomainID,
-		PaymentID:  &session.ID,
-		EventID:    session.ID.String() + ":" + session.WebhookEvent,
-		EventType:  session.WebhookEvent,
-		TargetURL:  domain.WebhookURL,
-		Status:     models.WebhookDeliveryStatusPending,
-	}
-	if err := coreApplication.CORE.Router.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+	delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueuePayment(ctx, domain, session)
+	if err != nil {
 		log.Println("Payment webhook delivery log create error:", err)
+		return uuid.Nil
+	}
+	if delivery == nil {
 		return uuid.Nil
 	}
 	return delivery.ID

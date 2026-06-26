@@ -22,6 +22,7 @@ webhook:
   signature_payload: "timestamp + raw_body"
   current_events:
     - native_transfer
+    - transaction_reorged
     - payment_succeeded
     - payment_failed
     - payment_expired
@@ -264,6 +265,8 @@ Statuses:
 - `expired`
 - `canceled`
 - `failed`
+
+Detected deposits are held behind a confirmation gate before a payment becomes `paid`. If a finalized deposit is later invalidated by a reorg, the gateway reverses the ledger entries, marks the transaction `reorged`, and emits correction webhooks when callback settings are configured.
 
 ## Create Payout Request
 

@@ -3400,16 +3400,11 @@ func createAdminTransactionWebhookDelivery(ctx context.Context, deps DealerDeps,
 	if deps.WebhookDeliveryRepo == nil || txModel.MerchantID == nil || txModel.DomainID == nil {
 		return uuid.Nil
 	}
-	delivery := &models.WebhookDelivery{
-		MerchantID:    *txModel.MerchantID,
-		DomainID:      *txModel.DomainID,
-		TransactionID: &txModel.ID,
-		EventID:       txModel.UniqueHash,
-		EventType:     txModel.EventType,
-		TargetURL:     domain.WebhookURL,
-		Status:        models.WebhookDeliveryStatusPending,
+	delivery, _, err := deps.WebhookDeliveryRepo.EnqueueTransaction(ctx, domain, txModel)
+	if err != nil {
+		return uuid.Nil
 	}
-	if err := deps.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+	if delivery == nil {
 		return uuid.Nil
 	}
 	return delivery.ID
@@ -3419,16 +3414,11 @@ func createAdminPaymentWebhookDelivery(ctx context.Context, deps DealerDeps, dom
 	if deps.WebhookDeliveryRepo == nil {
 		return uuid.Nil
 	}
-	delivery := &models.WebhookDelivery{
-		MerchantID: session.MerchantID,
-		DomainID:   session.DomainID,
-		PaymentID:  &session.ID,
-		EventID:    session.ID.String() + ":" + session.WebhookEvent,
-		EventType:  session.WebhookEvent,
-		TargetURL:  domain.WebhookURL,
-		Status:     models.WebhookDeliveryStatusPending,
+	delivery, _, err := deps.WebhookDeliveryRepo.EnqueuePayment(ctx, domain, session)
+	if err != nil {
+		return uuid.Nil
 	}
-	if err := deps.WebhookDeliveryRepo.Create(ctx, delivery); err != nil {
+	if delivery == nil {
 		return uuid.Nil
 	}
 	return delivery.ID

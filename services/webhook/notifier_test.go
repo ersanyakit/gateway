@@ -89,7 +89,7 @@ func TestNotifierDeliverSignsAndPostsTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if received.EventID != tx.UniqueHash {
+	if received.EventID != TransactionEventID(tx) {
 		t.Fatalf("event id = %q", received.EventID)
 	}
 	if received.MerchantID != merchantID.String() || received.DomainID != domainID.String() || received.WalletID != walletID.String() {

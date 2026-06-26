@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	TransactionStatusPending             = "pending"
 	TransactionStatusPendingConfirmation = "pending_confirmation"
 	TransactionStatusConfirmed           = "confirmed"
 	TransactionStatusFailed              = "failed"

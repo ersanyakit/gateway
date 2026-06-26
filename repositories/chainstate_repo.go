@@ -62,8 +62,8 @@ func (r *ChainStateRepo) Update(ctx context.Context, state *models.ChainState) e
 		`INSERT INTO chain_states (chain_id, last_processed_block, last_confirmed_block, updated_at)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT (chain_id) DO UPDATE
-		 SET last_processed_block = EXCLUDED.last_processed_block,
-		     last_confirmed_block = EXCLUDED.last_confirmed_block,
+		 SET last_processed_block = GREATEST(chain_states.last_processed_block, EXCLUDED.last_processed_block),
+		     last_confirmed_block = GREATEST(chain_states.last_confirmed_block, EXCLUDED.last_confirmed_block),
 		     updated_at = EXCLUDED.updated_at`,
 		int64(state.ChainID),
 		state.LastProcessedBlock,

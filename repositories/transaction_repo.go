@@ -41,6 +41,10 @@ func (r *TransactionRepo) UniqueHash(params types.TransactionParam) (string, err
 }
 
 func (r *TransactionRepo) Create(params types.TransactionParam) error {
+	ctx := params.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	uniqueHash, err := r.UniqueHash(params)
 	if err != nil {
 		return err
@@ -58,11 +62,8 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		return errors.New("amount is required")
 	}
 
-	return r.DB().Transaction(func(tx *gorm.DB) error {
-		status := "pending"
-		if params.Status != nil && *params.Status != "" {
-			status = *params.Status
-		}
+	return r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		status := transactionInitialStatus(params.Status)
 		blockHash := ""
 		if params.BlockHash != nil {
 			blockHash = *params.BlockHash
@@ -73,8 +74,62 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}
 
 		now := time.Now()
-		if err := r.markBlockHashConflictsWithDB(params.Context, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
+		existing, found, err := r.findExistingForCreateWithDB(ctx, tx, uniqueHash)
+		if err != nil {
 			return err
+		}
+		if found {
+			if existing.Status == models.TransactionStatusReorged {
+				if transactionBlockIdentityChanged(existing, *params.Block, blockHash) {
+					fromBlock := parseBlockNumber(existing.BlockNumber)
+					reason := transactionReorgReason("tx_reappeared", params.ChainID, existing.BlockNumber)
+					_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, params.ChainID, fromBlock, fromBlock, reason)
+					return err
+				}
+				return nil
+			}
+			identityChanged := transactionBlockIdentityChanged(existing, *params.Block, blockHash)
+			if existing.Status == models.TransactionStatusFailed {
+				return nil
+			}
+			if existing.FinalizedAt != nil && identityChanged {
+				fromBlock := parseBlockNumber(existing.BlockNumber)
+				reason := transactionReorgReason("tx_block_identity_changed", params.ChainID, existing.BlockNumber)
+				return r.markTransactionsReorgedWithDB(ctx, tx, []models.Transaction{existing}, now, params.ChainID, fromBlock, reason)
+			}
+			if existing.FinalizedAt != nil {
+				return nil
+			}
+		}
+		if err := r.markBlockHashConflictsWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
+			return err
+		}
+		identityChanged := found && transactionBlockIdentityChanged(existing, *params.Block, blockHash)
+		assignments := map[string]interface{}{
+			"block_number":  *params.Block,
+			"block_hash":    blockHash,
+			"token":         token,
+			"symbol":        *params.Symbol,
+			"decimals":      params.Decimals,
+			"from_address":  *params.From,
+			"to_address":    *params.To,
+			"amount":        *params.Amount,
+			"status":        status,
+			"confirmations": uint(0),
+			"updated_at":    now,
+		}
+		if found && !identityChanged {
+			delete(assignments, "status")
+			delete(assignments, "confirmations")
+		}
+		if identityChanged {
+			assignments["confirmations_required"] = uint(1)
+			assignments["finalized_at"] = nil
+			assignments["reorged_at"] = nil
+			assignments["webhook_sent_at"] = nil
+			assignments["webhook_attempts"] = uint(0)
+			assignments["webhook_last_error"] = ""
+			assignments["webhook_locked_until"] = nil
 		}
 		txModel := &models.Transaction{
 			ID:          uuid.New(),
@@ -96,24 +151,71 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}
 
 		if err := tx.Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "unique_hash"}},
-			DoUpdates: clause.Assignments(map[string]interface{}{
-				"block_hash":   blockHash,
-				"token":        token,
-				"symbol":       *params.Symbol,
-				"decimals":     params.Decimals,
-				"from_address": *params.From,
-				"to_address":   *params.To,
-				"amount":       *params.Amount,
-				"status":       status,
-				"updated_at":   now,
-			}),
+			Columns:   []clause.Column{{Name: "unique_hash"}},
+			DoUpdates: clause.Assignments(assignments),
 		}).Create(txModel).Error; err != nil {
 			return err
 		}
 
 		return nil
 	})
+}
+
+func transactionInitialStatus(status *string) string {
+	if status == nil {
+		return models.TransactionStatusPending
+	}
+	switch strings.ToLower(strings.TrimSpace(*status)) {
+	case models.TransactionStatusFailed:
+		return models.TransactionStatusFailed
+	case models.TransactionStatusConfirmed:
+		return models.TransactionStatusPendingConfirmation
+	case models.TransactionStatusPendingConfirmation:
+		return models.TransactionStatusPendingConfirmation
+	case models.TransactionStatusReorged:
+		return models.TransactionStatusReorged
+	default:
+		return models.TransactionStatusPending
+	}
+}
+
+func transactionBlockIdentityChanged(existing models.Transaction, blockNumber string, blockHash string) bool {
+	if strings.TrimSpace(existing.BlockNumber) != strings.TrimSpace(blockNumber) {
+		return true
+	}
+	existingHash := strings.TrimSpace(existing.BlockHash)
+	nextHash := strings.TrimSpace(blockHash)
+	return existingHash != "" && nextHash != "" && !strings.EqualFold(existingHash, nextHash)
+}
+
+func parseBlockNumber(blockNumber string) int64 {
+	block, err := strconv.ParseInt(strings.TrimSpace(blockNumber), 10, 64)
+	if err != nil || block < 0 {
+		return 0
+	}
+	return block
+}
+
+func transactionReorgReason(prefix string, chainID constants.ChainID, blockNumber string) string {
+	reason := fmt.Sprintf("%s:%d:%s", prefix, chainID, strings.TrimSpace(blockNumber))
+	if len(reason) > 120 {
+		reason = reason[:120]
+	}
+	return reason
+}
+
+func (r *TransactionRepo) findExistingForCreateWithDB(ctx context.Context, tx *gorm.DB, uniqueHash string) (models.Transaction, bool, error) {
+	var existing models.Transaction
+	err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&existing, "unique_hash = ?", uniqueHash).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.Transaction{}, false, nil
+	}
+	if err != nil {
+		return models.Transaction{}, false, err
+	}
+	return existing, true, nil
 }
 
 func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber string, blockHash string, currentUniqueHash string, now time.Time) error {
@@ -139,8 +241,20 @@ func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *
 		return nil
 	}
 
+	fromBlock := parseBlockNumber(blockNumber)
+	reason := transactionReorgReason("reorg_detected", chainID, blockNumber)
+	return r.markTransactionsReorgedWithDB(ctx, tx, conflicts, now, chainID, fromBlock, reason)
+}
+
+func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx *gorm.DB, conflicts []models.Transaction, now time.Time, chainID constants.ChainID, fromBlock int64, reason string) error {
+	if len(conflicts) == 0 {
+		return nil
+	}
 	uniqueHashes := make([]string, 0, len(conflicts))
 	for _, conflict := range conflicts {
+		if conflict.Status == models.TransactionStatusReorged {
+			continue
+		}
 		uniqueHashes = append(uniqueHashes, conflict.UniqueHash)
 		if err := NewLedgerRepo(tx).PostTransactionReversalWithDB(ctx, tx, conflict); err != nil {
 			return err
@@ -148,6 +262,9 @@ func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *
 		if err := NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, conflict.UniqueHash); err != nil {
 			return err
 		}
+	}
+	if len(uniqueHashes) == 0 {
+		return nil
 	}
 
 	if err := tx.WithContext(ctx).
@@ -180,13 +297,8 @@ func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *
 		return err
 	}
 
-	fromBlock, parseErr := strconv.ParseInt(blockNumber, 10, 64)
-	if parseErr != nil {
-		fromBlock = 0
-	}
-	reason := fmt.Sprintf("reorg_detected:%d:%s", chainID, blockNumber)
-	if len(reason) > 120 {
-		reason = reason[:120]
+	if strings.TrimSpace(reason) == "" {
+		reason = transactionReorgReason("reorg_detected", chainID, strconv.FormatInt(fromBlock, 10))
 	}
 	_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, chainID, fromBlock, fromBlock, reason)
 	return err
@@ -279,10 +391,14 @@ func (r *TransactionRepo) MarkFinality(ctx context.Context, uniqueHash string, c
 	} else {
 		updates["status"] = models.TransactionStatusPendingConfirmation
 	}
-	if err := r.DB().WithContext(ctx).
+	query := r.DB().WithContext(ctx).
 		Model(&models.Transaction{}).
 		Where("unique_hash = ?", uniqueHash).
-		Updates(updates).Error; err != nil {
+		Where("status NOT IN ?", []string{models.TransactionStatusReorged, models.TransactionStatusFailed})
+	if !finalized {
+		query = query.Where("finalized_at IS NULL")
+	}
+	if err := query.Updates(updates).Error; err != nil {
 		return nil, err
 	}
 	return r.FindByUniqueHash(ctx, uniqueHash)
@@ -292,6 +408,8 @@ func (r *TransactionRepo) MarkFailed(ctx context.Context, uniqueHash string) (*m
 	if err := r.DB().WithContext(ctx).
 		Model(&models.Transaction{}).
 		Where("unique_hash = ?", uniqueHash).
+		Where("status <> ?", models.TransactionStatusReorged).
+		Where("finalized_at IS NULL").
 		Updates(map[string]interface{}{
 			"status":     models.TransactionStatusFailed,
 			"updated_at": time.Now(),
@@ -308,7 +426,7 @@ func (r *TransactionRepo) ListPendingFinality(ctx context.Context, limit int) ([
 	var rows []models.Transaction
 	err := r.DB().WithContext(ctx).
 		Where("wallet_id IS NOT NULL").
-		Where("status = ?", models.TransactionStatusPendingConfirmation).
+		Where("(status = ? OR (status = ? AND finalized_at IS NULL))", models.TransactionStatusPendingConfirmation, models.TransactionStatusConfirmed).
 		Order("created_at ASC").
 		Limit(limit).
 		Find(&rows).Error

@@ -38,6 +38,74 @@ func (r *WebhookDeliveryRepo) Create(ctx context.Context, delivery *models.Webho
 	return r.db.WithContext(ctx).Create(delivery).Error
 }
 
+func (r *WebhookDeliveryRepo) EnqueueTransaction(ctx context.Context, domain models.Domain, txModel models.Transaction) (*models.WebhookDelivery, bool, error) {
+	if txModel.MerchantID == nil || txModel.DomainID == nil || txModel.ID == uuid.Nil || txModel.UniqueHash == "" || txModel.EventType == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
+	eventID := webhooksvc.TransactionEventID(txModel)
+	if eventID == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
+	var existing models.WebhookDelivery
+	err := r.db.WithContext(ctx).First(&existing, "event_id = ?", eventID).Error
+	if err == nil {
+		return &existing, false, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+	delivery := &models.WebhookDelivery{
+		MerchantID:    *txModel.MerchantID,
+		DomainID:      *txModel.DomainID,
+		TransactionID: &txModel.ID,
+		EventID:       eventID,
+		EventType:     txModel.EventType,
+		EventVersion:  "v1",
+		EntityType:    "transaction",
+		EntityID:      &txModel.ID,
+		TargetURL:     domain.WebhookURL,
+		Status:        models.WebhookDeliveryStatusPending,
+	}
+	if err := r.Create(ctx, delivery); err != nil {
+		return nil, false, err
+	}
+	return delivery, true, nil
+}
+
+func (r *WebhookDeliveryRepo) EnqueuePayment(ctx context.Context, domain models.Domain, session models.PaymentSession) (*models.WebhookDelivery, bool, error) {
+	if session.ID == uuid.Nil || session.WebhookEvent == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
+	eventID := webhooksvc.PaymentEventID(session)
+	if eventID == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
+	var existing models.WebhookDelivery
+	err := r.db.WithContext(ctx).First(&existing, "event_id = ?", eventID).Error
+	if err == nil {
+		return &existing, false, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, err
+	}
+	delivery := &models.WebhookDelivery{
+		MerchantID:   session.MerchantID,
+		DomainID:     session.DomainID,
+		PaymentID:    &session.ID,
+		EventID:      eventID,
+		EventType:    session.WebhookEvent,
+		EventVersion: "v1",
+		EntityType:   "payment",
+		EntityID:     &session.ID,
+		TargetURL:    domain.WebhookURL,
+		Status:       models.WebhookDeliveryStatusPending,
+	}
+	if err := r.Create(ctx, delivery); err != nil {
+		return nil, false, err
+	}
+	return delivery, true, nil
+}
+
 func (r *WebhookDeliveryRepo) EnqueueLifecycle(ctx context.Context, domain models.Domain, payload webhooksvc.LifecyclePayload) (*models.WebhookDelivery, bool, error) {
 	if payload.EventID == "" || payload.EventType == "" {
 		return nil, false, gorm.ErrInvalidData
