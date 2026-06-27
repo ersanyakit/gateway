@@ -2,9 +2,12 @@ package main
 
 import (
 	"core/constants"
+	"core/repositories"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestChainIndexerEventHandlerDoesNotMutateBusinessState(t *testing.T) {
@@ -195,6 +198,30 @@ func TestLedgerInvariantReconciliationUsesScopedContext(t *testing.T) {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("ledger invariant reconciliation must not log sensitive token %q", forbidden)
 		}
+	}
+}
+
+func TestLedgerInvariantReasonIsBoundedAndDistinctForLongKeys(t *testing.T) {
+	merchantID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	base := repositories.LedgerInvariantIssue{
+		MerchantID: merchantID,
+		ChainID:    int64(constants.Ethereum),
+	}
+	first := base
+	first.IdempotencyKey = strings.Repeat("same-prefix-", 20) + "first"
+	second := base
+	second.IdempotencyKey = strings.Repeat("same-prefix-", 20) + "second"
+
+	firstReason := ledgerInvariantReason(first)
+	secondReason := ledgerInvariantReason(second)
+	if len(firstReason) > 120 || len(secondReason) > 120 {
+		t.Fatalf("ledger invariant reasons must fit DB size: %q %q", firstReason, secondReason)
+	}
+	if firstReason == secondReason {
+		t.Fatalf("long invariant reasons collided: %q", firstReason)
+	}
+	if !strings.Contains(firstReason, ":h=") || !strings.Contains(secondReason, ":h=") {
+		t.Fatalf("truncated invariant reasons must include hash suffix: %q %q", firstReason, secondReason)
 	}
 }
 

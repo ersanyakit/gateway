@@ -18,6 +18,8 @@ import (
 	evmListener "core/workers/listeners/evm"
 	solListener "core/workers/listeners/solana"
 	tronListener "core/workers/listeners/tron"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -1090,12 +1092,16 @@ func ledgerInvariantCorrelationID(issue repositories.LedgerInvariantIssue) strin
 	return "ledger_invariant:" + issue.IdempotencyKey
 }
 
+const ledgerInvariantReasonMaxLength = 120
+
 func ledgerInvariantReason(issue repositories.LedgerInvariantIssue) string {
 	reason := fmt.Sprintf("ledger_invariant:%s:%s:%d:%s", issue.MerchantID.String(), ledgerInvariantDomainID(issue.DomainID), issue.ChainID, issue.IdempotencyKey)
-	if len(reason) > 120 {
-		return reason[:120]
+	if len(reason) <= ledgerInvariantReasonMaxLength {
+		return reason
 	}
-	return reason
+	sum := sha256.Sum256([]byte(reason))
+	suffix := ":h=" + hex.EncodeToString(sum[:])[:12]
+	return reason[:ledgerInvariantReasonMaxLength-len(suffix)] + suffix
 }
 
 func ledgerInvariantDomainID(domainID *uuid.UUID) string {

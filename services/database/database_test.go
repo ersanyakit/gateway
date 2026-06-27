@@ -87,6 +87,28 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 	}
 }
 
+func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
+	required := map[string]bool{
+		"ledger_entries_entry_type_check": false,
+		"ledger_entries_account_check":    false,
+		"ledger_entries_direction_check":  false,
+		"ledger_entries_status_check":     false,
+	}
+	for _, constraint := range requiredSchemaConstraints() {
+		if constraint.table != "ledger_entries" {
+			continue
+		}
+		if _, ok := required[constraint.name]; ok {
+			required[constraint.name] = true
+		}
+	}
+	for name, found := range required {
+		if !found {
+			t.Fatalf("VerifySchema does not require ledger_entries constraint %s", name)
+		}
+	}
+}
+
 func TestApplyGORMMigrationsEntrypointExists(t *testing.T) {
 	if reflect.ValueOf(ApplyGORMMigrations).IsNil() {
 		t.Fatal("ApplyGORMMigrations must be available for GORM-managed migration jobs")

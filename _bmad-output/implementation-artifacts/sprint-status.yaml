@@ -65,7 +65,7 @@ development_status:
   epic-3: in-progress
   3-1-emit-chain-facts-without-mutating-business-state: done
   3-2-match-deposits-and-gate-settlement-on-finality: done
-  3-3-enforce-ledger-derived-balance-authority: review
+  3-3-enforce-ledger-derived-balance-authority: done
   3-4-model-payment-matching-outcomes-explicitly: backlog
   3-5-correct-reorgs-with-compensating-events-and-ledger-reversals: backlog
   3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty: backlog

@@ -2,7 +2,7 @@
 story_id: "3.3"
 story_key: "3-3-enforce-ledger-derived-balance-authority"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 5adc975
@@ -10,7 +10,7 @@ baseline_commit: 5adc975
 
 # Story 3.3: Enforce Ledger-Derived Balance Authority
 
-Status: review
+Status: done
 
 ## Story
 
@@ -61,6 +61,10 @@ boylece available, pending, hold, transit, reversal ve adjustment bakiyeleri dep
   - [x] Static validation: `go vet ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+
+### Review Findings
+
+- [x] [Review][Patch] Ledger invariant reconciliation reason truncation could collide [main.go:1093] — Fixed with a bounded reason helper that preserves the 120-character DB limit while appending a deterministic hash suffix for long scoped reasons.
 
 ## Dev Notes
 
@@ -120,6 +124,9 @@ Codex
 - 2026-06-27: Validation passed: `go test -count=1 ./...`.
 - 2026-06-27: Validation passed: `go vet ./...`.
 - 2026-06-27: Validation passed: `git diff --check`.
+- 2026-06-27: Code review found one patch issue: long ledger invariant reasons could collide after fixed-length truncation. Added hash-suffixed bounded reason and regression coverage.
+- 2026-06-27: Post-review validation passed: `go test -count=1 ./...`, `go vet ./...`, and `git diff --check && git diff --cached --check`.
+- 2026-06-27: Added GORM-owned ledger check constraints for entry type, account, direction, and status, plus VerifySchema coverage.
 
 ### Completion Notes List
 
@@ -127,6 +134,7 @@ Codex
 - Added `LedgerRepo.WalletBalancesByWalletIDs` for batch wallet balance rows and extended ledger balance rows with domain/wallet scope.
 - Ledger balance queries exclude voided/non-numeric rows, preserve asset metadata, and keep account-level pending/available/transit visibility.
 - Ledger invariant reconciliation now carries correlation id plus merchant/domain/chain/token/symbol/net context without sensitive values.
+- Ledger invariant reconciliation reasons stay within the 120-character DB limit without collapsing distinct long idempotency keys.
 - Added documentation and tests for ledger-only balance authority, idempotency, GORM schema verification, source contracts, and invariant scope.
 
 ### File List
@@ -139,12 +147,15 @@ Codex
 - `docs/ledger-balance-authority.md`
 - `main.go`
 - `main_chain_fact_contract_test.go`
+- `models/ledger_entry.go`
 - `repositories/ledger_repo.go`
 - `repositories/ledger_repo_test.go`
 - `services/database/database.go`
+- `services/database/database_test.go`
 - `services/database/outbox_schema_contract_test.go`
 
 ### Change Log
 
 - 2026-06-27: Created story with ledger-only balance authority scope, GORM migration guardrails, dealer/admin fallback risks, invariant reconciliation scope, and validation requirements.
 - 2026-06-27: Implemented ledger-only balance authority across API/dealer/admin views with scoped invariant reconciliation and validation coverage.
+- 2026-06-27: Addressed code review finding for long ledger invariant reconciliation reason collision resistance and marked story done.
