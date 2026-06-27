@@ -174,7 +174,6 @@ Codex
 - V1 readiness and `gateway_production_signer_ready` now share the signer policy result, and docs no longer imply a production software signing allowance.
 - Signer audit output includes mode, key reference, chain, intent, destination, decision, outcome, and correlation fields while filtering secret-like metadata values.
 - QA automation added metrics exposure coverage for the production software signer gate and unsupported signer mode audit/readiness tests.
-- Existing branch follow-ups retained and validated: 4.1 sweep/ledger review patches, tx-rescan deposit processing, TRON native log index normalization, and admin live-balance UI support.
 - Full `go test ./...` remains blocked by the local sandbox's TCP listen restriction for existing `httptest.NewServer` tests; story-scoped signer tests and targeted `go vet` passed.
 
 ### File List
