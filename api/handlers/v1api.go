@@ -677,6 +677,7 @@ func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
 // @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
+// @Param Idempotency-Key header string false "Idempotency key. If omitted, order_id is used within the domain scope."
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -708,6 +709,7 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 // @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
 // @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
 // @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
+// @Param Idempotency-Key header string false "Idempotency key. If omitted, order_id is used within the domain scope."
 // @Param payload body types.V1InvoiceRequest true "Invoice parameters"
 // @Success 201 {object} types.V1PaymentCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
@@ -998,16 +1000,19 @@ func HandleV1PaymentStatusTable(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
 
-		table := []fiber.Map{
-			{"status": "pending", "description": "Payment session created, waiting for asset selection."},
-			{"status": "awaiting_payment", "description": "Asset selected, waiting for blockchain deposit."},
-			{"status": "paid", "description": "Deposit confirmed on-chain. Payment complete."},
-			{"status": "expired", "description": "Payment window elapsed without deposit."},
-			{"status": "canceled", "description": "Manually canceled by the customer or merchant."},
-			{"status": "failed", "description": "Deposit detected but amount or confirmations did not match."},
-			{"status": "underpaid", "description": "Deposit amount is below the expected payment amount."},
-		}
-		return v1OK(c, fiber.Map{"statuses": table})
+		return v1OK(c, types.V1PaymentStatusTableData{Statuses: v1PaymentStatusTable()})
+	}
+}
+
+func v1PaymentStatusTable() []types.V1StatusTableItem {
+	return []types.V1StatusTableItem{
+		{Status: models.PaymentStatusPending, Description: "Payment session created, waiting for asset selection.", IsFinal: false},
+		{Status: models.PaymentStatusAwaitingPayment, Description: "Asset selected, waiting for blockchain deposit.", IsFinal: false},
+		{Status: models.PaymentStatusPaid, Description: "Deposit confirmed on-chain. Payment complete.", IsFinal: true},
+		{Status: models.PaymentStatusExpired, Description: "Payment window elapsed without deposit.", IsFinal: true},
+		{Status: models.PaymentStatusCanceled, Description: "Manually canceled by the customer or merchant.", IsFinal: true},
+		{Status: models.PaymentStatusFailed, Description: "Deposit detected but amount or confirmations did not match.", IsFinal: true},
+		{Status: models.PaymentStatusUnderpaid, Description: "Deposit amount is below the expected payment amount.", IsFinal: true},
 	}
 }
 

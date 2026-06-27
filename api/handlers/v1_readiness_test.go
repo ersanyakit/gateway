@@ -108,3 +108,53 @@ func TestV1ReadinessCountTotal(t *testing.T) {
 		t.Fatalf("total = %d, want 10", got)
 	}
 }
+
+func TestV1MigrationStrategyReadiness(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("ALLOW_AUTOMIGRATE_IN_PRODUCTION", "")
+	ok, _, err := v1MigrationStrategyReadiness()
+	if !ok || err != nil {
+		t.Fatalf("development migration readiness ok=%v err=%v, want ok", ok, err)
+	}
+
+	t.Setenv("APP_ENV", "production")
+	ok, _, err = v1MigrationStrategyReadiness()
+	if !ok || err != nil {
+		t.Fatalf("production with AutoMigrate disabled ok=%v err=%v, want ok", ok, err)
+	}
+
+	t.Setenv("ALLOW_AUTOMIGRATE_IN_PRODUCTION", "true")
+	ok, _, err = v1MigrationStrategyReadiness()
+	if ok || err == nil {
+		t.Fatalf("production AutoMigrate override ok=%v err=%v, want failure", ok, err)
+	}
+}
+
+func TestV1ProductionSignerReadiness(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SIGNER_MODE", "")
+	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "")
+	ok, _, err := v1ProductionSignerReadiness()
+	if !ok || err != nil {
+		t.Fatalf("development signer readiness ok=%v err=%v, want ok", ok, err)
+	}
+
+	t.Setenv("APP_ENV", "production")
+	ok, _, err = v1ProductionSignerReadiness()
+	if ok || err == nil {
+		t.Fatalf("production default software signer ok=%v err=%v, want failure", ok, err)
+	}
+
+	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "true")
+	ok, _, err = v1ProductionSignerReadiness()
+	if ok || err == nil {
+		t.Fatalf("production software signer override ok=%v err=%v, want failure", ok, err)
+	}
+
+	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "")
+	t.Setenv("SIGNER_MODE", "kms")
+	ok, _, err = v1ProductionSignerReadiness()
+	if ok || err == nil {
+		t.Fatalf("unimplemented external signer ok=%v err=%v, want failure", ok, err)
+	}
+}

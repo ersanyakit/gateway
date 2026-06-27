@@ -241,21 +241,21 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	for _, rpcURL := range r.chain.RPCs() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := r.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", r.chain.Name(), rpcURL, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -271,7 +271,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 
 		var rpcResp jsonRPCResponse
 		if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 		if rpcResp.Error != nil {
@@ -288,7 +288,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			return nil
 		}
 		if err := json.Unmarshal(rpcResp.Result, out); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 
@@ -319,21 +319,21 @@ func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCReques
 	for _, rpcURL := range r.chain.RPCs() {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := r.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", r.chain.Name(), rpcURL, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -360,7 +360,7 @@ func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCReques
 				}
 				continue
 			}
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s batch response decode failed: %w", r.chain.Name(), rpcURL, err)
 			continue
 		}
 		if len(rpcResponses) == 0 {

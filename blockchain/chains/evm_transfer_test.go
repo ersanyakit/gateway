@@ -1,8 +1,12 @@
 package chains
 
 import (
+	"context"
 	"encoding/hex"
+	"encoding/json"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -73,4 +77,42 @@ func TestEVMSignERC20UsesTrustWalletCore(t *testing.T) {
 	if len(tx.Data()) < 4 || hex.EncodeToString(tx.Data()[:4]) != "a9059cbb" {
 		t.Fatalf("unexpected ERC20 calldata: %x", tx.Data())
 	}
+}
+
+func TestDialFirstHealthyEVMRPCSkipsBrokenEndpoints(t *testing.T) {
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"temporarily unavailable"}`))
+	}))
+	defer broken.Close()
+
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID     any      `json:"id"`
+			Method string   `json:"method"`
+			Params []any    `json:"params"`
+			JSONRPC string  `json:"jsonrpc"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.Method != "eth_chainId" {
+			t.Fatalf("method = %s, want eth_chainId", req.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      req.ID,
+			"result":  "0x2105",
+		})
+	}))
+	defer good.Close()
+
+	client, err := dialFirstHealthyEVMRPC(context.Background(), []string{broken.URL, good.URL})
+	if err != nil {
+		t.Fatalf("dialFirstHealthyEVMRPC returned error: %v", err)
+	}
+	if client == nil {
+		t.Fatal("dialFirstHealthyEVMRPC returned nil client")
+	}
+	defer client.Close()
 }

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -20,6 +21,39 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	ethSDK "github.com/okx/go-wallet-sdk/coins/ethereum"
 )
+
+func dialFirstHealthyEVMRPC(ctx context.Context, rpcs []string) (*ethclient.Client, error) {
+	client, _, err := dialFirstHealthyEVMRPCWithURL(ctx, rpcs)
+	return client, err
+}
+
+func dialFirstHealthyEVMRPCWithURL(ctx context.Context, rpcs []string) (*ethclient.Client, string, error) {
+	var lastErr error
+	for _, rpcURL := range rpcs {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+
+		client, err := ethclient.DialContext(ctx, rpcURL)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		if _, err := client.ChainID(ctx); err != nil {
+			lastErr = err
+			client.Close()
+			continue
+		}
+
+		return client, rpcURL, nil
+	}
+	if lastErr != nil {
+		return nil, "", lastErr
+	}
+	return nil, "", errors.New("no RPC endpoint configured")
+}
 
 type EVMCompatibleChain struct {
 	blockchain.BaseChain
@@ -167,12 +201,15 @@ func (e *EVMCompatibleChain) BatchBalances(ctx context.Context, addresses []stri
 		return nil
 	}
 
-	client, err := ethclient.Dial(e.RPCHttp[0])
+	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, e.RPCHttp)
 	if err != nil {
 		log.Println("RPC dial error:", err)
 		return nil
 	}
 	defer client.Close()
+	if len(e.RPCHttp) > 0 && strings.TrimSpace(e.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(e.RPCHttp[0]) {
+		log.Printf("[%s] balance RPC failover selected %s\n", e.Name(), selectedRPC)
+	}
 
 	out := make([]models.BalanceResult, 0, len(addresses))
 	batchSize := 100

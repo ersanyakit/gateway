@@ -19,6 +19,37 @@ import (
 
 var DB *gorm.DB
 
+type requiredSchemaColumn struct {
+	table string
+	model any
+	field string
+}
+
+func normalizedAppEnv() string {
+	return strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+}
+
+func envBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func IsProductionEnv() bool {
+	return normalizedAppEnv() == "production"
+}
+
+func AllowAutoMigrateInProduction() bool {
+	return envBool("ALLOW_AUTOMIGRATE_IN_PRODUCTION")
+}
+
+func AutoMigrateEnabled() bool {
+	return !IsProductionEnv() || AllowAutoMigrateInProduction()
+}
+
 func EnableExtensions(ctx context.Context, db *gorm.DB, extensions map[string]string) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
@@ -77,16 +108,38 @@ func InitDB() error {
 }
 
 func Migrate(app *application.App) error {
+	ctx := context.Background()
+	if !AutoMigrateEnabled() {
+		log.Println("Migration: APP_ENV=production; AutoMigrate disabled. Schema must be managed by an external migration process.")
+		return VerifySchema(ctx, app.DB)
+	}
+	if IsProductionEnv() {
+		log.Println("Migration: WARNING AutoMigrate is enabled in production by ALLOW_AUTOMIGRATE_IN_PRODUCTION=true")
+	}
+
 	extensions := map[string]string{
 		"uuid-ossp": "public",
 	}
 
-	if err := EnableExtensions(context.Background(), app.DB, extensions); err != nil {
+	if err := EnableExtensions(ctx, app.DB, extensions); err != nil {
 		return err
 	}
 
-	err := app.DB.AutoMigrate(
+	err := app.DB.AutoMigrate(autoMigrateModels()...)
 
+	if err != nil {
+		return err
+	}
+
+	if err := VerifySchema(ctx, app.DB); err != nil {
+		return err
+	}
+
+	return ReconcileChainStates(ctx, app.DB)
+}
+
+func autoMigrateModels() []any {
+	return []any{
 		&models.ChainState{},
 		&models.Domain{},
 		&models.Merchant{},
@@ -96,6 +149,7 @@ func Migrate(app *application.App) error {
 		&models.Product{},
 		&models.PaymentSession{},
 		&models.IdempotencyKey{},
+		&models.MoneyEventOutbox{},
 		&models.WebhookDelivery{},
 		&models.SweepJob{},
 		&models.WithdrawalRequest{},
@@ -104,34 +158,45 @@ func Migrate(app *application.App) error {
 		&models.ReconciliationJob{},
 		&models.ActivityLog{},
 		&models.Admin{},
-	)
-
-	if err != nil {
-		return err
 	}
-
-	if err := VerifySchema(context.Background(), app.DB); err != nil {
-		return err
-	}
-
-	return ReconcileChainStates(context.Background(), app.DB)
 }
 
-func VerifySchema(ctx context.Context, db *gorm.DB) error {
-	requiredColumns := []struct {
-		table string
-		model any
-		field string
-	}{
+func requiredSchemaColumns() []requiredSchemaColumn {
+	return []requiredSchemaColumn{
+		{table: "chain_states", model: &models.ChainState{}, field: "ChainID"},
+		{table: "domains", model: &models.Domain{}, field: "ID"},
+		{table: "merchants", model: &models.Merchant{}, field: "ID"},
+		{table: "transactions", model: &models.Transaction{}, field: "UniqueHash"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "ID"},
+		{table: "wallets", model: &models.Wallet{}, field: "ID"},
+		{table: "products", model: &models.Product{}, field: "ID"},
+		{table: "payment_sessions", model: &models.PaymentSession{}, field: "ID"},
+		{table: "idempotency_keys", model: &models.IdempotencyKey{}, field: "Key"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "EventID"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "IdempotencyKey"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "PayloadJSON"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "Status"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ID"},
+		{table: "sweep_jobs", model: &models.SweepJob{}, field: "ID"},
+		{table: "withdrawal_requests", model: &models.WithdrawalRequest{}, field: "ID"},
+		{table: "refunds", model: &models.Refund{}, field: "ID"},
+		{table: "price_quotes", model: &models.PriceQuote{}, field: "ID"},
+		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, field: "ID"},
+		{table: "activity_logs", model: &models.ActivityLog{}, field: "ID"},
+		{table: "admins", model: &models.Admin{}, field: "ID"},
 		{table: "transactions", model: &models.Transaction{}, field: "WebhookLockedUntil"},
 		{table: "payment_sessions", model: &models.PaymentSession{}, field: "WebhookLockedUntil"},
 		{table: "admins", model: &models.Admin{}, field: "TOTPSecret"},
 	}
+}
+
+func VerifySchema(ctx context.Context, db *gorm.DB) error {
+	requiredColumns := requiredSchemaColumns()
 
 	migrator := db.WithContext(ctx).Migrator()
 	for _, column := range requiredColumns {
 		if !migrator.HasColumn(column.model, column.field) {
-			return fmt.Errorf("schema check failed: %s.%s is missing after AutoMigrate", column.table, column.field)
+			return fmt.Errorf("schema check failed: %s.%s is missing", column.table, column.field)
 		}
 	}
 	return nil

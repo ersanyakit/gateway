@@ -37,6 +37,11 @@ const docTemplate = `{
         },
         "/api/v1/common/balance": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns the ledger balance for each asset held under the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -58,16 +63,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/currencies": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists all supported crypto assets with chain, decimals, and logo URLs.",
                 "produces": [
                     "application/json"
@@ -89,16 +94,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/fiat-currencies": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists all fiat currencies accepted as payment amount denomination.",
                 "produces": [
                     "application/json"
@@ -120,16 +125,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/networks": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists all supported blockchain networks with chain IDs and logo URLs.",
                 "produces": [
                     "application/json"
@@ -151,16 +156,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/prices": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns current prices for all supported crypto assets in the requested fiat currency.",
                 "produces": [
                     "application/json"
@@ -197,12 +202,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/qrcode": {
@@ -257,6 +257,11 @@ const docTemplate = `{
         },
         "/api/v1/common/readiness": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Validates database access, chain registration, listener registration, live RPC access, and Trust Wallet Core HD wallet derivation.",
                 "produces": [
                     "application/json"
@@ -284,16 +289,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ReadinessResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/common/status": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns current operational status of the gateway.",
                 "produces": [
                     "application/json"
@@ -315,12 +320,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/assets": {
@@ -345,6 +345,11 @@ const docTemplate = `{
         },
         "/api/v1/payment/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates a hosted checkout payment session. Returns a checkout URL the customer visits to complete payment.",
                 "consumes": [
                     "application/json"
@@ -377,6 +382,12 @@ const docTemplate = `{
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key. If omitted, order_id is used within the domain scope.",
+                        "name": "Idempotency-Key",
+                        "in": "header"
                     },
                     {
                         "description": "Invoice parameters",
@@ -413,16 +424,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/currencies": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists all crypto currencies that can be accepted as payment.",
                 "produces": [
                     "application/json"
@@ -444,16 +455,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/history": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns paginated payment session history for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -506,16 +517,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/info": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Retrieves detailed payment session info by track_id (session token) or order_id.",
                 "produces": [
                     "application/json"
@@ -565,16 +576,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/static-address": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates a permanent deposit wallet for a user and asset scope. Subsequent calls with the same domain, product_id, user_id, chain, symbol, and token return the existing address.",
                 "consumes": [
                     "application/json"
@@ -637,16 +648,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/static-addresses": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists static deposit wallets under the authenticated API domain, optionally filtered by user_id.",
                 "produces": [
                     "application/json"
@@ -691,16 +702,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/statistics": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns count of payments grouped by status for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -722,16 +733,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/status-table": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns all possible payment statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
@@ -753,16 +764,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payment/white-label": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates a white label hosted checkout session. Identical to Generate Invoice but returns a branded URL.",
                 "consumes": [
                     "application/json"
@@ -795,6 +806,12 @@ const docTemplate = `{
                         "name": "X-Gateway-Signature",
                         "in": "header",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Idempotency key. If omitted, order_id is used within the domain scope.",
+                        "name": "Idempotency-Key",
+                        "in": "header"
                     },
                     {
                         "description": "Invoice parameters",
@@ -831,16 +848,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payout/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates a withdrawal (payout) request from the merchant's wallet to the specified address. Requires admin approval before execution.",
                 "consumes": [
                     "application/json"
@@ -903,16 +920,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payout/history": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns paginated payout (withdrawal) history for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -950,16 +967,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payout/info": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns details of a specific payout request by payout_id.",
                 "produces": [
                     "application/json"
@@ -1003,16 +1020,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/payout/status-table": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns all possible payout statuses with descriptions and whether each is a terminal state.",
                 "produces": [
                     "application/json"
@@ -1034,16 +1051,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/refund/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates a refund request for a paid payment. Provide payment_id OR order_id to identify the payment. Admin approval broadcasts the on-chain refund.",
                 "consumes": [
                     "application/json"
@@ -1106,16 +1123,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/refund/history": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns paginated refund requests for the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1153,16 +1170,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/refund/info": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns a refund request owned by the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1206,16 +1223,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/transaction/rescan": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Re-fetches a transaction from the selected blockchain and replays it through wallet matching, payment, ledger, and webhook processing.",
                 "consumes": [
                     "application/json"
@@ -1288,16 +1305,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/wallet/balance": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns ledger balances scoped to one wallet-provider wallet.",
                 "produces": [
                     "application/json"
@@ -1351,16 +1368,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/wallet/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Creates or returns a reusable multi-chain wallet for a merchant user. This endpoint is for wallet-provider integrations.",
                 "consumes": [
                     "application/json"
@@ -1423,16 +1440,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/wallet/info": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Returns a wallet by wallet_id, or by user_id plus optional product_id under the authenticated API domain.",
                 "produces": [
                     "application/json"
@@ -1486,16 +1503,16 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/api/v1/wallet/list": {
             "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
                 "description": "Lists wallet-provider wallets under the authenticated API domain, optionally filtered by user_id.",
                 "produces": [
                     "application/json"
@@ -1539,12 +1556,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.V1ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    }
-                ]
+                }
             }
         },
         "/auth/oidc/callback": {
@@ -2454,6 +2466,14 @@ const docTemplate = `{
         },
         "/payments/create": {
             "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    },
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "description": "Creates a checkout session for a merchant order and returns a hosted checkout URL.",
                 "consumes": [
                     "application/json"
@@ -2534,15 +2554,7 @@ const docTemplate = `{
                             "$ref": "#/definitions/types.ErrorResponse"
                         }
                     }
-                },
-                "security": [
-                    {
-                        "ApiKeyAuth": []
-                    },
-                    {
-                        "BearerAuth": []
-                    }
-                ]
+                }
             }
         }
     },
@@ -3378,14 +3390,22 @@ const docTemplate = `{
                 }
             }
         },
-        "types.V1PaymentStatusTableResponse": {
+        "types.V1PaymentStatusTableData": {
             "type": "object",
             "properties": {
-                "data": {
+                "statuses": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/types.V1StatusTableItem"
                     }
+                }
+            }
+        },
+        "types.V1PaymentStatusTableResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/types.V1PaymentStatusTableData"
                 },
                 "result": {
                     "type": "string",

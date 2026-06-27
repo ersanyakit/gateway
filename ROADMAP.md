@@ -51,6 +51,9 @@ Completed in this pass:
 - P0-20260626-2 partial: listeners now support explicit chain start block env vars (`CHAIN_<id>_START_BLOCK`, `<CHAIN_NAME>_START_BLOCK`, `START_BLOCK_<CHAIN_NAME>`, `CHAIN_START_BLOCK_DEFAULT`) instead of always jumping to safe/latest on first start.
 - P0-20260626-4 partial: same-chain/same-height block hash conflicts now mark old transactions as `reorged`, enqueue `transaction_reorged` webhooks, reverse linked ledger entries with idempotent `reorg_reversal` entries, fail linked paid sessions with correction webhooks, dead-letter pending sweep jobs, and open reconciliation jobs.
 - P2-20260626-3 partial: ledger invariant scanning now opens reconciliation jobs when a non-zero debit/credit imbalance is detected by idempotency key.
+- P1-20260626-1 partial: `APP_ENV=production` now disables startup `AutoMigrate` by default, runs schema verification instead, reports migration policy in readiness, and documents the versioned-migration launch requirement.
+- P0-20260626-8 partial: `/metrics` now exposes Prometheus-compatible gauges for webhook backlog, sweep backlog, reconciliation drift, chain worker/state lag, migration policy, and signer policy; production access requires `METRICS_BEARER_TOKEN`.
+- T1-4: `SECURITY.md` now documents secret handling, mnemonic/software-signer limits, production migration discipline, webhook egress, and launch gates.
 
 Still open:
 
@@ -58,6 +61,8 @@ Still open:
 - P0-20260626-3/P0-20260626-7: horizontal chain indexing and durable event bus are architectural work beyond the monolith worker patch.
 - P0-20260626-4: full reorg accounting still needs canonical parent/child block hash storage, proactive rollback-window scanning, and fork simulation tests.
 - P0-20260626-6/P1-20260626-4: advanced fee, nonce, UTXO, stuck transaction, RBF/CPFP, priority fee, and TRON resource policies are still open.
+- P1-20260626-1: production still needs actual versioned migration files/runner and rollback workflow; startup `AutoMigrate` is now guarded but not replaced by a full migration system.
+- P0-20260626-8: structured logs, traces, dashboards, alert rules, and SLO thresholds are still open beyond the `/metrics` baseline.
 - P2-20260626-2: custody policy platform remains open.
 
 Older audit sections below remain for historical continuity; some statuses may have changed after the latest implementation work.
@@ -90,7 +95,7 @@ Auditor: Senior payment systems architect / Go backend engineer
 | T1-1 | Encrypt TOTP secret in DB — wrap `SaveTOTPSecret` with `helpers.EncryptSecret`, decrypt on verify | `repositories/admin_repo.go:75` | ✅ Done |
 | T1-2 | Add CSRF tokens to all admin/merchant portal forms — use Fiber's built-in `csrf` middleware | `api/routes/routes.go`, all HTML templates | ❌ Open |
 | T1-3 | Remove hardcoded default admin credentials (`admin123`) — generate random password on first run | `main.go` | ✅ Done |
-| T1-4 | Document minimum mnemonic security — add `SECURITY.md` with env hardening guide; path toward KMS/Vault integration | `main.go`, `SECURITY.md` | ❌ Open |
+| T1-4 | Document minimum mnemonic security — add `SECURITY.md` with env hardening guide; path toward KMS/Vault integration | `main.go`, `SECURITY.md` | ✅ Done |
 | T1-5 | Fix bootstrap admin race condition — use transaction with count check instead of count-then-insert | `repositories/admin_repo.go` | ✅ Done |
 
 ---

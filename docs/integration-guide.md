@@ -14,7 +14,8 @@ auth_write_endpoints:
     X-API-Key: "<domain_api_key>"
     X-API-Secret: "<domain_api_secret>"
     X-Gateway-Timestamp: "<unix_seconds>"
-    X-Gateway-Signature: "sha256=<hmac_sha256_hex(timestamp + raw_body)>"
+    X-Gateway-Signature: "sha256=<hmac_sha256_hex(method + path/query + timestamp + raw body)>"
+  request_signature_payload: "METHOD\npath?query\ntimestamp\nraw_body"
 webhook:
   callback_model: "single callback URL per domain"
   configured_in: "merchant portal domain settings"
@@ -80,13 +81,19 @@ Before sending production traffic, call `GET /api/v1/common/readiness` with the 
 
 ### Signature Algorithm
 
+V1 request signing binds method, original path/query target, timestamp, and raw body.
+
 ```text
 timestamp = current unix timestamp in seconds
+METHOD = uppercase HTTP method, for example POST
+path_and_query = request path plus query string, for example /api/v1/payment/create
 body = exact raw JSON request body bytes
-message = timestamp + body
+message = METHOD + "\n" + path_and_query + "\n" + timestamp + "\n" + body
 signature = hex(HMAC_SHA256(api_secret, message))
 header = "sha256=" + signature
 ```
+
+For `POST /api/v1/payment/create`, the canonical prefix is `POST\n/api/v1/payment/create\n<timestamp>\n<body>`. If a signed endpoint includes query parameters, include them exactly as sent in `path_and_query`.
 
 The gateway accepts `X-Gateway-Signature` as either `sha256=<hex>` or `<hex>`.
 
@@ -95,11 +102,16 @@ The gateway accepts `X-Gateway-Signature` as either `sha256=<hex>` or `<hex>`.
 ```js
 import crypto from "crypto";
 
-function sign(apiSecret, body) {
+function sign(apiSecret, method, pathAndQuery, body) {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = crypto
     .createHmac("sha256", apiSecret)
+    .update(method.trim().toUpperCase())
+    .update("\n")
+    .update(pathAndQuery.trim())
+    .update("\n")
     .update(timestamp)
+    .update("\n")
     .update(body)
     .digest("hex");
 
@@ -137,7 +149,7 @@ Example:
 ```bash
 BODY='{"order_id":"ORDER-1001","amount":"25.00","currency":"USD","description":"Order #1001","user_id":"customer_42","success_url":"https://merchant.example.com/success","cancel_url":"https://merchant.example.com/cancel"}'
 TS="$(date +%s)"
-SIG="$(printf "%s%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$API_SECRET" -hex | awk '{print $2}')"
+SIG="$(printf "POST\n/api/v1/payment/create\n%s\n%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$API_SECRET" -hex | awk '{print $2}')"
 
 curl -X POST "$BASE_URL/api/v1/payment/create" \
   -H "Content-Type: application/json" \
@@ -145,6 +157,7 @@ curl -X POST "$BASE_URL/api/v1/payment/create" \
   -H "X-API-Secret: $API_SECRET" \
   -H "X-Gateway-Timestamp: $TS" \
   -H "X-Gateway-Signature: sha256=$SIG" \
+  -H "Idempotency-Key: ORDER-1001-create-v1" \
   --data "$BODY"
 ```
 
@@ -152,13 +165,35 @@ Response shape:
 
 ```json
 {
-  "success": true,
-  "payment_id": "uuid",
-  "session_token": "token",
-  "checkout_url": "https://gateway.example.com/checkout/token",
-  "status": "pending",
-  "expires_at": "2026-06-06T10:00:00Z",
-  "deposit_wallet": "uuid"
+  "result": "ok",
+  "data": {
+    "payment_id": "uuid",
+    "track_id": "uuid",
+    "session_token": "token",
+    "checkout_url": "https://gateway.example.com/checkout/token",
+    "status": "pending",
+    "expires_at": "2026-06-06T10:00:00Z",
+    "order_id": "ORDER-1001",
+    "amount": "25.00",
+    "currency": "USD",
+    "chain_id": 1,
+    "symbol": "USDT",
+    "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "decimals": 6,
+    "expected_amount_raw": "25000000",
+    "deposit_address": "0xDepositAddress"
+  }
+}
+```
+
+Send `Idempotency-Key` on create requests. If older client code still names this header `X-Idempotency-Key`, migrate it to `Idempotency-Key`; do not send both. A retry with the same key and identical payload returns the cached create response.
+
+Idempotency conflict example: reusing the same key with a different payload returns `409`:
+
+```json
+{
+  "result": "error",
+  "message": "idempotency key was already used with a different request"
 }
 ```
 
@@ -177,8 +212,10 @@ Request body:
 ```json
 {
   "user_id": "customer_42",
+  "product_id": "checkout",
   "chain_id": 1,
   "symbol": "USDT",
+  "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
   "label": "Main wallet"
 }
 ```
@@ -191,13 +228,19 @@ Response:
   "data": {
     "wallet_id": "uuid",
     "user_id": "customer_42",
+    "product_id": "static:1:USDT:token:0xdac17f958d2ee523a2206206994597c13d831ec7:product:checkout",
     "chain": "ethereum",
+    "chain_id": 1,
     "symbol": "USDT",
+    "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     "address": "0x...",
-    "label": "Main wallet"
+    "label": "Main wallet",
+    "created_at": "2026-06-26T12:00:00Z"
   }
 }
 ```
+
+Static addresses are deterministic inside the authenticated domain/product/user/asset scope. The asset scope is `chain_id`, `symbol`, and optional `token`; repeated calls for the same domain/product/user/asset return the existing address. Unsupported chains or assets return the V1 error envelope before wallet creation.
 
 Deposits to this address are detected by blockchain listeners and can generate transaction/payment webhooks depending on the matching flow.
 
@@ -257,7 +300,7 @@ GET /api/v1/payment/info?order_id=ORDER-1001
 GET /api/v1/payment/info?track_id=<session_token>
 ```
 
-Statuses:
+Payment info/history statuses:
 
 - `pending`
 - `awaiting_payment`
@@ -265,6 +308,62 @@ Statuses:
 - `expired`
 - `canceled`
 - `failed`
+- `underpaid`
+
+Checkout polling uses:
+
+```http
+GET /checkout/{token}/status.json
+```
+
+Example checkout status response:
+
+```json
+{
+  "success": true,
+  "status": "confirming",
+  "paid": false,
+  "payment_id": "uuid",
+  "tx_hash": "0xhash",
+  "success_path": "/checkout/token/return/success",
+  "cancel_path": "/checkout/token/cancel",
+  "payable": true,
+  "terminal": false
+}
+```
+
+Documented checkout status values:
+
+- `active`
+- `pending`
+- `confirming`
+- `paid`
+- `expired`
+- `canceled`
+- `failed`
+- `underpaid`
+
+```json
+["active", "pending", "confirming", "paid", "expired", "canceled", "failed", "underpaid"]
+```
+
+`payable` is false for terminal states or sessions that should not accept a new payment attempt. `terminal` is true for final payer-facing states such as `paid`, `expired`, `canceled`, `failed`, and `underpaid`.
+
+Terminal checkout example:
+
+```json
+{
+  "success": true,
+  "status": "paid",
+  "paid": true,
+  "payment_id": "uuid",
+  "tx_hash": "0xhash",
+  "success_path": "/checkout/token/return/success",
+  "cancel_path": "/checkout/token/cancel",
+  "payable": false,
+  "terminal": true
+}
+```
 
 Detected deposits are held behind a confirmation gate before a payment becomes `paid`. If a finalized deposit is later invalidated by a reorg, the gateway reverses the ledger entries, marks the transaction `reorged`, and emits correction webhooks when callback settings are configured.
 
@@ -402,6 +501,8 @@ The gateway re-fetches the transaction and replays wallet matching, payment matc
 
 The gateway uses one callback URL per domain. The merchant integration should route by `event_type` in the JSON body or by `X-Gateway-Event` header.
 
+The versioned money event catalog is maintained in `docs/money-event-catalog.md`. It maps current emitted names, legacy underscore aliases, and canonical dotted event names without replacing the examples below.
+
 Headers:
 
 ```text
@@ -467,6 +568,10 @@ Event example: `native_transfer`
 ```
 
 Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction_reorged` correction for the same transaction has a distinct idempotency key.
+
+The existing underscore webhook event names remain compatibility aliases until a versioned event catalog migration explicitly retires them.
+
+The full versioned money lifecycle catalog is documented in `docs/money-event-catalog.md`.
 
 ### Payment Webhook Payload
 
@@ -581,6 +686,10 @@ Merchant systems should store and deduplicate:
 
 Never fulfill an order based only on frontend return URLs. Always use webhook verification or server-side payment status query.
 
+## Contract Evidence - Epic 1
+
+Partner API Contract Evidence is in `docs/epic-1-integration-evidence.md`. It lists covered endpoints, auth modes, idempotency behavior, static wallet domain/product/user/asset scope, checkout state semantics, and known limitations for merchant/domain and tenant/domain isolation. Known production limitations are summarized below and expanded in the evidence file.
+
 ## Error Handling
 
 Common API errors:
@@ -588,9 +697,11 @@ Common API errors:
 ```json
 {
   "result": "error",
-  "error": "invalid request signature"
+  "message": "invalid request signature"
 }
 ```
+
+The same V1 envelope is used for validation failures, idempotency conflicts, unsupported assets, expired or unavailable sessions, and authorization failures. Error messages are category-level and must not expose API secrets, raw signatures, stack traces, or whether another tenant/domain owns a resource.
 
 Webhook delivery behavior:
 
@@ -607,3 +718,11 @@ Webhook delivery behavior:
 - Deduplicate webhook `event_id`.
 - Do not process unsigned callbacks.
 - Do not expose API secret in frontend code.
+
+## Known Production Limitations
+
+Epic 1 hardens partner intake, hosted checkout state, static address scope, idempotency, and integration evidence. It is controlled-launch evidence, not a claim of production custody or exchange-grade readiness.
+
+Production custody remains gated.
+
+Do not treat the gateway as production custody/exchange-ready until the external signer boundary, reconciliation jobs, ledger-derived balances, versioned migrations, observability/SLOs, backup/restore, compliance controls, and controlled launch gates are complete.
