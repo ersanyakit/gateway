@@ -580,12 +580,17 @@ definitions:
         example: ok
         type: string
     type: object
-  types.V1PaymentStatusTableResponse:
+  types.V1PaymentStatusTableData:
     properties:
-      data:
+      statuses:
         items:
           $ref: '#/definitions/types.V1StatusTableItem'
         type: array
+    type: object
+  types.V1PaymentStatusTableResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentStatusTableData'
       result:
         example: ok
         type: string
@@ -1363,6 +1368,11 @@ paths:
         name: X-Gateway-Signature
         required: true
         type: string
+      - description: Idempotency key. If omitted, order_id is used within the domain
+          scope.
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Invoice parameters
         in: body
         name: payload
@@ -1642,6 +1652,11 @@ paths:
         in: header
         name: X-Gateway-Signature
         required: true
+        type: string
+      - description: Idempotency key. If omitted, order_id is used within the domain
+          scope.
+        in: header
+        name: Idempotency-Key
         type: string
       - description: Invoice parameters
         in: body

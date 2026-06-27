@@ -279,8 +279,12 @@ type V1StatusTableItem struct {
 
 // V1PaymentStatusTableResponse is returned by GET /api/v1/payment/status-table.
 type V1PaymentStatusTableResponse struct {
-	Result string              `json:"result" example:"ok"`
-	Data   []V1StatusTableItem `json:"data"`
+	Result string                   `json:"result" example:"ok"`
+	Data   V1PaymentStatusTableData `json:"data"`
+}
+
+type V1PaymentStatusTableData struct {
+	Statuses []V1StatusTableItem `json:"statuses"`
 }
 
 // V1StaticAddressResponse is returned by POST /api/v1/payment/static-address.
