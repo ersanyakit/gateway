@@ -135,6 +135,7 @@ Codex
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Final validation rerun after JSONB default and evidence redaction assertion fixes passed: full `go test ./...`, full `go vet ./...`, and whitespace checks.
+- 2026-06-27: Added reserve scoped reconciliation Postgres coverage for job creation, active dedupe, evidence, affected ids, and tenant scope.
 
 ### Completion Notes List
 
@@ -145,6 +146,7 @@ Codex
 - Ledger invariant, reserve drift, and Story 3.5 reorg reconciliation producers now open scoped jobs with evidence and affected resource ids.
 - Repository helpers cover webhook drift and stuck lifecycle uncertainty scopes.
 - Metrics and V1 readiness include `needs_operator_action` and `retry_scheduled` reconciliation statuses.
+- Reserve reconciliation now has Postgres-backed coverage proving scoped job creation and dedupe behavior.
 
 ### File List
 
@@ -163,9 +165,11 @@ Codex
 - `services/database/database.go`
 - `services/database/database_test.go`
 - `services/reconciliation/reserve.go`
+- `services/reconciliation/reserve_test.go`
 
 ### Change Log
 
 - 2026-06-27: Created story with scoped reconciliation schema, dedupe, evidence, outcome, detector integration, and validation scope.
 - 2026-06-27: Implemented scoped reconciliation model, repository API, detector integrations, operator-visible statuses, tests, and validation; story moved to review.
 - 2026-06-27: Tightened JSONB defaults and sensitive evidence redaction tests, then reran Postgres, full regression, static, and whitespace validation.
+- 2026-06-27: Added reserve scoped reconciliation Postgres coverage for tenant/resource scope and active dedupe.
