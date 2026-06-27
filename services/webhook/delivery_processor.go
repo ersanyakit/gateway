@@ -62,6 +62,11 @@ type deliveryProcessorQueue struct {
 
 func (q deliveryProcessorQueue) ClaimDue(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
 	if queue, ok := q.queue.(interface {
+		ClaimDue(context.Context, int, time.Duration) ([]models.WebhookDelivery, error)
+	}); ok {
+		return queue.ClaimDue(ctx, limit, 0)
+	}
+	if queue, ok := q.queue.(interface {
 		ClaimDue(context.Context, int) ([]models.WebhookDelivery, error)
 	}); ok {
 		return queue.ClaimDue(ctx, limit)

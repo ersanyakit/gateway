@@ -719,23 +719,28 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 	bridgePendingTransactionWebhookDeliveries(ctx)
 	bridgePendingPaymentWebhookDeliveries(ctx)
 
-	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.DomainRepo == nil || notifier == nil {
 		return
 	}
+	router := coreApplication.CORE.Router
 	processor := webhooksvc.DeliveryProcessor{
-		DeliveryRepo: coreApplication.CORE.Router.WebhookDeliveryRepo,
+		DeliveryRepo: router.WebhookDeliveryRepo,
 		Notifier:     notifier,
 		DomainLookup: func(ctx context.Context, id uuid.UUID) (*models.Domain, error) {
 			idString := id.String()
-			return coreApplication.CORE.Router.DomainRepo.FindByID(types.DomainParams{
+			return router.DomainRepo.FindByID(types.DomainParams{
 				Context:  ctx,
 				DomainID: &idString,
 			})
 		},
-		TransactionLookup:      coreApplication.CORE.Router.TransactionRepo.FindByID,
-		PaymentLookup:          coreApplication.CORE.Router.PaymentRepo.FindByID,
-		MarkTransactionAttempt: coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt,
-		MarkPaymentAttempt:     coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt,
+	}
+	if router.TransactionRepo != nil {
+		processor.TransactionLookup = router.TransactionRepo.FindByID
+		processor.MarkTransactionAttempt = router.TransactionRepo.MarkWebhookAttempt
+	}
+	if router.PaymentRepo != nil {
+		processor.PaymentLookup = router.PaymentRepo.FindByID
+		processor.MarkPaymentAttempt = router.PaymentRepo.MarkWebhookAttempt
 	}
 	summary, err := processor.ProcessDue(ctx, 100)
 	if err != nil {
@@ -748,7 +753,7 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 }
 
 func bridgePendingTransactionWebhookDeliveries(ctx context.Context) {
-	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.TransactionRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.TransactionRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.WalletRepo == nil {
 		return
 	}
 	transactions, err := coreApplication.CORE.Router.TransactionRepo.ListPendingWebhooks(ctx, 100)

@@ -2,7 +2,7 @@
 story_id: "2.3"
 story_key: "2-3-deliver-webhooks-from-the-webhook-boundary"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
@@ -10,7 +10,7 @@ baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
 
 # Story 2.3: Deliver Webhooks from the Webhook Boundary
 
-Status: review
+Status: done
 
 ## Story
 
@@ -165,6 +165,12 @@ Codex
 - `go test -count=1 ./...`
 - `go vet ./...`
 - `git diff --check`
+- Code review patch: fixed `DeliveryProcessor` to support the production `WebhookDeliveryRepo.ClaimDue(ctx, limit, lockFor)` signature and added nil guards around retry worker repository dependencies.
+- Post-review validation: `go test -count=1 ./services/webhook ./repositories ./api/handlers` passed.
+- Post-review validation: `go test -count=1 ./workers/... ./docs ./constants` passed.
+- Post-review validation: `go test -count=1 ./...` passed.
+- Post-review validation: `go vet ./...` passed.
+- Post-review validation: `git diff --check` passed.
 
 ### Completion Notes List
 
@@ -172,6 +178,8 @@ Codex
 - Added transaction-safe due-claim leasing with `FOR UPDATE SKIP LOCKED`, retry eligibility filtering, failure category persistence, sanitized last-error storage, and max-attempt terminal handling.
 - Converted source money flows and admin test-deposit helpers to enqueue-only delivery behavior; explicit admin replay remains supported through the boundary path.
 - Added diagnostics redaction helpers and regression coverage for success, transient failure, timeout/permanent classification, backoff/claim behavior, callback validation/signing preservation, and no-inline source delivery.
+- Resolved code review finding by adapting the boundary processor to three-argument claim repositories and guarding nil retry-worker dependencies before constructing lookup callbacks.
+- Review fallback found and fixed a worker adapter mismatch so `DeliveryProcessor` supports the repository's claim-lock `ClaimDue(ctx, limit, lockFor)` signature.
 
 ### File List
 
@@ -201,3 +209,5 @@ Codex
 
 - 2026-06-27: Story created with Epic 2.3 acceptance criteria, webhook boundary guardrails, Story 2.1/2.2 learnings, and delivery/retry/redaction testing guidance.
 - 2026-06-27: Implemented webhook boundary delivery, due-claim leasing, enqueue-only source flows, sanitized diagnostics, validation tests, and moved story to review.
+- 2026-06-27: Addressed code review finding for production claim adapter compatibility and marked story done.
+- 2026-06-27: Fixed review-found `DeliveryProcessor` claim adapter mismatch and reran targeted/full validation.

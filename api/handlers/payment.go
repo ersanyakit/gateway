@@ -1420,7 +1420,9 @@ func deliverPaymentWebhook(ctx context.Context, deps PaymentHandlerDeps, session
 	defer cancel()
 	if deps.WebhookDeliveryRepo != nil {
 		if _, _, err := deps.WebhookDeliveryRepo.EnqueuePayment(deliveryCtx, session.Domain, *session); err != nil {
-			_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
+			if deps.PaymentRepo != nil {
+				_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
+			}
 		}
 	}
 }

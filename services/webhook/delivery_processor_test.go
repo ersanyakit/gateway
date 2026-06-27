@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
@@ -29,6 +30,30 @@ func (r *deliveryProcessorFakeRepo) ClaimDue(_ context.Context, _ int) ([]models
 func (r *deliveryProcessorFakeRepo) MarkAttempt(_ context.Context, id uuid.UUID, delivered bool, err error) error {
 	r.marks = append(r.marks, deliveryProcessorMark{id: id, delivered: delivered, err: err})
 	return nil
+}
+
+type deliveryProcessorLockingRepo struct {
+	rows      []models.WebhookDelivery
+	claimLock time.Duration
+}
+
+func (r *deliveryProcessorLockingRepo) ClaimDue(_ context.Context, _ int, lockFor time.Duration) ([]models.WebhookDelivery, error) {
+	r.claimLock = lockFor
+	return append([]models.WebhookDelivery(nil), r.rows...), nil
+}
+
+func (r *deliveryProcessorLockingRepo) MarkAttempt(context.Context, uuid.UUID, bool, error) error {
+	return nil
+}
+
+type deliveryProcessorThreeArgClaimRepo struct {
+	deliveryProcessorFakeRepo
+	claimLockSupported bool
+}
+
+func (r *deliveryProcessorThreeArgClaimRepo) ClaimDue(_ context.Context, _ int, _ time.Duration) ([]models.WebhookDelivery, error) {
+	r.claimLockSupported = true
+	return append([]models.WebhookDelivery(nil), r.rows...), nil
 }
 
 type deliveryProcessorFakeNotifier struct {
@@ -171,5 +196,40 @@ func TestDeliveryProcessorRecordsTransientFailure(t *testing.T) {
 	}
 	if !paymentMarkedFailure {
 		t.Fatal("payment source attempt was not marked failed")
+	}
+}
+
+func TestDeliveryProcessorSupportsLockingClaimRepos(t *testing.T) {
+	repo := &deliveryProcessorLockingRepo{}
+	processor := DeliveryProcessor{
+		DeliveryRepo: repo,
+		Notifier:     &deliveryProcessorFakeNotifier{},
+	}
+
+	stats, err := processor.ProcessDue(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Claimed != 0 {
+		t.Fatalf("stats = %#v", stats)
+	}
+	if repo.claimLock != 0 {
+		t.Fatalf("claim lock = %s, want repository default sentinel 0", repo.claimLock)
+	}
+}
+
+func TestDeliveryProcessorSupportsRepositoryClaimLockSignature(t *testing.T) {
+	repo := &deliveryProcessorThreeArgClaimRepo{}
+	processor := DeliveryProcessor{
+		DeliveryRepo: repo,
+		Notifier:     &deliveryProcessorFakeNotifier{},
+	}
+
+	stats, err := processor.ProcessDue(context.Background(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Claimed != 0 || !repo.claimLockSupported {
+		t.Fatalf("stats=%#v claimLockSupported=%v", stats, repo.claimLockSupported)
 	}
 }
