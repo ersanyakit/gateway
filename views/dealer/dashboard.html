@@ -2,7 +2,7 @@
   <header class="overflow-hidden rounded-[28px] border border-line bg-white/90 p-4 shadow-soft sm:p-5">
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
       <div class="min-w-0">
-        <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Merchant treasury</span>
+        <span class="inline-flex rounded-full border border-line bg-accent/5 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Merchant treasury</span>
         <h1 class="m-0 mt-3 max-w-4xl text-3xl font-black tracking-normal text-ink sm:text-4xl">Üye işyeri kasası</h1>
         <p class="m-0 mt-2 max-w-3xl text-sm leading-6 text-muted">Dashboard sadece merchant'ın biriken varlıklarını gösterir: hangi network, hangi asset, ne kadar bakiye.</p>
       </div>
@@ -50,7 +50,7 @@
     </div>
   </header>
 
-  <div class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/85 p-2 shadow-sm backdrop-blur">
+  <div class="sticky top-[73px] z-30 rounded-[24px] border border-line bg-white/92 p-2 shadow-sm backdrop-blur">
     <div class="flex gap-2 overflow-x-auto">
       <a class="dash-tab" href="{{.TreasuryURL}}" aria-selected="{{if eq .ActivePanel "treasury"}}true{{else}}false{{end}}">Treasury</a>
       <a class="dash-tab" href="{{.ActivityURL}}" aria-selected="{{if eq .ActivePanel "activity"}}true{{else}}false{{end}}">Activity</a>
