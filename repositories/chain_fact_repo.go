@@ -122,6 +122,36 @@ func (r *ChainFactRepo) RecordTransaction(ctx context.Context, eventType string,
 	return r.Record(ctx, &fact)
 }
 
+func (r *ChainFactRepo) FindByEventID(ctx context.Context, eventID string) (*models.ChainFact, error) {
+	if r == nil || r.db == nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	var fact models.ChainFact
+	if err := r.db.WithContext(ctx).First(&fact, "event_id = ?", strings.TrimSpace(eventID)).Error; err != nil {
+		return nil, err
+	}
+	return &fact, nil
+}
+
+func (r *ChainFactRepo) ListForDepositProcessing(ctx context.Context, limit int) ([]models.ChainFact, error) {
+	if r == nil || r.db == nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	var facts []models.ChainFact
+	err := r.db.WithContext(ctx).
+		Table("chain_facts").
+		Select("chain_facts.*").
+		Joins("LEFT JOIN deposits ON deposits.chain_fact_event_id = chain_facts.event_id").
+		Where("deposits.id IS NULL OR (deposits.status <> ? AND chain_facts.finalized = ?)", models.DepositStatusFinalized, true).
+		Order("chain_facts.created_at ASC").
+		Limit(limit).
+		Find(&facts).Error
+	return facts, err
+}
+
 func prepareChainFact(fact *models.ChainFact) (models.ChainFact, error) {
 	if fact == nil {
 		return models.ChainFact{}, invalidChainFact("record is nil")

@@ -44,6 +44,7 @@ type Router struct {
 	WalletRepo           *repositories.WalletRepo
 	ChainStateRepo       *repositories.ChainStateRepo
 	ChainFactRepo        *repositories.ChainFactRepo
+	DepositRepo          *repositories.DepositRepo
 	TransactionRepo      *repositories.TransactionRepo
 	PaymentRepo          *repositories.PaymentRepo
 	ProductRepo          *repositories.ProductRepo
@@ -139,6 +140,7 @@ func NewRouter(db *gorm.DB) *Router {
 
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
 	r.ChainFactRepo = repositories.NewChainFactRepo(r.db)
+	r.DepositRepo = repositories.NewDepositRepo(r.db)
 	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
 	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
 	r.ProductRepo = repositories.NewProductRepo(r.db)
@@ -187,6 +189,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Use("/merchant", portalCSRF)
 	r.fiber.Use("/admin", portalCSRF)
 
+	priceOracle := pricing.NewCoinGecko()
 	dealerDeps := handlers.DealerDeps{
 		MerchantService:     r.MerchantService,
 		DomainService:       r.DomainService,
@@ -204,7 +207,7 @@ func NewRouter(db *gorm.DB) *Router {
 		Blockchains:         r.blockchains,
 		TxRescanService:     func() *txrescan.Service { return r.TxRescanService },
 		Notifier:            webhooksvc.NewNotifier(),
-		PriceOracle:         pricing.NewCoinGecko(),
+		PriceOracle:         priceOracle,
 	}
 	registerMerchantPortal := func(prefix string) {
 		r.fiber.Get(prefix+"/login", handlers.HandleDealerLogin())
@@ -270,7 +273,7 @@ func NewRouter(db *gorm.DB) *Router {
 		ProductRepo:         r.ProductRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
-		PriceOracle:         pricing.NewCoinGecko(),
+		PriceOracle:         priceOracle,
 		Notifier:            webhooksvc.NewNotifier(),
 		PaymentHub:          r.PaymentHub,
 		IdempotencyRepo:     r.IdempotencyRepo,
@@ -302,7 +305,7 @@ func NewRouter(db *gorm.DB) *Router {
 		ReconciliationRepo:  r.ReconciliationRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
-		PriceOracle:         pricing.NewCoinGecko(),
+		PriceOracle:         priceOracle,
 		Notifier:            webhooksvc.NewNotifier(),
 		PaymentHub:          r.PaymentHub,
 		IdempotencyRepo:     r.IdempotencyRepo,

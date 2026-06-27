@@ -137,6 +137,31 @@ func TestChainFactBoundaryDocumentsIndexerContract(t *testing.T) {
 	}
 }
 
+func TestDepositFinalityBoundaryDocumentsSettlementGate(t *testing.T) {
+	docBytes, err := os.ReadFile("deposit-finality-boundary.md")
+	if err != nil {
+		t.Fatalf("read deposit finality boundary: %v", err)
+	}
+	doc := string(docBytes)
+	for _, token := range []string{
+		"Deposit processing consumes durable chain facts",
+		"listener path remains fact-only",
+		"chain fact event id as the stable idempotency key",
+		"unmatched without merchant, domain, or wallet identifiers",
+		"`pending` or `confirming`",
+		"`deposit.finalized.v1`",
+		"Bitcoin: 3 confirmations",
+		"Solana: 1 confirmation",
+		"TRON: 20 confirmations",
+		"EVM/default chains: 12 confirmations",
+		"must not mark payments paid",
+		"post available ledger entries",
+		"schedule sweep jobs",
+	} {
+		requireContains(t, doc, token)
+	}
+}
+
 func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
 	catalogBytes, err := os.ReadFile("money-event-catalog.md")
 	if err != nil {

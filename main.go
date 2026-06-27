@@ -6,6 +6,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
+	depositsvc "core/services/deposits"
 	"core/services/realtime"
 	reconsvc "core/services/reconciliation"
 	"core/services/txrescan"
@@ -81,6 +82,18 @@ func transactionFinalityInterval() time.Duration {
 	interval, err := time.ParseDuration(raw)
 	if err != nil || interval <= 0 {
 		return 20 * time.Second
+	}
+	return interval
+}
+
+func depositFactInterval() time.Duration {
+	raw := os.Getenv("DEPOSIT_FACT_INTERVAL")
+	if raw == "" {
+		return 10 * time.Second
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 10 * time.Second
 	}
 	return interval
 }
@@ -385,6 +398,62 @@ func finalizePendingTransactions(ctx context.Context, notifier *webhooksvc.Notif
 		handlePaymentDeposit(ctx, notifier, finalized)
 		enqueueSweepJob(ctx, finalized)
 	}
+}
+
+func processDepositFacts(ctx context.Context) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil {
+		return
+	}
+	router := coreApplication.CORE.Router
+	if router.ChainFactRepo == nil ||
+		router.ChainStateRepo == nil ||
+		router.DepositRepo == nil ||
+		router.WalletRepo == nil ||
+		router.TransactionRepo == nil {
+		return
+	}
+	service := depositsvc.New(depositsvc.Dependencies{
+		ChainFactRepo:   router.ChainFactRepo,
+		ChainStateRepo:  router.ChainStateRepo,
+		DepositRepo:     router.DepositRepo,
+		WalletRepo:      router.WalletRepo,
+		TransactionRepo: router.TransactionRepo,
+		PaymentRepo:     router.PaymentRepo,
+		LedgerRepo:      router.LedgerRepo,
+	}, chainConfirmationRequirement)
+	summary, err := service.ProcessBatch(ctx, 200)
+	if err != nil {
+		log.Println("Deposit fact processing error:", err)
+		return
+	}
+	if summary.FactsProcessed > 0 || summary.Finalized > 0 || summary.PaymentsSettled > 0 {
+		log.Printf(
+			"Deposit facts processed=%d created=%d matched=%d unmatched=%d finalized=%d transactions=%d payments=%d\n",
+			summary.FactsProcessed,
+			summary.DepositsCreated,
+			summary.Matched,
+			summary.Unmatched,
+			summary.Finalized,
+			summary.TransactionsRecorded,
+			summary.PaymentsSettled,
+		)
+	}
+}
+
+func startDepositFactWorker(ctx context.Context) {
+	processDepositFacts(ctx)
+	ticker := time.NewTicker(depositFactInterval())
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				processDepositFacts(ctx)
+			}
+		}
+	}()
 }
 
 func ensureMerchantReserveWallet(ctx context.Context, merchantID uuid.UUID) (*models.Wallet, error) {
@@ -1226,6 +1295,7 @@ func main() {
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)
 	go startTransactionFinalityWorker(mainCtx, webhookNotifier)
+	go startDepositFactWorker(mainCtx)
 	go startSweepJobWorker(mainCtx)
 	go startReconciliationWorker(mainCtx)
 	go startTransferFinalizationWorker(mainCtx)

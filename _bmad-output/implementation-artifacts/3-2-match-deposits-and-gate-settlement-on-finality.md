@@ -2,7 +2,7 @@
 story_id: "3.2"
 story_key: "3-2-match-deposits-and-gate-settlement-on-finality"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: in-progress
+status: review
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 93aace0
@@ -10,7 +10,7 @@ baseline_commit: 93aace0
 
 # Story 3.2: Match Deposits and Gate Settlement on Finality
 
-Status: in-progress
+Status: review
 
 ## Story
 
@@ -28,40 +28,40 @@ böylece payment ve wallet bakiyeleri zincir eventi yeterince guvenilir olmadan 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add deposit lifecycle ownership boundary (AC: 1, 2, 3)
-  - [ ] Add a narrow GORM `models.Deposit` or equivalent lifecycle model keyed by `chain_fact_event_id`.
-  - [ ] Store status, chain fact identity, wallet/merchant/domain when matched, observed address, chain/asset/amount/tx metadata, confirmations, required confirmations, finalized timestamp, and transaction unique hash when an adapter row is created.
-  - [ ] Allow unmatched facts to be recorded or counted without merchant/domain/wallet ids; do not leak tenant data for unknown addresses.
-  - [ ] Register the model and required columns/indexes in `services/database` GORM migration/schema verification.
+- [x] Task 1: Add deposit lifecycle ownership boundary (AC: 1, 2, 3)
+  - [x] Add a narrow GORM `models.Deposit` or equivalent lifecycle model keyed by `chain_fact_event_id`.
+  - [x] Store status, chain fact identity, wallet/merchant/domain when matched, observed address, chain/asset/amount/tx metadata, confirmations, required confirmations, finalized timestamp, and transaction unique hash when an adapter row is created.
+  - [x] Allow unmatched facts to be recorded or counted without merchant/domain/wallet ids; do not leak tenant data for unknown addresses.
+  - [x] Register the model and required columns/indexes in `services/database` GORM migration/schema verification.
 
-- [ ] Task 2: Consume chain facts outside the chain indexer path (AC: 1, 2, 3)
-  - [ ] Add repository/service helpers that process persisted `models.ChainFact` records idempotently.
-  - [ ] Use `WalletRepo.FindByChainAddress` and/or the existing address index pattern for ownership matching; do not duplicate address normalization rules.
-  - [ ] Keep `handleChainIndexerEvent` and the dispatcher subscriber fact-only; do not call payment, ledger, webhook, or sweep functions from the listener subscriber.
-  - [ ] Add a separate deposit worker/service entry point from `main.go` that can be retried safely after fact persistence.
+- [x] Task 2: Consume chain facts outside the chain indexer path (AC: 1, 2, 3)
+  - [x] Add repository/service helpers that process persisted `models.ChainFact` records idempotently.
+  - [x] Use `WalletRepo.FindByChainAddress` and/or the existing address index pattern for ownership matching; do not duplicate address normalization rules.
+  - [x] Keep `handleChainIndexerEvent` and the dispatcher subscriber fact-only; do not call payment, ledger, webhook, or sweep functions from the listener subscriber.
+  - [x] Add a separate deposit worker/service entry point from `main.go` that can be retried safely after fact persistence.
 
-- [ ] Task 3: Gate pending vs finalized settlement (AC: 3, 4)
-  - [ ] Convert matched facts to deterministic transaction lifecycle input only after wallet ownership is known.
-  - [ ] Before required chain confirmations/finality, keep payment unpaid and available ledger uncredited; pending/confirming state may be represented by deposit and/or transaction status.
-  - [ ] At finality, update deposit lifecycle to finalized and emit a `deposit.finalized.v1` money event through the existing Postgres outbox.
-  - [ ] If a minimal compatibility adapter calls existing transaction/payment/ledger helpers, it must run from the deposit boundary after finality gates and be idempotent.
+- [x] Task 3: Gate pending vs finalized settlement (AC: 3, 4)
+  - [x] Convert matched facts to deterministic transaction lifecycle input only after wallet ownership is known.
+  - [x] Before required chain confirmations/finality, keep payment unpaid and available ledger uncredited; pending/confirming state may be represented by deposit and/or transaction status.
+  - [x] At finality, update deposit lifecycle to finalized and emit a `deposit.finalized.v1` money event through the existing Postgres outbox.
+  - [x] If a minimal compatibility adapter calls existing transaction/payment/ledger helpers, it must run from the deposit boundary after finality gates and be idempotent.
 
-- [ ] Task 4: Add tests for matching, duplicates, finality gates, and source boundaries (AC: 1, 2, 3, 4, 5)
-  - [ ] Test matched chain fact creates/updates deposit lifecycle with tenant/wallet scope.
-  - [ ] Test unmatched chain fact creates no payment/ledger/webhook/sweep mutation and carries no tenant identifiers.
-  - [ ] Test duplicate chain fact/deposit processing no-ops by `chain_fact_event_id`.
-  - [ ] Test pending finality does not mark payment paid or post available ledger entries.
-  - [ ] Test finalized deposit emits `deposit.finalized.v1` outbox record and respects chain-specific confirmation thresholds.
-  - [ ] Add source contract tests proving chain indexer handler remains fact-only and deposit worker owns business mutation.
+- [x] Task 4: Add tests for matching, duplicates, finality gates, and source boundaries (AC: 1, 2, 3, 4, 5)
+  - [x] Test matched chain fact creates/updates deposit lifecycle with tenant/wallet scope.
+  - [x] Test unmatched chain fact creates no payment/ledger/webhook/sweep mutation and carries no tenant identifiers.
+  - [x] Test duplicate chain fact/deposit processing no-ops by `chain_fact_event_id`.
+  - [x] Test pending finality does not mark payment paid or post available ledger entries.
+  - [x] Test finalized deposit emits `deposit.finalized.v1` outbox record and respects chain-specific confirmation thresholds.
+  - [x] Add source contract tests proving chain indexer handler remains fact-only and deposit worker owns business mutation.
 
-- [ ] Task 5: Update evidence and story record (AC: 5)
-  - [ ] Update docs/evidence to describe chain fact -> deposit lifecycle -> finality gate -> outbox settlement flow.
-  - [ ] Targeted validation: `go test -count=1 ./repositories ./services/database ./services/deposits`.
-  - [ ] Boundary validation: `go test -count=1 . ./docs ./services/webhook`.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check && git diff --cached --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+- [x] Task 5: Update evidence and story record (AC: 5)
+  - [x] Update docs/evidence to describe chain fact -> deposit lifecycle -> finality gate -> outbox settlement flow.
+  - [x] Targeted validation: `go test -count=1 ./repositories ./services/database ./services/deposits`.
+  - [x] Boundary validation: `go test -count=1 . ./docs ./services/webhook`.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
 ## Dev Notes
 
@@ -110,16 +110,43 @@ Codex
 ### Debug Log References
 
 - 2026-06-27: Started dev-story implementation.
+- 2026-06-27: Added GORM deposit lifecycle model, repository, schema verification, and idempotent chain fact consumption.
+- 2026-06-27: Added deposit service/worker boundary using persisted chain facts, wallet ownership lookup, chain-specific finality, and finalized outbox event emission.
+- 2026-06-27: Added repository/source-contract/docs tests for matched, unmatched, duplicate, pending, finalized, and listener/deposit boundary behavior.
+- 2026-06-27: Validation passed: `go test -count=1 ./repositories ./services/database ./services/deposits`.
+- 2026-06-27: Validation passed: `go test -count=1 . ./docs ./services/webhook`.
+- 2026-06-27: Validation passed: `go test -count=1 ./...`.
+- 2026-06-27: Validation passed: `go vet ./...`.
+- 2026-06-27: Validation passed: `git diff --check`.
 
 ### Completion Notes List
 
-- Implementation in progress.
+- Implemented `models.Deposit` lifecycle records keyed by `chain_fact_event_id`, including matched tenant/wallet scope, unmatched reconciliation records without tenant leakage, finality fields, and transaction correlation.
+- Added `DepositRepo` and deposit service processing for durable `ChainFact` rows; the chain indexer remains fact-only while a separate worker owns deposit matching and settlement adapter execution.
+- Added finality gating so pending/confirming deposits can create pending transaction/ledger state but cannot mark payments paid or post available balance until required confirmations are met.
+- Finalized matched deposits emit `deposit.finalized.v1` through the existing Postgres money event outbox and then use idempotent transaction/payment/ledger compatibility helpers.
+- Updated documentation and contract tests for the chain fact -> deposit lifecycle -> finality gate -> outbox settlement flow.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-2-match-deposits-and-gate-settlement-on-finality.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `api/routes/routes.go`
+- `docs/deposit-finality-boundary.md`
+- `docs/integration_contract_test.go`
+- `main.go`
+- `main_chain_fact_contract_test.go`
+- `models/deposit.go`
+- `repositories/chain_fact_repo.go`
+- `repositories/deposit_repo.go`
+- `repositories/deposit_repo_test.go`
+- `repositories/payment_repo_test.go`
+- `services/database/database.go`
+- `services/database/outbox_schema_contract_test.go`
+- `services/deposits/service.go`
+- `services/deposits/service_test.go`
 
 ### Change Log
 
 - 2026-06-27: Story created from Epic 3.2 with FR13/FR14, architecture finality flow, 3.1 chain fact boundary, and current transaction/payment/ledger compatibility notes.
+- 2026-06-27: Implemented deposit lifecycle matching, finality-gated settlement boundary, GORM schema registration, docs, and validation tests.

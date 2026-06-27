@@ -1,6 +1,7 @@
 package main
 
 import (
+	"core/constants"
 	"os"
 	"strings"
 	"testing"
@@ -66,6 +67,67 @@ func TestMainDispatcherSubscriberAcksAfterChainFactPersistence(t *testing.T) {
 	}
 	if earlierAck := strings.Index(source[callIndex:callIndex+ackIndex], "event.Ack <-"); earlierAck != -1 {
 		t.Fatal("dispatcher subscriber must not ack before chain fact persistence completes")
+	}
+}
+
+func TestDepositFactWorkerOwnsDepositBoundary(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	source := string(sourceBytes)
+	for _, token := range []string{
+		"func startDepositFactWorker(",
+		"func processDepositFacts(",
+		"depositsvc.New(",
+		"service.ProcessBatch(ctx, 200)",
+	} {
+		if !strings.Contains(source, token) {
+			t.Fatalf("deposit boundary worker missing %q", token)
+		}
+	}
+	body := extractMainFunctionBody(t, source, "processDepositFacts")
+	for _, forbidden := range []string{
+		"PaymentRepo.MarkPaidByTransaction",
+		"LedgerRepo.",
+		"WebhookDeliveryRepo.",
+		"handleDepositWebhook",
+		"handlePaymentDeposit",
+		"enqueueSweepJob",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("deposit fact worker must not directly mutate settlement through %q", forbidden)
+		}
+	}
+}
+
+func TestChainConfirmationRequirementDefaults(t *testing.T) {
+	t.Setenv("FINALITY_CONFIRMATIONS_DEFAULT", "")
+	t.Setenv("CHAIN_0_CONFIRMATIONS", "")
+	t.Setenv("BITCOIN_CONFIRMATIONS", "")
+	t.Setenv("CHAIN_99999999_CONFIRMATIONS", "")
+	t.Setenv("SOLANA_CONFIRMATIONS", "")
+	t.Setenv("CHAIN_99999998_CONFIRMATIONS", "")
+	t.Setenv("TRON_CONFIRMATIONS", "")
+	t.Setenv("CHAIN_1_CONFIRMATIONS", "")
+	t.Setenv("ETHEREUM_CONFIRMATIONS", "")
+
+	cases := []struct {
+		name    string
+		chainID constants.ChainID
+		want    uint
+	}{
+		{name: "bitcoin", chainID: constants.Bitcoin, want: 3},
+		{name: "solana", chainID: constants.Solana, want: 1},
+		{name: "tron", chainID: constants.TRON, want: 20},
+		{name: "evm-default", chainID: constants.Ethereum, want: 12},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := chainConfirmationRequirement(tc.chainID); got != tc.want {
+				t.Fatalf("chainConfirmationRequirement(%d) = %d, want %d", tc.chainID, got, tc.want)
+			}
+		})
 	}
 }
 
