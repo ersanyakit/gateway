@@ -22,6 +22,7 @@ import (
 	"fmt"
 	htmltemplate "html/template"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"os"
@@ -688,7 +689,6 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 			}
 		}
-		var balances []models.DepositSummary
 		var ledgerBalances []repositories.LedgerBalanceRow
 		if deps.LedgerRepo != nil {
 			ledgerBalances, err = deps.LedgerRepo.MerchantBalances(c.Context(), merchant.ID)
@@ -696,15 +696,6 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 				data := dealerPageData("Üye işyeri paneli", "dashboard")
 				fillDealerMerchant(&data, merchant)
 				data.Error = "Ledger bakiyesi okunamadı: " + err.Error()
-				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
-			}
-		}
-		if len(ledgerBalances) == 0 {
-			balances, err = deps.TransactionRepo.MerchantDepositSummary(c.Context(), merchant.ID)
-			if err != nil {
-				data := dealerPageData("Üye işyeri paneli", "dashboard")
-				fillDealerMerchant(&data, merchant)
-				data.Error = "Bakiye özeti okunamadı: " + err.Error()
 				return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 			}
 		}
@@ -734,11 +725,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.Withdrawals = dealerWithdrawalViews(withdrawals)
 		data.Products = dealerProductViews(c, products)
 		data.Payments = dealerPaymentViews(c, payments)
-		if len(ledgerBalances) > 0 {
-			data.Balances = dealerLedgerBalanceViews(ledgerBalances, deps.AssetRegistry)
-		} else {
-			data.Balances = dealerBalanceViews(balances, deps.AssetRegistry)
-		}
+		data.Balances = dealerLedgerBalanceViews(ledgerBalances, deps.AssetRegistry)
 		data.Balances = dealerAllBalanceViews(deps.AssetRegistry, data.Balances)
 		enrichBalancesWithUSD(c.Context(), data.Balances, deps.PriceOracle)
 		data.ChainVaults = dealerChainVaultViews(data.Balances)
@@ -1785,7 +1772,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			if err != nil {
 				return renderAdminDashboardError(c, data, "Wallet listesi okunamadı", err)
 			}
-			balanceMap := buildWalletBalanceMap(c.Context(), deps.TransactionRepo, deps.AssetRegistry)
+			balanceMap := buildWalletBalanceMap(c.Context(), deps.LedgerRepo, rows, deps.AssetRegistry)
 			data.AdminWallets = dealerWalletViewsWithBalances(rows, balanceMap)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/wallets")
 
@@ -3706,21 +3693,76 @@ func dealerWalletViews(wallets []models.Wallet) []DealerWalletView {
 	return views
 }
 
-// buildWalletBalanceMap returns a map of walletID -> balance rows (one per chain+symbol).
-func buildWalletBalanceMap(ctx context.Context, txRepo *repositories.TransactionRepo, registry *asset.Registry) map[uuid.UUID][]DealerWalletBalanceRow {
-	rows, err := txRepo.AllWalletDeposits(ctx)
+// buildWalletBalanceMap returns ledger-derived balance rows keyed by wallet id.
+func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerRepo, wallets []models.Wallet, registry *asset.Registry) map[uuid.UUID][]DealerWalletBalanceRow {
 	result := make(map[uuid.UUID][]DealerWalletBalanceRow)
+	if ledgerRepo == nil || len(wallets) == 0 {
+		return result
+	}
+	walletIDs := make([]uuid.UUID, 0, len(wallets))
+	for _, wallet := range wallets {
+		walletIDs = append(walletIDs, wallet.ID)
+	}
+	rows, err := ledgerRepo.WalletBalancesByWalletIDs(ctx, walletIDs)
 	if err != nil {
 		return result
 	}
+	buckets := make(map[uuid.UUID]map[string]*DealerWalletBalanceRow)
+	lockedTotals := make(map[uuid.UUID]map[string]string)
+	order := make(map[uuid.UUID][]string)
 	for _, r := range rows {
-		display := formatTokenAmount(r.Deposited, r.Decimals)
-		result[r.WalletID] = append(result[r.WalletID], DealerWalletBalanceRow{
-			Chain:     chainLabel(constants.ChainID(r.ChainID)),
-			Symbol:    r.Symbol,
-			LogoURL:   registryLogoURL(registry, r.Symbol),
-			Deposited: display,
-		})
+		if r.WalletID == nil {
+			continue
+		}
+		walletID := *r.WalletID
+		token := ""
+		if r.Token != nil {
+			token = strings.ToLower(strings.TrimSpace(*r.Token))
+		}
+		key := fmt.Sprintf("%d:%s:%s", r.ChainID, strings.ToUpper(strings.TrimSpace(r.Symbol)), token)
+		if buckets[walletID] == nil {
+			buckets[walletID] = make(map[string]*DealerWalletBalanceRow)
+			lockedTotals[walletID] = make(map[string]string)
+		}
+		row := buckets[walletID][key]
+		if row == nil {
+			order[walletID] = append(order[walletID], key)
+			row = &DealerWalletBalanceRow{
+				Chain:   chainLabel(constants.ChainID(r.ChainID)),
+				Symbol:  r.Symbol,
+				LogoURL: registryLogoURL(registry, r.Symbol),
+			}
+			buckets[walletID][key] = row
+		}
+		display := formatTokenAmount(r.BalanceRaw, r.Decimals)
+		switch r.Account {
+		case models.LedgerAccountMerchantAvailable:
+			row.Available = display
+			row.Deposited = display
+		case models.LedgerAccountMerchantPending:
+			if row.Deposited == "" {
+				row.Deposited = display
+			}
+		case models.LedgerAccountWithdrawalTransit, models.LedgerAccountRefundTransit:
+			lockedTotals[walletID][key] = addTokenAmountRaw(lockedTotals[walletID][key], r.BalanceRaw)
+			row.Locked = formatTokenAmount(lockedTotals[walletID][key], r.Decimals)
+			if row.Deposited == "" {
+				row.Deposited = display
+			}
+		default:
+			if row.Deposited == "" {
+				row.Deposited = display
+			}
+		}
+	}
+	for walletID, keys := range order {
+		for _, key := range keys {
+			row := buckets[walletID][key]
+			if row.Deposited == "" {
+				row.Deposited = "0"
+			}
+			result[walletID] = append(result[walletID], *row)
+		}
 	}
 	return result
 }
@@ -4315,6 +4357,22 @@ func shortText(value string, prefix int, suffix int) string {
 		return value
 	}
 	return value[:prefix] + "..." + value[len(value)-suffix:]
+}
+
+func addTokenAmountRaw(current string, next string) string {
+	next = strings.TrimSpace(next)
+	if current == "" {
+		return next
+	}
+	left, ok := new(big.Int).SetString(strings.TrimSpace(current), 10)
+	if !ok {
+		return next
+	}
+	right, ok := new(big.Int).SetString(next, 10)
+	if !ok {
+		return current
+	}
+	return left.Add(left, right).String()
 }
 
 func formatTokenAmount(raw string, decimals uint8) string {
