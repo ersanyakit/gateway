@@ -304,20 +304,7 @@ func handleDepositWebhook(ctx context.Context, notifier *webhooksvc.Notifier, ev
 		return txModel, nil
 	}
 
-	go func() {
-		deliveryCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		deliveryID := createTransactionWebhookDelivery(deliveryCtx, wallet.Domain, *txModel)
-		err := notifier.Deliver(deliveryCtx, wallet.Domain, *txModel)
-		if err != nil {
-			fmt.Println("Webhook delivery error:", err)
-			markWebhookDeliveryAttempt(context.Background(), deliveryID, false, err)
-			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(context.Background(), uniqueHash, false, err)
-		} else {
-			markWebhookDeliveryAttempt(context.Background(), deliveryID, true, nil)
-			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(context.Background(), uniqueHash, true, nil)
-		}
-	}()
+	createTransactionWebhookDelivery(ctx, wallet.Domain, *txModel)
 
 	enqueueSweepJob(ctx, txModel)
 
@@ -557,20 +544,7 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		return
 	}
 
-	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	deliveryID := createPaymentWebhookDelivery(deliveryCtx, session.Domain, *session)
-	err = notifier.DeliverPayment(deliveryCtx, session.Domain, *session)
-	cancel()
-	if err != nil {
-		log.Println("Payment webhook delivery error:", err)
-		markWebhookDeliveryAttempt(ctx, deliveryID, false, err)
-		_ = coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
-		return
-	}
-	markWebhookDeliveryAttempt(ctx, deliveryID, true, nil)
-	if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
-		log.Println("Payment webhook mark delivered error:", err)
-	}
+	createPaymentWebhookDelivery(ctx, session.Domain, *session)
 }
 
 func postStaticAddressDepositAvailable(ctx context.Context, txModel *models.Transaction) {
@@ -742,6 +716,41 @@ func paymentRealtimeBroadcastEvent(session *models.PaymentSession) realtime.Paym
 }
 
 func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
+	bridgePendingTransactionWebhookDeliveries(ctx)
+	bridgePendingPaymentWebhookDeliveries(ctx)
+
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+		return
+	}
+	processor := webhooksvc.DeliveryProcessor{
+		DeliveryRepo: coreApplication.CORE.Router.WebhookDeliveryRepo,
+		Notifier:     notifier,
+		DomainLookup: func(ctx context.Context, id uuid.UUID) (*models.Domain, error) {
+			idString := id.String()
+			return coreApplication.CORE.Router.DomainRepo.FindByID(types.DomainParams{
+				Context:  ctx,
+				DomainID: &idString,
+			})
+		},
+		TransactionLookup:      coreApplication.CORE.Router.TransactionRepo.FindByID,
+		PaymentLookup:          coreApplication.CORE.Router.PaymentRepo.FindByID,
+		MarkTransactionAttempt: coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt,
+		MarkPaymentAttempt:     coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt,
+	}
+	summary, err := processor.ProcessDue(ctx, 100)
+	if err != nil {
+		log.Println("Webhook boundary delivery error:", err)
+		return
+	}
+	if summary.Claimed > 0 {
+		log.Printf("Webhook boundary delivered=%d failed=%d claimed=%d\n", summary.Delivered, summary.Failed, summary.Claimed)
+	}
+}
+
+func bridgePendingTransactionWebhookDeliveries(ctx context.Context) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.TransactionRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+		return
+	}
 	transactions, err := coreApplication.CORE.Router.TransactionRepo.ListPendingWebhooks(ctx, 100)
 	if err != nil {
 		log.Println("Pending webhook query error:", err)
@@ -760,25 +769,12 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 			continue
 		}
 
-		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		deliveryID := createTransactionWebhookDelivery(deliveryCtx, wallet.Domain, txModel)
-		err = notifier.Deliver(deliveryCtx, wallet.Domain, txModel)
-		cancel()
-
-		if err != nil {
-			log.Println("Webhook retry error:", err)
-			markWebhookDeliveryAttempt(ctx, deliveryID, false, err)
-			_ = coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, false, err)
-			continue
-		}
-
-		markWebhookDeliveryAttempt(ctx, deliveryID, true, nil)
-		if err := coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, true, nil); err != nil {
-			log.Println("Webhook mark delivered error:", err)
-		}
+		createTransactionWebhookDelivery(ctx, wallet.Domain, txModel)
 	}
+}
 
-	if coreApplication.CORE.Router.PaymentRepo == nil {
+func bridgePendingPaymentWebhookDeliveries(ctx context.Context) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.PaymentRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
 		return
 	}
 	sessions, err := coreApplication.CORE.Router.PaymentRepo.ListPendingWebhooks(ctx, 100)
@@ -787,50 +783,7 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 		return
 	}
 	for _, session := range sessions {
-		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		deliveryID := createPaymentWebhookDelivery(deliveryCtx, session.Domain, session)
-		err = notifier.DeliverPayment(deliveryCtx, session.Domain, session)
-		cancel()
-		if err != nil {
-			log.Println("Payment webhook retry error:", err)
-			markWebhookDeliveryAttempt(ctx, deliveryID, false, err)
-			_ = coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
-			continue
-		}
-		markWebhookDeliveryAttempt(ctx, deliveryID, true, nil)
-		if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
-			log.Println("Payment webhook mark delivered error:", err)
-		}
-	}
-
-	if coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.DomainRepo == nil {
-		return
-	}
-	deliveries, err := coreApplication.CORE.Router.WebhookDeliveryRepo.ListDueLifecycle(ctx, 100)
-	if err != nil {
-		log.Println("Pending lifecycle webhook query error:", err)
-		return
-	}
-	for _, delivery := range deliveries {
-		domain, err := findDomainForLifecycle(ctx, delivery.DomainID)
-		if err != nil {
-			log.Println("Lifecycle webhook domain lookup error:", err)
-			_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, false, err)
-			continue
-		}
-		eventVersion := delivery.EventVersion
-		if eventVersion == "" {
-			eventVersion = constants.WebhookEventVersionV1
-		}
-		deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		err = notifier.DeliverRaw(deliveryCtx, *domain, delivery.EventType, delivery.EventID, eventVersion, []byte(delivery.PayloadJSON))
-		cancel()
-		if err != nil {
-			log.Println("Lifecycle webhook retry error:", err)
-			_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, false, err)
-			continue
-		}
-		_ = coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, delivery.ID, true, nil)
+		createPaymentWebhookDelivery(ctx, session.Domain, session)
 	}
 }
 

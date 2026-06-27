@@ -186,7 +186,7 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, SanitizeDeliveryText(string(respBody)))
 	}
 
 	return nil
@@ -274,7 +274,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, SanitizeDeliveryText(string(respBody)))
 	}
 
 	return nil
@@ -322,7 +322,7 @@ func (n *Notifier) DeliverRaw(ctx context.Context, domain models.Domain, eventTy
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("webhook returned HTTP %d: %s", resp.StatusCode, SanitizeDeliveryText(string(respBody)))
 	}
 
 	return nil

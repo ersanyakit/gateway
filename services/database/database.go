@@ -131,17 +131,18 @@ func Migrate(app *application.App) error {
 		return err
 	}
 
-	err := app.DB.AutoMigrate(autoMigrateModels()...)
-
-	if err != nil {
-		return err
-	}
-
-	if err := VerifySchema(ctx, app.DB); err != nil {
+	if err := ApplyGORMMigrations(ctx, app.DB); err != nil {
 		return err
 	}
 
 	return ReconcileChainStates(ctx, app.DB)
+}
+
+func ApplyGORMMigrations(ctx context.Context, db *gorm.DB) error {
+	if err := db.WithContext(ctx).AutoMigrate(autoMigrateModels()...); err != nil {
+		return err
+	}
+	return VerifySchema(ctx, db)
 }
 
 func autoMigrateModels() []any {
@@ -183,6 +184,7 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "PayloadJSON"},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "Status"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ID"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "FailureCategory"},
 		{table: "sweep_jobs", model: &models.SweepJob{}, field: "ID"},
 		{table: "withdrawal_requests", model: &models.WithdrawalRequest{}, field: "ID"},
 		{table: "refunds", model: &models.Refund{}, field: "ID"},

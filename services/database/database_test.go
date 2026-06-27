@@ -87,6 +87,12 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 	}
 }
 
+func TestApplyGORMMigrationsEntrypointExists(t *testing.T) {
+	if reflect.ValueOf(ApplyGORMMigrations).IsNil() {
+		t.Fatal("ApplyGORMMigrations must be available for GORM-managed migration jobs")
+	}
+}
+
 func autoMigrateModelsIncludes(want any) bool {
 	wantType := reflect.TypeOf(want)
 	for _, model := range autoMigrateModels() {

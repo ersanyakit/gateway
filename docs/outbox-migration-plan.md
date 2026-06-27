@@ -1,65 +1,69 @@
-# Money Event Outbox Migration Plan
+# Money Event Outbox GORM Migration Plan
 
-Bu plan `money_event_outboxes` tablosunu durable money lifecycle event kaydi icin tanimlar. Startup `AutoMigrate` sadece development kolayligidir; production migration mekanizmasi degildir.
+Bu plan `money_event_outboxes` tablosunu durable money lifecycle event kaydi icin GORM ile yonetir. Migration kaynagi raw SQL DDL degil, `models.MoneyEventOutbox` GORM tag'leri, `services/database.autoMigrateModels`, `services/database.ApplyGORMMigrations`, ve `services/database.VerifySchema` kontrolleridir.
 
-## Ileri Migration
+## GORM Migration Entry Point
 
-Money event outbox satiri yazan kod production'a alinmadan once bu DDL production migration sureciyle uygulanmalidir.
+Production migration job'u uygulama startup path'inden ayri calismalidir ve GORM entrypoint'ini cagirmalidir:
 
-```sql
-CREATE TABLE IF NOT EXISTS money_event_outboxes (
-    id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
-    event_id varchar(256) NOT NULL,
-    event_type varchar(120) NOT NULL,
-    event_version varchar(16) NOT NULL DEFAULT 'v1',
-    aggregate_type varchar(64) NOT NULL,
-    aggregate_id varchar(256) NOT NULL,
-    merchant_id uuid NOT NULL,
-    domain_id uuid NOT NULL,
-    idempotency_key varchar(256) NOT NULL,
-    payload_json jsonb NOT NULL,
-    status varchar(32) NOT NULL DEFAULT 'pending',
-    attempts bigint NOT NULL DEFAULT 0,
-    locked_until timestamptz NULL,
-    last_error text NOT NULL DEFAULT '',
-    created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT money_event_outboxes_payload_object_check
-        CHECK (jsonb_typeof(payload_json) = 'object')
-);
+```go
+ctx := context.Background()
+db := openProductionGORMConnection()
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_money_event_outboxes_event_id
-    ON money_event_outboxes (event_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_money_event_outboxes_idempotency_scope
-    ON money_event_outboxes (merchant_id, domain_id, idempotency_key);
-
-CREATE INDEX IF NOT EXISTS idx_money_event_outboxes_event_type
-    ON money_event_outboxes (event_type);
-
-CREATE INDEX IF NOT EXISTS idx_money_event_outboxes_status
-    ON money_event_outboxes (status);
-
-CREATE INDEX IF NOT EXISTS idx_money_event_outboxes_locked_until
-    ON money_event_outboxes (locked_until);
-
-CREATE INDEX IF NOT EXISTS idx_money_event_outbox_aggregate
-    ON money_event_outboxes (aggregate_type, aggregate_id);
+if err := database.EnableExtensions(ctx, db, map[string]string{"uuid-ossp": "public"}); err != nil {
+    return err
+}
+if err := database.ApplyGORMMigrations(ctx, db); err != nil {
+    return err
+}
 ```
 
-## Deployment Notlari
+`ApplyGORMMigrations` sirasiyla:
 
-- Live webhook delivery halen `webhook_deliveries` kullanirken bu migration uygulanabilir; Story 2.2 sadece durable event substrate olusturur.
-- `APP_ENV=production` ortaminda `ALLOW_AUTOMIGRATE_IN_PRODUCTION` set edilmemelidir; `VerifySchema` disaridan yonetilen schemayi dogrular.
-- Table DDL uygulanmadan once `uuid-ossp` extension'inin mevcut oldugu dogrulanmalidir.
-- Bu story icin historical backfill gerekmez.
+- `db.WithContext(ctx).AutoMigrate(autoMigrateModels()...)` ile GORM model migration'larini uygular.
+- `VerifySchema(ctx, db)` ile zorunlu kolon ve index'leri GORM `Migrator` uzerinden dogrular.
 
-## Rollback
+## GORM Model Source Of Truth
 
-Rollback sadece production write baslamadan once gecerlidir:
+`models.MoneyEventOutbox` su sozlesmenin kaynak modelidir:
 
-```sql
-DROP TABLE IF EXISTS money_event_outboxes;
+| Field | GORM-managed contract |
+| --- | --- |
+| `EventID` | `money_event_outboxes.event_id`, unique index `ux_money_event_outboxes_event_id`. |
+| `EventType` | `money_event_outboxes.event_type`, indexed event name. |
+| `EventVersion` | `money_event_outboxes.event_version`, version string such as `v1`. |
+| `AggregateType` | `money_event_outboxes.aggregate_type`, indexed aggregate family. |
+| `AggregateID` | `money_event_outboxes.aggregate_id`, indexed aggregate/resource id. |
+| `MerchantID` | `money_event_outboxes.merchant_id`, scoped idempotency index component. |
+| `DomainID` | `money_event_outboxes.domain_id`, scoped idempotency index component. |
+| `IdempotencyKey` | `money_event_outboxes.idempotency_key`, scoped idempotency index component. |
+| `PayloadJSON` | `money_event_outboxes.payload_json`, JSONB payload field. |
+| `Status` | `money_event_outboxes.status`, indexed outbox state. |
+| `Attempts` | `money_event_outboxes.attempts`, attempt counter. |
+| `LockedUntil` | `money_event_outboxes.locked_until`, future worker lock index. |
+| `LastError` | `money_event_outboxes.last_error`, bounded failure summary. |
+| `CreatedAt` | `money_event_outboxes.created_at`, GORM-managed creation timestamp. |
+| `UpdatedAt` | `money_event_outboxes.updated_at`, GORM-managed update timestamp. |
+
+Required GORM-managed indexes:
+
+- `ux_money_event_outboxes_event_id`
+- `ux_money_event_outboxes_idempotency_scope`
+
+## Deployment Notes
+
+- `APP_ENV=production` startup must keep automatic app startup migration disabled unless an operator intentionally sets `ALLOW_AUTOMIGRATE_IN_PRODUCTION=true`.
+- The production migration pipeline should call `ApplyGORMMigrations` explicitly, then start the application with schema verification only.
+- `VerifySchema` must fail startup if required outbox columns or unique indexes are missing.
+- Existing `webhook_deliveries` behavior remains live while Story 2.3 moves delivery behind the webhook boundary.
+- GORM does not automatically drop fields on rollback. Rollback means disabling the writer code path or deploying the prior application version while preserving durable event history.
+
+## Verification
+
+Run:
+
+```bash
+go test -count=1 ./services/database ./docs
 ```
 
-Write basladiktan sonra tablo drop edilmemeli; event history korunmali ve gerekiyorsa writer code path'i kapatilmalidir.
+The docs contract intentionally rejects raw SQL migration instructions here. Outbox schema drift should be expressed through GORM model tags and `VerifySchema` checks.

@@ -113,6 +113,35 @@ func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 	}
 }
 
+func TestNotifierDeliveryErrorRedactsCallbackBody(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       io.NopCloser(strings.NewReader(`{"webhook_secret":"plain","raw_signature":"abc"}`)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverRaw(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, "evt", "evt-1", "v1", []byte(`{"ok":true}`))
+	if err == nil {
+		t.Fatal("non-2xx should fail")
+	}
+	if strings.Contains(err.Error(), "webhook_secret") || strings.Contains(err.Error(), "raw_signature") {
+		t.Fatalf("error leaked sensitive body: %v", err)
+	}
+}
+
 func TestNotifierDeliverRawSignsAndPostsLifecycle(t *testing.T) {
 	t.Setenv("MASTER_KEY", "webhook-test-master-key")
 	t.Setenv("APP_ENV", "test")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"strings"
 
@@ -119,6 +120,7 @@ func (s *ReserveService) RunOnce(ctx context.Context, limit int) (ReserveReport,
 			result, ok := balanceResultForAddress(results, address)
 			if !ok {
 				report.QueryErrors++
+				log.Printf("[reserve] balance query returned no result chain=%d merchant=%s address=%s\n", chainID, wallet.MerchantID, address)
 				created, createErr := s.openJob(ctx, chainID, "no_result", wallet.MerchantID, "")
 				if createErr != nil {
 					errs = append(errs, createErr)
@@ -130,6 +132,7 @@ func (s *ReserveService) RunOnce(ctx context.Context, limit int) (ReserveReport,
 			}
 			if result.Error != nil {
 				report.QueryErrors++
+				log.Printf("[reserve] balance query failed chain=%d merchant=%s address=%s err=%v\n", chainID, wallet.MerchantID, address, result.Error)
 				created, createErr := s.openJob(ctx, chainID, "query_failed", wallet.MerchantID, "")
 				if createErr != nil {
 					errs = append(errs, createErr)

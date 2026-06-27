@@ -139,8 +139,19 @@ func TestMoneyEventOutboxMigrationPlanDocumentsSchema(t *testing.T) {
 		"ux_money_event_outboxes_event_id",
 		"ux_money_event_outboxes_idempotency_scope",
 		"AutoMigrate",
+		"ApplyGORMMigrations",
+		"GORM",
+		"Migrator",
 	} {
 		requireContains(t, plan, token)
+	}
+	for _, forbidden := range []string{
+		"CREATE TABLE",
+		"CREATE UNIQUE INDEX",
+		"DROP TABLE",
+		"```sql",
+	} {
+		requireNotContains(t, plan, forbidden)
 	}
 }
 

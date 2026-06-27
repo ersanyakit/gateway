@@ -77,6 +77,7 @@ boylece process crash olsa bile event delivery kaybolmaz, replay edilebilir ve d
 
 - [x] [Review][Patch] Require object payloads for outbox JSON validation [repositories/money_event_outbox_repo.go:253] — fixed by rejecting primitive JSON payloads and adding regression coverage.
 - [x] [Review][Patch] Verify outbox unique indexes during production schema checks [services/database/database.go:193] — fixed by adding required index verification and schema tests.
+- [x] [User][Patch] Migration guidance must be GORM-based, not raw SQL DDL — fixed by adding `ApplyGORMMigrations`, converting `docs/outbox-migration-plan.md` to GORM model/tag guidance, and adding docs contract coverage that rejects raw SQL DDL instructions.
 
 ## Dev Notes
 
@@ -183,12 +184,13 @@ Codex
 - Post-review validation: `go test -count=1 ./...` passed.
 - Post-review validation: `go vet ./...` passed.
 - Post-review validation: `git diff --check` passed.
+- User follow-up: converted outbox migration plan from raw SQL DDL to GORM-managed migration guidance.
 
 ### Implementation Plan
 
 - Add `models.MoneyEventOutbox` as the durable event substrate, separate from `webhook_deliveries`.
 - Add `repositories.MoneyEventOutboxRepo` with caller-owned `*gorm.DB` support, canonical JSON payload validation, duplicate no-op semantics, and explicit conflict detection.
-- Register outbox schema in development migration/schema verification and publish production DDL guidance under `docs/outbox-migration-plan.md`.
+- Register outbox schema in development migration/schema verification and publish GORM-managed production migration guidance under `docs/outbox-migration-plan.md`.
 - Preserve existing live webhook delivery behavior for Story 2.3; this story creates persistence substrate and tests.
 
 ### Completion Notes List
@@ -199,6 +201,7 @@ Codex
 - Added unit/docs/schema tests plus optional Postgres integration coverage for commit, rollback, duplicate, and conflict semantics when a test DSN is available.
 - Resolved code review finding by requiring outbox payload JSON to be an object instead of allowing primitive JSON values.
 - Resolved code review finding by making production schema verification fail if the outbox unique indexes are missing.
+- Resolved user follow-up by making outbox migration guidance GORM-based through `ApplyGORMMigrations`, GORM model tags, and `VerifySchema`/`Migrator` checks instead of raw SQL DDL.
 
 ### File List
 
@@ -219,3 +222,4 @@ Codex
 - 2026-06-27: Implemented durable money event outbox schema, repository boundary, migration plan, schema/docs tests, and validation evidence.
 - 2026-06-27: Addressed code review finding for primitive payload JSON validation and marked story done.
 - 2026-06-27: Addressed code review finding for production outbox unique index verification.
+- 2026-06-27: Addressed user follow-up requiring GORM-based migrations instead of raw SQL migration instructions.

@@ -753,10 +753,12 @@ func (r *fakePaymentWalletRepo) EnsureAllAddresses(context.Context, uuid.UUID, *
 }
 
 type fakePaymentSessionRepo struct {
-	createCalls int
-	selectCalls int
-	sessions    []*models.PaymentSession
-	quotes      []*models.PriceQuote
+	createCalls        int
+	selectCalls        int
+	markWebhookCalls   int
+	markWebhookSuccess bool
+	sessions           []*models.PaymentSession
+	quotes             []*models.PriceQuote
 }
 
 func (r *fakePaymentSessionRepo) Create(_ context.Context, session *models.PaymentSession) error {
@@ -832,8 +834,58 @@ func (r *fakePaymentSessionRepo) DB() *gorm.DB {
 	return nil
 }
 
-func (r *fakePaymentSessionRepo) MarkWebhookAttempt(context.Context, uuid.UUID, bool, error) error {
+func (r *fakePaymentSessionRepo) MarkWebhookAttempt(_ context.Context, _ uuid.UUID, delivered bool, _ error) error {
+	r.markWebhookCalls++
+	r.markWebhookSuccess = delivered
 	return nil
+}
+
+type fakePaymentWebhookDeliveryRepo struct {
+	enqueueCalls int
+	markCalls    int
+}
+
+func (r *fakePaymentWebhookDeliveryRepo) EnqueuePayment(context.Context, models.Domain, models.PaymentSession) (*models.WebhookDelivery, bool, error) {
+	r.enqueueCalls++
+	return &models.WebhookDelivery{ID: uuid.New()}, true, nil
+}
+
+func (r *fakePaymentWebhookDeliveryRepo) MarkAttempt(context.Context, uuid.UUID, bool, error) error {
+	r.markCalls++
+	return nil
+}
+
+func TestDeliverPaymentWebhookQueuesWithoutInlineNotifier(t *testing.T) {
+	paymentRepo := &fakePaymentSessionRepo{}
+	deliveryRepo := &fakePaymentWebhookDeliveryRepo{}
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		MerchantID:   uuid.New(),
+		DomainID:     uuid.New(),
+		WalletID:     uuid.New(),
+		WebhookEvent: constants.WebhookEventPaymentSucceeded,
+		Domain: models.Domain{
+			ID:         uuid.New(),
+			MerchantID: uuid.New(),
+			WebhookURL: "http://127.0.0.1/webhook",
+		},
+	}
+
+	deliverPaymentWebhook(context.Background(), PaymentHandlerDeps{
+		PaymentRepo:         paymentRepo,
+		WebhookDeliveryRepo: deliveryRepo,
+		Notifier:            nil,
+	}, session)
+
+	if deliveryRepo.enqueueCalls != 1 {
+		t.Fatalf("enqueue calls = %d, want 1", deliveryRepo.enqueueCalls)
+	}
+	if deliveryRepo.markCalls != 0 {
+		t.Fatalf("delivery mark calls = %d, want 0 before boundary delivery", deliveryRepo.markCalls)
+	}
+	if paymentRepo.markWebhookCalls != 0 {
+		t.Fatalf("payment webhook mark calls = %d, want 0 before boundary delivery", paymentRepo.markWebhookCalls)
+	}
 }
 
 type fakePaymentIdempotencyRepo struct {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type WebhookDeliveryRepo struct {
@@ -160,6 +161,7 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		updates["status"] = models.WebhookDeliveryStatusSucceeded
 		updates["delivered_at"] = &now
 		updates["last_error"] = ""
+		updates["failure_category"] = ""
 		updates["next_retry_at"] = nil
 	} else {
 		status := models.WebhookDeliveryStatusFailed
@@ -168,7 +170,8 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		}
 		updates["status"] = status
 		if lastErr != nil {
-			updates["last_error"] = lastErr.Error()
+			updates["last_error"] = webhooksvc.SanitizeDeliveryError(lastErr)
+			updates["failure_category"] = webhooksvc.FailureCategory(lastErr)
 		}
 		if status == models.WebhookDeliveryStatusDeadLetter {
 			updates["next_retry_at"] = nil
@@ -187,22 +190,61 @@ func webhookMaxAttempts() uint {
 	return uintFromEnv("WEBHOOK_MAX_ATTEMPTS", 8)
 }
 
-func (r *WebhookDeliveryRepo) ListDueLifecycle(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
+func webhookDeliveryClaimTimeout() time.Duration {
+	return durationFromEnv("WEBHOOK_DELIVERY_CLAIM_TIMEOUT", 2*time.Minute)
+}
+
+func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Duration) ([]models.WebhookDelivery, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	now := time.Now()
 	var rows []models.WebhookDelivery
-	err := r.db.WithContext(ctx).
-		Where("payment_id IS NULL").
-		Where("transaction_id IS NULL").
-		Where("payload_json <> ''").
-		Where("status IN ?", []string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed}).
-		Where("next_retry_at IS NULL OR next_retry_at <= ?", now).
-		Order("updated_at ASC").
-		Limit(limit).
-		Find(&rows).Error
+	lockDuration := webhookDeliveryClaimTimeout()
+	if lockFor > 0 {
+		lockDuration = lockFor
+	}
+	lockUntil := now.Add(lockDuration)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where(
+				"(status IN ? AND (next_retry_at IS NULL OR next_retry_at <= ?)) OR (status = ? AND next_retry_at <= ?)",
+				[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed},
+				now,
+				models.WebhookDeliveryStatusProcessing,
+				now,
+			).
+			Order("updated_at ASC").
+			Limit(limit).
+			Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(rows))
+		for i := range rows {
+			rows[i].Status = models.WebhookDeliveryStatusProcessing
+			rows[i].NextRetryAt = &lockUntil
+			ids = append(ids, rows[i].ID)
+		}
+		if err := tx.Model(&models.WebhookDelivery{}).
+			Where("id IN ?", ids).
+			Updates(map[string]any{
+				"status":     models.WebhookDeliveryStatusProcessing,
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.WebhookDelivery{}).
+			Where("id IN ?", ids).
+			Update("next_retry_at", lockUntil).Error
+	})
 	return rows, err
+}
+
+func (r *WebhookDeliveryRepo) ListDueLifecycle(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
+	return r.ClaimDue(ctx, limit, 0)
 }
 
 func (r *WebhookDeliveryRepo) ListPage(ctx context.Context, page, limit int, status string) ([]models.WebhookDelivery, int64, error) {

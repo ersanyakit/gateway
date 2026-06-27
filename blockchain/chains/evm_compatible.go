@@ -196,6 +196,21 @@ type evmCompatibleBalance struct {
 	TokenErr  error
 }
 
+func failedBalanceResults(addresses []string, balance string, err error) []models.BalanceResult {
+	if len(addresses) == 0 {
+		return nil
+	}
+	out := make([]models.BalanceResult, 0, len(addresses))
+	for _, addr := range addresses {
+		out = append(out, models.BalanceResult{
+			Address: addr,
+			Balance: balance,
+			Error:   err,
+		})
+	}
+	return out
+}
+
 func (e *EVMCompatibleChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {
 	if len(addresses) == 0 {
 		return nil
@@ -204,7 +219,7 @@ func (e *EVMCompatibleChain) BatchBalances(ctx context.Context, addresses []stri
 	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, e.RPCHttp)
 	if err != nil {
 		log.Println("RPC dial error:", err)
-		return nil
+		return failedBalanceResults(addresses, fmt.Sprintf("%s:0 | %s:0", e.NativeSymbol, e.TokenSymbol), err)
 	}
 	defer client.Close()
 	if len(e.RPCHttp) > 0 && strings.TrimSpace(e.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(e.RPCHttp[0]) {
