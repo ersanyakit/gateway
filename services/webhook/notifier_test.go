@@ -113,6 +113,95 @@ func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 	}
 }
 
+func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received PaymentPayload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventPaymentSucceeded {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if r.Header.Get("X-Gateway-Event-Version") != constants.WebhookEventVersionV1 {
+			t.Fatalf("version header = %q", r.Header.Get("X-Gateway-Event-Version"))
+		}
+		if r.Header.Get("X-Gateway-Event-Id") == "" {
+			t.Fatal("event id header is empty")
+		}
+		if r.Header.Get("X-Gateway-Timestamp") == "" {
+			t.Fatal("timestamp header is empty")
+		}
+		if !strings.HasPrefix(r.Header.Get("X-Gateway-Signature"), "sha256=") {
+			t.Fatalf("signature header = %q", r.Header.Get("X-Gateway-Signature"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	chainID := constants.Ethereum
+	token := "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+	txHash := "0xpayment"
+	txUniqueHash := "1-0xpayment-log:0"
+	paidAt := time.Date(2026, 6, 6, 12, 5, 0, 0, time.UTC)
+	session := models.PaymentSession{
+		ID:                uuid.New(),
+		SessionToken:      "sess_token",
+		MerchantID:        merchantID,
+		DomainID:          domainID,
+		WalletID:          walletID,
+		OrderID:           "order-1",
+		ProductID:         "product",
+		UserID:            "user",
+		Amount:            "25.00",
+		Currency:          "USDT",
+		SelectedChainID:   &chainID,
+		SelectedToken:     &token,
+		SelectedSymbol:    "USDT",
+		SelectedDecimals:  6,
+		ExpectedAmountRaw: "25000000",
+		DepositAddress:    "0xdeposit",
+		Status:            models.PaymentStatusPaid,
+		PaidAt:            &paidAt,
+		TxHash:            &txHash,
+		TxUniqueHash:      &txUniqueHash,
+		WebhookEvent:      constants.WebhookEventPaymentSucceeded,
+		CreatedAt:         time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverPayment(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.EventID != PaymentEventID(session) || received.EventType != constants.WebhookEventPaymentSucceeded || received.EventVersion != constants.WebhookEventVersionV1 {
+		t.Fatalf("event metadata = %#v", received)
+	}
+	if received.PaymentID != session.ID.String() || received.MerchantID != merchantID.String() || received.DomainID != domainID.String() || received.WalletID != walletID.String() {
+		t.Fatalf("identity fields not populated: %#v", received)
+	}
+	if received.ExpectedAmountRaw != "25000000" || received.DepositAddress != "0xdeposit" || received.TxHash == nil || *received.TxHash != txHash {
+		t.Fatalf("payment payload mismatch: %#v", received)
+	}
+}
+
 func TestNotifierDeliveryErrorRedactsCallbackBody(t *testing.T) {
 	t.Setenv("MASTER_KEY", "webhook-test-master-key")
 	t.Setenv("APP_ENV", "test")

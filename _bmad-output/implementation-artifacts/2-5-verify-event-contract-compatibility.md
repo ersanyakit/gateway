@@ -2,7 +2,7 @@
 story_id: "2.5"
 story_key: "2-5-verify-event-contract-compatibility"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: in-progress
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
@@ -10,7 +10,7 @@ baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
 
 # Story 2.5: Verify Event Contract Compatibility
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -36,28 +36,33 @@ boylece consumer'lar mevcut webhook isimlerinden versioned money event'lere kiri
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Strengthen catalog alias and schema contract tests (AC: 1, 2, 3, 4)
-  - [ ] Add tests that every catalog entry example includes every declared required field.
-  - [ ] Add tests that alias entries include relation, note, deprecation/migration path, and map to a canonical dotted/versioned event.
-  - [ ] Add a v1 required-field snapshot test for public canonical events so accidental field removal fails CI.
-  - [ ] Keep sensitive field exclusion tests for examples and docs.
+- [x] Task 1: Strengthen catalog alias and schema contract tests (AC: 1, 2, 3, 4)
+  - [x] Add tests that every catalog entry example includes every declared required field.
+  - [x] Add tests that alias entries include relation, note, deprecation/migration path, and map to a canonical dotted/versioned event.
+  - [x] Add a v1 required-field snapshot test for public canonical events so accidental field removal fails CI.
+  - [x] Keep sensitive field exclusion tests for examples and docs.
 
-- [ ] Task 2: Verify emitted events and payload builders stay compatible (AC: 1, 2, 4)
-  - [ ] Ensure current constants and raw literals still resolve through `MoneyEventCatalogEntryForEmittedEvent`.
-  - [ ] Ensure notifier/request tests assert event id/type/version headers and payload event metadata.
-  - [ ] Ensure outbox/docs tests keep event id/type/version/idempotency semantics visible.
+- [x] Task 2: Verify emitted events and payload builders stay compatible (AC: 1, 2, 4)
+  - [x] Ensure current constants and raw literals still resolve through `MoneyEventCatalogEntryForEmittedEvent`.
+  - [x] Ensure notifier/request tests assert event id/type/version headers and payload event metadata.
+  - [x] Ensure outbox/docs tests keep event id/type/version/idempotency semantics visible.
 
-- [ ] Task 3: Produce Epic 2 integration evidence (AC: 5)
-  - [ ] Add a concise docs artifact linking event catalog, outbox persistence, boundary delivery, replay/dead-letter, and duplicate-safety behavior.
-  - [ ] Include validation commands and known limitations without claiming full production custody readiness.
-  - [ ] Update docs contract tests so missing evidence breaks CI.
+- [x] Task 3: Produce Epic 2 integration evidence (AC: 5)
+  - [x] Add a concise docs artifact linking event catalog, outbox persistence, boundary delivery, replay/dead-letter, and duplicate-safety behavior.
+  - [x] Include validation commands and known limitations without claiming full production custody readiness.
+  - [x] Update docs contract tests so missing evidence breaks CI.
 
-- [ ] Task 4: Validate and update story record (AC: 1, 2, 3, 4, 5)
-  - [ ] Targeted validation: `go test -count=1 ./services/webhook ./docs`.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check && git diff --cached --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+- [x] Task 4: Validate and update story record (AC: 1, 2, 3, 4, 5)
+  - [x] Targeted validation: `go test -count=1 ./services/webhook ./docs`.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+
+### Review Findings
+
+- [x] [Review][Patch] Alias contract test did not verify emitted-event lookup resolves each alias to its canonical target [services/webhook/event_catalog_test.go] — Added lookup assertions for every alias relation and tightened canonical `v1` target validation.
+- [x] [Review][Patch] Payment webhook request contract lacked direct header/payload coverage [services/webhook/notifier_test.go] — Added payment notifier coverage for event id/type/version headers, timestamp/signature, and payment identity/payload metadata.
 
 ## Dev Notes
 
@@ -75,17 +80,32 @@ Codex
 
 ### Debug Log References
 
-- Not started.
+- `go test -count=1 ./services/webhook ./docs`
+- `go test -count=1 ./docs ./constants ./services/database`
+- `go test -count=1 ./...`
+- `go vet ./...`
+- `git diff --check && git diff --cached --check`
 
 ### Completion Notes List
 
-- Not started.
+- Added catalog schema tests requiring every example to include declared required fields and consistent event type/version/resource metadata.
+- Added a v1 field snapshot for public canonical money events so silent field removal or untracked new v1 events fail tests.
+- Strengthened alias migration tests so aliases must include relation, note, versioned canonical target, and migration/deprecation path.
+- Added Epic 2 integration evidence linking event catalog, outbox, delivery boundary, replay/dead-letter behavior, duplicate-safety, validation, and known production limits.
+- Added payment notifier contract coverage for signed headers and payment payload metadata.
+- Code review fixes strengthened alias-to-canonical lookup assertions and added direct payment webhook request contract coverage; full validation passed.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-5-verify-event-contract-compatibility.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `docs/epic-2-integration-evidence.md`
+- `docs/integration_contract_test.go`
+- `services/webhook/event_catalog_test.go`
+- `services/webhook/notifier_test.go`
 
 ### Change Log
 
 - 2026-06-27: Story created from Epic 2.5 acceptance criteria and Epic 2 continuity notes.
+- 2026-06-27: Implemented v1 event contract compatibility tests, Epic 2 integration evidence, docs contract checks, and validation; moved to review.
+- 2026-06-27: Code review findings fixed and full validation passed; story completed.

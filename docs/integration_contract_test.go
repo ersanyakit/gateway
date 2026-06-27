@@ -113,6 +113,55 @@ func TestEpic2IntegrationEvidenceDocumentsEventDeliveryContract(t *testing.T) {
 	}
 }
 
+func TestChainFactBoundaryDocumentsIndexerContract(t *testing.T) {
+	docBytes, err := os.ReadFile("chain-fact-boundary.md")
+	if err != nil {
+		t.Fatalf("read chain fact boundary: %v", err)
+	}
+	doc := string(docBytes)
+	for _, token := range []string{
+		"Chain indexers produce durable chain facts",
+		"do not mark payments paid",
+		"post ledger entries",
+		"enqueue webhooks",
+		"chain_id",
+		"log index",
+		"observed address",
+		"finality metadata",
+		"CHAIN_<id>_START_BLOCK",
+		"Default safe/latest startup is not historical backfill",
+		"Range replay/backfill remains",
+		"no-op by event id",
+	} {
+		requireContains(t, doc, token)
+	}
+}
+
+func TestDepositFinalityBoundaryDocumentsSettlementGate(t *testing.T) {
+	docBytes, err := os.ReadFile("deposit-finality-boundary.md")
+	if err != nil {
+		t.Fatalf("read deposit finality boundary: %v", err)
+	}
+	doc := string(docBytes)
+	for _, token := range []string{
+		"Deposit processing consumes durable chain facts",
+		"listener path remains fact-only",
+		"chain fact event id as the stable idempotency key",
+		"unmatched without merchant, domain, or wallet identifiers",
+		"`pending` or `confirming`",
+		"`deposit.finalized.v1`",
+		"Bitcoin: 3 confirmations",
+		"Solana: 1 confirmation",
+		"TRON: 20 confirmations",
+		"EVM/default chains: 12 confirmations",
+		"must not mark payments paid",
+		"post available ledger entries",
+		"schedule sweep jobs",
+	} {
+		requireContains(t, doc, token)
+	}
+}
+
 func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
 	catalogBytes, err := os.ReadFile("money-event-catalog.md")
 	if err != nil {

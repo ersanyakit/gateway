@@ -6,6 +6,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
+	depositsvc "core/services/deposits"
 	"core/services/realtime"
 	reconsvc "core/services/reconciliation"
 	"core/services/txrescan"
@@ -81,6 +82,18 @@ func transactionFinalityInterval() time.Duration {
 	interval, err := time.ParseDuration(raw)
 	if err != nil || interval <= 0 {
 		return 20 * time.Second
+	}
+	return interval
+}
+
+func depositFactInterval() time.Duration {
+	raw := os.Getenv("DEPOSIT_FACT_INTERVAL")
+	if raw == "" {
+		return 10 * time.Second
+	}
+	interval, err := time.ParseDuration(raw)
+	if err != nil || interval <= 0 {
+		return 10 * time.Second
 	}
 	return interval
 }
@@ -265,6 +278,29 @@ func transactionWalletMatch(ctx context.Context, txParam types.TransactionParam)
 	return nil, false, false, nil
 }
 
+func handleChainIndexerEvent(ctx context.Context, event dispatcher.Event) error {
+	if event.Transaction == nil {
+		return nil
+	}
+	_, _, err := recordChainFactObservation(ctx, event.Type, *event.Transaction)
+	return err
+}
+
+func recordChainFactObservation(ctx context.Context, eventType string, txParam types.TransactionParam) (*models.ChainFact, bool, error) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.ChainFactRepo == nil {
+		return nil, false, errors.New("chain fact repository is not configured")
+	}
+	fact, err := repositories.BuildChainFact(repositories.ChainFactBuildParams{
+		EventType:             eventType,
+		Transaction:           txParam,
+		ConfirmationsRequired: uint(chainConfirmationRequirement(txParam.ChainID)),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return coreApplication.CORE.Router.ChainFactRepo.Record(ctx, &fact)
+}
+
 func bindTransactionWallet(ctx context.Context, eventType string, txParam types.TransactionParam, wallet *models.Wallet) (*models.Transaction, error) {
 	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
 	if err != nil {
@@ -362,6 +398,62 @@ func finalizePendingTransactions(ctx context.Context, notifier *webhooksvc.Notif
 		handlePaymentDeposit(ctx, notifier, finalized)
 		enqueueSweepJob(ctx, finalized)
 	}
+}
+
+func processDepositFacts(ctx context.Context) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil {
+		return
+	}
+	router := coreApplication.CORE.Router
+	if router.ChainFactRepo == nil ||
+		router.ChainStateRepo == nil ||
+		router.DepositRepo == nil ||
+		router.WalletRepo == nil ||
+		router.TransactionRepo == nil {
+		return
+	}
+	service := depositsvc.New(depositsvc.Dependencies{
+		ChainFactRepo:   router.ChainFactRepo,
+		ChainStateRepo:  router.ChainStateRepo,
+		DepositRepo:     router.DepositRepo,
+		WalletRepo:      router.WalletRepo,
+		TransactionRepo: router.TransactionRepo,
+		PaymentRepo:     router.PaymentRepo,
+		LedgerRepo:      router.LedgerRepo,
+	}, chainConfirmationRequirement)
+	summary, err := service.ProcessBatch(ctx, 200)
+	if err != nil {
+		log.Println("Deposit fact processing error:", err)
+		return
+	}
+	if summary.FactsProcessed > 0 || summary.Finalized > 0 || summary.PaymentsSettled > 0 {
+		log.Printf(
+			"Deposit facts processed=%d created=%d matched=%d unmatched=%d finalized=%d transactions=%d payments=%d\n",
+			summary.FactsProcessed,
+			summary.DepositsCreated,
+			summary.Matched,
+			summary.Unmatched,
+			summary.Finalized,
+			summary.TransactionsRecorded,
+			summary.PaymentsSettled,
+		)
+	}
+}
+
+func startDepositFactWorker(ctx context.Context) {
+	processDepositFacts(ctx)
+	ticker := time.NewTicker(depositFactInterval())
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				processDepositFacts(ctx)
+			}
+		}
+	}()
 }
 
 func ensureMerchantReserveWallet(ctx context.Context, merchantID uuid.UUID) (*models.Wallet, error) {
@@ -1203,6 +1295,7 @@ func main() {
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)
 	go startTransactionFinalityWorker(mainCtx, webhookNotifier)
+	go startDepositFactWorker(mainCtx)
 	go startSweepJobWorker(mainCtx)
 	go startReconciliationWorker(mainCtx)
 	go startTransferFinalizationWorker(mainCtx)
@@ -1245,53 +1338,9 @@ func main() {
 							)
 						}
 
-						wallet, inbound, matched, err := transactionWalletMatch(mainCtx, *tx)
+						err := handleChainIndexerEvent(mainCtx, event)
 						if err != nil {
-							fmt.Println("Wallet match error:", err)
-							if event.Ack != nil {
-								event.Ack <- err
-							}
-							continue
-						}
-						if !matched {
-							if event.Ack != nil {
-								event.Ack <- nil
-							}
-							continue
-						}
-
-						err = coreApplication.CORE.Router.TransactionRepo.Create(*tx)
-						if err != nil {
-							fmt.Println("Transaction save error:", err)
-						} else {
-							if _, finalityErr := applyTransactionFinality(mainCtx, *tx); finalityErr != nil {
-								err = finalityErr
-								fmt.Println("Transaction finality error:", finalityErr)
-							}
-							if err == nil {
-								if inbound {
-									txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
-									if webhookErr != nil {
-										err = webhookErr
-										fmt.Println("Deposit processing error:", webhookErr)
-									}
-									if err == nil {
-										if txModel == nil {
-											if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
-												err = bindErr
-												fmt.Println("Transaction wallet bind error:", bindErr)
-											}
-										} else {
-											handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
-										}
-									}
-								} else {
-									if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
-										err = bindErr
-										fmt.Println("Transaction wallet bind error:", bindErr)
-									}
-								}
-							}
+							fmt.Println("Chain fact record error:", err)
 						}
 						if event.Ack != nil {
 							event.Ack <- err
