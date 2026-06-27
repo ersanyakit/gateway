@@ -176,6 +176,23 @@ Codex
 - QA automation added metrics exposure coverage for the production software signer gate and unsupported signer mode audit/readiness tests.
 - Full `go test ./...` remains blocked by the local sandbox's TCP listen restriction for existing `httptest.NewServer` tests; story-scoped signer tests and targeted `go vet` passed.
 
+### Senior Developer Review (AI)
+
+- Reviewer: Codex
+- Review cycle: 2
+- Outcome: Approved / done
+- CRITICAL issues: 0
+- Scope: Story 4.2 committed signer-policy, chain signing guard, readiness/metrics, documentation, and automation coverage. Uncommitted out-of-story files were excluded from review and staging.
+- AC validation: AC1-AC5 are implemented by `services/signer`, non-secret wallet signer metadata, chain-level pre-signing guards, shared readiness/metrics policy, sanitized audit output, and focused tests.
+- Non-blocking findings: Full package validation that touches existing `httptest.NewServer` tests remains environment-limited in this sandbox with `bind: operation not permitted`; story-specific validation passed.
+- Evidence:
+  - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer`
+  - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./blockchain -run 'TestBaseChain(GetDerivedWalletAddsSignerContext|GetMnemonicBlocksProductionSoftwareSignerOverride)'`
+  - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./blockchain/chains -run 'Test(EVMSendNativeChecksSignerPolicyBeforeRPCAndPrivateKey|BitcoinSendChecksSignerPolicyBeforePrivateKey|SolanaWithdrawChecksSignerPolicyBeforeRPCAndPrivateKey|TronSendChecksSignerPolicyBeforeRPCAndPrivateKey)'`
+  - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'Test(V1ProductionSignerReadinessUsesPolicy|OperationalMetricsReportsProductionSignerGate|TransferContextWithSignerAuditPropagatesActorAndCorrelation|AdminOutboundTransfersCarrySignerAuditContext)'`
+  - `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
+  - `git diff --check && git diff --cached --check`
+
 ### File List
 
 - `SECURITY.md`
