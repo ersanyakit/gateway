@@ -178,6 +178,9 @@ func openReserveReconciliationPostgresTestDB(t *testing.T) *gorm.DB {
 		dsn = os.Getenv("MONEY_OUTBOX_TEST_DATABASE_URL")
 	}
 	if strings.TrimSpace(dsn) == "" {
+		dsn = os.Getenv("TEST_DATABASE_URL")
+	}
+	if strings.TrimSpace(dsn) == "" {
 		t.Skip("set OUTBOX_TEST_DATABASE_URL to run reserve reconciliation Postgres tests")
 	}
 
@@ -201,19 +204,16 @@ func openReserveReconciliationPostgresTestDB(t *testing.T) *gorm.DB {
 }
 
 func reserveReconciliationPostgresDSNWithSearchPath(dsn string, schema string) string {
+	searchPath := schema + ",public"
 	parsed, err := url.Parse(dsn)
 	if err != nil || parsed.Scheme == "" {
-		sep := " "
 		if strings.Contains(dsn, "search_path=") {
 			return dsn
 		}
-		if strings.HasSuffix(strings.TrimSpace(dsn), " ") {
-			sep = ""
-		}
-		return dsn + sep + "search_path=" + schema
+		return strings.TrimSpace(dsn) + " search_path=" + searchPath
 	}
 	query := parsed.Query()
-	query.Set("search_path", schema)
+	query.Set("search_path", searchPath)
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }

@@ -10,6 +10,7 @@
 - [x] Existing `repositories/transaction_repo_test.go` coverage exercises deterministic same-height fork replacement, parent mismatch block-range correction, duplicate reorg handling, webhook correction metadata, sweep dead-lettering, and reconciliation job creation.
 - [x] Existing `repositories/payment_repo_test.go` coverage exercises payment correction for paid, underpaid, overpaid, partial paid, expired-after-deposit, and already-corrected idempotent paths.
 - [x] `repositories/reconciliation_repo_test.go` - Scoped reconciliation coverage exercises active scope-key dedupe, legacy fallback dedupe, evidence recording, sensitive value redaction, retry scheduling, claim lifecycle, resolved/failed re-open behavior, webhook drift, and stuck lifecycle scopes.
+- [x] `services/reconciliation/reserve_test.go` - Reserve drift coverage now verifies scoped reconciliation job creation, tenant/resource context, affected ids/evidence JSON, and active scope-key dedupe for reserve deficits.
 - [x] Existing `services/webhook/notifier_test.go` and `services/webhook/event_catalog_test.go` coverage exercises `transaction.reorged.v1` payload metadata, reorg-corrected `payment.failed` relation fields, and legacy alias/catalog contract.
 - [x] Existing `services/deposits/service_test.go`, `services/database/database_test.go`, and `docs/integration_contract_test.go` coverage exercises corrected chain fact processing guards, schema contract fields, and integration documentation contract.
 
@@ -33,9 +34,14 @@
 - [x] Review rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./docs ./services/database ./services/deposits`
 - [x] Review rerun: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
 - [x] Review rerun: `git diff --check && git diff --cached --check`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestOperationalMetricsIncludesBacklogAndChainState|TestV1ReadinessCountTotal|TestV1ReadinessCountDetails'`
 
 ## Notes
 
 - Full repository validation passed on 2026-06-27 after running the Story 3.5 targeted packages, Postgres-backed repository/database packages, full test suite, static vet check, and whitespace checks.
 - Postgres validation caught and the implementation fixed a parent-mismatch ordering issue where generic same-height hash conflict handling could mask the more specific `parent_mismatch` correction reason.
 - Story 3.6 validation passed after running targeted packages, Postgres-backed reconciliation/database packages, full test suite, static vet check, and whitespace checks. The earlier sandbox-only listener bind failure was resolved by rerunning the same tests with the required local test-server permission.
+- QA E2E generation for Story 3.6 added reserve drift scoped reconciliation coverage. The new Postgres-backed reserve test skips when `OUTBOX_TEST_DATABASE_URL` is not configured and runs as part of `./services/reconciliation` when a test database DSN is available.
