@@ -3,6 +3,7 @@ package webhook
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -45,27 +46,7 @@ func TestMoneyEventCatalogCoversRequiredCanonicalEvents(t *testing.T) {
 }
 
 func TestMoneyEventCatalogCoversCurrentWebhookConstants(t *testing.T) {
-	currentEvents := []string{
-		constants.WebhookEventNativeTransfer,
-		constants.WebhookEventTransactionReorged,
-		constants.WebhookEventPaymentSucceeded,
-		constants.WebhookEventPaymentFailed,
-		constants.WebhookEventPaymentExpired,
-		constants.WebhookEventPayoutRequestedV1,
-		constants.WebhookEventPayoutBroadcastV1,
-		constants.WebhookEventPayoutFinalizedV1,
-		constants.WebhookEventPayoutRejectedV1,
-		constants.WebhookEventPayoutFailedV1,
-		constants.WebhookEventRefundRequestedV1,
-		constants.WebhookEventRefundBroadcastV1,
-		constants.WebhookEventRefundSucceededV1,
-		constants.WebhookEventRefundRejectedV1,
-		constants.WebhookEventRefundFailedV1,
-		constants.WebhookEventSweepRequestedV1,
-		constants.WebhookEventSweepSucceededV1,
-		constants.WebhookEventSweepFailedV1,
-		constants.WebhookEventSweepDeadLetteredV1,
-	}
+	currentEvents := webhookEventConstantsFromSource(t)
 
 	for _, eventName := range currentEvents {
 		t.Run(eventName, func(t *testing.T) {
@@ -81,6 +62,30 @@ func TestMoneyEventCatalogCoversCurrentWebhookConstants(t *testing.T) {
 			}
 		})
 	}
+}
+
+func webhookEventConstantsFromSource(t *testing.T) []string {
+	t.Helper()
+	contentBytes, err := os.ReadFile("../../constants/webhook_events.go")
+	if err != nil {
+		t.Fatalf("read webhook event constants: %v", err)
+	}
+	re := regexp.MustCompile(`(?m)^\s*(WebhookEvent[A-Za-z0-9]+)\s*=\s*"([^"]+)"`)
+	matches := re.FindAllStringSubmatch(string(contentBytes), -1)
+	if len(matches) == 0 {
+		t.Fatal("no webhook event constants found")
+	}
+	events := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if match[1] == "WebhookEventVersionV1" {
+			continue
+		}
+		events = append(events, match[2])
+	}
+	if len(events) == 0 {
+		t.Fatal("no webhook event type constants found")
+	}
+	return events
 }
 
 func TestMoneyEventCatalogExamplesExcludeSensitiveFields(t *testing.T) {
