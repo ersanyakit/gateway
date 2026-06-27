@@ -76,12 +76,12 @@ boylece sistem canonical chain degisimlerinden audit trail'i koruyarak recover e
 
 ## Dev Notes
 
-### Current Implementation Snapshot
+### Baseline Implementation Snapshot
 
 - `repositories/transaction_repo.go` already has first-pass correction behavior in `markTransactionsReorgedWithDB`: it posts ledger reversals, calls `PaymentRepo.MarkReorgedByTransactionWithDB`, marks transactions `reorged`, resets transaction webhook attempt fields, dead-letters related sweep jobs, and creates an open reconciliation job.
-- Current risk: `markTransactionsReorgedWithDB` writes raw `"transaction_reorged"` instead of using the constants/catalog vocabulary. Keep alias compatibility, but avoid new raw event strings.
-- `models.Block` exists with `ChainID`, `Number`, `Hash`, `ParentHash`, and `Processed`, but it is not currently registered in `services/database.autoMigrateModels` or required by `VerifySchema`; there is no repository/rollback-window processor using it.
-- `models.ChainFact` and `models.Deposit` currently have no explicit `reorged` or `superseded` status/metadata. Acceptance criterion 1 requires affected facts and transactions to be marked, so model/schema changes may be needed.
+- Baseline risk: `markTransactionsReorgedWithDB` writes raw `"transaction_reorged"` instead of using the constants/catalog vocabulary. Keep alias compatibility, but avoid new raw event strings.
+- Baseline gap: `models.Block` exists with `ChainID`, `Number`, `Hash`, `ParentHash`, and `Processed`, but it is not currently registered in `services/database.autoMigrateModels` or required by `VerifySchema`; there is no repository/rollback-window processor using it.
+- Baseline gap: `models.ChainFact` and `models.Deposit` currently have no explicit `reorged` or `superseded` status/metadata. Acceptance criterion 1 requires affected facts and transactions to be marked, so model/schema changes may be needed.
 - `repositories/ledger_repo.go` includes `PostTransactionReversalWithDB`. It creates compensating `reorg_reversal` entries, reverses direction, uses idempotency key `reorg-reversal:<ledger_entry_id>`, and skips already-voided or existing reorg reversal entries.
 - `repositories/payment_repo.go` currently corrects only sessions with `tx_unique_hash = uniqueHash` and `status = paid`. Story 3.4 added explicit non-paid matched outcomes that may still be tx-linked and ledger-posted; this story must correct those states too.
 - `models.SweepJob` supports `pending`, `processing`, `succeeded`, `failed`, and `dead_letter`. Current transaction correction dead-letters `pending`, `processing`, and `failed` jobs tied to the reorged transaction.
@@ -172,6 +172,7 @@ Codex
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Revalidated after Story 3.4 review merge point: targeted Story 3.5 packages, full `go test ./...`, `go vet ./...`, and whitespace checks all passed.
+- 2026-06-27: Added parent-hash block canonicality handling: EVM observed events carry parent hashes, parent mismatches reorg affected canonical block ranges, and reconciliation jobs use the affected from/to block range.
 
 ### Completion Notes List
 
@@ -186,7 +187,8 @@ Codex
 - Hardened payment reorg idempotency so an already corrected and delivered `payment_failed` webhook is not reopened by a repeated correction call.
 - Added deterministic transaction block identity reorg coverage for same transaction hash/log index reappearing at a different block identity.
 - Hardened `models.Block` with canonical/reorg state fields, parent hash support, and schema verification so block tracking can represent canonical replacements without a parallel table.
-- EVM listener dispatch now carries parent hash into transaction params so parent/child mismatch detection can run from observed chain data.
+- EVM listener dispatch now carries parent hash into native, token-transfer, and internal-transfer transaction params so parent/child mismatch detection can run from observed chain data.
+- Parent mismatch correction marks the affected canonical block range reorged and creates reconciliation with the affected from/to block range, not only the trigger block.
 - Added checkout failed-state and ledger reversal skip/idempotency coverage for reorg-corrected payment and ledger paths.
 
 ### File List
@@ -194,6 +196,7 @@ Codex
 - `.gitignore`
 - `_bmad-output/implementation-artifacts/3-5-correct-reorgs-with-compensating-events-and-ledger-reversals.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `_bmad-output/implementation-artifacts/tests/test-summary.md`
 - `api/handlers/payment_test.go`
 - `constants/webhook_events.go`
 - `docs/integration-guide.md`
@@ -224,3 +227,4 @@ Codex
 - 2026-06-27: Implemented reorg correction metadata, canonical correction events, chain fact/deposit/payment/sweep correction handling, webhook correction payloads, schema guardrails, tests, and validation; story moved to review.
 - 2026-06-27: Tightened repeated payment correction no-op behavior, replaced remaining raw payment failure literals in `PaymentRepo`, and added transaction block identity reorg regression coverage.
 - 2026-06-27: Aligned story record with final diff, EVM parent-hash propagation, ledger reversal skip coverage, checkout reorg-failed state coverage, and final validation results.
+- 2026-06-27: Added deterministic parent/child fork simulation and reconciliation range scoping for canonical block parent mismatches.

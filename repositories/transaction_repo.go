@@ -106,10 +106,10 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 				return nil
 			}
 		}
-		if err := r.markBlockHashConflictsWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
+		if err := r.observeCanonicalBlockWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, parentHash, uniqueHash, now); err != nil {
 			return err
 		}
-		if err := r.observeCanonicalBlockWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, parentHash, uniqueHash, now); err != nil {
+		if err := r.markBlockHashConflictsWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
 			return err
 		}
 		identityChanged := found && transactionBlockIdentityChanged(existing, *params.Block, blockHash)
