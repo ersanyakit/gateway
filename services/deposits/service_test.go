@@ -113,7 +113,7 @@ func TestFinalizedSettlementUsesExplicitPaymentMatchResult(t *testing.T) {
 		"MatchFinalizedTransaction(ctx, *txModel)",
 		"matchResult.LedgerEligible",
 		"matchResult.Session",
-		"PostDepositAvailable(ctx, *matchResult.Session, *txModel)",
+		"postFinalizedDepositAvailable(ctx, *txModel, matchResult.Session)",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("settleFinalizedTransaction missing %q", token)
@@ -121,6 +121,28 @@ func TestFinalizedSettlementUsesExplicitPaymentMatchResult(t *testing.T) {
 	}
 	if strings.Contains(body, "MarkPaidByTransaction") {
 		t.Fatal("settlement must consume explicit match result instead of paid-only wrapper")
+	}
+}
+
+func TestFinalizedSettlementKeepsLedgerAvailableForUnmatchedCheckoutDeposits(t *testing.T) {
+	source := readDepositServiceSource(t)
+	settleBody := extractFunctionBody(t, source, "settleFinalizedTransaction")
+	if !strings.Contains(settleBody, "postFinalizedDepositAvailable(ctx, *txModel, nil)") {
+		t.Fatal("unmatched finalized wallet deposits must still post available ledger entries")
+	}
+	if strings.Contains(settleBody, "isStandaloneDepositWalletProduct") {
+		t.Fatal("finalized ledger availability must not be limited to standalone wallet products")
+	}
+
+	helperBody := extractFunctionBody(t, source, "postFinalizedDepositAvailable")
+	for _, token := range []string{
+		"FindByTxUniqueHash(ctx, txModel.UniqueHash)",
+		"PostDepositAvailable(ctx, *matchedSession, txModel)",
+		"PostStandaloneDepositAvailable(ctx, txModel)",
+	} {
+		if !strings.Contains(helperBody, token) {
+			t.Fatalf("postFinalizedDepositAvailable missing %q", token)
+		}
 	}
 }
 

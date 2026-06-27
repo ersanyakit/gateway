@@ -2,7 +2,7 @@
 story_id: "3.4"
 story_key: "3-4-model-payment-matching-outcomes-explicitly"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: in-progress
+status: review
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 7f8c552
@@ -10,7 +10,7 @@ baseline_commit: 7f8c552
 
 # Story 3.4: Model Payment Matching Outcomes Explicitly
 
-Status: in-progress
+Status: review
 
 ## Story
 
@@ -28,43 +28,43 @@ boylece checkout, API ve webhook consumer'lari belirsiz veya mismatch odeme duru
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Define explicit payment outcome vocabulary and persistence (AC: 1, 2, 3, 4)
-  - [ ] Add explicit model constants for every supported payment matching outcome/state. Current statuses include `pending`, `awaiting_payment`, `paid`, `expired`, `failed`, and `underpaid`; this story must add or otherwise explicitly model `overpaid` and `partial_paid` or document an equivalent policy field that appears in API/webhook/docs.
-  - [ ] Add persistent outcome metadata to `models.PaymentSession` if status alone is insufficient: reason/category, matched raw amount, expected raw amount snapshot, excess/shortfall raw amount, and matched transaction/deposit reference. Keep raw integer string storage.
-  - [ ] Keep schema changes GORM-owned through model tags, `AutoMigrate`, and `services/database.VerifySchema`; do not add raw SQL migration files.
-  - [ ] Preserve backwards compatibility for existing `payment_succeeded`, `payment_failed`, and `payment_expired` webhook consumers.
+- [x] Task 1: Define explicit payment outcome vocabulary and persistence (AC: 1, 2, 3, 4)
+  - [x] Add explicit model constants for every supported payment matching outcome/state. Current statuses include `pending`, `awaiting_payment`, `paid`, `expired`, `failed`, and `underpaid`; this story must add or otherwise explicitly model `overpaid` and `partial_paid` or document an equivalent policy field that appears in API/webhook/docs.
+  - [x] Add persistent outcome metadata to `models.PaymentSession` if status alone is insufficient: reason/category, matched raw amount, expected raw amount snapshot, excess/shortfall raw amount, and matched transaction/deposit reference. Keep raw integer string storage.
+  - [x] Keep schema changes GORM-owned through model tags, `AutoMigrate`, and `services/database.VerifySchema`; do not add raw SQL migration files.
+  - [x] Preserve backwards compatibility for existing `payment_succeeded`, `payment_failed`, and `payment_expired` webhook consumers.
 
-- [ ] Task 2: Replace implicit paid-only matching with an explicit matching command (AC: 1, 2, 3, 4, 5)
-  - [ ] Refactor `repositories.PaymentRepo.MarkPaidByTransaction` into an explicit matching boundary such as `MatchFinalizedTransaction` returning a typed result; keep a compatibility wrapper only if existing callers/tests still need it.
-  - [ ] Match only finalized/confirmed transactions. Preserve the Story 3.2 finality rule: pre-finality tx cannot mark a payment paid, underpaid, overpaid, partial, failed, or ledger-available.
-  - [ ] Check wallet/address scope, selected chain, selected token/symbol, and raw amount policy before mutating payment status.
-  - [ ] Define amount policy unambiguously. Existing code silently accepts up to 0.5% underpayment and rejects over 120% as no-match; this story must turn those branches into explicit outcomes instead of silent skip/success.
-  - [ ] Guard idempotency with stable transaction unique hash and row/advisory locks so repeated matching is no-op and cannot produce duplicate lifecycle/webhook side effects.
-  - [ ] Expired sessions must not become `paid` automatically. A finalized deposit after expiry must produce the configured exception/outcome and/or scoped reconciliation record.
+- [x] Task 2: Replace implicit paid-only matching with an explicit matching command (AC: 1, 2, 3, 4, 5)
+  - [x] Refactor `repositories.PaymentRepo.MarkPaidByTransaction` into an explicit matching boundary such as `MatchFinalizedTransaction` returning a typed result; keep a compatibility wrapper only if existing callers/tests still need it.
+  - [x] Match only finalized/confirmed transactions. Preserve the Story 3.2 finality rule: pre-finality tx cannot mark a payment paid, underpaid, overpaid, partial, failed, or ledger-available.
+  - [x] Check wallet/address scope, selected chain, selected token/symbol, and raw amount policy before mutating payment status.
+  - [x] Define amount policy unambiguously. Existing code silently accepts up to 0.5% underpayment and rejects over 120% as no-match; this story must turn those branches into explicit outcomes instead of silent skip/success.
+  - [x] Guard idempotency with stable transaction unique hash and row/advisory locks so repeated matching is no-op and cannot produce duplicate lifecycle/webhook side effects.
+  - [x] Expired sessions must not become `paid` automatically. A finalized deposit after expiry must produce the configured exception/outcome and/or scoped reconciliation record.
 
-- [ ] Task 3: Integrate deposit finality settlement without losing ledger authority (AC: 1, 2, 3, 4)
-  - [ ] Update `services/deposits.Service.settleFinalizedTransaction` to consume the new matching result instead of assuming changed == paid.
-  - [ ] Do not skip ledger availability for finalized money received on a checkout wallet just because the payment outcome is underpaid, overpaid, expired, or partial. Payment outcome is lifecycle state; ledger entries remain the balance authority.
-  - [ ] Ensure exact paid outcomes still call `LedgerRepo.PostDepositAvailable` and enqueue the payment lifecycle event exactly once.
-  - [ ] For non-success matched outcomes, make the follow-up discoverable through payment outcome fields, webhook/outbox event, or scoped reconciliation job without leaking tenant data.
-  - [ ] Keep standalone/static wallet deposit behavior from Story 3.2 intact.
+- [x] Task 3: Integrate deposit finality settlement without losing ledger authority (AC: 1, 2, 3, 4)
+  - [x] Update `services/deposits.Service.settleFinalizedTransaction` to consume the new matching result instead of assuming changed == paid.
+  - [x] Do not skip ledger availability for finalized money received on a checkout wallet just because the payment outcome is underpaid, overpaid, expired, or partial. Payment outcome is lifecycle state; ledger entries remain the balance authority.
+  - [x] Ensure exact paid outcomes still call `LedgerRepo.PostDepositAvailable` and enqueue the payment lifecycle event exactly once.
+  - [x] For non-success matched outcomes, make the follow-up discoverable through payment outcome fields, webhook/outbox event, or scoped reconciliation job without leaking tenant data.
+  - [x] Keep standalone/static wallet deposit behavior from Story 3.2 intact.
 
-- [ ] Task 4: Update checkout, V1 API, webhook catalog, and integration docs (AC: 1, 2, 3, 4)
-  - [ ] Update `api/handlers/payment.go` so checkout state, status JSON, realtime event, and terminal/payable flags distinguish `underpaid`, `overpaid`, and `partial_paid` from `paid`, `pending`, and `confirming`.
-  - [ ] Update `api/handlers/v1api.go` payment response/status table/history filters so API consumers can see the explicit outcome and raw shortfall/excess metadata where available.
-  - [ ] Update `services/webhook/event_catalog.go`, `docs/money-event-catalog.md`, and notifier payload tests for the selected outcome event policy. New dotted events should remain versioned; legacy underscore aliases must not break existing consumers.
-  - [ ] Update `docs/integration-guide.md` and contract tests so merchants know exact, underpaid, overpaid, partial, expired-after-deposit, wrong-asset, and wrong-chain behavior.
-  - [ ] Apply UX contract: checkout shows one clear state at a time; paid is terminal and stable; underpaid/failed/overpaid/partial are visually distinct from pending and paid.
+- [x] Task 4: Update checkout, V1 API, webhook catalog, and integration docs (AC: 1, 2, 3, 4)
+  - [x] Update `api/handlers/payment.go` so checkout state, status JSON, realtime event, and terminal/payable flags distinguish `underpaid`, `overpaid`, and `partial_paid` from `paid`, `pending`, and `confirming`.
+  - [x] Update `api/handlers/v1api.go` payment response/status table/history filters so API consumers can see the explicit outcome and raw shortfall/excess metadata where available.
+  - [x] Update `services/webhook/event_catalog.go`, `docs/money-event-catalog.md`, and notifier payload tests for the selected outcome event policy. New dotted events should remain versioned; legacy underscore aliases must not break existing consumers.
+  - [x] Update `docs/integration-guide.md` and contract tests so merchants know exact, underpaid, overpaid, partial, expired-after-deposit, wrong-asset, and wrong-chain behavior.
+  - [x] Apply UX contract: checkout shows one clear state at a time; paid is terminal and stable; underpaid/failed/overpaid/partial are visually distinct from pending and paid.
 
-- [ ] Task 5: Tests, contracts, validation, and story record (AC: 1, 2, 3, 4, 5)
-  - [ ] Add repository tests for exact match, wrong asset, wrong chain, underpaid, overpaid, partial policy, expired interaction, duplicate transaction unique hash, and repeated matching no-op.
-  - [ ] Add deposit service tests proving matching runs only after finality and that ledger posting is not skipped for finalized non-paid payment outcomes.
-  - [ ] Add checkout/API/webhook/docs contract tests for every public status/event introduced or changed.
-  - [ ] Targeted validation: `go test -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./docs`.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check && git diff --cached --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+- [x] Task 5: Tests, contracts, validation, and story record (AC: 1, 2, 3, 4, 5)
+  - [x] Add repository tests for exact match, wrong asset, wrong chain, underpaid, overpaid, partial policy, expired interaction, duplicate transaction unique hash, and repeated matching no-op.
+  - [x] Add deposit service tests proving matching runs only after finality and that ledger posting is not skipped for finalized non-paid payment outcomes.
+  - [x] Add checkout/API/webhook/docs contract tests for every public status/event introduced or changed.
+  - [x] Targeted validation: `go test -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./docs`.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
 ## Dev Notes
 
@@ -144,16 +144,56 @@ Codex
 ### Debug Log References
 
 - 2026-06-27: Story created from Epic 3.4 with FR15/FR16, UX checkout state requirements, architecture money lifecycle guardrails, current `PaymentRepo.MarkPaidByTransaction` behavior, and Story 3.3 ledger authority learnings.
+- 2026-06-27: Implemented explicit finalized payment matching outcomes with exact-only paid, underpaid, overpaid, terminal unsupported partial payment, expired-after-deposit, wrong-chain, and wrong-asset policies.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./docs`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
+- 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 
 ### Completion Notes List
 
-- Ready for dev-story implementation.
+- Added `overpaid` and `partial_paid` payment statuses plus persisted outcome metadata (`payment_outcome`, reason, matched amount, shortfall, excess) on `PaymentSession`.
+- Replaced the paid-only repository boundary with `MatchFinalizedTransaction`, preserving a compatibility `MarkPaidByTransaction` wrapper and stable transaction-hash idempotency locks.
+- Defined the settlement policy: exact amount is the only automatic `paid`; small underpayments become `underpaid`; larger underpayments become terminal `partial_paid` with automatic aggregation intentionally unsupported; overpayments become `overpaid`; expired/wrong-chain/wrong-asset deposits do not become paid.
+- Updated deposit finality settlement so finalized funds on checkout wallets still post ledger availability for non-paid outcomes.
+- Updated checkout, V1 API, webhook payload/catalog, and integration docs to expose explicit outcome states and raw shortfall/excess metadata.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-4-model-payment-matching-outcomes-explicitly.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `api/handlers/dealer.go`
+- `api/handlers/dealer_test.go`
+- `api/handlers/integration_guide_contract_test.go`
+- `api/handlers/partner_contract_test.go`
+- `api/handlers/payment.go`
+- `api/handlers/payment_test.go`
+- `api/handlers/v1api.go`
+- `constants/webhook_events.go`
+- `docs/docs.go`
+- `docs/epic-1-integration-evidence.md`
+- `docs/integration-guide.md`
+- `docs/integration_contract_test.go`
+- `docs/money-event-catalog.md`
+- `docs/swagger.json`
+- `docs/swagger.yaml`
+- `main.go`
+- `main_chain_fact_contract_test.go`
+- `models/payment_session.go`
+- `repositories/payment_repo.go`
+- `repositories/payment_repo_test.go`
+- `services/database/database.go`
+- `services/database/database_test.go`
+- `services/deposits/service.go`
+- `services/deposits/service_test.go`
+- `services/webhook/event_catalog.go`
+- `services/webhook/event_catalog_test.go`
+- `services/webhook/notifier.go`
+- `services/webhook/notifier_test.go`
+- `types/payment.go`
+- `types/v1api.go`
 
 ### Change Log
 
 - 2026-06-27: Created story with explicit payment matching outcome scope, current paid-only matching risks, ledger authority constraints, webhook/API/checkout contract requirements, and validation plan.
+- 2026-06-27: Implemented explicit payment matching outcome model, deposit settlement integration, public API/checkout/webhook/docs contracts, and validation coverage; story moved to review.

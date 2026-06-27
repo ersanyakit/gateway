@@ -41,8 +41,14 @@ func TestIntegrationGuideDocumentsCurrentResponseSchemaKeys(t *testing.T) {
 		"\"result\": \"ok\"",
 		"\"data\": {",
 		"\"underpaid\"",
+		"\"overpaid\"",
+		"\"partial_paid\"",
 		"\"payable\"",
 		"\"terminal\"",
+		"\"payment_outcome\"",
+		"\"matched_amount_raw\"",
+		"\"shortfall_amount_raw\"",
+		"\"excess_amount_raw\"",
 	)
 }
 

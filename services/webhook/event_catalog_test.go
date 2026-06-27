@@ -17,6 +17,9 @@ func TestMoneyEventCatalogCoversRequiredCanonicalEvents(t *testing.T) {
 		"payment.succeeded.v1",
 		"payment.failed.v1",
 		"payment.expired.v1",
+		"payment.underpaid.v1",
+		"payment.overpaid.v1",
+		"payment.partial_paid.v1",
 		"withdrawal.requested.v1",
 		"withdrawal.broadcast.v1",
 		"withdrawal.finalized.v1",
@@ -69,6 +72,9 @@ func TestMoneyEventCatalogV1FieldSnapshot(t *testing.T) {
 		"payment.succeeded.v1":              {"payment_id", "order_id", "amount", "currency", "tx_hash", "tx_unique_hash"},
 		"payment.failed.v1":                 {"payment_id", "order_id", "amount", "currency", "failure_reason"},
 		"payment.expired.v1":                {"payment_id", "order_id", "amount", "currency", "expires_at"},
+		"payment.underpaid.v1":              {"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "shortfall_amount_raw", "payment_outcome"},
+		"payment.overpaid.v1":               {"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "excess_amount_raw", "payment_outcome"},
+		"payment.partial_paid.v1":           {"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "shortfall_amount_raw", "payment_outcome"},
 		"withdrawal.requested.v1":           {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address"},
 		"withdrawal.broadcast.v1":           {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address", "tx_hash"},
 		"withdrawal.finalized.v1":           {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address", "tx_hash"},
@@ -172,7 +178,7 @@ func TestMoneyEventCatalogCoversRawEventLiteralsInMoneyPaths(t *testing.T) {
 	}
 	eventsBySource := map[string][]string{
 		"api/handlers/payment.go":           {constants.WebhookEventPaymentFailed},
-		"repositories/payment_repo.go":      {constants.WebhookEventPaymentSucceeded, constants.WebhookEventPaymentFailed, constants.WebhookEventPaymentExpired},
+		"repositories/payment_repo.go":      {constants.WebhookEventPaymentSucceeded, constants.WebhookEventPaymentFailed, constants.WebhookEventPaymentExpired, constants.WebhookEventPaymentUnderpaid, constants.WebhookEventPaymentOverpaid, constants.WebhookEventPaymentPartialPaid},
 		"repositories/transaction_repo.go":  {constants.WebhookEventTransactionReorged},
 		"services/txrescan/service.go":      {constants.WebhookEventNativeTransfer},
 		"workers/listeners/evm/listener.go": {constants.WebhookEventNativeTransfer},

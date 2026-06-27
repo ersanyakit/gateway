@@ -619,18 +619,21 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		return
 	}
 
-	session, changed, err := coreApplication.CORE.Router.PaymentRepo.MarkPaidByTransaction(ctx, *txModel)
+	matchResult, err := coreApplication.CORE.Router.PaymentRepo.MatchFinalizedTransaction(ctx, *txModel)
 	if err != nil {
 		log.Println("Payment match error:", err)
 		return
 	}
-	if !changed || session == nil {
+	if matchResult == nil || !matchResult.Changed || matchResult.Session == nil {
 		postStaticAddressDepositAvailable(ctx, txModel)
 		return
 	}
+	session := matchResult.Session
 	if coreApplication.CORE.Router.LedgerRepo != nil {
-		if err := coreApplication.CORE.Router.LedgerRepo.PostDepositAvailable(ctx, *session, *txModel); err != nil {
-			log.Println("Ledger available deposit error:", err)
+		if matchResult.LedgerEligible {
+			if err := coreApplication.CORE.Router.LedgerRepo.PostDepositAvailable(ctx, *session, *txModel); err != nil {
+				log.Println("Ledger available deposit error:", err)
+			}
 		}
 	}
 	publishPaymentUpdate(session)

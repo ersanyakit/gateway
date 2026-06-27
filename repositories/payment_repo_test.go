@@ -193,6 +193,57 @@ func TestPaymentMatchDecisionClassifiesExplicitOutcomes(t *testing.T) {
 	}
 }
 
+func TestPaymentMatchSelectionPrefersExactCandidateBeforeFailure(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	token := "0xToken"
+	wrongChain := models.PaymentSession{
+		ID:                uuid.New(),
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   ptr(constants.Ethereum),
+		SelectedSymbol:    "USDC",
+		SelectedToken:     &token,
+		ExpectedAmountRaw: "1000",
+		ExpiresAt:         &future,
+	}
+	exact := wrongChain
+	exact.ID = uuid.New()
+	exact.SelectedChainID = ptr(constants.Base)
+	txModel := paymentMatchTestTx(constants.Base, "USDC", &token, "1000")
+
+	sessionID, decision, ok := selectPaymentMatchCandidate([]models.PaymentSession{wrongChain, exact}, txModel, now)
+	if !ok {
+		t.Fatal("expected exact candidate to be selected")
+	}
+	if sessionID != exact.ID || decision.Status != models.PaymentStatusPaid || decision.Outcome != models.PaymentOutcomeExact {
+		t.Fatalf("selected session=%s decision=%#v, want exact paid session %s", sessionID, decision, exact.ID)
+	}
+}
+
+func TestPaymentMatchSelectionRecordsFailureWhenNoExactCandidateExists(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	token := "0xToken"
+	wrongChain := models.PaymentSession{
+		ID:                uuid.New(),
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   ptr(constants.Ethereum),
+		SelectedSymbol:    "USDC",
+		SelectedToken:     &token,
+		ExpectedAmountRaw: "1000",
+		ExpiresAt:         &future,
+	}
+	txModel := paymentMatchTestTx(constants.Base, "USDC", &token, "1000")
+
+	sessionID, decision, ok := selectPaymentMatchCandidate([]models.PaymentSession{wrongChain}, txModel, now)
+	if !ok {
+		t.Fatal("expected wrong-chain candidate to be selected when no exact candidate exists")
+	}
+	if sessionID != wrongChain.ID || decision.Status != models.PaymentStatusFailed || decision.Outcome != models.PaymentOutcomeWrongChain {
+		t.Fatalf("selected session=%s decision=%#v, want wrong-chain failed session %s", sessionID, decision, wrongChain.ID)
+	}
+}
+
 func TestPaymentMatchSourceKeepsIdempotencyGuardrails(t *testing.T) {
 	source := readPaymentRepoSource(t)
 	for _, token := range []string{
@@ -200,11 +251,121 @@ func TestPaymentMatchSourceKeepsIdempotencyGuardrails(t *testing.T) {
 		`pg_advisory_xact_lock(hashtext(?))`,
 		`"payment-tx:"+txModel.UniqueHash`,
 		`Where("tx_unique_hash = ?", txModel.UniqueHash)`,
+		"if used > 0",
+		"if matchedSession.TxUniqueHash != nil",
 		"LedgerEligible",
 	} {
 		if !contains(source, token) {
 			t.Fatalf("payment matching source missing %q", token)
 		}
+	}
+}
+
+func TestPaymentRepoMatchFinalizedTransactionPersistsOutcomeAndIsIdempotent(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {
+		t.Fatalf("automigrate payment match models: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewPaymentRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	token := "0xToken"
+	chainID := constants.Ethereum
+	future := time.Now().Add(10 * time.Minute)
+	now := time.Now()
+	merchant := models.Merchant{
+		ID:        merchantID,
+		Name:      "Payment Match Test",
+		Email:     "payment-match-" + uuid.NewString() + "@example.test",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domain := models.Domain{
+		ID:          domainID,
+		MerchantID:  merchantID,
+		DomainURL:   "payment-match.example.test",
+		APIKey:      "pk_" + uuid.NewString(),
+		APISecret:   "secret",
+		HDAccountID: 7001,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	wallet := models.Wallet{
+		ID:              walletID,
+		HDAccountID:     7001,
+		HDAddressId:     1,
+		MerchantID:      merchantID,
+		DomainID:        domainID,
+		ProductID:       "checkout:test",
+		UserID:          "user-" + uuid.NewString(),
+		EthereumAddress: "0x" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := db.WithContext(ctx).Create(&merchant).Error; err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&domain).Error; err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&wallet).Error; err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+	session := models.PaymentSession{
+		ID:                uuid.New(),
+		SessionToken:      "match-" + uuid.NewString(),
+		MerchantID:        merchantID,
+		DomainID:          domainID,
+		WalletID:          walletID,
+		OrderID:           "order-" + uuid.NewString(),
+		Amount:            "10.00",
+		Currency:          "USD",
+		SelectedChainID:   &chainID,
+		SelectedToken:     &token,
+		SelectedSymbol:    "USDC",
+		SelectedDecimals:  6,
+		ExpectedAmountRaw: "1000",
+		DepositAddress:    "0xdeposit",
+		Status:            models.PaymentStatusAwaitingPayment,
+		ExpiresAt:         &future,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+	if err := db.WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("seed payment session: %v", err)
+	}
+	walletIDCopy := walletID
+	merchantIDCopy := merchantID
+	domainIDCopy := domainID
+	txModel := paymentMatchTestTx(constants.Ethereum, "USDC", &token, "997")
+	txModel.WalletID = &walletIDCopy
+	txModel.MerchantID = &merchantIDCopy
+	txModel.DomainID = &domainIDCopy
+	txModel.UniqueHash = "match-tx-" + uuid.NewString()
+	txModel.Hash = "0xmatch"
+
+	result, err := repo.MatchFinalizedTransaction(ctx, txModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || !result.Changed || result.Session == nil {
+		t.Fatalf("match result = %#v, want changed session", result)
+	}
+	if result.Status != models.PaymentStatusUnderpaid || result.Outcome != models.PaymentOutcomeUnderpaid || result.WebhookEvent != constants.WebhookEventPaymentUnderpaid {
+		t.Fatalf("result outcome = %#v", result)
+	}
+	if result.Session.MatchedAmountRaw != "997" || result.Session.ShortfallAmountRaw != "3" || result.Session.ExcessAmountRaw != "" {
+		t.Fatalf("persisted outcome amounts = %#v", result.Session)
+	}
+
+	repeated, err := repo.MatchFinalizedTransaction(ctx, txModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated != nil {
+		t.Fatalf("repeated match = %#v, want no-op", repeated)
 	}
 }
 

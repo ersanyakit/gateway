@@ -223,27 +223,32 @@ type V1PaymentInfoResponse struct {
 }
 
 type V1PaymentDetail struct {
-	PaymentID         string `json:"payment_id"      example:"550e8400-e29b-41d4-a716-446655440000"`
-	TrackID           string `json:"track_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
-	OrderID           string `json:"order_id"        example:"ORD-2024-001"`
-	Status            string `json:"status"          example:"paid"`
-	Amount            string `json:"amount"          example:"25.00"`
-	Currency          string `json:"currency"        example:"USD"`
-	UserID            string `json:"user_id"         example:"customer_42"`
-	SelectedAsset     string `json:"selected_asset"  example:"USDT"`
-	SelectedChain     string `json:"selected_chain"  example:"ethereum"`
-	ChainID           *int64 `json:"chain_id,omitempty" example:"1"`
-	Symbol            string `json:"symbol,omitempty" example:"USDT"`
-	Token             string `json:"token,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
-	Decimals          uint8  `json:"decimals,omitempty" example:"6"`
-	ExpectedAmountRaw string `json:"expected_amount_raw,omitempty" example:"25000000"`
-	DepositAddress    string `json:"deposit_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	DepositWallet     string `json:"deposit_wallet"  example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	TxHash            string `json:"tx_hash"         example:"0xabc123..."`
-	PaidAt            string `json:"paid_at"         example:"2024-06-01T12:15:00Z"`
-	ExpiresAt         string `json:"expires_at"      example:"2024-06-01T12:30:00Z"`
-	CheckoutURL       string `json:"checkout_url"    example:"https://pay.example.com/checkout/eyJhbGci"`
-	CreatedAt         string `json:"created_at"      example:"2024-06-01T12:00:00Z"`
+	PaymentID            string `json:"payment_id"      example:"550e8400-e29b-41d4-a716-446655440000"`
+	TrackID              string `json:"track_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
+	OrderID              string `json:"order_id"        example:"ORD-2024-001"`
+	Status               string `json:"status"          example:"paid"`
+	Amount               string `json:"amount"          example:"25.00"`
+	Currency             string `json:"currency"        example:"USD"`
+	UserID               string `json:"user_id"         example:"customer_42"`
+	SelectedAsset        string `json:"selected_asset"  example:"USDT"`
+	SelectedChain        string `json:"selected_chain"  example:"ethereum"`
+	ChainID              *int64 `json:"chain_id,omitempty" example:"1"`
+	Symbol               string `json:"symbol,omitempty" example:"USDT"`
+	Token                string `json:"token,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	Decimals             uint8  `json:"decimals,omitempty" example:"6"`
+	ExpectedAmountRaw    string `json:"expected_amount_raw,omitempty" example:"25000000"`
+	DepositAddress       string `json:"deposit_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	DepositWallet        string `json:"deposit_wallet"  example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	PaymentOutcome       string `json:"payment_outcome,omitempty" example:"exact"`
+	PaymentOutcomeReason string `json:"payment_outcome_reason,omitempty" example:"deposit amount exactly matches expected amount"`
+	MatchedAmountRaw     string `json:"matched_amount_raw,omitempty" example:"25000000"`
+	ShortfallAmountRaw   string `json:"shortfall_amount_raw,omitempty" example:""`
+	ExcessAmountRaw      string `json:"excess_amount_raw,omitempty" example:""`
+	TxHash               string `json:"tx_hash"         example:"0xabc123..."`
+	PaidAt               string `json:"paid_at"         example:"2024-06-01T12:15:00Z"`
+	ExpiresAt            string `json:"expires_at"      example:"2024-06-01T12:30:00Z"`
+	CheckoutURL          string `json:"checkout_url"    example:"https://pay.example.com/checkout/eyJhbGci"`
+	CreatedAt            string `json:"created_at"      example:"2024-06-01T12:00:00Z"`
 }
 
 // V1PaymentHistoryResponse is returned by GET /api/v1/payment/history.
@@ -262,12 +267,13 @@ type V1PaymentStatisticsResponse struct {
 }
 
 type V1PaymentStatisticsData struct {
-	Total           int64  `json:"total"             example:"120"`
-	Paid            int64  `json:"paid"              example:"95"`
-	Pending         int64  `json:"pending"           example:"12"`
-	AwaitingPayment int64  `json:"awaiting_payment"  example:"8"`
-	Expired         int64  `json:"expired"           example:"5"`
-	TotalVolumeUSD  string `json:"total_volume_usd"  example:"48320.00"`
+	Total    int64                 `json:"total"    example:"120"`
+	Statuses []V1PaymentStatusStat `json:"statuses"`
+}
+
+type V1PaymentStatusStat struct {
+	Status string `json:"status" example:"paid"`
+	Count  int64  `json:"count"  example:"95"`
 }
 
 // V1StatusTableItem describes a single payment status.

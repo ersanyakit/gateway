@@ -40,8 +40,8 @@ This document records the partner-facing contract evidence for Epic 1: Partner I
 
 ## Checkout State Semantics
 
-- Hosted checkout status can report `active`, `pending`, `confirming`, `paid`, `expired`, `canceled`, `failed`, and `underpaid`.
-- `paid`, `expired`, `canceled`, `failed`, and `underpaid` are terminal payer-facing states.
+- Hosted checkout status can report `active`, `pending`, `confirming`, `paid`, `expired`, `canceled`, `failed`, `underpaid`, `overpaid`, and `partial_paid`.
+- `paid`, `expired`, `canceled`, `failed`, `underpaid`, `overpaid`, and `partial_paid` are terminal payer-facing states.
 - `payable` indicates whether the checkout should still present payment affordances.
 - `terminal` indicates whether the payer-facing state is final.
 - Checkout status responses expose only safe fields such as status, paid flag, payment id, tx hash, success/cancel paths, `payable`, and `terminal`.

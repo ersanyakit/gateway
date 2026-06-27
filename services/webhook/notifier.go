@@ -90,18 +90,23 @@ type PaymentPayload struct {
 	UserID     string `json:"user_id"`
 	WalletID   string `json:"wallet_id"`
 
-	Amount            string  `json:"amount"`
-	Currency          string  `json:"currency"`
-	ChainID           *int64  `json:"chain_id,omitempty"`
-	Symbol            string  `json:"symbol,omitempty"`
-	Token             *string `json:"token,omitempty"`
-	Decimals          uint8   `json:"decimals,omitempty"`
-	ExpectedAmountRaw string  `json:"expected_amount_raw,omitempty"`
-	DepositAddress    string  `json:"deposit_address,omitempty"`
-	TxHash            *string `json:"tx_hash,omitempty"`
-	TxUniqueHash      *string `json:"tx_unique_hash,omitempty"`
-	CreatedAt         string  `json:"created_at"`
-	PaidAt            *string `json:"paid_at,omitempty"`
+	Amount             string  `json:"amount"`
+	Currency           string  `json:"currency"`
+	ChainID            *int64  `json:"chain_id,omitempty"`
+	Symbol             string  `json:"symbol,omitempty"`
+	Token              *string `json:"token,omitempty"`
+	Decimals           uint8   `json:"decimals,omitempty"`
+	ExpectedAmountRaw  string  `json:"expected_amount_raw,omitempty"`
+	DepositAddress     string  `json:"deposit_address,omitempty"`
+	PaymentOutcome     string  `json:"payment_outcome,omitempty"`
+	OutcomeReason      string  `json:"payment_outcome_reason,omitempty"`
+	MatchedAmountRaw   string  `json:"matched_amount_raw,omitempty"`
+	ShortfallAmountRaw string  `json:"shortfall_amount_raw,omitempty"`
+	ExcessAmountRaw    string  `json:"excess_amount_raw,omitempty"`
+	TxHash             *string `json:"tx_hash,omitempty"`
+	TxUniqueHash       *string `json:"tx_unique_hash,omitempty"`
+	CreatedAt          string  `json:"created_at"`
+	PaidAt             *string `json:"paid_at,omitempty"`
 }
 
 func NewNotifier() *Notifier {
@@ -215,30 +220,35 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	}
 
 	payload := PaymentPayload{
-		EventID:           PaymentEventID(session),
-		EventType:         session.WebhookEvent,
-		EventVersion:      "v1",
-		PaymentID:         session.ID.String(),
-		SessionToken:      session.SessionToken,
-		OrderID:           session.OrderID,
-		Status:            session.Status,
-		MerchantID:        session.MerchantID.String(),
-		DomainID:          session.DomainID.String(),
-		ProductID:         session.ProductID,
-		UserID:            session.UserID,
-		WalletID:          session.WalletID.String(),
-		Amount:            session.Amount,
-		Currency:          session.Currency,
-		ChainID:           chainID,
-		Symbol:            session.SelectedSymbol,
-		Token:             session.SelectedToken,
-		Decimals:          session.SelectedDecimals,
-		ExpectedAmountRaw: session.ExpectedAmountRaw,
-		DepositAddress:    session.DepositAddress,
-		TxHash:            session.TxHash,
-		TxUniqueHash:      session.TxUniqueHash,
-		CreatedAt:         session.CreatedAt.UTC().Format(time.RFC3339Nano),
-		PaidAt:            paidAt,
+		EventID:            PaymentEventID(session),
+		EventType:          session.WebhookEvent,
+		EventVersion:       "v1",
+		PaymentID:          session.ID.String(),
+		SessionToken:       session.SessionToken,
+		OrderID:            session.OrderID,
+		Status:             session.Status,
+		MerchantID:         session.MerchantID.String(),
+		DomainID:           session.DomainID.String(),
+		ProductID:          session.ProductID,
+		UserID:             session.UserID,
+		WalletID:           session.WalletID.String(),
+		Amount:             session.Amount,
+		Currency:           session.Currency,
+		ChainID:            chainID,
+		Symbol:             session.SelectedSymbol,
+		Token:              session.SelectedToken,
+		Decimals:           session.SelectedDecimals,
+		ExpectedAmountRaw:  session.ExpectedAmountRaw,
+		DepositAddress:     session.DepositAddress,
+		PaymentOutcome:     session.PaymentOutcome,
+		OutcomeReason:      session.PaymentOutcomeReason,
+		MatchedAmountRaw:   session.MatchedAmountRaw,
+		ShortfallAmountRaw: session.ShortfallAmountRaw,
+		ExcessAmountRaw:    session.ExcessAmountRaw,
+		TxHash:             session.TxHash,
+		TxUniqueHash:       session.TxUniqueHash,
+		CreatedAt:          session.CreatedAt.UTC().Format(time.RFC3339Nano),
+		PaidAt:             paidAt,
 	}
 
 	body, err := json.Marshal(payload)

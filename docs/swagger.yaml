@@ -146,11 +146,21 @@ definitions:
     properties:
       cancel_path:
         type: string
+      excess_amount_raw:
+        type: string
+      matched_amount_raw:
+        type: string
       paid:
         type: boolean
       payable:
         type: boolean
       payment_id:
+        type: string
+      payment_outcome:
+        type: string
+      payment_outcome_reason:
+        type: string
+      shortfall_amount_raw:
         type: string
       status:
         type: string
@@ -484,11 +494,17 @@ definitions:
       deposit_wallet:
         example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
         type: string
+      excess_amount_raw:
+        example: ""
+        type: string
       expected_amount_raw:
         example: "25000000"
         type: string
       expires_at:
         example: "2024-06-01T12:30:00Z"
+        type: string
+      matched_amount_raw:
+        example: "25000000"
         type: string
       order_id:
         example: ORD-2024-001
@@ -499,11 +515,20 @@ definitions:
       payment_id:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
+      payment_outcome:
+        example: exact
+        type: string
+      payment_outcome_reason:
+        example: deposit amount exactly matches expected amount
+        type: string
       selected_asset:
         example: USDT
         type: string
       selected_chain:
         example: ethereum
+        type: string
+      shortfall_amount_raw:
+        example: ""
         type: string
       status:
         example: paid
@@ -553,24 +578,13 @@ definitions:
     type: object
   types.V1PaymentStatisticsData:
     properties:
-      awaiting_payment:
-        example: 8
-        type: integer
-      expired:
-        example: 5
-        type: integer
-      paid:
-        example: 95
-        type: integer
-      pending:
-        example: 12
-        type: integer
+      statuses:
+        items:
+          $ref: '#/definitions/types.V1PaymentStatusStat'
+        type: array
       total:
         example: 120
         type: integer
-      total_volume_usd:
-        example: "48320.00"
-        type: string
     type: object
   types.V1PaymentStatisticsResponse:
     properties:
@@ -578,6 +592,15 @@ definitions:
         $ref: '#/definitions/types.V1PaymentStatisticsData'
       result:
         example: ok
+        type: string
+    type: object
+  types.V1PaymentStatusStat:
+    properties:
+      count:
+        example: 95
+        type: integer
+      status:
+        example: paid
         type: string
     type: object
   types.V1PaymentStatusTableData:
@@ -1446,6 +1469,8 @@ paths:
         - canceled
         - failed
         - underpaid
+        - overpaid
+        - partial_paid
         in: query
         name: status
         type: string
