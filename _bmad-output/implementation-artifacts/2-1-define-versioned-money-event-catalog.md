@@ -2,7 +2,7 @@
 story_id: "2.1"
 story_key: "2-1-define-versioned-money-event-catalog"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 8449389195a3d4b185bb6b30c730ddb524a8b1f5
@@ -10,7 +10,7 @@ baseline_commit: 8449389195a3d4b185bb6b30c730ddb524a8b1f5
 
 # Story 2.1: Define Versioned Money Event Catalog
 
-Status: review
+Status: done
 
 ## Story
 
@@ -203,3 +203,26 @@ Codex
 
 - 2026-06-27: Story created with Epic 2.1 acceptance criteria, event-surface inventory, architecture guardrails, Story 1.5 learnings, and catalog/testing guidance.
 - 2026-06-27: Implemented versioned money event catalog metadata, developer documentation, compatibility alias mapping, and catalog contract tests.
+
+## Senior Developer Review
+
+### Review Date
+
+2026-06-27
+
+### Reviewer
+
+Codex
+
+### Review Summary
+
+- Result: Approved after fix.
+- Scope reviewed: catalog metadata, alias coverage, docs contract, emitted event drift checks, sensitive field exclusions, and correction semantics.
+- Finding fixed: `services/webhook/event_catalog_test.go` used a hardcoded list of webhook constants, which could miss future additions in `constants/webhook_events.go`. The test now parses exported webhook event constants from the source file and fails if new constants are not cataloged.
+
+### Review Validation
+
+- `go test -count=1 ./services/webhook ./constants ./docs` passed.
+- `go test -count=1 ./...` passed.
+- `go vet ./...` passed.
+- `git diff --check` passed.
