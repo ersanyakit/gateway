@@ -459,6 +459,57 @@ func TestAdminLiveBalanceRawSelectsNativeAndTokenComponents(t *testing.T) {
 	}
 }
 
+func TestAdminRecoverNetAmountRawDeductsNativeFees(t *testing.T) {
+	t.Setenv("TRON_NATIVE_SWEEP_FEE_SUN", "1100000")
+	net, fee, err := adminRecoverNetAmountRaw(nil, nil, asset.NewTRX(constants.TRON), "18500000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != "17400000" || fee != "1100000" {
+		t.Fatalf("TRX net=%q fee=%q, want net=17400000 fee=1100000", net, fee)
+	}
+
+	t.Setenv("SOLANA_TRANSFER_FEE_LAMPORTS", "5000")
+	net, fee, err = adminRecoverNetAmountRaw(nil, nil, asset.NewSOL(constants.Solana), "1000000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != "999995000" || fee != "5000" {
+		t.Fatalf("SOL net=%q fee=%q, want net=999995000 fee=5000", net, fee)
+	}
+
+	t.Setenv("BITCOIN_FEE_RATE_SAT_PER_VBYTE", "12")
+	net, fee, err = adminRecoverNetAmountRaw(nil, nil, asset.NewBTC(), "2000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != "320" || fee != "1680" {
+		t.Fatalf("BTC net=%q fee=%q, want net=320 fee=1680", net, fee)
+	}
+}
+
+func TestAdminRecoverNetAmountRawLeavesTokenAmountUntouched(t *testing.T) {
+	token := asset.NewTRC20(constants.TRON, "TToken", "USDT", "Tether", 6)
+	net, fee, err := adminRecoverNetAmountRaw(nil, nil, token, "18500000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != "18500000" || fee != "0" {
+		t.Fatalf("token net=%q fee=%q, want unchanged amount and zero fee", net, fee)
+	}
+}
+
+func TestAdminRecoverNetAmountRawRejectsFeeExhaustedAmount(t *testing.T) {
+	t.Setenv("TRON_NATIVE_SWEEP_FEE_SUN", "1100000")
+	_, _, err := adminRecoverNetAmountRaw(nil, nil, asset.NewTRX(constants.TRON), "1100000")
+	if err == nil {
+		t.Fatal("expected fee-exhausted native amount to be rejected")
+	}
+	if !strings.Contains(err.Error(), "network fee sonrası") {
+		t.Fatalf("error = %q, want network fee message", err.Error())
+	}
+}
+
 func TestAddTokenAmountRawSumsSignedLedgerValues(t *testing.T) {
 	tests := map[string]struct {
 		current string

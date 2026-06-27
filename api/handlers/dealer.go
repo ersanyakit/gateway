@@ -10,6 +10,7 @@ import (
 	"core/helpers"
 	"core/models"
 	"core/repositories"
+	"core/services/chainresource"
 	"core/services/pricing"
 	services "core/services/system"
 	"core/services/txrescan"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/pquerna/otp/totp"
@@ -2055,6 +2057,10 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		if chain == "" {
 			return redirectWithError(c, "/admin/sweep", fmt.Sprintf("unsupported chain: %d", selectedAsset.GetChainID()))
 		}
+		chainObj, err := deps.Blockchains.GetChainByID(selectedChainID)
+		if err != nil {
+			return redirectWithError(c, "/admin/sweep", "Chain hazır değil: "+err.Error())
+		}
 		token := tokenForSelectedAsset(selectedAsset)
 		assetLabel := strings.TrimSpace(selectedAsset.GetSymbol())
 		if assetLabel == "" {
@@ -2100,6 +2106,16 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			}
 			return redirectWithError(c, "/admin/sweep", "Recover funds için amount_raw zorunlu; "+msg+".")
 		}
+		grossAmountRaw := amountRaw
+		networkFeeRaw := "0"
+		feeCtx, feeCancel := context.WithTimeout(c.Context(), 15*time.Second)
+		netAmountRaw, feeRaw, err := adminRecoverNetAmountRaw(feeCtx, chainObj, selectedAsset, amountRaw)
+		feeCancel()
+		if err != nil {
+			return redirectWithError(c, "/admin/sweep", err.Error())
+		}
+		amountRaw = netAmountRaw
+		networkFeeRaw = feeRaw
 
 		if walletID == "" || chain == "" || toAddress == "" {
 			return redirectWithError(c, "/admin/sweep", "Source wallet, asset ve hedef wallet/adres zorunlu.")
@@ -2120,6 +2136,10 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/sweep", err.Error())
 		}
 		domainID := sourceWallet.DomainID
+		note := "admin recover funds to " + destinationLabel
+		if networkFeeRaw != "0" {
+			note += " (gross_raw=" + grossAmountRaw + " network_fee_raw=" + networkFeeRaw + ")"
+		}
 		request := &models.WithdrawalRequest{
 			MerchantID:  sourceWallet.MerchantID,
 			DomainID:    &domainID,
@@ -2130,7 +2150,7 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			Decimals:    decimals,
 			ToAddress:   *params.ToAddress,
 			AmountRaw:   *params.AmountRaw,
-			Note:        "admin recover funds to " + destinationLabel,
+			Note:        note,
 			Status:      models.WithdrawalStatusPending,
 			RequestedBy: adminEmail,
 		}
@@ -2189,7 +2209,11 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		if approvedRequest != nil {
 			txHash = approvedRequest.TxHash
 		}
-		return redirectWithSuccess(c, "/admin/sweep", "Recover funds transferi gönderildi ("+assetLabel+"). Tx: "+txHash)
+		message := "Recover funds transferi gönderildi (" + assetLabel + "). Tx: " + txHash
+		if networkFeeRaw != "0" {
+			message = "Recover funds transferi gönderildi (" + assetLabel + "). Network fee raw düşüldü: " + networkFeeRaw + ". Tx: " + txHash
+		}
+		return redirectWithSuccess(c, "/admin/sweep", message)
 	}
 }
 
@@ -2343,6 +2367,92 @@ func adminBalanceValueToRaw(value string, decimals uint8) (string, bool) {
 		return "", false
 	}
 	return new(big.Int).Set(decimal.Num()).String(), true
+}
+
+const adminEVMNativeTransferGasLimit uint64 = 21_000
+
+func adminRecoverNetAmountRaw(ctx context.Context, chain blockchain.Chain, selected asset.Asset, grossRaw string) (string, string, error) {
+	grossRaw = strings.TrimSpace(grossRaw)
+	gross, ok := new(big.Int).SetString(grossRaw, 10)
+	if !ok || gross.Sign() <= 0 {
+		return "", "", errors.New("amount_raw pozitif integer olmalı")
+	}
+	fee, err := adminRecoverNativeFeeRaw(ctx, chain, selected)
+	if err != nil {
+		return "", "", err
+	}
+	if fee == nil || fee.Sign() <= 0 {
+		return gross.String(), "0", nil
+	}
+	net := new(big.Int).Sub(gross, fee)
+	if net.Sign() <= 0 {
+		return "", "", fmt.Errorf("amount_raw network fee sonrası sıfır/negatif kalıyor: gross=%s fee=%s", gross.String(), fee.String())
+	}
+	return net.String(), fee.String(), nil
+}
+
+func adminRecoverNativeFeeRaw(ctx context.Context, chain blockchain.Chain, selected asset.Asset) (*big.Int, error) {
+	if selected == nil || !selected.IsNative() {
+		return big.NewInt(0), nil
+	}
+	switch selected.GetChainID() {
+	case constants.TRON:
+		fee, err := chainresource.TronNativeSweepFeeSUN()
+		if err != nil {
+			return nil, err
+		}
+		return big.NewInt(fee), nil
+	case constants.Solana:
+		fee, err := chainresource.SolanaTransferFeeLamports()
+		if err != nil {
+			return nil, err
+		}
+		return new(big.Int).SetUint64(fee), nil
+	case constants.Bitcoin:
+		feeRate, err := chainresource.BitcoinFeeRateSatPerVByte()
+		if err != nil {
+			return nil, err
+		}
+		const estimatedNativeTransferVSize = int64(10 + 68 + 31*2)
+		return big.NewInt(estimatedNativeTransferVSize * feeRate), nil
+	default:
+		if isEVMChain(selected.GetChainID()) {
+			return adminRecoverEVMNativeFeeRaw(ctx, chain)
+		}
+		return big.NewInt(0), nil
+	}
+}
+
+func adminRecoverEVMNativeFeeRaw(ctx context.Context, chain blockchain.Chain) (*big.Int, error) {
+	if chain == nil {
+		return nil, errors.New("chain hazır değil")
+	}
+	var lastErr error
+	for _, rpcURL := range chain.RPCs() {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+		client, err := ethclient.DialContext(ctx, rpcURL)
+		if err != nil {
+			lastErr = fmt.Errorf("%s %s gas RPC bağlantısı başarısız: %w", chain.Name(), rpcURL, err)
+			continue
+		}
+		gasPrice, err := client.SuggestGasPrice(ctx)
+		client.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("%s %s gas price okunamadı: %w", chain.Name(), rpcURL, err)
+			continue
+		}
+		if err := chainresource.ValidateEVMGasPolicy(chain.Name(), "admin.recover_funds", gasPrice, adminEVMNativeTransferGasLimit); err != nil {
+			return nil, err
+		}
+		return new(big.Int).Mul(gasPrice, new(big.Int).SetUint64(adminEVMNativeTransferGasLimit)), nil
+	}
+	if lastErr == nil {
+		lastErr = errors.New("EVM gas fee için RPC endpoint bulunamadı")
+	}
+	return nil, lastErr
 }
 
 func HandleAdminTestDeposit(deps DealerDeps) fiber.Handler {

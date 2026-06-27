@@ -13,6 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const domainHDAccountLockKey = "domain-hd-account-id"
+
 type DomainRepo struct {
 	merchantRepo *MerchantRepo
 }
@@ -32,55 +34,77 @@ func NewDomainRepo(merchantRepo *MerchantRepo) *DomainRepo {
 // CreateReserveDomain creates a system-internal domain (no real URL, no webhook) used as the
 // home for the merchant's reserve wallet (HD address index 0). Called once at merchant registration.
 func (r *DomainRepo) CreateReserveDomain(ctx context.Context, merchantID uuid.UUID) (*models.Domain, error) {
-	// Idempotent: if a reserve domain already exists, return it.
-	var existing models.Domain
-	if err := r.DB().WithContext(ctx).
-		Where("merchant_id = ? AND domain_url = ?", merchantID, "_reserve_").
-		First(&existing).Error; err == nil {
-		return &existing, nil
-	}
+	var domain *models.Domain
 
-	keyID, apiKey, err := helpers.GenerateAPIKey("live")
+	err := r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.lockDomainHDAccountID(ctx, tx); err != nil {
+			return err
+		}
+
+		// Idempotent: if a reserve domain already exists, return it.
+		var existing models.Domain
+		if err := tx.
+			Where("merchant_id = ? AND domain_url = ?", merchantID, "_reserve_").
+			First(&existing).Error; err == nil {
+			domain = &existing
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		keyID, apiKey, err := helpers.GenerateAPIKey("live")
+		if err != nil {
+			return err
+		}
+		apiSecretPlain, err := helpers.GenerateSecret()
+		if err != nil {
+			return err
+		}
+		hashedAPISecret, err := helpers.HMACSecret(apiSecretPlain)
+		if err != nil {
+			return err
+		}
+		hdIndex, err := r.getNextDomainHDIndex(ctx, tx)
+		if err != nil {
+			return err
+		}
+		domain = &models.Domain{
+			MerchantID:  merchantID,
+			DomainURL:   "_reserve_",
+			KeyID:       keyID,
+			APIKey:      apiKey,
+			APISecret:   hashedAPISecret,
+			HDAccountID: hdIndex,
+		}
+		return tx.Create(domain).Error
+	})
 	if err != nil {
-		return nil, err
-	}
-	apiSecretPlain, err := helpers.GenerateSecret()
-	if err != nil {
-		return nil, err
-	}
-	hashedAPISecret, err := helpers.HMACSecret(apiSecretPlain)
-	if err != nil {
-		return nil, err
-	}
-	hdIndex, err := r.GetNextDomainHDIndex(ctx, merchantID)
-	if err != nil {
-		return nil, err
-	}
-	domain := &models.Domain{
-		MerchantID:  merchantID,
-		DomainURL:   "_reserve_",
-		KeyID:       keyID,
-		APIKey:      apiKey,
-		APISecret:   hashedAPISecret,
-		HDAccountID: hdIndex,
-	}
-	if err := r.DB().WithContext(ctx).Create(domain).Error; err != nil {
 		return nil, err
 	}
 	return domain, nil
 }
 
-func (r *DomainRepo) GetNextDomainHDIndex(ctx context.Context, merchantID uuid.UUID) (uint32, error) {
+func (r *DomainRepo) GetNextDomainHDIndex(ctx context.Context, _ uuid.UUID) (uint32, error) {
+	return r.getNextDomainHDIndex(ctx, r.DB())
+}
+
+func (r *DomainRepo) getNextDomainHDIndex(ctx context.Context, db *gorm.DB) (uint32, error) {
 	var maxIndex uint32
-	err := r.DB().WithContext(ctx).
+	err := db.WithContext(ctx).
 		Model(&models.Domain{}).
-		Where("merchant_id = ?", merchantID).
 		Select("COALESCE(MAX(hd_account_id), 0)").
 		Scan(&maxIndex).Error
 	if err != nil {
 		return 0, err
 	}
 	return maxIndex + 1, nil
+}
+
+func (r *DomainRepo) lockDomainHDAccountID(ctx context.Context, tx *gorm.DB) error {
+	if tx == nil || tx.Dialector == nil || tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", domainHDAccountLockKey).Error
 }
 
 func (r *DomainRepo) FindByID(params types.DomainParams) (*models.Domain, error) {
@@ -150,8 +174,12 @@ func (r *DomainRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID) (
 }
 
 func (r *DomainRepo) IsDomainExists(ctx context.Context, merchantID uuid.UUID, domainURL, webhookURL string) (bool, error) {
+	return r.isDomainExistsWithDB(ctx, r.merchantRepo.DB(), merchantID, domainURL, webhookURL)
+}
+
+func (r *DomainRepo) isDomainExistsWithDB(ctx context.Context, db *gorm.DB, merchantID uuid.UUID, domainURL, webhookURL string) (bool, error) {
 	var count int64
-	err := r.merchantRepo.DB().WithContext(ctx).
+	err := db.WithContext(ctx).
 		Model(&models.Domain{}).
 		Where("merchant_id = ? AND domain_url = ? AND webhook_url = ?", merchantID, domainURL, webhookURL).
 		Count(&count).Error
@@ -226,7 +254,12 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		return nil, errors.New("invalid merchant id")
 	}
 
-	exists, err := r.IsDomainExists(params.Context, merchantUUID, *params.DomainURL, *params.WebhookURL)
+	if err := r.lockDomainHDAccountID(params.Context, tx); err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	exists, err := r.isDomainExistsWithDB(params.Context, tx, merchantUUID, *params.DomainURL, *params.WebhookURL)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
@@ -267,7 +300,7 @@ func (r *DomainRepo) Create(params types.DomainParams) (*models.Domain, error) {
 		return nil, err
 	}
 
-	hdIndex, err := r.GetNextDomainHDIndex(params.Context, merchantUUID)
+	hdIndex, err := r.getNextDomainHDIndex(params.Context, tx)
 	if err != nil {
 		tx.Rollback()
 		return nil, err

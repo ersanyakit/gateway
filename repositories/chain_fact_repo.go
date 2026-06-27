@@ -202,8 +202,48 @@ func (r *ChainFactRepo) ListForDepositProcessing(ctx context.Context, limit int)
 		Select("chain_facts.*").
 		Joins("LEFT JOIN deposits ON deposits.chain_fact_event_id = chain_facts.event_id").
 		Where("(chain_facts.status IS NULL OR chain_facts.status = '' OR chain_facts.status = ?)", models.ChainFactStatusObserved).
-		Where("deposits.id IS NULL OR (deposits.status <> ? AND chain_facts.finalized = ?)", models.DepositStatusFinalized, true).
-		Order("chain_facts.created_at ASC").
+		Where(`
+			deposits.id IS NULL
+			OR (
+				deposits.wallet_id IS NOT NULL
+				AND deposits.status IN ?
+				AND chain_facts.finalized = ?
+			)
+			OR (
+				deposits.wallet_id IS NULL
+				AND deposits.status = ?
+				AND EXISTS (
+					SELECT 1
+					FROM wallets
+					WHERE (chain_facts.chain_id = ? AND wallets.bitcoin_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.ethereum_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.base_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.arbitrum_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.binance_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.unichain_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.avalanche_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.chiliz_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.chiliz_spicy_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.solana_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.tron_address = chain_facts.observed_address)
+				)
+			)`,
+			[]string{models.DepositStatusPending, models.DepositStatusConfirming},
+			true,
+			models.DepositStatusUnmatched,
+			constants.Bitcoin,
+			constants.Ethereum,
+			constants.Base,
+			constants.Arbitrum,
+			constants.Binance,
+			constants.Unichain,
+			constants.Avalanche,
+			constants.Chiliz,
+			constants.ChilizSpicy,
+			constants.Solana,
+			constants.TRON,
+		).
+		Order("chain_facts.created_at DESC").
 		Limit(limit).
 		Find(&facts).Error
 	return facts, err

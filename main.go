@@ -176,6 +176,13 @@ func gatewayShutdownTimeout() time.Duration {
 	return timeout
 }
 
+func logStartupTask(name string, fn func()) {
+	startedAt := time.Now()
+	log.Printf("Startup:%s:BEGIN\n", name)
+	fn()
+	log.Printf("Startup:%s:END duration=%s\n", name, time.Since(startedAt).Round(time.Millisecond))
+}
+
 func chainConfirmationRequirement(chainID constants.ChainID) uint {
 	envKeys := []string{fmt.Sprintf("CHAIN_%d_CONFIRMATIONS", chainID)}
 	if chainName := constants.ChainName(chainID); chainName != "" {
@@ -1355,6 +1362,135 @@ func startTransferFinalizationWorker(ctx context.Context) {
 	}
 }
 
+func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, verboseTxLogging bool) {
+	logStartupTask("ChainInfra", func() {
+		deletedChainStates, err := coreApplication.CORE.Router.ChainStateRepo.DeleteUnsupported(
+			ctx,
+			coreApplication.CORE.Router.Blockchains().ListChainIDs(),
+		)
+		if err != nil {
+			log.Printf("Startup:ChainInfra: delete unsupported chain states error: %v\n", err)
+		} else if deletedChainStates > 0 {
+			log.Printf("Deleted %d unsupported chain state rows\n", deletedChainStates)
+		}
+
+		subscribeBus := func(chain blockchain.Chain) {
+			events := bus.Subscribe(chain.ChainID(), 1000)
+			go func() {
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case event, ok := <-events:
+						if !ok {
+							return
+						}
+						if event.Transaction == nil {
+							if event.Ack != nil {
+								event.Ack <- nil
+							}
+							continue
+						}
+
+						tx := event.Transaction
+						if verboseTxLogging {
+							fmt.Printf(
+								"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
+								chain.Name(),
+								tx.ChainID,
+								event.Type,
+								ptrValue(tx.Hash),
+								ptrValue(tx.Block),
+								ptrValue(tx.From),
+								ptrValue(tx.To),
+								ptrValue(tx.Amount),
+								ptrValue(tx.Symbol),
+								ptrValue(tx.LogIndex),
+							)
+						}
+
+						err := handleChainIndexerEvent(ctx, event)
+						if err != nil {
+							fmt.Println("Chain fact record error:", err)
+						}
+						if event.Ack != nil {
+							event.Ack <- err
+						}
+					}
+				}
+			}()
+		}
+
+		for _, chainName := range coreApplication.CORE.Router.Blockchains().ListChains() {
+			chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
+			if err != nil {
+				log.Printf("[%s] chain not found: %v\n", chainName, err)
+				continue
+			}
+
+			state, err := coreApplication.CORE.Router.ChainStateRepo.Get(ctx, chain.ChainID())
+			if err != nil {
+				log.Printf("[%s] chain state error: %v\n", chainName, err)
+				continue
+			}
+
+			var worker blockchain.Worker
+			switch chain.ChainID() {
+			case constants.Bitcoin:
+				worker = btcListener.NewRpcListener(
+					chain,
+					coreApplication.CORE.Router.AssetRegistry(),
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
+					},
+				)
+			case constants.Solana:
+				worker = solListener.NewRpcListener(
+					chain,
+					coreApplication.CORE.Router.AssetRegistry(),
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
+					},
+				)
+			case constants.TRON:
+				worker = tronListener.NewRpcListener(
+					chain,
+					coreApplication.CORE.Router.AssetRegistry(),
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
+					},
+				)
+			default:
+				worker = evmListener.NewRpcListener(
+					chain,
+					coreApplication.CORE.Router.AssetRegistry(),
+					state,
+					bus,
+					func(s *models.ChainState) error {
+						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
+					},
+				)
+			}
+
+			if err := chain.AddWorker(worker); err != nil {
+				log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
+				continue
+			}
+			subscribeBus(chain)
+		}
+
+		for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(ctx) {
+			log.Printf("[%s] worker start error: %v\n", chainName, startErr)
+		}
+	})
+}
+
 func NewApp() (*coreApplication.App, error) {
 	if coreApplication.CORE == nil {
 
@@ -1427,26 +1563,6 @@ func main() {
 	}
 
 	log.Println("Registered chains:", coreApplication.CORE.Router.Blockchains().ListChains())
-	deletedChainStates, err := coreApplication.CORE.Router.ChainStateRepo.DeleteUnsupported(
-		mainCtx,
-		coreApplication.CORE.Router.Blockchains().ListChainIDs(),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if deletedChainStates > 0 {
-		log.Printf("Deleted %d unsupported chain state rows\n", deletedChainStates)
-	}
-
-	addrIndex = addressindex.NewAddressIndex(mainCtx, coreDB.DB)
-	if err := addrIndex.Load(); err != nil {
-		log.Printf("Address index load error: %v\n", err)
-	} else {
-		log.Println("Address index loaded")
-	}
-
-	go backfillMissingAddresses(mainCtx)
-	go bootstrapAdminAccount(mainCtx)
 
 	bus := dispatcher.NewDispatcher()
 	assetRegistry := coreApplication.CORE.Router.AssetRegistry()
@@ -1472,125 +1588,6 @@ func main() {
 	go startReconciliationWorker(mainCtx)
 	go startTransferFinalizationWorker(mainCtx)
 
-	var isEnabled = true
-
-	if isEnabled {
-		subscribeBus := func(chain blockchain.Chain) {
-			events := bus.Subscribe(chain.ChainID(), 1000)
-			go func() {
-				for {
-					select {
-					case <-mainCtx.Done():
-						return
-					case event, ok := <-events:
-						if !ok {
-							return
-						}
-						if event.Transaction == nil {
-							if event.Ack != nil {
-								event.Ack <- nil
-							}
-							continue
-						}
-
-						tx := event.Transaction
-						if verboseTxLogging {
-							fmt.Printf(
-								"[BUS] chain=%s chain_id=%d type=%s hash=%s block=%s from=%s to=%s amount=%s symbol=%s log=%s\n",
-								chain.Name(),
-								tx.ChainID,
-								event.Type,
-								ptrValue(tx.Hash),
-								ptrValue(tx.Block),
-								ptrValue(tx.From),
-								ptrValue(tx.To),
-								ptrValue(tx.Amount),
-								ptrValue(tx.Symbol),
-								ptrValue(tx.LogIndex),
-							)
-						}
-
-						err := handleChainIndexerEvent(mainCtx, event)
-						if err != nil {
-							fmt.Println("Chain fact record error:", err)
-						}
-						if event.Ack != nil {
-							event.Ack <- err
-						}
-					}
-				}
-			}()
-		}
-
-		for _, chainName := range coreApplication.CORE.Router.Blockchains().ListChains() {
-			chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
-			if err != nil {
-				log.Printf("[%s] chain not found: %v\n", chainName, err)
-				continue
-			}
-
-			state, err := coreApplication.CORE.Router.ChainStateRepo.Get(mainCtx, chain.ChainID())
-			if err != nil {
-				log.Printf("[%s] chain state error: %v\n", chainName, err)
-				continue
-			}
-
-			var worker blockchain.Worker
-			switch chain.ChainID() {
-			case constants.Bitcoin:
-				worker = btcListener.NewRpcListener(
-					chain,
-					assetRegistry,
-					state,
-					bus,
-					func(s *models.ChainState) error {
-						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-					},
-				)
-			case constants.Solana:
-				worker = solListener.NewRpcListener(
-					chain,
-					assetRegistry,
-					state,
-					bus,
-					func(s *models.ChainState) error {
-						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-					},
-				)
-			case constants.TRON:
-				worker = tronListener.NewRpcListener(
-					chain,
-					assetRegistry,
-					state,
-					bus,
-					func(s *models.ChainState) error {
-						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-					},
-				)
-			default:
-				worker = evmListener.NewRpcListener(
-					chain,
-					assetRegistry,
-					state,
-					bus,
-					func(s *models.ChainState) error {
-						return coreApplication.CORE.Router.ChainStateRepo.Update(mainCtx, s)
-					},
-				)
-			}
-
-			if err := chain.AddWorker(worker); err != nil {
-				log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
-				continue
-			}
-			subscribeBus(chain)
-		}
-
-		for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(mainCtx) {
-			log.Printf("[%s] worker start error: %v\n", chainName, startErr)
-		}
-
-	}
 	fiberApp := coreApplication.CORE.Router.GetFiber()
 	port := os.Getenv("PORT")
 	log.Println("App running on", port)
@@ -1598,6 +1595,18 @@ func main() {
 	go func() {
 		serverErr <- fiberApp.Listen(port)
 	}()
+
+	addrIndex = addressindex.NewAddressIndex(mainCtx, coreDB.DB)
+	go logStartupTask("AddressIndexLoad", func() {
+		if err := addrIndex.Load(); err != nil {
+			log.Printf("Address index load error: %v\n", err)
+			return
+		}
+		log.Println("Address index loaded")
+	})
+	go backfillMissingAddresses(mainCtx)
+	go bootstrapAdminAccount(mainCtx)
+	go startChainInfrastructure(mainCtx, bus, verboseTxLogging)
 
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
