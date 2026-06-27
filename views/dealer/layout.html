@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} | Gateway Üye İşyeri Portalı</title>
   <link rel="stylesheet" href="/assets/tailwind.css">
+  {{if and (eq .Active "home") (not .HasSession)}}<link rel="stylesheet" href="/assets/home.css">{{end}}
   {{if or .AdminPanel .HasSession}}<link rel="stylesheet" href="/assets/admin.css">{{end}}
   <script src="/assets/dashboard.js" defer></script>
 </head>
