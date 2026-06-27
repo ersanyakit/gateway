@@ -185,14 +185,14 @@ func (e *TronChain) getBalance(client *http.Client, address string) (string, err
 
 		req, err := http.NewRequest("POST", rpc, bytes.NewReader(data))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", e.Name(), rpc, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", e.Name(), rpc, err)
 			continue
 		}
 
@@ -202,12 +202,12 @@ func (e *TronChain) getBalance(client *http.Client, address string) (string, err
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
 			_ = resp.Body.Close()
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", e.Name(), rpc, err)
 			continue
 		}
 		_ = resp.Body.Close()
 		if res.Error != nil {
-			lastErr = fmt.Errorf("rpc error")
+			lastErr = fmt.Errorf("%s %s rpc error", e.Name(), rpc)
 			continue
 		}
 

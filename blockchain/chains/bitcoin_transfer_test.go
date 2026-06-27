@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -154,6 +156,25 @@ func TestBitcoinBroadcastRequiresEndpoint(t *testing.T) {
 	}
 	if txID != "" {
 		t.Fatalf("expected empty tx id, got %q", txID)
+	}
+}
+
+func TestBitcoinGetBalanceAnnotatesFailingRPC(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`bad gateway`))
+	}))
+	defer first.Close()
+
+	chain := NewBitcoinChain()
+	chain.RPCHttp = []string{first.URL}
+
+	_, err := chain.getBalance(first.Client(), "bc1qpjult34k9spjfym8hss2jrwjgf0xjf40ze0pp8")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), first.URL) {
+		t.Fatalf("error %q does not include endpoint %q", err.Error(), first.URL)
 	}
 }
 

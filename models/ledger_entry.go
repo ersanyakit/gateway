@@ -50,10 +50,10 @@ type LedgerEntry struct {
 	Symbol   string            `gorm:"size:20;not null;index" json:"symbol"`
 	Decimals uint8             `json:"decimals"`
 
-	EntryType string `gorm:"size:40;not null;index" json:"entry_type"`
-	Account   string `gorm:"size:40;not null;index;uniqueIndex:ux_ledger_idempotent_account" json:"account"`
-	Direction string `gorm:"size:12;not null;index" json:"direction"`
-	Status    string `gorm:"size:20;not null;index" json:"status"`
+	EntryType string `gorm:"size:40;not null;index;check:ledger_entries_entry_type_check,entry_type IN ('deposit_pending','deposit_available','withdrawal_hold','withdrawal_release','withdrawal_debit','refund_hold','refund_debit','reorg_reversal','adjustment')" json:"entry_type"`
+	Account   string `gorm:"size:40;not null;index;uniqueIndex:ux_ledger_idempotent_account;check:ledger_entries_account_check,account IN ('merchant_pending','merchant_available','platform_clearing','withdrawal_transit','refund_transit')" json:"account"`
+	Direction string `gorm:"size:12;not null;index;check:ledger_entries_direction_check,direction IN ('credit','debit')" json:"direction"`
+	Status    string `gorm:"size:20;not null;index;check:ledger_entries_status_check,status IN ('pending','posted','voided')" json:"status"`
 	AmountRaw string `gorm:"type:text;not null" json:"amount_raw"`
 
 	IdempotencyKey string `gorm:"size:180;index;uniqueIndex:ux_ledger_idempotent_account" json:"idempotency_key,omitempty"`

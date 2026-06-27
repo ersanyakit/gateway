@@ -31,6 +31,12 @@ type requiredSchemaIndex struct {
 	name  string
 }
 
+type requiredSchemaConstraint struct {
+	table string
+	model any
+	name  string
+}
+
 func normalizedAppEnv() string {
 	return strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
 }
@@ -271,6 +277,15 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 	}
 }
 
+func requiredSchemaConstraints() []requiredSchemaConstraint {
+	return []requiredSchemaConstraint{
+		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_entry_type_check"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_account_check"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_direction_check"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_status_check"},
+	}
+}
+
 func VerifySchema(ctx context.Context, db *gorm.DB) error {
 	requiredColumns := requiredSchemaColumns()
 
@@ -283,6 +298,11 @@ func VerifySchema(ctx context.Context, db *gorm.DB) error {
 	for _, index := range requiredSchemaIndexes() {
 		if !migrator.HasIndex(index.model, index.name) {
 			return fmt.Errorf("schema check failed: %s index %s is missing", index.table, index.name)
+		}
+	}
+	for _, constraint := range requiredSchemaConstraints() {
+		if !migrator.HasConstraint(constraint.model, constraint.name) {
+			return fmt.Errorf("schema check failed: %s constraint %s is missing", constraint.table, constraint.name)
 		}
 	}
 	return nil

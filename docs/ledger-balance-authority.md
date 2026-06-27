@@ -23,10 +23,10 @@ Ledger entries are the only authoritative source for merchant and wallet balance
 
 ## Idempotency And Invariants
 
-Every ledger movement uses a stable idempotency key. The GORM schema owns the `ux_ledger_idempotent_account` index so duplicate posting attempts either no-op before insert or fail safely at the database boundary.
+Every ledger movement uses a stable idempotency key. The GORM schema owns the `ux_ledger_idempotent_account` index so duplicate posting attempts either no-op before insert or fail safely at the database boundary. It also owns check constraints for ledger entry type, account, direction, and status values.
 
 Balanced movements are checked by `LedgerRepo.FindInvariantIssues`, grouped by idempotency key, tenant scope, chain, token, and symbol. Non-zero net movement opens a scoped reconciliation job with a ledger invariant correlation id. Logs include `correlation_id`, merchant id, domain id when present, chain id, token/symbol, and net amount; they must not include API secrets, webhook secrets, private keys, mnemonics, or raw signatures.
 
 ## GORM Migration Plan
 
-Ledger schema changes remain GORM-owned through model tags, `AutoMigrate`, and `services/database.VerifySchema`. If a future balanced-movement constraint cannot be represented safely as a GORM model/index/check tag, it must be documented here before implementation and covered by repository invariant tests.
+Ledger schema changes remain GORM-owned through model tags, `AutoMigrate`, and `services/database.VerifySchema`. Current GORM checks require valid entry types, accounts, directions, statuses, and the idempotency/account uniqueness index. If a future balanced-movement constraint cannot be represented safely as a GORM model/index/check tag, it must be documented here before implementation and covered by repository invariant tests.

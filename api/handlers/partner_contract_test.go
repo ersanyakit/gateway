@@ -81,6 +81,8 @@ func TestV1PaymentStatusTableUsesDocumentedContractShape(t *testing.T) {
 		"canceled":         true,
 		"failed":           true,
 		"underpaid":        true,
+		"overpaid":         true,
+		"partial_paid":     true,
 	}
 	if len(statuses) != len(expectedFinal) {
 		t.Fatalf("statuses = %d, want %d", len(statuses), len(expectedFinal))

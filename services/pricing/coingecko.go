@@ -19,14 +19,16 @@ type PriceOracle interface {
 }
 
 type CoinGecko struct {
-	client  *http.Client
-	baseURL string
-	apiKey  string
-	ttl     time.Duration
-	now     func() time.Time
+	client            *http.Client
+	baseURL           string
+	apiKey            string
+	ttl               time.Duration
+	rateLimitCooldown time.Duration
+	now               func() time.Time
 
-	mu    sync.RWMutex
-	cache map[string]cachedPrice
+	mu               sync.RWMutex
+	cache            map[string]cachedPrice
+	rateLimitedUntil map[string]time.Time
 }
 
 type cachedPrice struct {
@@ -46,16 +48,24 @@ func NewCoinGecko() *CoinGecko {
 			ttl = parsed
 		}
 	}
+	rateLimitCooldown := 2 * time.Minute
+	if raw := os.Getenv("COINGECKO_RATE_LIMIT_COOLDOWN"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+			rateLimitCooldown = parsed
+		}
+	}
 
 	return &CoinGecko{
 		client: &http.Client{
 			Timeout: 8 * time.Second,
 		},
-		baseURL: baseURL,
-		apiKey:  strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")),
-		ttl:     ttl,
-		now:     time.Now,
-		cache:   make(map[string]cachedPrice),
+		baseURL:           baseURL,
+		apiKey:            strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")),
+		ttl:               ttl,
+		rateLimitCooldown: rateLimitCooldown,
+		now:               time.Now,
+		cache:             make(map[string]cachedPrice),
+		rateLimitedUntil:  make(map[string]time.Time),
 	}
 }
 
@@ -80,18 +90,23 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 
 	key := coinID + "|" + vsCurrency
 
+	now := c.now()
 	var stalePrice *big.Rat
 	c.mu.RLock()
 	cached, ok := c.cache[key]
 	if ok && cached.price != nil {
 		price := new(big.Rat).Set(cached.price)
-		if c.now().Before(cached.expiresAt) {
+		if now.Before(cached.expiresAt) {
 			c.mu.RUnlock()
 			return price, nil
 		}
 		stalePrice = price
 	}
+	rateLimitedUntil := c.rateLimitedUntil[key]
 	c.mu.RUnlock()
+	if now.Before(rateLimitedUntil) {
+		return staleOrError(stalePrice, fmt.Errorf("CoinGecko rate limit cooldown active for %s/%s until %s", coinID, vsCurrency, rateLimitedUntil.UTC().Format(time.RFC3339)))
+	}
 
 	endpoint, err := url.Parse(c.baseURL + "/simple/price")
 	if err != nil {
@@ -118,6 +133,9 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode == http.StatusTooManyRequests {
+			c.markRateLimited(key, resp.Header.Get("Retry-After"))
+		}
 		return staleOrError(stalePrice, fmt.Errorf("CoinGecko returned HTTP %d", resp.StatusCode))
 	}
 
@@ -142,9 +160,41 @@ func (c *CoinGecko) Price(ctx context.Context, symbol string, currency string) (
 		price:     new(big.Rat).Set(price),
 		expiresAt: c.now().Add(c.ttl),
 	}
+	delete(c.rateLimitedUntil, key)
 	c.mu.Unlock()
 
 	return price, nil
+}
+
+func (c *CoinGecko) markRateLimited(key string, retryAfter string) {
+	now := c.now()
+	cooldown := c.rateLimitCooldown
+	if cooldown <= 0 {
+		cooldown = 2 * time.Minute
+	}
+	if parsed, ok := parseRetryAfter(retryAfter, now); ok && parsed.After(now) {
+		cooldown = parsed.Sub(now)
+	}
+	c.mu.Lock()
+	if c.rateLimitedUntil == nil {
+		c.rateLimitedUntil = make(map[string]time.Time)
+	}
+	c.rateLimitedUntil[key] = now.Add(cooldown)
+	c.mu.Unlock()
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if seconds, err := time.ParseDuration(value + "s"); err == nil && seconds > 0 {
+		return now.Add(seconds), true
+	}
+	if parsed, err := http.ParseTime(value); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 func staleOrError(stalePrice *big.Rat, err error) (*big.Rat, error) {

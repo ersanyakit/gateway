@@ -97,12 +97,25 @@ func (r *RpcListener) Stop() error {
 }
 
 func (r *RpcListener) connect() error {
-	c, _, err := websocket.DefaultDialer.Dial(r.chain.WSS()[0], nil)
-	if err != nil {
-		return err
+	var lastErr error
+	for _, wsURL := range r.chain.WSS() {
+		wsURL = strings.TrimSpace(wsURL)
+		if wsURL == "" {
+			continue
+		}
+
+		c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("%s %s websocket dial failed: %w", r.chain.Name(), wsURL, err)
+			continue
+		}
+		r.conn = c
+		return nil
 	}
-	r.conn = c
-	return nil
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no websocket endpoint configured")
+	}
+	return lastErr
 }
 
 func (r *RpcListener) writeJSON(v interface{}) error {
