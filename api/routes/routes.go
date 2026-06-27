@@ -16,6 +16,7 @@ import (
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"strings"
+	"time"
 
 	"github.com/bytedance/sonic"
 	fiber "github.com/gofiber/fiber/v3"
@@ -164,8 +165,13 @@ func NewRouter(db *gorm.DB) *Router {
 	r.WalletRepo = repositories.NewWalletRepo(r.DomainRepo)
 	r.WalletService = services.NewWalletService(r.WalletRepo)
 
-	r.fiber.Use("/assets", staticmw.New("./views/assets"))
-	r.fiber.Use("/static", staticmw.New("./static"))
+	staticAssetConfig := staticmw.Config{
+		CacheDuration: 30 * time.Second,
+		MaxAge:        300,
+		Compress:      true,
+	}
+	r.fiber.Use("/assets", staticmw.New("./views/assets", staticAssetConfig))
+	r.fiber.Use("/static", staticmw.New("./static", staticAssetConfig))
 
 	r.fiber.Post(constants.CMD_MERCHANT_CREATE.String(), handlers.HandleMerchantCreate(r.MerchantService))
 	r.fiber.Post(constants.CMD_MERCHANT_FETCH.String(), handlers.HandleMerchantFetch(r.MerchantService))

@@ -143,3 +143,72 @@ func TestScanTronProducesNativeTRXTransfer(t *testing.T) {
 		t.Fatalf("decimals = %d, want 6", event.Tx.Decimals)
 	}
 }
+
+func TestScanTronProducesNativeTRXTransferFromFullNodeResponse(t *testing.T) {
+	const txHash = "8fef7c128e5db6d32eb375c18dc5a21cc2baff15fd30e149f0ced74cfe63d0ee"
+	const ownerHex = "4163d090b2101f125f65e8fae5b9744d0e74eb8746"
+	const toHex = "4107cb66bc50d09c784a843a6f2a0d942995facb92"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/wallet/gettransactionbyid":
+			_, _ = fmt.Fprintf(w, `{
+				"ret":[{"contractRet":"SUCCESS"}],
+				"txID":%q,
+				"raw_data":{"contract":[{
+					"parameter":{"value":{"amount":18500000,"owner_address":%q,"to_address":%q},"type_url":"type.googleapis.com/protocol.TransferContract"},
+					"type":"TransferContract"
+				}]}
+			}`, txHash, ownerHex, toHex)
+		case "/wallet/gettransactioninfobyid":
+			_, _ = w.Write([]byte(`{"id":"` + txHash + `","fee":1000000,"blockNumber":83954659,"blockTimeStamp":1782533604000,"receipt":{"net_usage":274}}`))
+		case "/wallet/getnowblock":
+			_, _ = w.Write([]byte(`{"block_header":{"raw_data":{"number":83954670}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("TRON_HTTP_ENDPOINTS", server.URL)
+
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewTRX(constants.TRON))
+	svc := &Service{
+		Registry: registry,
+		client:   server.Client(),
+		Confirmations: func(chainID constants.ChainID) uint {
+			if chainID != constants.TRON {
+				t.Fatalf("chainID = %d, want TRON", chainID)
+			}
+			return 2
+		},
+	}
+
+	events, err := svc.scanTron(context.Background(), txHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Type != "native_transfer" {
+		t.Fatalf("type = %q, want native_transfer", event.Type)
+	}
+	if event.Confirmations != 12 || event.ConfirmationsRequired != 2 {
+		t.Fatalf("confirmations = %d/%d, want 12/2", event.Confirmations, event.ConfirmationsRequired)
+	}
+	if got := *event.Tx.Amount; got != "18500000" {
+		t.Fatalf("amount = %q, want 18500000", got)
+	}
+	if got := *event.Tx.To; got != tronHexToBase58(toHex) {
+		t.Fatalf("to = %q, want %q", got, tronHexToBase58(toHex))
+	}
+	if got := *event.Tx.From; got != tronHexToBase58(ownerHex) {
+		t.Fatalf("from = %q, want %q", got, tronHexToBase58(ownerHex))
+	}
+	if got := *event.Tx.Status; got != "confirmed" {
+		t.Fatalf("status = %q, want confirmed", got)
+	}
+}

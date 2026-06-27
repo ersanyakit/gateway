@@ -2169,14 +2169,22 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+  min-height: 48px;
   margin-bottom: 24px;
+  padding: 2px 0;
 }
 
 .crypto-header-left {
   min-width: 0;
   display: flex;
   align-items: center;
+  flex: 1 1 auto;
   gap: 8px;
+}
+
+.crypto-header-left > span:last-child {
+  min-width: 0;
 }
 
 .crypto-header-icon {
@@ -2201,6 +2209,9 @@ h1 {
 .crypto-header-sub {
   display: block;
   line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .crypto-header-title {
@@ -2218,6 +2229,7 @@ h1 {
 .crypto-steps {
   display: flex;
   align-items: center;
+  margin-left: auto;
   gap: 6px;
   flex: 0 0 auto;
 }
@@ -2621,7 +2633,9 @@ h1 {
 }
 
 .crypto-footer {
-  margin: 20px 0 0;
+  max-width: 420px;
+  margin: 18px auto 0;
+  padding: 0 10px;
   color: #8b93a7;
   font-size: 12px;
   line-height: 1.45;
@@ -3358,7 +3372,8 @@ h1 {
 
 @media (max-width: 640px) {
   .crypto-header {
-    align-items: flex-start;
+    align-items: center;
+    gap: 10px;
   }
 
   .crypto-grid {

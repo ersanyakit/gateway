@@ -2,6 +2,7 @@ package chains
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +24,7 @@ func TestTronGetTRXBalanceFromRPCsFallsBack(t *testing.T) {
 
 	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"result":"0x2a"}`))
+		_, _ = w.Write([]byte(`{"balance":42}`))
 	}))
 	defer good.Close()
 
@@ -33,6 +34,34 @@ func TestTronGetTRXBalanceFromRPCsFallsBack(t *testing.T) {
 	}
 	if got != 42 {
 		t.Fatalf("balance = %d, want 42", got)
+	}
+}
+
+func TestTronGetTRXBalanceUsesFullNodeGetAccount(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wallet/getaccount" {
+			t.Fatalf("path = %q, want /wallet/getaccount", r.URL.Path)
+		}
+		var payload struct {
+			Address string `json:"address"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(payload.Address, "41") {
+			t.Fatalf("address = %q, want tron hex address with 41 prefix", payload.Address)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"balance":18500000}`))
+	}))
+	defer server.Close()
+
+	got, err := tronGetTRXBalance(context.Background(), server.URL+"/jsonrpc", tronTestAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 18_500_000 {
+		t.Fatalf("balance = %d, want 18500000", got)
 	}
 }
 

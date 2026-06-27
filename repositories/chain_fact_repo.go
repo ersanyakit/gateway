@@ -114,6 +114,62 @@ func (r *ChainFactRepo) Record(ctx context.Context, fact *models.ChainFact) (*mo
 	return &existing, false, nil
 }
 
+func (r *ChainFactRepo) RecordOrUpdate(ctx context.Context, fact *models.ChainFact) (*models.ChainFact, bool, error) {
+	if r == nil || r.db == nil {
+		return nil, false, gorm.ErrInvalidDB
+	}
+	prepared, err := prepareChainFact(fact)
+	if err != nil {
+		return nil, false, err
+	}
+	*fact = prepared
+
+	var out models.ChainFact
+	created := false
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing models.ChainFact
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "event_id = ?", prepared.EventID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := tx.Create(&prepared).Error; err != nil {
+				return err
+			}
+			out = prepared
+			created = true
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		next := existing
+		if prepared.Confirmations > next.Confirmations {
+			next.Confirmations = prepared.Confirmations
+		}
+		if next.ConfirmationsRequired == 0 || prepared.ConfirmationsRequired > next.ConfirmationsRequired {
+			next.ConfirmationsRequired = prepared.ConfirmationsRequired
+		}
+		if prepared.Finalized || (next.ConfirmationsRequired > 0 && next.Confirmations >= next.ConfirmationsRequired) {
+			next.Finalized = true
+		}
+		if next.BlockHash == "" && prepared.BlockHash != "" {
+			next.BlockHash = prepared.BlockHash
+		}
+		if strings.TrimSpace(next.RawMetadataJSON) == "{}" && strings.TrimSpace(prepared.RawMetadataJSON) != "{}" {
+			next.RawMetadataJSON = prepared.RawMetadataJSON
+		}
+		next.UpdatedAt = time.Now()
+		if err := tx.Save(&next).Error; err != nil {
+			return err
+		}
+		out = next
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return &out, created, nil
+}
+
 func (r *ChainFactRepo) RecordTransaction(ctx context.Context, eventType string, tx types.TransactionParam) (*models.ChainFact, bool, error) {
 	fact, err := BuildChainFactFromTransaction(eventType, tx)
 	if err != nil {

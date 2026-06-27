@@ -49,7 +49,7 @@ type RpcListener struct {
 	bus         *dispatcher.Dispatcher
 
 	conn   *grpc.ClientConn
-	client *walletClient
+	client tronWalletClient
 	apiKey string
 	connMu sync.RWMutex
 
@@ -58,7 +58,8 @@ type RpcListener struct {
 	running bool
 	events  chan interface{}
 
-	throttleErrors int
+	throttleErrors    int
+	lastTxInfoWarning time.Time
 }
 
 type walletClient struct {
@@ -66,6 +67,12 @@ type walletClient struct {
 }
 
 var errTronClientNotConnected = errors.New("tron grpc client is not connected")
+
+type tronWalletClient interface {
+	getNowBlock(ctx context.Context) (*pb.Block, error)
+	getBlockByNum(ctx context.Context, num int64) (*pb.Block, error)
+	getTransactionInfoByBlockNum(ctx context.Context, num int64) (*transactionInfoList, error)
+}
 
 type emptyMessage struct{}
 
@@ -211,7 +218,7 @@ func (r *RpcListener) connect() error {
 	return lastErr
 }
 
-func (r *RpcListener) currentClient() (*walletClient, error) {
+func (r *RpcListener) currentClient() (tronWalletClient, error) {
 	r.connMu.RLock()
 	client := r.client
 	r.connMu.RUnlock()
@@ -221,7 +228,7 @@ func (r *RpcListener) currentClient() (*walletClient, error) {
 	return client, nil
 }
 
-func (r *RpcListener) setClient(conn *grpc.ClientConn, client *walletClient) {
+func (r *RpcListener) setClient(conn *grpc.ClientConn, client tronWalletClient) {
 	r.connMu.Lock()
 	r.conn = conn
 	r.client = client
@@ -391,13 +398,16 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		return err
 	}
 	infoList, err := client.getTransactionInfoByBlockNum(ctx, blockNumber)
-	if err != nil {
-		return err
-	}
-
 	infoByTxID := make(map[string]*pb.TransactionInfo)
-	for _, info := range infoList.GetTransactionInfo() {
-		infoByTxID[hex.EncodeToString(info.GetId())] = info
+	if err != nil {
+		if time.Since(r.lastTxInfoWarning) >= time.Minute {
+			r.lastTxInfoWarning = time.Now()
+			log.Printf("[tron] transaction info fetch failed for block %d; scanning native TRX transfers without TRC20 logs: %v", blockNumber, err)
+		}
+	} else {
+		for _, info := range infoList.GetTransactionInfo() {
+			infoByTxID[hex.EncodeToString(info.GetId())] = info
+		}
 	}
 
 	nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
