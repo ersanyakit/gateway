@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -57,10 +58,26 @@ const adminSessionDefaultTTL = 8 * time.Hour
 const adminSessionRememberTTL = 30 * 24 * time.Hour
 const adminPendingTOTPTTL = 5 * time.Minute
 const adminSetupTOTPTTL = 10 * time.Minute
+const adminHeaderStatsTTL = 3 * time.Second
 const oidcPortalMerchant = "merchant"
 const oidcPortalAdmin = "admin"
 
 var runtimeDealerSessionSecret = "runtime-session-secret-" + uuid.NewString()
+
+type adminHeaderStats struct {
+	MerchantCount   int
+	PaymentCount    int
+	DepositCount    int
+	WithdrawalCount int
+	WalletCountAll  int
+	ActivityCount    int
+}
+
+var adminHeaderStatsCache = struct {
+	sync.Mutex
+	stats     adminHeaderStats
+	expiresAt time.Time
+}{}
 
 type DealerDeps struct {
 	MerchantService     *services.MerchantService
@@ -1719,20 +1736,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			limit = 50
 		}
 
-		// Total counts for header stats.
-		var merchantTotal, paymentTotal, depositTotal, withdrawalTotal, walletTotal, activityTotal int64
-		deps.MerchantService.Repo().DB().WithContext(c.Context()).Model(&models.Merchant{}).Where("deleted_at IS NULL").Count(&merchantTotal)
-		deps.PaymentRepo.CountAll(c.Context(), &paymentTotal)
-		deps.TransactionRepo.DB().WithContext(c.Context()).Model(&models.Transaction{}).Count(&depositTotal)
-		deps.WithdrawalRepo.DB().WithContext(c.Context()).Model(&models.WithdrawalRequest{}).Count(&withdrawalTotal)
-		deps.WalletRepo.DB().WithContext(c.Context()).Model(&models.Wallet{}).Count(&walletTotal)
-		deps.ActivityLogRepo.DB().WithContext(c.Context()).Model(&models.ActivityLog{}).Count(&activityTotal)
-		data.MerchantCount = int(merchantTotal)
-		data.PaymentCount = int(paymentTotal)
-		data.DepositCount = int(depositTotal)
-		data.WithdrawalCount = int(withdrawalTotal)
-		data.WalletCountAll = int(walletTotal)
-		data.ActivityCount = int(activityTotal)
+			adminHeaderStatsFor(c.Context(), deps).applyTo(&data)
 
 		switch panel {
 		case "merchants":
@@ -3623,6 +3627,49 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminTestDepositURL: "/admin/test-deposit",
 	}
 	return data
+}
+
+func adminHeaderStatsFor(ctx context.Context, deps DealerDeps) adminHeaderStats {
+	now := time.Now()
+	adminHeaderStatsCache.Lock()
+	if now.Before(adminHeaderStatsCache.expiresAt) {
+		stats := adminHeaderStatsCache.stats
+		adminHeaderStatsCache.Unlock()
+		return stats
+	}
+	adminHeaderStatsCache.Unlock()
+
+	var merchantTotal, paymentTotal, depositTotal, withdrawalTotal, walletTotal, activityTotal int64
+	deps.MerchantService.Repo().DB().WithContext(ctx).Model(&models.Merchant{}).Where("deleted_at IS NULL").Count(&merchantTotal)
+	deps.PaymentRepo.CountAll(ctx, &paymentTotal)
+	deps.TransactionRepo.DB().WithContext(ctx).Model(&models.Transaction{}).Count(&depositTotal)
+	deps.WithdrawalRepo.DB().WithContext(ctx).Model(&models.WithdrawalRequest{}).Count(&withdrawalTotal)
+	deps.WalletRepo.DB().WithContext(ctx).Model(&models.Wallet{}).Count(&walletTotal)
+	deps.ActivityLogRepo.DB().WithContext(ctx).Model(&models.ActivityLog{}).Count(&activityTotal)
+
+	stats := adminHeaderStats{
+		MerchantCount:   int(merchantTotal),
+		PaymentCount:    int(paymentTotal),
+		DepositCount:    int(depositTotal),
+		WithdrawalCount: int(withdrawalTotal),
+		WalletCountAll:  int(walletTotal),
+		ActivityCount:    int(activityTotal),
+	}
+
+	adminHeaderStatsCache.Lock()
+	adminHeaderStatsCache.stats = stats
+	adminHeaderStatsCache.expiresAt = now.Add(adminHeaderStatsTTL)
+	adminHeaderStatsCache.Unlock()
+	return stats
+}
+
+func (stats adminHeaderStats) applyTo(data *DealerPageData) {
+	data.MerchantCount = stats.MerchantCount
+	data.PaymentCount = stats.PaymentCount
+	data.DepositCount = stats.DepositCount
+	data.WithdrawalCount = stats.WithdrawalCount
+	data.WalletCountAll = stats.WalletCountAll
+	data.ActivityCount = stats.ActivityCount
 }
 
 func renderAdminDashboardError(c fiber.Ctx, data DealerPageData, message string, err error) error {

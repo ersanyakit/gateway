@@ -113,6 +113,50 @@ func TestChainFactRepoPostgresUpsertIdempotent(t *testing.T) {
 	requirePostgresCount(t, db, &models.ChainFact{}, "event_id = ?", first.EventID, 1)
 }
 
+func TestChainFactRepoRecordOrUpdateAdvancesFinality(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.ChainFact{}); err != nil {
+		t.Fatalf("automigrate chain facts: %v", err)
+	}
+	repo := NewChainFactRepo(db)
+	ctx := context.Background()
+
+	tx := chainFactTestTx(constants.TRON, "tron-tx", "tx:0")
+	pending := models.TransactionStatusPendingConfirmation
+	tx.Status = &pending
+	first, created, err := repo.RecordOrUpdate(ctx, mustBuildChainFact(t, ChainFactBuildParams{
+		EventType:             "native_transfer",
+		Transaction:           tx,
+		Confirmations:         0,
+		ConfirmationsRequired: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || first.Finalized {
+		t.Fatalf("first fact created=%v finalized=%v", created, first.Finalized)
+	}
+
+	confirmed := models.TransactionStatusConfirmed
+	tx.Status = &confirmed
+	second, created, err := repo.RecordOrUpdate(ctx, mustBuildChainFact(t, ChainFactBuildParams{
+		EventType:             "native_transfer",
+		Transaction:           tx,
+		Confirmations:         3,
+		ConfirmationsRequired: 2,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created {
+		t.Fatal("duplicate fact should update existing row")
+	}
+	if second.ID != first.ID || second.Confirmations != 3 || second.ConfirmationsRequired != 2 || !second.Finalized {
+		t.Fatalf("updated fact = %#v, want same id with finalized 3/2", second)
+	}
+	requirePostgresCount(t, db, &models.ChainFact{}, "event_id = ?", first.EventID, 1)
+}
+
 func chainFactTestTx(chainID constants.ChainID, txHash, logIndex string) types.TransactionParam {
 	status := models.TransactionStatusConfirmed
 	return types.TransactionParam{
@@ -132,4 +176,13 @@ func chainFactTestTx(chainID constants.ChainID, txHash, logIndex string) types.T
 
 func strPtr(value string) *string {
 	return &value
+}
+
+func mustBuildChainFact(t *testing.T, params ChainFactBuildParams) *models.ChainFact {
+	t.Helper()
+	fact, err := BuildChainFact(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fact
 }

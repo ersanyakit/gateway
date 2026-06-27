@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -125,6 +126,9 @@ func (s *TronChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) 
 }
 
 func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {
+	if workers <= 0 {
+		workers = 1
+	}
 	jobs := make(chan string, len(addresses))
 	results := make(chan models.BalanceResult, len(addresses))
 
@@ -135,7 +139,7 @@ func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, worke
 	workerFunc := func() {
 		defer wg.Done()
 		for addr := range jobs {
-			balance, err := e.getBalance(client, addr)
+			balance, err := e.getBalance(ctx, client, addr)
 			results <- models.BalanceResult{
 				Address: addr,
 				Balance: balance,
@@ -166,56 +170,106 @@ func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, worke
 	return out
 }
 
-func (e *TronChain) getBalance(client *http.Client, address string) (string, error) {
-	reqBody := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "eth_getBalance",
-		"params":  []interface{}{address, "latest"},
+func (e *TronChain) getBalance(ctx context.Context, client *http.Client, address string) (string, error) {
+	address = strings.TrimSpace(address)
+	if !e.ValidateAddress(address) {
+		return "", fmt.Errorf("invalid tron address: %s", address)
 	}
 
+	addressHash, err := tronSDK.GetAddressHash(address)
+	if err != nil {
+		return "", fmt.Errorf("tron address hash: %w", err)
+	}
+	reqBody := map[string]interface{}{
+		"address": hex.EncodeToString(addressHash),
+	}
 	data, _ := json.Marshal(reqBody)
 
 	var lastErr error
-	for _, rpc := range e.RPCHttp {
-		rpc = strings.TrimSpace(rpc)
-		if rpc == "" {
+	for _, apiBase := range tronHTTPAPIEndpoints(e.RPCs()) {
+		apiBase = strings.TrimRight(strings.TrimSpace(apiBase), "/")
+		if apiBase == "" {
 			continue
 		}
 
-		req, err := http.NewRequest("POST", rpc, bytes.NewReader(data))
+		endpoint := apiBase + "/wallet/getaccount"
+		req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
 		if err != nil {
-			lastErr = fmt.Errorf("%s %s request build failed: %w", e.Name(), rpc, err)
+			lastErr = fmt.Errorf("%s %s request build failed: %w", e.Name(), endpoint, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
+		if apiKey := strings.TrimSpace(os.Getenv("TRON_PRO_API_KEY")); apiKey != "" {
+			req.Header.Set("TRON-PRO-API-KEY", apiKey)
+		}
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("%s %s request failed: %w", e.Name(), rpc, err)
+			lastErr = fmt.Errorf("%s %s request failed: %w", e.Name(), endpoint, err)
 			continue
 		}
-
-		var res struct {
-			Result string          `json:"result"`
-			Error  json.RawMessage `json:"error"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-			_ = resp.Body.Close()
-			lastErr = fmt.Errorf("%s %s response decode failed: %w", e.Name(), rpc, err)
-			continue
-		}
+		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if res.Error != nil {
-			lastErr = fmt.Errorf("%s %s rpc error", e.Name(), rpc)
+		if readErr != nil {
+			lastErr = fmt.Errorf("%s %s response read failed: %w", e.Name(), endpoint, readErr)
 			continue
 		}
-
-		return res.Result, nil
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", e.Name(), endpoint, resp.StatusCode, strings.TrimSpace(string(body)))
+			continue
+		}
+		var res struct {
+			Balance json.Number     `json:"balance"`
+			Error   json.RawMessage `json:"Error"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(body))
+		decoder.UseNumber()
+		if err := decoder.Decode(&res); err != nil {
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", e.Name(), endpoint, err)
+			continue
+		}
+		if len(res.Error) > 0 && string(res.Error) != "null" {
+			lastErr = fmt.Errorf("%s %s tron account error: %s", e.Name(), endpoint, strings.TrimSpace(string(res.Error)))
+			continue
+		}
+		balance := strings.TrimSpace(res.Balance.String())
+		if balance == "" {
+			balance = "0"
+		}
+		return "TRX:" + balance, nil
 	}
 
 	if lastErr == nil {
-		lastErr = errors.New("no tron RPC endpoint configured")
+		lastErr = errors.New("no tron HTTP API endpoint configured")
 	}
 	return "", lastErr
+}
+
+func tronHTTPAPIEndpoints(rpcURLs []string) []string {
+	out := make([]string, 0, len(rpcURLs)+2)
+	seen := map[string]struct{}{}
+	add := func(raw string) {
+		for _, part := range strings.Split(raw, ",") {
+			value := strings.TrimRight(strings.TrimSpace(part), "/")
+			value = strings.TrimSuffix(value, "/jsonrpc")
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			out = append(out, value)
+		}
+	}
+
+	add(os.Getenv("TRON_HTTP_ENDPOINTS"))
+	add(os.Getenv("TRON_HTTP_ENDPOINT"))
+	for _, rpcURL := range rpcURLs {
+		add(rpcURL)
+	}
+	if len(out) == 0 {
+		add("https://api.trongrid.io")
+	}
+	return out
 }

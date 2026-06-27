@@ -94,22 +94,32 @@ func tronGetBlockRef(ctx context.Context, apiBase string) (*tronBlockRef, error)
 }
 
 func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, error) {
+	apiBase := strings.TrimRight(strings.TrimSpace(rpcURL), "/")
+	apiBase = strings.TrimSuffix(apiBase, "/jsonrpc")
+	if apiBase == "" {
+		return 0, fmt.Errorf("empty tron HTTP API endpoint")
+	}
+	addressHash, err := tronSDK.GetAddressHash(address)
+	if err != nil {
+		return 0, fmt.Errorf("tron address hash: %w", err)
+	}
 	reqBody, _ := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "eth_getBalance",
-		"params":  []interface{}{address, "latest"},
+		"address": hex.EncodeToString(addressHash),
 	})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(reqBody))
+	endpoint := apiBase + "/wallet/getaccount"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if apiKey := strings.TrimSpace(os.Getenv("TRON_PRO_API_KEY")); apiKey != "" {
+		req.Header.Set("TRON-PRO-API-KEY", apiKey)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("tron eth_getBalance: %w", err)
+		return 0, fmt.Errorf("tron getaccount: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -117,37 +127,39 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 		return 0, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("tron eth_getBalance HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return 0, fmt.Errorf("tron getaccount HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var res struct {
-		Result string          `json:"result"`
-		Error  json.RawMessage `json:"error"`
+		Balance  json.Number     `json:"balance"`
+		Error    json.RawMessage `json:"Error"`
+		RPCError json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal(body, &res); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&res); err != nil {
 		return 0, err
 	}
 	if len(res.Error) > 0 && string(res.Error) != "null" {
-		return 0, fmt.Errorf("tron eth_getBalance rpc error: %s", strings.TrimSpace(string(res.Error)))
+		return 0, fmt.Errorf("tron getaccount error: %s", strings.TrimSpace(string(res.Error)))
 	}
-
-	hexStr := strings.TrimPrefix(strings.TrimSpace(res.Result), "0x")
-	if hexStr == "" {
+	if len(res.RPCError) > 0 && string(res.RPCError) != "null" {
+		return 0, fmt.Errorf("tron getaccount error: %s", strings.TrimSpace(string(res.RPCError)))
+	}
+	balance := strings.TrimSpace(res.Balance.String())
+	if balance == "" {
 		return 0, nil
 	}
-	v, ok := new(big.Int).SetString(hexStr, 16)
-	if !ok {
-		return 0, fmt.Errorf("tron parse balance hex: %s", res.Result)
+	v, err := strconv.ParseInt(balance, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("tron parse balance SUN: %w", err)
 	}
-	if !v.IsInt64() {
-		return 0, fmt.Errorf("tron balance exceeds int64 SUN: %s", v.String())
-	}
-	return v.Int64(), nil
+	return v, nil
 }
 
 func tronGetTRXBalanceFromRPCs(ctx context.Context, rpcURLs []string, address string) (int64, error) {
 	var lastErr error
-	for _, rpcURL := range rpcURLs {
+	for _, rpcURL := range tronHTTPAPIEndpoints(rpcURLs) {
 		rpcURL = strings.TrimSpace(rpcURL)
 		if rpcURL == "" {
 			continue

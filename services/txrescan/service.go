@@ -65,8 +65,10 @@ type Result struct {
 }
 
 type eventCandidate struct {
-	Type string
-	Tx   *types.TransactionParam
+	Type                  string
+	Tx                    *types.TransactionParam
+	Confirmations         uint
+	ConfirmationsRequired uint
 }
 
 func New(chains *blockchain.ChainFactory, registry *asset.Registry, bus *dispatcher.Dispatcher, txRepo *repositories.TransactionRepo, walletRepo *repositories.WalletRepo) *Service {
@@ -132,11 +134,14 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 		if candidate.Tx == nil {
 			continue
 		}
+		if err := s.recordRescanFact(ctx, candidate); err != nil {
+			return result, err
+		}
 		if err := s.Bus.DispatchAndWait(ctx, dispatcher.Event{
 			Chain:       chainID,
 			Type:        candidate.Type,
 			Transaction: candidate.Tx,
-		}); err != nil {
+		}); err != nil && !(errors.Is(err, dispatcher.ErrNoSubscribers) && s.ChainFactRepo != nil) {
 			return result, err
 		}
 		result.Events++
@@ -152,6 +157,27 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) recordRescanFact(ctx context.Context, candidate eventCandidate) error {
+	if s == nil || s.ChainFactRepo == nil || candidate.Tx == nil {
+		return nil
+	}
+	fact, err := repositories.BuildChainFact(repositories.ChainFactBuildParams{
+		EventType:             candidate.Type,
+		Transaction:           *candidate.Tx,
+		Confirmations:         candidate.Confirmations,
+		ConfirmationsRequired: candidate.ConfirmationsRequired,
+	})
+	if err != nil {
+		return err
+	}
+	if candidate.ConfirmationsRequired > 0 {
+		failed := candidate.Tx.Status != nil && strings.EqualFold(*candidate.Tx.Status, models.TransactionStatusFailed)
+		fact.Finalized = !failed && candidate.Confirmations >= candidate.ConfirmationsRequired
+	}
+	_, _, err = s.ChainFactRepo.RecordOrUpdate(ctx, &fact)
+	return err
 }
 
 func (s *Service) processDeposits(ctx context.Context) error {
@@ -643,6 +669,13 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 	if strings.EqualFold(infoObj.Receipt.Result, "FAILED") || strings.EqualFold(infoObj.Result, "FAILED") {
 		status = "failed"
 	}
+	confirmationsRequired := s.confirmationsRequired(constants.TRON)
+	confirmations := uint(0)
+	if strings.EqualFold(status, "confirmed") && infoObj.BlockNumber > 0 {
+		if latest, err := s.tronLatestBlockNumber(ctx); err == nil && latest >= infoObj.BlockNumber {
+			confirmations = uint(latest - infoObj.BlockNumber + 1)
+		}
+	}
 	var events []eventCandidate
 	for idx, contract := range txObj.RawData.Contract {
 		if contract.Type != "TransferContract" {
@@ -651,7 +684,7 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 		if contract.Parameter.Value.Amount <= 0 {
 			continue
 		}
-		events = append(events, eventCandidate{Type: "native_transfer", Tx: &types.TransactionParam{
+		events = append(events, eventCandidate{Type: "native_transfer", Confirmations: confirmations, ConfirmationsRequired: confirmationsRequired, Tx: &types.TransactionParam{
 			Context: context.Background(), ChainID: constants.TRON, Symbol: helpers.StrPtr(native.GetSymbol()), Decimals: native.GetDecimals(),
 			Hash: helpers.StrPtr(hash), Block: helpers.StrPtr(blockNumber), BlockHash: helpers.StrPtr(blockHash), Token: nil,
 			From: helpers.StrPtr(tronHexToBase58(contract.Parameter.Value.OwnerAddress)), To: helpers.StrPtr(tronHexToBase58(contract.Parameter.Value.ToAddress)),
@@ -669,7 +702,7 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 		}
 		amount := new(big.Int)
 		amount.SetString(strings.TrimPrefix(logEntry.Data, "0x"), 16)
-		events = append(events, eventCandidate{Type: "token_transfer", Tx: &types.TransactionParam{
+		events = append(events, eventCandidate{Type: "token_transfer", Confirmations: confirmations, ConfirmationsRequired: confirmationsRequired, Tx: &types.TransactionParam{
 			Context: context.Background(), ChainID: constants.TRON, Symbol: helpers.StrPtr(assetInfo.GetSymbol()), Decimals: assetInfo.GetDecimals(),
 			Hash: helpers.StrPtr(hash), Block: helpers.StrPtr(blockNumber), BlockHash: helpers.StrPtr(blockHash), Token: helpers.StrPtr(token),
 			From: helpers.StrPtr(tronTopicToAddress(logEntry.Topics[1])), To: helpers.StrPtr(tronTopicToAddress(logEntry.Topics[2])),
@@ -677,6 +710,36 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 		}})
 	}
 	return events, nil
+}
+
+func (s *Service) confirmationsRequired(chainID constants.ChainID) uint {
+	if s != nil && s.Confirmations != nil {
+		if required := s.Confirmations(chainID); required > 0 {
+			return required
+		}
+	}
+	return 1
+}
+
+func (s *Service) tronLatestBlockNumber(ctx context.Context) (int64, error) {
+	body, err := s.tronPost(ctx, "/wallet/getnowblock", map[string]any{})
+	if err != nil {
+		return 0, err
+	}
+	var result struct {
+		BlockHeader struct {
+			RawData struct {
+				Number int64 `json:"number"`
+			} `json:"raw_data"`
+		} `json:"block_header"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, err
+	}
+	if result.BlockHeader.RawData.Number <= 0 {
+		return 0, ErrTransactionNotFound
+	}
+	return result.BlockHeader.RawData.Number, nil
 }
 
 func (s *Service) tronPost(ctx context.Context, path string, payload any) ([]byte, error) {
