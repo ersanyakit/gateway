@@ -68,7 +68,7 @@ development_status:
   3-3-enforce-ledger-derived-balance-authority: done
   3-4-model-payment-matching-outcomes-explicitly: done
   3-5-correct-reorgs-with-compensating-events-and-ledger-reversals: done
-  3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty: backlog
+  3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty: ready-for-dev
   epic-3-retrospective: optional
   epic-4: backlog
   4-1-reserve-ledger-holds-before-outbound-money-movement: backlog
