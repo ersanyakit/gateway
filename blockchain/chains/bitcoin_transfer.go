@@ -15,6 +15,7 @@ import (
 	blockchain "core/blockchain"
 	"core/blockchain/walletcore"
 	"core/constants"
+	"core/services/chainresource"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
@@ -102,14 +103,17 @@ func btcBroadcast(ctx context.Context, rpcURLs []string, rawTxHex string) (strin
 	return "", lastErr
 }
 
-func btcEstimateFee(inputCount, outputCount int) int64 {
+func btcEstimateFee(inputCount, outputCount int) (int64, error) {
+	feeRate, err := chainresource.BitcoinFeeRateSatPerVByte()
+	if err != nil {
+		return 0, err
+	}
 	// P2WPKH: ~68 vbytes per input, ~31 vbytes per output, ~10 vbytes overhead
 	vsize := int64(10 + inputCount*68 + outputCount*31)
-	return vsize * btcFeeRateSatPerVByte
+	return vsize * feeRate, nil
 }
 
 const (
-	btcFeeRateSatPerVByte      int64  = 10
 	trustWalletCoinTypeBitcoin uint32 = 0
 )
 
@@ -120,12 +124,6 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	if err := authorizeWalletSigning(ctx, b.Name(), b.ChainID(), wallet, "transfer.native", fmt.Sprintf("%d", sendSat), toAddress); err != nil {
 		return nil, err
 	}
-
-	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
-	if err != nil {
-		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
-	}
-	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 
 	utxos, err := btcFetchUTXOs(ctx, b.RPCs(), wallet.Address)
 	if err != nil {
@@ -140,7 +138,11 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 		}
 		selected = append(selected, u)
 		totalSat += u.Value
-		if totalSat >= sendSat+btcEstimateFee(len(selected), 2) {
+		estimatedFee, err := btcEstimateFee(len(selected), 2)
+		if err != nil {
+			return nil, err
+		}
+		if totalSat >= sendSat+estimatedFee {
 			break
 		}
 	}
@@ -149,7 +151,10 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	}
 
 	const dustSat int64 = 546
-	fee := btcEstimateFee(len(selected), 2)
+	fee, err := btcEstimateFee(len(selected), 2)
+	if err != nil {
+		return nil, err
+	}
 	changeSat := totalSat - sendSat - fee
 	if changeSat < 0 {
 		return nil, fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, fee)
@@ -157,8 +162,12 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	includeChange := changeSat >= dustSat
 	if !includeChange {
 		fee = totalSat - sendSat
-		if fee < btcEstimateFee(len(selected), 1) {
-			return nil, fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, btcEstimateFee(len(selected), 1))
+		minFee, err := btcEstimateFee(len(selected), 1)
+		if err != nil {
+			return nil, err
+		}
+		if fee < minFee {
+			return nil, fmt.Errorf("bitcoin balance not enough: total=%d sat amount=%d sat fee=%d sat", totalSat, sendSat, minFee)
 		}
 		changeSat = 0
 	}
@@ -170,20 +179,41 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	if destAddr == nil {
 		return nil, fmt.Errorf("invalid bitcoin destination address")
 	}
+	utxoReservation, err := chainResources.ReserveUTXOs(ctx, chainresource.UTXORequest{
+		Chain:   b.Name(),
+		Wallet:  wallet.Address,
+		Intent:  "transfer.native",
+		OwnerID: chainResourceOwnerID(ctx, wallet, "transfer.native"),
+		UTXOs:   btcChainResourceUTXOs(selected),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin UTXO reservation failed: %w", err)
+	}
+
+	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
+	if err != nil {
+		_ = utxoReservation.Release()
+		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
+	}
+	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 	if _, _, err := b.bitcoinSourceScript(wallet, pubKey); err != nil {
+		_ = utxoReservation.Release()
 		return nil, err
 	}
 	rawTxHex, fallbackTxID, err := b.signBitcoinWithTrustWallet(wallet, privKeyBytes, pubKey, toAddress, sendSat, false, selected)
 	if err != nil {
+		_ = utxoReservation.Release()
 		return nil, err
 	}
 	txID, err := btcBroadcast(ctx, b.RPCs(), rawTxHex)
 	if err != nil {
+		_ = utxoReservation.Consume(fallbackTxID)
 		return nil, err
 	}
 	if txID == "" {
 		txID = fallbackTxID
 	}
+	_ = utxoReservation.Consume(txID)
 	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
 }
 
@@ -191,12 +221,6 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 	if err := authorizeWalletSigning(ctx, b.Name(), b.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
 		return nil, err
 	}
-
-	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
-	if err != nil {
-		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
-	}
-	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 
 	utxos, err := btcFetchUTXOs(ctx, b.RPCs(), wallet.Address)
 	if err != nil {
@@ -216,7 +240,10 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 		return nil, fmt.Errorf("bitcoin no confirmed UTXOs for %s", wallet.Address)
 	}
 
-	fee := btcEstimateFee(len(confirmed), 1)
+	fee, err := btcEstimateFee(len(confirmed), 1)
+	if err != nil {
+		return nil, err
+	}
 	sendSat := totalSat - fee
 	if sendSat <= 0 {
 		return nil, fmt.Errorf("bitcoin sweep balance not enough for fee: total=%d sat fee=%d sat", totalSat, fee)
@@ -230,20 +257,41 @@ func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDeta
 	if destAddr == nil {
 		return nil, fmt.Errorf("invalid bitcoin destination address")
 	}
+	utxoReservation, err := chainResources.ReserveUTXOs(ctx, chainresource.UTXORequest{
+		Chain:   b.Name(),
+		Wallet:  wallet.Address,
+		Intent:  "sweep.native",
+		OwnerID: chainResourceOwnerID(ctx, wallet, "sweep.native"),
+		UTXOs:   btcChainResourceUTXOs(confirmed),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bitcoin UTXO reservation failed: %w", err)
+	}
+
+	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
+	if err != nil {
+		_ = utxoReservation.Release()
+		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)
+	}
+	_, pubKey := btcec.PrivKeyFromBytes(privKeyBytes)
 	if _, _, err := b.bitcoinSourceScript(wallet, pubKey); err != nil {
+		_ = utxoReservation.Release()
 		return nil, err
 	}
 	rawTxHex, fallbackTxID, err := b.signBitcoinWithTrustWallet(wallet, privKeyBytes, pubKey, toAddress, totalSat, true, confirmed)
 	if err != nil {
+		_ = utxoReservation.Release()
 		return nil, err
 	}
 	txID, err := btcBroadcast(ctx, b.RPCs(), rawTxHex)
 	if err != nil {
+		_ = utxoReservation.Consume(fallbackTxID)
 		return nil, err
 	}
 	if txID == "" {
 		txID = fallbackTxID
 	}
+	_ = utxoReservation.Consume(txID)
 	return &blockchain.TransactionResult{TxHash: txID, Success: true}, nil
 }
 
@@ -311,11 +359,15 @@ func (b *BitcoinChain) signBitcoinWithTrustWallet(wallet blockchain.WalletDetail
 	if len(twUTXOs) == 0 {
 		return "", "", fmt.Errorf("bitcoin no confirmed UTXOs for %s", wallet.Address)
 	}
+	feeRate, err := chainresource.BitcoinFeeRateSatPerVByte()
+	if err != nil {
+		return "", "", err
+	}
 
 	input := &twbitcoin.SigningInput{
 		HashType:      uint32(txscript.SigHashAll),
 		Amount:        amountSat,
-		ByteFee:       btcFeeRateSatPerVByte,
+		ByteFee:       feeRate,
 		ToAddress:     toAddress,
 		ChangeAddress: wallet.Address,
 		PrivateKey:    [][]byte{privateKey},
@@ -393,7 +445,10 @@ func signBitcoinManually(params *chaincfg.Params, wallet blockchain.WalletDetail
 	if useMax {
 		outputCount = 1
 	}
-	fee := btcEstimateFee(len(utxos), outputCount)
+	fee, err := btcEstimateFee(len(utxos), outputCount)
+	if err != nil {
+		return "", "", err
+	}
 	sendSat := amountSat
 	changeSat := totalSat - sendSat - fee
 	includeChange := !useMax && changeSat >= dustSat
@@ -497,6 +552,18 @@ func bitcoinTxIDFromRaw(raw []byte) string {
 		return ""
 	}
 	return tx.TxHash().String()
+}
+
+func btcChainResourceUTXOs(utxos []btcUTXO) []chainresource.UTXO {
+	out := make([]chainresource.UTXO, 0, len(utxos))
+	for _, utxo := range utxos {
+		out = append(out, chainresource.UTXO{
+			TxID:  utxo.Txid,
+			Vout:  utxo.Vout,
+			Value: utxo.Value,
+		})
+	}
+	return out
 }
 
 // PrefundGas is not applicable for Bitcoin — transaction fees come from UTXOs.

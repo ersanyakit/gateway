@@ -13,6 +13,7 @@ import (
 	"core/blockchain/walletcore"
 	"core/constants"
 	"core/contracts/erc20"
+	"core/services/chainresource"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -63,7 +64,7 @@ func evmSweepNative(ctx context.Context, chainName string, chainID constants.Cha
 	}
 	defer client.Close()
 
-	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	from, err := evmWalletAddress(chainName, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +85,7 @@ func evmSweepNative(ctx context.Context, chainName string, chainID constants.Cha
 		return nil, fmt.Errorf("%s sweep balance is not enough for gas: balance=%s gas_cost=%s", chainName, balance.String(), gasCost.String())
 	}
 
-	return evmSendNativeWithClient(ctx, client, privateKey, from, chainName, chainID, amountWei, toAddress, gasPrice)
+	return evmSendNativeWithClient(ctx, client, wallet, from, chainName, chainID, amountWei, toAddress, gasPrice, "sweep.native")
 }
 
 func evmSendNative(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, amountWei *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
@@ -105,7 +106,7 @@ func evmSendNative(ctx context.Context, chainName string, chainID constants.Chai
 	}
 	defer client.Close()
 
-	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	from, err := evmWalletAddress(chainName, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -115,15 +116,15 @@ func evmSendNative(ctx context.Context, chainName string, chainID constants.Chai
 		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
 	}
 
-	return evmSendNativeWithClient(ctx, client, privateKey, from, chainName, chainID, amountWei, toAddress, gasPrice)
+	return evmSendNativeWithClient(ctx, client, wallet, from, chainName, chainID, amountWei, toAddress, gasPrice, "transfer.native")
 }
 
-func evmSendNativeWithClient(ctx context.Context, client *ethclient.Client, privateKey *ecdsa.PrivateKey, from common.Address, chainName string, chainID constants.ChainID, amountWei *big.Int, toAddress string, gasPrice *big.Int) (*blockchain.TransactionResult, error) {
+func evmSendNativeWithClient(ctx context.Context, client *ethclient.Client, wallet blockchain.WalletDetails, from common.Address, chainName string, chainID constants.ChainID, amountWei *big.Int, toAddress string, gasPrice *big.Int, intent string) (*blockchain.TransactionResult, error) {
 	if amountWei == nil || amountWei.Sign() <= 0 {
 		return nil, errors.New("amount must be greater than zero")
 	}
-	if gasPrice == nil || gasPrice.Sign() <= 0 {
-		return nil, fmt.Errorf("%s gas price must be greater than zero", chainName)
+	if err := chainresource.ValidateEVMGasPolicy(chainName, intent, gasPrice, evmNativeTransferGasLimit); err != nil {
+		return nil, err
 	}
 	if err := evmVerifyChainID(ctx, client, chainName, chainID); err != nil {
 		return nil, err
@@ -134,22 +135,39 @@ func evmSendNativeWithClient(ctx context.Context, client *ethclient.Client, priv
 		return nil, err
 	}
 
-	nonce, err := client.PendingNonceAt(ctx, from)
+	nonceReservation, err := chainResources.ReserveNonce(ctx, chainresource.NonceRequest{
+		Chain:   chainName,
+		Wallet:  from.Hex(),
+		Intent:  intent,
+		OwnerID: chainResourceOwnerID(ctx, wallet, intent),
+	}, func(fetchCtx context.Context) (uint64, error) {
+		return client.PendingNonceAt(fetchCtx, from)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
+		return nil, fmt.Errorf("%s nonce reservation failed: %w", chainName, err)
 	}
 
-	signedTx, err := evmSignNativeWithTrustWallet(chainName, chainID, privateKey, nonce, gasPrice, amountWei, toAddress)
+	privateKey, _, err := evmPrivateKeyAndAddress(wallet)
 	if err != nil {
+		_ = nonceReservation.Release()
 		return nil, err
 	}
 
+	signedTx, err := evmSignNativeWithTrustWallet(chainName, chainID, privateKey, nonceReservation.Nonce, gasPrice, amountWei, toAddress)
+	if err != nil {
+		_ = nonceReservation.Release()
+		return nil, err
+	}
+	txHash := signedTx.Hash().Hex()
+
 	if err := client.SendTransaction(ctx, signedTx); err != nil {
+		_ = nonceReservation.Consume(txHash)
 		return nil, fmt.Errorf("%s tx broadcast failed: %w", chainName, err)
 	}
+	_ = nonceReservation.Consume(txHash)
 
 	return &blockchain.TransactionResult{
-		TxHash:  signedTx.Hash().Hex(),
+		TxHash:  txHash,
 		Success: true,
 	}, nil
 }
@@ -194,6 +212,13 @@ func evmPrivateKeyAndAddress(wallet blockchain.WalletDetails) (*ecdsa.PrivateKey
 	return privateKey, from, nil
 }
 
+func evmWalletAddress(chainName string, wallet blockchain.WalletDetails) (common.Address, error) {
+	if !common.IsHexAddress(strings.TrimSpace(wallet.Address)) {
+		return common.Address{}, fmt.Errorf("%s wallet address is required for chain resource reservation", chainName)
+	}
+	return common.HexToAddress(wallet.Address), nil
+}
+
 func nativeAmountRaw(value string) (*big.Int, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -225,7 +250,7 @@ func evmSweepNativeTo(ctx context.Context, chainName string, chainID constants.C
 	}
 	defer client.Close()
 
-	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	from, err := evmWalletAddress(chainName, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +271,7 @@ func evmSweepNativeTo(ctx context.Context, chainName string, chainID constants.C
 		return nil, fmt.Errorf("%s sweep balance not enough for gas: balance=%s gas_cost=%s", chainName, balance.String(), gasCost.String())
 	}
 
-	return evmSendNativeWithClient(ctx, client, privateKey, from, chainName, chainID, amountWei, toAddress, gasPrice)
+	return evmSendNativeWithClient(ctx, client, wallet, from, chainName, chainID, amountWei, toAddress, gasPrice, "sweep.native")
 }
 
 // evmNativeBalance returns the current native balance (in wei) for address.
@@ -313,7 +338,7 @@ func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.Ch
 	}
 	defer client.Close()
 
-	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	from, err := evmWalletAddress(chainName, wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +357,7 @@ func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.Ch
 		return nil, fmt.Errorf("%s ERC-20 balance is zero for %s", chainName, from.Hex())
 	}
 
-	return evmSendERC20WithClient(ctx, client, privateKey, from, chainName, chainID, contractAddr, balance, toAddress)
+	return evmSendERC20WithClient(ctx, client, wallet, from, chainName, chainID, contractAddr, balance, toAddress, "sweep.token")
 }
 
 func evmSendERC20(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, contractAddr string, amount *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
@@ -356,15 +381,15 @@ func evmSendERC20(ctx context.Context, chainName string, chainID constants.Chain
 	}
 	defer client.Close()
 
-	privateKey, from, err := evmPrivateKeyAndAddress(wallet)
+	from, err := evmWalletAddress(chainName, wallet)
 	if err != nil {
 		return nil, err
 	}
 
-	return evmSendERC20WithClient(ctx, client, privateKey, from, chainName, chainID, contractAddr, amount, toAddress)
+	return evmSendERC20WithClient(ctx, client, wallet, from, chainName, chainID, contractAddr, amount, toAddress, "transfer.token")
 }
 
-func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, privateKey *ecdsa.PrivateKey, from common.Address, chainName string, chainID constants.ChainID, contractAddr string, amount *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
+func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, wallet blockchain.WalletDetails, from common.Address, chainName string, chainID constants.ChainID, contractAddr string, amount *big.Int, toAddress string, intent string) (*blockchain.TransactionResult, error) {
 	if amount == nil || amount.Sign() <= 0 {
 		return nil, errors.New("amount must be greater than zero")
 	}
@@ -391,30 +416,48 @@ func evmSendERC20WithClient(ctx context.Context, client *ethclient.Client, priva
 		return nil, err
 	}
 
-	nonce, err := client.PendingNonceAt(ctx, from)
-	if err != nil {
-		return nil, fmt.Errorf("%s nonce fetch failed: %w", chainName, err)
-	}
 	gasPrice, err := client.SuggestGasPrice(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s gas price fetch failed: %w", chainName, err)
 	}
-	if gasPrice == nil || gasPrice.Sign() <= 0 {
-		return nil, fmt.Errorf("%s gas price must be greater than zero", chainName)
+	if err := chainresource.ValidateEVMGasPolicy(chainName, intent, gasPrice, erc20TransferGasLimit); err != nil {
+		return nil, err
 	}
 	gasCost := new(big.Int).Mul(new(big.Int).Set(gasPrice), new(big.Int).SetUint64(erc20TransferGasLimit))
 	if err := evmEnsureNativeBalance(ctx, client, from, gasCost, chainName); err != nil {
 		return nil, err
 	}
 
-	signedTx, err := evmSignERC20WithTrustWallet(chainName, chainID, privateKey, nonce, gasPrice, contractAddr, amount, toAddress)
+	nonceReservation, err := chainResources.ReserveNonce(ctx, chainresource.NonceRequest{
+		Chain:   chainName,
+		Wallet:  from.Hex(),
+		Intent:  intent,
+		OwnerID: chainResourceOwnerID(ctx, wallet, intent),
+	}, func(fetchCtx context.Context) (uint64, error) {
+		return client.PendingNonceAt(fetchCtx, from)
+	})
 	if err != nil {
+		return nil, fmt.Errorf("%s nonce reservation failed: %w", chainName, err)
+	}
+
+	privateKey, _, err := evmPrivateKeyAndAddress(wallet)
+	if err != nil {
+		_ = nonceReservation.Release()
 		return nil, err
 	}
+
+	signedTx, err := evmSignERC20WithTrustWallet(chainName, chainID, privateKey, nonceReservation.Nonce, gasPrice, contractAddr, amount, toAddress)
+	if err != nil {
+		_ = nonceReservation.Release()
+		return nil, err
+	}
+	txHash := signedTx.Hash().Hex()
 	if err := client.SendTransaction(ctx, signedTx); err != nil {
+		_ = nonceReservation.Consume(txHash)
 		return nil, fmt.Errorf("%s ERC-20 tx broadcast failed: %w", chainName, err)
 	}
-	return &blockchain.TransactionResult{TxHash: signedTx.Hash().Hex(), Success: true}, nil
+	_ = nonceReservation.Consume(txHash)
+	return &blockchain.TransactionResult{TxHash: txHash, Success: true}, nil
 }
 
 func evmSignNativeWithTrustWallet(chainName string, chainID constants.ChainID, privateKey *ecdsa.PrivateKey, nonce uint64, gasPrice *big.Int, amount *big.Int, toAddress string) (*types.Transaction, error) {

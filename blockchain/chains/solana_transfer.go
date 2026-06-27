@@ -17,8 +17,6 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 )
 
-const solanaTransferFeeLamports uint64 = 5000
-
 func solanaGasThresholdLamports() uint64 {
 	if raw := strings.TrimSpace(os.Getenv("SOLANA_GAS_THRESHOLD_LAMPORTS")); raw != "" {
 		if v, err := strconv.ParseUint(raw, 10, 64); err == nil && v > 0 {
@@ -47,7 +45,7 @@ func (s *SolanaChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, err
 	}
 
-	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	from, err := solanaWalletAddress(wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -57,11 +55,15 @@ func (s *SolanaChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, fmt.Errorf("solana balance fetch failed: %w", err)
 	}
 
-	if balance.Value <= solanaTransferFeeLamports {
+	feeLamports, err := solanaTransferFeeLamports()
+	if err != nil {
+		return nil, err
+	}
+	if balance.Value <= feeLamports {
 		return nil, fmt.Errorf("solana sweep balance not enough for fee: balance=%d", balance.Value)
 	}
 
-	return s.sendLamportsWithClient(ctx, rpcClient, privateKey, from, balance.Value-solanaTransferFeeLamports, toAddress)
+	return s.sendLamportsWithClient(ctx, rpcClient, wallet, from, balance.Value-feeLamports, toAddress, "sweep.native")
 }
 
 // SweepERC20To sweeps all SPL tokens (mint = contractAddr) from wallet to toAddress.
@@ -76,7 +78,7 @@ func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.Wallet
 		return nil, err
 	}
 
-	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	from, err := solanaWalletAddress(wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -139,29 +141,50 @@ func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.Wallet
 		).Build(),
 	)
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "sweep.token")
+	if err != nil {
+		return nil, fmt.Errorf("solana resource reservation failed: %w", err)
+	}
+
 	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana blockhash fetch failed: %w", err)
 	}
 
 	tx, err := solana.NewTransaction(instructions, recent.Value.Blockhash, solana.TransactionPayer(from))
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana SPL tx build failed: %w", err)
 	}
 
-	if _, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+	privateKey, _, err := solanaPrivateKeyAndAddress(wallet)
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
+
+	signatures, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(from) {
 			return &privateKey
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana SPL tx signing failed: %w", err)
 	}
 
 	signature, err := rpcClient.SendTransaction(ctx, tx)
 	if err != nil {
+		txSig := ""
+		if len(signatures) > 0 {
+			txSig = signatures[0].String()
+		}
+		_ = lease.Consume(txSig)
 		return nil, fmt.Errorf("solana SPL tx broadcast failed: %w", err)
 	}
+	_ = lease.Consume(signature.String())
 
 	return &blockchain.TransactionResult{TxHash: signature.String(), Success: true}, nil
 }
@@ -187,7 +210,7 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, err
 	}
 
-	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	from, err := solanaWalletAddress(wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -239,26 +262,48 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 		).Build(),
 	)
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "transfer.token")
+	if err != nil {
+		return nil, fmt.Errorf("solana resource reservation failed: %w", err)
+	}
+
 	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana blockhash fetch failed: %w", err)
 	}
 	tx, err := solana.NewTransaction(instructions, recent.Value.Blockhash, solana.TransactionPayer(from))
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana SPL tx build failed: %w", err)
 	}
-	if _, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+
+	privateKey, _, err := solanaPrivateKeyAndAddress(wallet)
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
+
+	signatures, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(from) {
 			return &privateKey
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("solana SPL tx signing failed: %w", err)
 	}
 	signature, err := rpcClient.SendTransaction(ctx, tx)
 	if err != nil {
+		txSig := ""
+		if len(signatures) > 0 {
+			txSig = signatures[0].String()
+		}
+		_ = lease.Consume(txSig)
 		return nil, fmt.Errorf("solana SPL tx broadcast failed: %w", err)
 	}
+	_ = lease.Consume(signature.String())
 	return &blockchain.TransactionResult{TxHash: signature.String(), Success: true}, nil
 }
 
@@ -297,7 +342,11 @@ func (s *SolanaChain) PrefundGas(ctx context.Context, reserveWallet blockchain.W
 		return false, nil
 	}
 
-	if _, err := s.Deposit(ctx, reserveWallet, amount, userAddress); err != nil {
+	from, err := solanaWalletAddress(reserveWallet)
+	if err != nil {
+		return false, err
+	}
+	if _, err := s.sendLamportsWithClient(ctx, rpcClient, reserveWallet, from, solanaGasPrefundLamports(), userAddress, "prefund.native"); err != nil {
 		return false, fmt.Errorf("solana gas prefund failed: %w", err)
 	}
 	return true, nil
