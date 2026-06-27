@@ -1674,3 +1674,376 @@
     border-top: 1px solid #e9e9e9;
   }
 }
+
+.merchant-titlebar .admin-titlebar-actions {
+  gap: .35rem;
+}
+
+.merchant-titlebar .admin-titlebar-link {
+  box-shadow: none;
+}
+
+.merchant-statusbar {
+  background: #131313;
+}
+
+.merchant-workbench {
+  min-height: 100%;
+  min-width: 0;
+  gap: 0;
+  background: #fff;
+  color: #131313;
+}
+
+.merchant-workbench > :not(style):not(script) {
+  min-width: 0;
+}
+
+.merchant-workbench > header {
+  border-radius: 0 !important;
+  border-width: 0 0 1px !important;
+  border-color: #e9e9e9 !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  padding: .85rem 1rem !important;
+}
+
+.merchant-workbench > header > .grid {
+  gap: .85rem;
+}
+
+.merchant-workbench > header h1 {
+  margin-top: .4rem !important;
+  font-size: 1.25rem !important;
+  line-height: 1.18 !important;
+  font-weight: 900;
+}
+
+.merchant-workbench > header p {
+  max-width: 46rem;
+  font-size: .78rem !important;
+  line-height: 1.45 !important;
+}
+
+.merchant-workbench > header a.inline-flex,
+.merchant-workbench > header button {
+  min-height: 2.25rem;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+.merchant-workbench > header .mt-4.grid {
+  margin-top: .85rem !important;
+  gap: .5rem !important;
+}
+
+.merchant-workbench > header .mt-4.grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+}
+
+.merchant-workbench > header .mt-4.grid > div {
+  border-color: #e9e9e9 !important;
+  border-radius: 8px !important;
+  background: #f9f9f9 !important;
+  padding: .75rem !important;
+}
+
+.merchant-workbench > header .mt-4.grid > div:nth-child(6) {
+  grid-column: span 2 / span 2 !important;
+}
+
+.merchant-workbench > header .mt-4.grid > div:nth-child(6) code {
+  max-width: 100%;
+}
+
+.merchant-workbench > header .mt-4.grid strong {
+  margin-top: .35rem !important;
+}
+
+.merchant-workbench > .sticky {
+  top: 0 !important;
+  border-width: 0 0 1px !important;
+  border-color: #e9e9e9 !important;
+  border-radius: 0 !important;
+  background: rgba(255, 255, 255, .96) !important;
+  box-shadow: none !important;
+  padding: .42rem .75rem !important;
+}
+
+.merchant-workbench > .sticky > div {
+  gap: .25rem !important;
+  scrollbar-width: thin;
+}
+
+.merchant-workbench .dash-tab {
+  min-height: 2rem;
+  border: 1px solid transparent;
+  border-radius: 6px !important;
+  padding: 0 .65rem;
+  color: rgba(19, 19, 19, .63);
+  font-size: .78rem;
+  font-weight: 780;
+}
+
+.merchant-workbench .dash-tab:hover {
+  border-color: #e9e9e9;
+  background: #f9f9f9;
+  color: #131313;
+}
+
+.merchant-workbench .dash-tab[aria-selected="true"] {
+  border-color: #131313;
+  background: #131313;
+  color: #fff;
+  box-shadow: none;
+}
+
+.merchant-workbench > section:not(.hidden) {
+  align-items: start;
+  border-top: 1px solid #e9e9e9;
+  padding: 1rem;
+}
+
+.merchant-workbench > section > section,
+.merchant-workbench > section > .grid > section,
+.merchant-workbench > section > .grid > div > section {
+  border-color: #e9e9e9 !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: none !important;
+  padding: 1rem !important;
+}
+
+.merchant-workbench .rounded-\[28px\],
+.merchant-workbench .rounded-\[24px\],
+.merchant-workbench .rounded-3xl {
+  border-radius: 8px !important;
+}
+
+.merchant-workbench .rounded-2xl,
+.merchant-workbench .rounded-xl,
+.merchant-workbench .rounded-lg,
+.merchant-workbench code,
+.merchant-workbench input,
+.merchant-workbench select,
+.merchant-workbench textarea,
+.merchant-workbench details > summary {
+  border-radius: 6px !important;
+}
+
+.merchant-workbench a.inline-flex,
+.merchant-workbench button.inline-flex {
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+.merchant-workbench .shadow-soft,
+.merchant-workbench .shadow-glow,
+.merchant-workbench .shadow-sm {
+  box-shadow: none !important;
+}
+
+.merchant-workbench input,
+.merchant-workbench select,
+.merchant-workbench textarea {
+  border-color: #e9e9e9 !important;
+  background: #fff !important;
+}
+
+.merchant-workbench input:focus,
+.merchant-workbench select:focus,
+.merchant-workbench textarea:focus {
+  border-color: #ff37c7 !important;
+  box-shadow: 0 0 0 3px rgba(255, 55, 199, .1) !important;
+}
+
+.merchant-workbench article {
+  border-color: #e9e9e9 !important;
+}
+
+.merchant-workbench article:hover {
+  background: #f9f9f9;
+}
+
+.merchant-workbench .bg-wash {
+  background-color: #f9f9f9 !important;
+}
+
+.merchant-workbench .overflow-hidden.border,
+.merchant-workbench .overflow-hidden.rounded-3xl {
+  border-color: #e9e9e9 !important;
+}
+
+.merchant-workbench h2 {
+  letter-spacing: 0;
+}
+
+.merchant-workbench time,
+.merchant-workbench code {
+  font-variant-numeric: tabular-nums;
+}
+
+.merchant-workbench code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.merchant-shell-body,
+.admin-vscode-body:has(.merchant-workbench) {
+  overflow: auto;
+  overflow-x: hidden;
+}
+
+.merchant-shell-body .admin-vscode-root,
+.admin-vscode-body:has(.merchant-workbench) .admin-vscode-root {
+  min-height: 100vh;
+  grid-template-rows: 35px auto 24px;
+}
+
+.merchant-shell-body .admin-vscode-main,
+.admin-vscode-body:has(.merchant-workbench) .admin-vscode-main {
+  min-height: auto;
+  overflow: visible;
+}
+
+.merchant-shell-body .admin-vscode-content,
+.admin-vscode-body:has(.merchant-workbench) .admin-vscode-content {
+  min-height: auto;
+}
+
+.merchant-shell-body .merchant-workbench,
+.admin-vscode-body:has(.merchant-workbench) .merchant-workbench {
+  height: auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+@media (min-width: 1280px) {
+  .merchant-workbench {
+    height: 100%;
+    overflow: auto;
+  }
+
+  .merchant-shell-body .admin-vscode-main,
+  .admin-vscode-body:has(.merchant-workbench) .admin-vscode-main,
+  .merchant-shell-body .merchant-workbench,
+  .admin-vscode-body:has(.merchant-workbench) .merchant-workbench {
+    overflow: visible;
+  }
+
+  .merchant-shell-body .merchant-workbench,
+  .admin-vscode-body:has(.merchant-workbench) .merchant-workbench {
+    height: auto;
+  }
+
+  .merchant-workbench > section:not(.hidden) {
+    padding: 1rem 1.25rem 1.5rem;
+  }
+}
+
+@media (max-width: 1023px) {
+  .admin-vscode-body {
+    overflow-x: hidden;
+  }
+
+  .admin-vscode-main,
+  .admin-vscode-content,
+  .merchant-titlebar,
+  .merchant-statusbar,
+  .merchant-workbench {
+    width: 100%;
+    max-width: 100vw;
+  }
+
+  .merchant-titlebar {
+    grid-template-columns: 1fr auto;
+  }
+
+  .merchant-titlebar .admin-titlebar-link[href="/swagger/index.html"] {
+    display: none;
+  }
+
+  .merchant-workbench > header {
+    padding: 1rem !important;
+  }
+
+  .merchant-workbench > header > .grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div:nth-child(6) {
+    grid-column: 1 / -1 !important;
+  }
+
+  .merchant-workbench > section:not(.hidden) {
+    padding: .75rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .merchant-workbench > header > .grid > div:last-child {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .merchant-workbench > header > .grid > div:last-child a:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .merchant-workbench > header .mt-4.grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: .45rem !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div {
+    padding: .62rem !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div > span:first-child {
+    font-size: .58rem !important;
+    line-height: 1.1;
+  }
+
+  .merchant-workbench > header .mt-4.grid strong {
+    font-size: 1.2rem !important;
+    line-height: 1.05 !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div:nth-child(6) > div {
+    flex-direction: row !important;
+    align-items: center !important;
+  }
+
+  .merchant-workbench > header .mt-4.grid > div:nth-child(6) button {
+    min-height: 2rem;
+    padding: 0 .75rem;
+  }
+
+  .merchant-workbench > .sticky {
+    padding: .35rem .5rem !important;
+    overflow: hidden;
+  }
+
+  .merchant-workbench > .sticky > div {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .merchant-workbench .dash-tab {
+    min-height: 2.1rem;
+    padding: 0 .58rem;
+    font-size: .75rem;
+  }
+
+  .merchant-statusbar span:last-child {
+    display: none;
+  }
+}

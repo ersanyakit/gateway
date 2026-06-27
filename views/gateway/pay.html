@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/assets/style.css">
   <script src="/assets/checkout.js" defer></script>
 </head>
-<body class="crypto-page">
+<body class="crypto-page crypto-payment-flow crypto-pay-page">
   <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
 
   <main class="crypto-container">
@@ -130,7 +130,7 @@
           <p>{{if .IsEnglish}}Send only{{else}}Sadece{{end}} <strong>{{.Session.SelectedSymbol}}</strong> {{if .IsEnglish}}on the{{else}}assetini{{end}} <strong>{{.ChainName}}</strong> {{if .IsEnglish}}network. Sending other assets may result in permanent loss.{{else}}network üzerinde gönder. Farklı asset göndermek kalıcı kayba yol açabilir.{{end}}</p>
         </section>
 
-        <div data-payable-action>
+        <div class="crypto-actions" data-payable-action>
           <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
           <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/change">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
           <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/cancel">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
