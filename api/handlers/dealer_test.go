@@ -328,6 +328,21 @@ func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
 				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success"`,
 			},
 		},
+		{
+			function: "HandleAdminRefundApprove",
+			tokens: []string{
+				`logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success"`,
+			},
+		},
+		{
+			function: "HandleAdminRefundReject",
+			tokens: []string{
+				`logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "success"`,
+			},
+		},
 	} {
 		body := extractHandlerFunctionBody(t, source, tc.function)
 		for _, token := range tc.tokens {

@@ -312,6 +312,7 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 		{table: "chain_facts", model: &models.ChainFact{}, name: "ux_chain_facts_event_id"},
 		{table: "deposits", model: &models.Deposit{}, name: "ux_deposits_chain_fact_event_id"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ux_ledger_idempotent_account"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "idx_ledger_entries_sweep_job_id"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_merchant_id"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_domain_id"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_scope_key"},

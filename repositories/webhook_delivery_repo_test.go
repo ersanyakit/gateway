@@ -23,7 +23,9 @@ func TestWebhookDeliveryClaimDueSourceContract(t *testing.T) {
 	source := string(sourceBytes)
 	for _, token := range []string{
 		"func (r *WebhookDeliveryRepo) ClaimDue",
-		`clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}`,
+		"FOR UPDATE OF wd SKIP LOCKED",
+		"ROW_NUMBER() OVER",
+		"duplicate webhook delivery event_id suppressed before delivery",
 		"WebhookDeliveryStatusPending",
 		"WebhookDeliveryStatusFailed",
 		"next_retry_at IS NULL OR next_retry_at <= ?",
@@ -244,6 +246,52 @@ func TestWebhookDeliveryClaimDueSuppressesDuplicateActiveEventIDs(t *testing.T) 
 		newerAfter.FailureCategory != "duplicate" ||
 		newerAfter.NextRetryAt != nil {
 		t.Fatalf("duplicate row state = %#v, want suppressed dead letter", newerAfter)
+	}
+}
+
+func TestWebhookDeliveryClaimDueSuppressesDuplicatesOutsideClaimLimit(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	eventID := "evt-duplicate-limit"
+
+	older := webhookDeliveryTestRow(merchantID, domainID, eventID, models.WebhookDeliveryStatusPending, nil)
+	newer := webhookDeliveryTestRow(merchantID, domainID, eventID, models.WebhookDeliveryStatusPending, nil)
+	older.UpdatedAt = time.Now().Add(-2 * time.Minute)
+	newer.UpdatedAt = time.Now().Add(-time.Minute)
+	if err := db.Create(&[]models.WebhookDelivery{older, newer}).Error; err != nil {
+		t.Fatalf("seed duplicate deliveries: %v", err)
+	}
+
+	claimed, err := repo.ClaimDue(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != older.ID {
+		t.Fatalf("claimed rows = %#v, want only oldest %s", claimed, older.ID)
+	}
+
+	var newerAfter models.WebhookDelivery
+	if err := db.First(&newerAfter, "id = ?", newer.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if newerAfter.Status != models.WebhookDeliveryStatusDeadLetter ||
+		newerAfter.OperatorAction != "duplicate_suppressed" ||
+		newerAfter.FailureCategory != "duplicate" {
+		t.Fatalf("duplicate outside limit state = %#v, want suppressed dead letter", newerAfter)
+	}
+
+	again, err := repo.ClaimDue(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("duplicate was claimed after first batch: %#v", again)
 	}
 }
 

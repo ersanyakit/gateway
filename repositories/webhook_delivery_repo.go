@@ -226,35 +226,65 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 	}
 	lockUntil := now.Add(lockDuration)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
-			Where(
-				"(status IN ? AND (next_retry_at IS NULL OR next_retry_at <= ?)) OR (status = ? AND next_retry_at <= ?)",
-				[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed},
-				now,
-				models.WebhookDeliveryStatusProcessing,
-				now,
-			).
-			Order("updated_at ASC").
-			Limit(limit).
-			Find(&rows).Error; err != nil {
+		if err := tx.Raw(`
+			WITH active AS (
+				SELECT
+					id,
+					event_id,
+					updated_at,
+					created_at,
+					ROW_NUMBER() OVER (
+						PARTITION BY COALESCE(NULLIF(TRIM(event_id), ''), id::text)
+						ORDER BY updated_at ASC, created_at ASC, id ASC
+					) AS event_rank,
+					(
+						(status IN ? AND (next_retry_at IS NULL OR next_retry_at <= ?))
+						OR (status = ? AND next_retry_at <= ?)
+					) AS is_due
+				FROM webhook_deliveries
+				WHERE status IN ?
+			),
+			suppressed AS (
+				UPDATE webhook_deliveries wd
+				SET status = ?,
+				    last_error = ?,
+				    failure_category = ?,
+				    next_retry_at = NULL,
+				    operator_action = ?,
+				    updated_at = ?
+				FROM active
+				WHERE wd.id = active.id
+				  AND active.event_rank > 1
+				  AND active.is_due
+				RETURNING wd.id
+			),
+			due AS (
+				SELECT id
+				FROM active
+				WHERE event_rank = 1
+				  AND is_due
+				ORDER BY updated_at ASC, created_at ASC, id ASC
+				LIMIT ?
+			)
+			SELECT wd.*
+			FROM webhook_deliveries wd
+			JOIN due ON due.id = wd.id
+			FOR UPDATE OF wd SKIP LOCKED
+		`,
+			[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed},
+			now,
+			models.WebhookDeliveryStatusProcessing,
+			now,
+			[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed, models.WebhookDeliveryStatusProcessing},
+			models.WebhookDeliveryStatusDeadLetter,
+			"duplicate webhook delivery event_id suppressed before delivery",
+			"duplicate",
+			"duplicate_suppressed",
+			now,
+			limit,
+		).Scan(&rows).Error; err != nil {
 			return err
 		}
-		if len(rows) == 0 {
-			return nil
-		}
-		claimRows, duplicateRows := splitDuplicateClaimRows(rows)
-		if len(duplicateRows) > 0 {
-			duplicateIDs := make([]uuid.UUID, 0, len(duplicateRows))
-			for _, row := range duplicateRows {
-				duplicateIDs = append(duplicateIDs, row.ID)
-			}
-			if err := tx.Model(&models.WebhookDelivery{}).
-				Where("id IN ?", duplicateIDs).
-				Updates(webhookDuplicateSuppressedUpdates(now)).Error; err != nil {
-				return err
-			}
-		}
-		rows = claimRows
 		if len(rows) == 0 {
 			return nil
 		}
@@ -278,36 +308,6 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 			Update("next_retry_at", lockUntil).Error
 	})
 	return rows, err
-}
-
-func splitDuplicateClaimRows(rows []models.WebhookDelivery) ([]models.WebhookDelivery, []models.WebhookDelivery) {
-	claimed := make([]models.WebhookDelivery, 0, len(rows))
-	duplicates := make([]models.WebhookDelivery, 0)
-	seen := make(map[string]struct{}, len(rows))
-	for _, row := range rows {
-		key := strings.TrimSpace(row.EventID)
-		if key == "" {
-			key = row.ID.String()
-		}
-		if _, ok := seen[key]; ok {
-			duplicates = append(duplicates, row)
-			continue
-		}
-		seen[key] = struct{}{}
-		claimed = append(claimed, row)
-	}
-	return claimed, duplicates
-}
-
-func webhookDuplicateSuppressedUpdates(now time.Time) map[string]any {
-	return map[string]any{
-		"status":           models.WebhookDeliveryStatusDeadLetter,
-		"last_error":       "duplicate webhook delivery event_id suppressed before delivery",
-		"failure_category": "duplicate",
-		"next_retry_at":    nil,
-		"operator_action":  "duplicate_suppressed",
-		"updated_at":       now,
-	}
 }
 
 func (r *WebhookDeliveryRepo) EnqueueReplay(ctx context.Context, params WebhookReplayParams) (*models.WebhookDelivery, bool, error) {
