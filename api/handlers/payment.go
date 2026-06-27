@@ -462,14 +462,28 @@ func copySessionSelectedFields(dst fiber.Map, session models.PaymentSession) {
 }
 
 func paymentSessionResponseStatus(session models.PaymentSession, now time.Time) string {
-	switch session.Status {
-	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+	if paymentStatusTerminal(session.Status) {
 		return session.Status
 	}
 	if !now.IsZero() && session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
 		return models.PaymentStatusExpired
 	}
 	return session.Status
+}
+
+func paymentStatusTerminal(status string) bool {
+	switch status {
+	case models.PaymentStatusPaid,
+		models.PaymentStatusCanceled,
+		models.PaymentStatusExpired,
+		models.PaymentStatusFailed,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid:
+		return true
+	default:
+		return false
+	}
 }
 
 const (
@@ -481,6 +495,8 @@ const (
 	checkoutStateCanceled   = "canceled"
 	checkoutStateFailed     = "failed"
 	checkoutStateUnderpaid  = "underpaid"
+	checkoutStateOverpaid   = "overpaid"
+	checkoutStatePartialPaid = "partial_paid"
 )
 
 type checkoutPaymentState struct {
@@ -549,6 +565,22 @@ func checkoutPayerState(session models.PaymentSession, now time.Time) checkoutPa
 		state.TitleTR = "Eksik odeme"
 		state.BodyEN = "The received amount is below the expected amount."
 		state.BodyTR = "Alinan tutar beklenen tutarin altinda."
+	case models.PaymentStatusOverpaid:
+		state.Status = checkoutStateOverpaid
+		state.Mode = "overpaid"
+		state.Terminal = true
+		state.TitleEN = "Overpaid"
+		state.TitleTR = "Fazla odeme"
+		state.BodyEN = "The received amount exceeds the expected amount."
+		state.BodyTR = "Alinan tutar beklenen tutarin uzerinde."
+	case models.PaymentStatusPartialPaid:
+		state.Status = checkoutStatePartialPaid
+		state.Mode = "partial_paid"
+		state.Terminal = true
+		state.TitleEN = "Partial payment received"
+		state.TitleTR = "Kismi odeme alindi"
+		state.BodyEN = "The received amount partially covers this checkout and needs follow-up."
+		state.BodyTR = "Alinan tutar checkout'u kismen karsiliyor ve takip gerektiriyor."
 	case models.PaymentStatusAwaitingPayment:
 		if strings.TrimSpace(state.TxHash) != "" || session.ConfirmedAt != nil {
 			state.Status = checkoutStateConfirming
@@ -593,7 +625,26 @@ func checkoutStatusPayload(session models.PaymentSession, now time.Time) fiber.M
 	if state.TxHash != "" {
 		payload["tx_hash"] = state.TxHash
 	}
+	copyPaymentOutcomeFields(payload, session)
 	return payload
+}
+
+func copyPaymentOutcomeFields(dst fiber.Map, session models.PaymentSession) {
+	if session.PaymentOutcome != "" {
+		dst["payment_outcome"] = session.PaymentOutcome
+	}
+	if session.PaymentOutcomeReason != "" {
+		dst["payment_outcome_reason"] = session.PaymentOutcomeReason
+	}
+	if session.MatchedAmountRaw != "" {
+		dst["matched_amount_raw"] = session.MatchedAmountRaw
+	}
+	if session.ShortfallAmountRaw != "" {
+		dst["shortfall_amount_raw"] = session.ShortfallAmountRaw
+	}
+	if session.ExcessAmountRaw != "" {
+		dst["excess_amount_raw"] = session.ExcessAmountRaw
+	}
 }
 
 func checkoutRealtimeEvent(session models.PaymentSession, now time.Time) realtime.PaymentEvent {
@@ -806,7 +857,7 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		if isSessionExpired(session) && session.Status != models.PaymentStatusPaid {
+		if isSessionExpired(session) && !paymentStatusTerminal(session.Status) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			session.Status = models.PaymentStatusExpired
 			return renderCheckoutStateResult(c, fiber.StatusGone, checkoutPayerState(*session, time.Now()))
@@ -880,7 +931,7 @@ func HandleCheckoutSocket(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
-		if isSessionExpired(session) && session.Status != models.PaymentStatusPaid {
+		if isSessionExpired(session) && !paymentStatusTerminal(session.Status) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			return c.SendStatus(fiber.StatusGone)
 		}
@@ -934,7 +985,7 @@ func HandleCheckoutStatus(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
 		}
-		if isSessionExpired(session) && session.Status != models.PaymentStatusPaid {
+		if isSessionExpired(session) && !paymentStatusTerminal(session.Status) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			session.Status = models.PaymentStatusExpired
 		}

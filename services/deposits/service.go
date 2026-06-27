@@ -204,15 +204,19 @@ func (s *Service) settleFinalizedTransaction(ctx context.Context, txModel *model
 	if txModel == nil || s.deps.PaymentRepo == nil {
 		return summary, nil
 	}
-	session, changed, err := s.deps.PaymentRepo.MarkPaidByTransaction(ctx, *txModel)
+	matchResult, err := s.deps.PaymentRepo.MatchFinalizedTransaction(ctx, *txModel)
 	if err != nil {
 		return summary, err
 	}
-	if changed && session != nil {
-		summary.PaymentsSettled = 1
+	if matchResult != nil && matchResult.Changed && matchResult.Session != nil {
+		if matchResult.Status == models.PaymentStatusPaid {
+			summary.PaymentsSettled = 1
+		}
 		if s.deps.LedgerRepo != nil {
-			if err := s.deps.LedgerRepo.PostDepositAvailable(ctx, *session, *txModel); err != nil {
-				return summary, err
+			if matchResult.LedgerEligible {
+				if err := s.deps.LedgerRepo.PostDepositAvailable(ctx, *matchResult.Session, *txModel); err != nil {
+					return summary, err
+				}
 			}
 		}
 		return summary, nil

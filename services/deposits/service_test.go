@@ -106,6 +106,24 @@ func TestPendingFinalityDoesNotSettlePaymentOrAvailableLedger(t *testing.T) {
 	}
 }
 
+func TestFinalizedSettlementUsesExplicitPaymentMatchResult(t *testing.T) {
+	source := readDepositServiceSource(t)
+	body := extractFunctionBody(t, source, "settleFinalizedTransaction")
+	for _, token := range []string{
+		"MatchFinalizedTransaction(ctx, *txModel)",
+		"matchResult.LedgerEligible",
+		"matchResult.Session",
+		"PostDepositAvailable(ctx, *matchResult.Session, *txModel)",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("settleFinalizedTransaction missing %q", token)
+		}
+	}
+	if strings.Contains(body, "MarkPaidByTransaction") {
+		t.Fatal("settlement must consume explicit match result instead of paid-only wrapper")
+	}
+}
+
 func readDepositServiceSource(t *testing.T) string {
 	t.Helper()
 	sourceBytes, err := os.ReadFile("service.go")

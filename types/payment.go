@@ -52,15 +52,20 @@ type PaymentCreateResponse struct {
 }
 
 type PaymentStatusResponse struct {
-	Success     bool   `json:"success"`
-	Status      string `json:"status"`
-	Paid        bool   `json:"paid"`
-	PaymentID   string `json:"payment_id,omitempty"`
-	TxHash      string `json:"tx_hash,omitempty"`
-	SuccessPath string `json:"success_path"`
-	CancelPath  string `json:"cancel_path"`
-	Payable     bool   `json:"payable"`
-	Terminal    bool   `json:"terminal"`
+	Success              bool   `json:"success"`
+	Status               string `json:"status"`
+	Paid                 bool   `json:"paid"`
+	PaymentID            string `json:"payment_id,omitempty"`
+	TxHash               string `json:"tx_hash,omitempty"`
+	SuccessPath          string `json:"success_path"`
+	CancelPath           string `json:"cancel_path"`
+	Payable              bool   `json:"payable"`
+	Terminal             bool   `json:"terminal"`
+	PaymentOutcome       string `json:"payment_outcome,omitempty"`
+	PaymentOutcomeReason string `json:"payment_outcome_reason,omitempty"`
+	MatchedAmountRaw     string `json:"matched_amount_raw,omitempty"`
+	ShortfallAmountRaw   string `json:"shortfall_amount_raw,omitempty"`
+	ExcessAmountRaw      string `json:"excess_amount_raw,omitempty"`
 }
 
 type ErrorResponse struct {

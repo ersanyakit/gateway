@@ -178,6 +178,8 @@ func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
 		PaidAt:            &paidAt,
 		TxHash:            &txHash,
 		TxUniqueHash:      &txUniqueHash,
+		PaymentOutcome:    models.PaymentOutcomeExact,
+		MatchedAmountRaw:  "25000000",
 		WebhookEvent:      constants.WebhookEventPaymentSucceeded,
 		CreatedAt:         time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
 	}
@@ -199,6 +201,9 @@ func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
 	}
 	if received.ExpectedAmountRaw != "25000000" || received.DepositAddress != "0xdeposit" || received.TxHash == nil || *received.TxHash != txHash {
 		t.Fatalf("payment payload mismatch: %#v", received)
+	}
+	if received.PaymentOutcome != models.PaymentOutcomeExact || received.MatchedAmountRaw != "25000000" {
+		t.Fatalf("payment outcome fields missing: %#v", received)
 	}
 }
 
