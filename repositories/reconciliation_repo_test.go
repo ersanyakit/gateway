@@ -157,6 +157,7 @@ func TestReconciliationRepoEvidenceOutcomeRetryAndClaimLifecycle(t *testing.T) {
 		"webhook_secret": "plain-secret",
 		"nested": map[string]any{
 			"raw_signature": "sig",
+			"signature":     "sig2",
 		},
 	}); err != nil {
 		t.Fatalf("record evidence: %v", err)
@@ -173,10 +174,10 @@ func TestReconciliationRepoEvidenceOutcomeRetryAndClaimLifecycle(t *testing.T) {
 		t.Fatalf("evidence json = %s", recorded.EvidenceJSON)
 	}
 	nested, _ := evidence["nested"].(map[string]any)
-	if evidence["webhook_secret"] != "[redacted]" || nested["raw_signature"] != "[redacted]" {
+	if evidence["webhook_secret"] != "[redacted]" || nested["raw_signature"] != "[redacted]" || nested["signature"] != "[redacted]" {
 		t.Fatalf("evidence sensitive values were not redacted: %s", recorded.EvidenceJSON)
 	}
-	if strings.Contains(recorded.EvidenceJSON, "plain-secret") {
+	if strings.Contains(recorded.EvidenceJSON, "plain-secret") || strings.Contains(recorded.EvidenceJSON, "sig2") {
 		t.Fatalf("evidence leaked sensitive values: %s", recorded.EvidenceJSON)
 	}
 
@@ -276,5 +277,12 @@ func TestReconciliationRepoOpensWebhookDriftAndStuckLifecycleScopes(t *testing.T
 	}
 	if !strings.Contains(stuckJob.EvidenceJSON, "lifecycle_status") || !strings.Contains(stuckJob.EvidenceJSON, "[redacted]") || strings.Contains(stuckJob.EvidenceJSON, "should-not-persist") {
 		t.Fatalf("stuck lifecycle evidence should include status and redact secrets: %s", stuckJob.EvidenceJSON)
+	}
+
+	if _, _, err := repo.OpenWebhookDeliveryDrift(ctx, models.WebhookDelivery{}, ""); err == nil {
+		t.Fatal("empty webhook delivery drift scope should fail")
+	}
+	if _, _, err := repo.OpenStuckLifecycleJob(ctx, constants.Ethereum, &merchantID, &domainID, "", "", "stuck", "", nil); err == nil {
+		t.Fatal("empty stuck lifecycle resource scope should fail")
 	}
 }

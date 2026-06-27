@@ -110,6 +110,9 @@ func (r *ReconciliationRepo) CreateScopedOpenIfMissing(ctx context.Context, scop
 }
 
 func (r *ReconciliationRepo) OpenWebhookDeliveryDrift(ctx context.Context, delivery models.WebhookDelivery, reason string) (*models.ReconciliationJob, bool, error) {
+	if delivery.ID == uuid.Nil || strings.TrimSpace(delivery.EventID) == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
 	if strings.TrimSpace(reason) == "" {
 		reason = "webhook_drift:" + delivery.EventID
 	}
@@ -139,6 +142,9 @@ func (r *ReconciliationRepo) OpenWebhookDeliveryDrift(ctx context.Context, deliv
 func (r *ReconciliationRepo) OpenStuckLifecycleJob(ctx context.Context, chainID constants.ChainID, merchantID *uuid.UUID, domainID *uuid.UUID, resourceType string, resourceID string, lifecycleStatus string, reason string, evidence any) (*models.ReconciliationJob, bool, error) {
 	resourceType = strings.TrimSpace(resourceType)
 	resourceID = strings.TrimSpace(resourceID)
+	if resourceType == "" || resourceID == "" {
+		return nil, false, gorm.ErrInvalidData
+	}
 	if strings.TrimSpace(reason) == "" {
 		reason = "stuck_lifecycle:" + resourceType + ":" + resourceID
 	}
@@ -308,6 +314,7 @@ func reconciliationEvidenceKeySensitive(key string) bool {
 		"private_key",
 		"mnemonic",
 		"raw_signature",
+		"signature",
 		"authorization",
 		"password",
 	} {
