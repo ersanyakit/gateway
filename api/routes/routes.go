@@ -260,6 +260,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/refunds/:id/reject", handlers.HandleAdminRefundReject(dealerDeps))
 	r.fiber.Post("/admin/rescan", handlers.HandleAdminTxRescan(dealerDeps))
 	r.fiber.Post("/admin/webhooks/:id/replay", handlers.HandleAdminWebhookReplay(dealerDeps))
+	r.fiber.Get("/admin/sweep/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))
 	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))
 	r.fiber.Post("/admin/test-deposit", handlers.HandleAdminTestDeposit(dealerDeps))
 	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))

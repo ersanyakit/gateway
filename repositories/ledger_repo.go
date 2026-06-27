@@ -452,7 +452,7 @@ func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, reque
 	if !r.amountIsPositive(request.AmountRaw) {
 		return errors.New("withdrawal amount must be positive")
 	}
-	if err := r.RequireWithdrawalHoldWithDB(ctx, tx, request.ID); err != nil {
+	if err := r.RequireWithdrawalHoldForRequestWithDB(ctx, tx, request); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -538,42 +538,202 @@ func (r *LedgerRepo) voidWithdrawalHold(ctx context.Context, tx *gorm.DB, withdr
 }
 
 func (r *LedgerRepo) RequireWithdrawalHoldWithDB(ctx context.Context, tx *gorm.DB, withdrawalID uuid.UUID) error {
-	return requireLedgerHold(ctx, tx, "withdrawal_id", withdrawalID, models.LedgerEntryTypeWithdrawalHold, models.LedgerAccountWithdrawalTransit)
+	if tx == nil || withdrawalID == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	var request models.WithdrawalRequest
+	if err := tx.WithContext(ctx).First(&request, "id = ?", withdrawalID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrLedgerReservationRequired
+		}
+		return err
+	}
+	return r.RequireWithdrawalHoldForRequestWithDB(ctx, tx, request)
+}
+
+func (r *LedgerRepo) RequireWithdrawalHoldForRequestWithDB(ctx context.Context, tx *gorm.DB, request models.WithdrawalRequest) error {
+	if request.ID == uuid.Nil || request.MerchantID == uuid.Nil || request.WalletID == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	chainID, ok := ledgerChainIDFromName(request.Chain)
+	if !ok {
+		return ErrLedgerReservationRequired
+	}
+	walletID := request.WalletID
+	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
+		idColumn:       "withdrawal_id",
+		id:             request.ID,
+		entryType:      models.LedgerEntryTypeWithdrawalHold,
+		transitAccount: models.LedgerAccountWithdrawalTransit,
+		strict:         true,
+		merchantID:     request.MerchantID,
+		domainID:       request.DomainID,
+		walletID:       &walletID,
+		chainID:        chainID,
+		token:          request.Token,
+		amountRaw:      request.AmountRaw,
+	})
 }
 
 func (r *LedgerRepo) RequireRefundHoldWithDB(ctx context.Context, tx *gorm.DB, refundID uuid.UUID) error {
-	return requireLedgerHold(ctx, tx, "refund_id", refundID, models.LedgerEntryTypeRefundHold, models.LedgerAccountRefundTransit)
+	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
+		idColumn:       "refund_id",
+		id:             refundID,
+		entryType:      models.LedgerEntryTypeRefundHold,
+		transitAccount: models.LedgerAccountRefundTransit,
+	})
+}
+
+func (r *LedgerRepo) RequireRefundHoldForRefundWithDB(ctx context.Context, tx *gorm.DB, refund models.Refund, session models.PaymentSession) error {
+	if refund.ID == uuid.Nil || refund.MerchantID == uuid.Nil || refund.DomainID == uuid.Nil || session.WalletID == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	chainID, _, _, err := ledgerRefundAssetFromSession(session)
+	if err != nil {
+		return err
+	}
+	domainID := refund.DomainID
+	walletID := session.WalletID
+	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
+		idColumn:       "refund_id",
+		id:             refund.ID,
+		entryType:      models.LedgerEntryTypeRefundHold,
+		transitAccount: models.LedgerAccountRefundTransit,
+		strict:         true,
+		merchantID:     refund.MerchantID,
+		domainID:       &domainID,
+		walletID:       &walletID,
+		chainID:        chainID,
+		token:          session.SelectedToken,
+		amountRaw:      refund.AmountRaw,
+	})
 }
 
 func (r *LedgerRepo) RequireSweepHoldWithDB(ctx context.Context, tx *gorm.DB, sweepJobID uuid.UUID) error {
-	return requireLedgerHold(ctx, tx, "sweep_job_id", sweepJobID, models.LedgerEntryTypeSweepHold, models.LedgerAccountSweepTransit)
+	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
+		idColumn:       "sweep_job_id",
+		id:             sweepJobID,
+		entryType:      models.LedgerEntryTypeSweepHold,
+		transitAccount: models.LedgerAccountSweepTransit,
+	})
 }
 
-func requireLedgerHold(ctx context.Context, tx *gorm.DB, idColumn string, id uuid.UUID, entryType string, transitAccount string) error {
-	if tx == nil || id == uuid.Nil {
-		return ErrLedgerReservationRequired
-	}
-	var rows []struct {
-		Account string
-		Count   int64
-	}
-	if err := tx.WithContext(ctx).
-		Model(&models.LedgerEntry{}).
-		Select("account, COUNT(*) AS count").
-		Where(idColumn+" = ? AND entry_type = ? AND status = ?", id, entryType, models.LedgerStatusPending).
-		Where("account IN ?", []string{models.LedgerAccountMerchantAvailable, transitAccount}).
-		Group("account").
-		Scan(&rows).Error; err != nil {
+func (r *LedgerRepo) RequireSweepHoldForJobTransactionWithDB(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction) error {
+	if err := validateSweepJobTransaction(job, txModel); err != nil {
 		return err
 	}
-	seen := map[string]int64{}
-	for _, row := range rows {
-		seen[row.Account] = row.Count
+	if txModel.MerchantID == nil || txModel.WalletID == nil {
+		return ErrLedgerReservationRequired
 	}
-	if seen[models.LedgerAccountMerchantAvailable] < 1 || seen[transitAccount] < 1 {
+	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
+		idColumn:       "sweep_job_id",
+		id:             job.ID,
+		entryType:      models.LedgerEntryTypeSweepHold,
+		transitAccount: models.LedgerAccountSweepTransit,
+		strict:         true,
+		merchantID:     *txModel.MerchantID,
+		domainID:       txModel.DomainID,
+		walletID:       txModel.WalletID,
+		chainID:        txModel.ChainID,
+		token:          txModel.Token,
+		amountRaw:      txModel.Amount,
+	})
+}
+
+type ledgerHoldRequirement struct {
+	idColumn       string
+	id             uuid.UUID
+	entryType      string
+	transitAccount string
+	strict         bool
+	merchantID     uuid.UUID
+	domainID       *uuid.UUID
+	walletID       *uuid.UUID
+	chainID        constants.ChainID
+	token          *string
+	amountRaw      string
+}
+
+func requireLedgerHold(ctx context.Context, tx *gorm.DB, req ledgerHoldRequirement) error {
+	if tx == nil || req.id == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	var rows []models.LedgerEntry
+	if err := tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where(req.idColumn+" = ? AND entry_type = ? AND status = ?", req.id, req.entryType, models.LedgerStatusPending).
+		Where("account IN ?", []string{models.LedgerAccountMerchantAvailable, req.transitAccount}).
+		Find(&rows).Error; err != nil {
+		return err
+	}
+	matches := map[string]bool{}
+	for _, row := range rows {
+		if !ledgerHoldEntryMatches(row, req) {
+			continue
+		}
+		matches[row.Account] = true
+	}
+	if !matches[models.LedgerAccountMerchantAvailable] || !matches[req.transitAccount] {
 		return ErrLedgerReservationRequired
 	}
 	return nil
+}
+
+func ledgerHoldEntryMatches(row models.LedgerEntry, req ledgerHoldRequirement) bool {
+	if !req.strict {
+		return true
+	}
+	if req.merchantID != uuid.Nil && row.MerchantID != req.merchantID {
+		return false
+	}
+	if req.domainID != nil || row.DomainID != nil {
+		if !sameUUIDPtr(row.DomainID, req.domainID) {
+			return false
+		}
+	}
+	if req.walletID != nil || row.WalletID != nil {
+		if !sameUUIDPtr(row.WalletID, req.walletID) {
+			return false
+		}
+	}
+	if req.amountRaw != "" && strings.TrimSpace(row.AmountRaw) != strings.TrimSpace(req.amountRaw) {
+		return false
+	}
+	if req.chainID != row.ChainID {
+		return false
+	}
+	if !sameOptionalToken(row.Token, req.token) {
+		return false
+	}
+	if row.Account == models.LedgerAccountMerchantAvailable && row.Direction != models.LedgerDirectionDebit {
+		return false
+	}
+	if row.Account == req.transitAccount && row.Direction != models.LedgerDirectionCredit {
+		return false
+	}
+	return true
+}
+
+func sameUUIDPtr(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameOptionalToken(left, right *string) bool {
+	leftValue := ""
+	if left != nil {
+		leftValue = strings.TrimSpace(*left)
+	}
+	rightValue := ""
+	if right != nil {
+		rightValue = strings.TrimSpace(*right)
+	}
+	if leftValue == "" || rightValue == "" {
+		return leftValue == "" && rightValue == ""
+	}
+	return strings.EqualFold(leftValue, rightValue)
 }
 
 func (r *LedgerRepo) existsWithDB(ctx context.Context, tx *gorm.DB, key string) (bool, error) {
@@ -869,11 +1029,6 @@ func (r *LedgerRepo) CreateSweepHoldWithDB(ctx context.Context, tx *gorm.DB, job
 }
 
 func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction) error {
-	key := sweepHoldKey(job.ID)
-	exists, err := r.existsWithDB(ctx, tx, key)
-	if err != nil || exists {
-		return err
-	}
 	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil || txModel.UniqueHash == "" {
 		return ErrLedgerReservationRequired
 	}
@@ -883,10 +1038,12 @@ func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job model
 	if !r.amountIsPositive(txModel.Amount) {
 		return errors.New("sweep amount must be positive")
 	}
-	chainID := txModel.ChainID
-	if job.ChainID != 0 {
-		chainID = job.ChainID
+	key := sweepHoldKey(job.ID)
+	exists, err := r.existsWithDB(ctx, tx, key)
+	if err != nil || exists {
+		return err
 	}
+	chainID := txModel.ChainID
 	symbol := strings.ToUpper(strings.TrimSpace(txModel.Symbol))
 	if symbol == "" {
 		symbol = strings.ToUpper(constants.ChainName(chainID))
@@ -975,27 +1132,28 @@ func (r *LedgerRepo) PostSweepRelease(ctx context.Context, job models.SweepJob, 
 }
 
 func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction, sweepTxHash string) error {
-	key := sweepReleaseKey(job.ID)
-	exists, err := r.existsWithDB(ctx, tx, key)
-	if err != nil || exists {
-		return err
-	}
 	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return ErrLedgerReservationRequired
 	}
-	if err := validateSweepJobTransaction(job, txModel); err != nil {
-		return err
+	sweepTxHash = strings.TrimSpace(sweepTxHash)
+	if sweepTxHash == "" {
+		return errors.New("sweep transaction hash is required")
 	}
-	if err := r.RequireSweepHoldWithDB(ctx, tx, job.ID); err != nil {
+	if err := validateSweepJobTransaction(job, txModel); err != nil {
 		return err
 	}
 	if !r.amountIsPositive(txModel.Amount) {
 		return errors.New("sweep amount must be positive")
 	}
-	chainID := txModel.ChainID
-	if job.ChainID != 0 {
-		chainID = job.ChainID
+	key := sweepReleaseKey(job.ID)
+	exists, err := r.existsWithDB(ctx, tx, key)
+	if err != nil || exists {
+		return err
 	}
+	if err := r.RequireSweepHoldForJobTransactionWithDB(ctx, tx, job, txModel); err != nil {
+		return err
+	}
+	chainID := txModel.ChainID
 	symbol := strings.ToUpper(strings.TrimSpace(txModel.Symbol))
 	if symbol == "" {
 		symbol = strings.ToUpper(constants.ChainName(chainID))
@@ -1009,7 +1167,7 @@ func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, jo
 			DomainID:              txModel.DomainID,
 			WalletID:              txModel.WalletID,
 			TransactionUniqueHash: txModel.UniqueHash,
-			TransactionHash:       strings.TrimSpace(sweepTxHash),
+			TransactionHash:       sweepTxHash,
 			SweepJobID:            &sweepJobID,
 			ChainID:               chainID,
 			Token:                 txModel.Token,
@@ -1032,7 +1190,7 @@ func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, jo
 			DomainID:              txModel.DomainID,
 			WalletID:              txModel.WalletID,
 			TransactionUniqueHash: txModel.UniqueHash,
-			TransactionHash:       strings.TrimSpace(sweepTxHash),
+			TransactionHash:       sweepTxHash,
 			SweepJobID:            &sweepJobID,
 			ChainID:               chainID,
 			Token:                 txModel.Token,
@@ -1054,20 +1212,19 @@ func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, jo
 }
 
 func validateSweepJobTransaction(job models.SweepJob, txModel models.Transaction) error {
-	if job.TransactionUniqueHash != "" && job.TransactionUniqueHash != txModel.UniqueHash {
+	if job.TransactionUniqueHash == "" || txModel.UniqueHash == "" || job.TransactionUniqueHash != txModel.UniqueHash {
 		return errors.New("sweep job transaction mismatch")
 	}
-	if job.MerchantID != uuid.Nil {
-		if txModel.MerchantID == nil || job.MerchantID != *txModel.MerchantID {
-			return errors.New("sweep job merchant mismatch")
-		}
+	if txModel.MerchantID == nil || job.MerchantID == uuid.Nil || job.MerchantID != *txModel.MerchantID {
+		return errors.New("sweep job merchant mismatch")
 	}
-	if job.WalletID != uuid.Nil {
-		if txModel.WalletID == nil || job.WalletID != *txModel.WalletID {
-			return errors.New("sweep job wallet mismatch")
-		}
+	if txModel.WalletID == nil || job.WalletID == uuid.Nil || job.WalletID != *txModel.WalletID {
+		return errors.New("sweep job wallet mismatch")
 	}
-	if job.Token != nil && txModel.Token != nil && !strings.EqualFold(strings.TrimSpace(*job.Token), strings.TrimSpace(*txModel.Token)) {
+	if job.ChainID != txModel.ChainID {
+		return errors.New("sweep job chain mismatch")
+	}
+	if !sameOptionalToken(job.Token, txModel.Token) {
 		return errors.New("sweep job token mismatch")
 	}
 	return nil
@@ -1086,7 +1243,7 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 	if !r.amountIsPositive(refund.AmountRaw) {
 		return errors.New("refund amount must be positive")
 	}
-	if err := r.RequireRefundHoldWithDB(ctx, tx, refund.ID); err != nil {
+	if err := r.RequireRefundHoldForRefundWithDB(ctx, tx, refund, session); err != nil {
 		return err
 	}
 	now := time.Now()

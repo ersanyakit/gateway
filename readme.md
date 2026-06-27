@@ -167,8 +167,8 @@ Zorunlu veya kritik değişkenler:
 | `APP_ENV` | Çalışma ortamı. `production` değerinde bazı güvenlik kontrolleri sıkılaşır. Lokal geliştirme için `development` kullanılabilir. |
 | `ALLOW_PRIVATE_WEBHOOK_URLS` | Lokal geliştirmede `localhost`, `127.0.0.1` veya özel ağ IP'lerine webhook göndermeye izin verir. `APP_ENV=production` iken dikkate alınmaz. |
 | `ALLOW_AUTOMIGRATE_IN_PRODUCTION` | Varsayılan `false`. `APP_ENV=production` iken startup `AutoMigrate` çalışmaz; schema harici/versioned migration süreciyle yönetilmelidir. Sadece kontrollü bakım penceresinde geçici `true` yapılmalıdır. |
-| `SIGNER_MODE` | `software`, `kms`, `hsm` veya `mpc`. Mevcut üretim-ready custody için gerçek external signer entegrasyonu gerekir; placeholder external modlar readiness'ı bilerek geçirmez. |
-| `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Varsayılan `false`. `production` ortamında process içi mnemonic/private key signing kullanımını engeller; `true` değeri sadece kontrollü pilot risk kabulü içindir ve production readiness'ı geçirmez. |
+| `SIGNER_MODE` | `software`, `kms`, `hsm`, `mpc`, `vault` veya external custody modu. `software` sadece development içindir; production signing gerçek external signer adapter'ı olmadan hard-fail eder. |
+| `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Legacy risk marker. `true` olsa bile `APP_ENV=production` altında software signing'e izin vermez ve production readiness'ı geçirmez. |
 | `METRICS_BEARER_TOKEN` | `/metrics` Prometheus endpoint'i için bearer token. `APP_ENV=production` iken zorunludur; boş bırakılırsa endpoint 503 döner. |
 | `CSRF_JWT_SECRET` | Merchant/admin portal CSRF token imzalama secret'ı. Production'da stabil bir secret veya `MASTER_KEY`/session secret fallback'i gerekir. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
@@ -445,7 +445,7 @@ HTTP sınırında her response `X-Request-ID` taşır. Request logları method, 
 - `MASTER_KEY` ve `MNEMONIC_PHRASE` production ortamında secret manager, KMS veya benzeri güvenli bir sistemden sağlanmalıdır.
 - `APP_ENV=production` altında startup `AutoMigrate` açık bırakılmamalıdır; `ALLOW_AUTOMIGRATE_IN_PRODUCTION=true` readiness tarafından production launch blocker olarak raporlanır.
 - `/metrics` production ortamında sadece private network veya reverse proxy allowlist arkasından ve `METRICS_BEARER_TOKEN` ile açılmalıdır.
-- Production custody için process içi software signer yeterli değildir. KMS/HSM/MPC veya eşdeğer external signer entegrasyonu tamamlanmadan yüksek hacimli müşteri fonu tutulmamalıdır.
+- Production custody için process içi software signer kullanılamaz. KMS/HSM/MPC/Vault veya eşdeğer external signer entegrasyonu tamamlanmadan yüksek hacimli müşteri fonu tutulmamalıdır.
 - Admin parolası güçlü ve benzersiz olmalıdır.
 - Merchant portal/admin formları ve public API uçları production öncesinde CSRF, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
 - Webhook imzaları `X-Gateway-Signature`, `X-Gateway-Timestamp` ve `X-Gateway-Event` header'ları üzerinden doğrulanacak şekilde tasarlanmıştır.

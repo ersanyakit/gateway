@@ -21,6 +21,7 @@ import (
 	"core/helpers"
 	"core/models"
 	"core/repositories"
+	depositsvc "core/services/deposits"
 	"core/types"
 	"core/workers/dispatcher"
 
@@ -44,8 +45,14 @@ type Service struct {
 	Chains          *blockchain.ChainFactory
 	Registry        *asset.Registry
 	Bus             *dispatcher.Dispatcher
+	ChainFactRepo   *repositories.ChainFactRepo
+	ChainStateRepo  *repositories.ChainStateRepo
+	DepositRepo     *repositories.DepositRepo
 	TransactionRepo *repositories.TransactionRepo
 	WalletRepo      *repositories.WalletRepo
+	PaymentRepo     *repositories.PaymentRepo
+	LedgerRepo      *repositories.LedgerRepo
+	Confirmations   depositsvc.ConfirmationRequirementFunc
 	client          *http.Client
 }
 
@@ -139,7 +146,34 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 			}
 		}
 	}
+	if result.Events > 0 {
+		if err := s.processDeposits(ctx); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+func (s *Service) processDeposits(ctx context.Context) error {
+	if s == nil ||
+		s.ChainFactRepo == nil ||
+		s.ChainStateRepo == nil ||
+		s.DepositRepo == nil ||
+		s.WalletRepo == nil ||
+		s.TransactionRepo == nil {
+		return nil
+	}
+	service := depositsvc.New(depositsvc.Dependencies{
+		ChainFactRepo:   s.ChainFactRepo,
+		ChainStateRepo:  s.ChainStateRepo,
+		DepositRepo:     s.DepositRepo,
+		WalletRepo:      s.WalletRepo,
+		TransactionRepo: s.TransactionRepo,
+		PaymentRepo:     s.PaymentRepo,
+		LedgerRepo:      s.LedgerRepo,
+	}, s.Confirmations)
+	_, err := service.ProcessBatch(ctx, 200)
+	return err
 }
 
 func (s *Service) authorizeMerchantEvents(ctx context.Context, chainID constants.ChainID, events []eventCandidate, merchantID uuid.UUID) error {

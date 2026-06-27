@@ -506,8 +506,10 @@ function initRecoverFundsBalance() {
   var maxButton = document.getElementById('recover-max-button');
   var balanceDisplay = document.getElementById('recover-balance-display');
   var balanceRaw = document.getElementById('recover-balance-raw');
+  var liveBalanceDisplay = document.getElementById('recover-live-balance-display');
+  var liveBalanceRaw = document.getElementById('recover-live-balance-raw');
   var balanceState = document.getElementById('recover-balance-state');
-  if (!walletSelect || !assetSelect || !amountInput || !maxButton || !balanceDisplay || !balanceRaw || !balanceState) return;
+  if (!walletSelect || !assetSelect || !amountInput || !maxButton || !balanceDisplay || !balanceRaw || !liveBalanceDisplay || !liveBalanceRaw || !balanceState) return;
 
   var balances = {};
   document.querySelectorAll('[data-recover-balance]').forEach(function (node) {
@@ -545,6 +547,7 @@ function initRecoverFundsBalance() {
     var symbol = selectedAssetSymbol();
     maxButton.disabled = true;
     maxButton.removeAttribute('data-max-raw');
+    resetRecoverLiveBalance('Canlı chain: -', 'Raw: -');
 
     if (!walletID || !assetKey) {
       balanceDisplay.textContent = 'Wallet ve asset seç';
@@ -574,8 +577,60 @@ function initRecoverFundsBalance() {
     balanceState.textContent = 'Bakiye yok';
   }
 
+  var liveBalanceRequestID = 0;
+
+  function resetRecoverLiveBalance(display, raw) {
+    liveBalanceDisplay.textContent = display;
+    liveBalanceRaw.textContent = raw;
+  }
+
+  function fetchRecoverLiveBalance() {
+    var walletID = compactText(walletSelect.value || '');
+    var option = selectedAssetOption();
+    var assetValue = option && option.value ? option.value : '';
+    var requestID = liveBalanceRequestID + 1;
+    liveBalanceRequestID = requestID;
+
+    if (!walletID || !assetValue) {
+      resetRecoverLiveBalance('Canlı chain: -', 'Raw: -');
+      return;
+    }
+
+    resetRecoverLiveBalance('Canlı chain: sorgulanıyor...', 'Raw: -');
+    var params = new URLSearchParams();
+    params.set('wallet_id', walletID);
+    params.set('asset', assetValue);
+
+    fetch('/admin/sweep/live-balance?' + params.toString(), {
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    })
+      .then(function (response) {
+        return response.json().then(function (payload) {
+          if (!response.ok || !payload || payload.result !== 'success') {
+            throw new Error((payload && payload.message) || 'Canlı bakiye okunamadı');
+          }
+          return payload;
+        });
+      })
+      .then(function (payload) {
+        if (requestID !== liveBalanceRequestID) return;
+        var symbol = compactText(payload.symbol || selectedAssetSymbol() || 'Asset');
+        var formatted = compactText(payload.balance || '');
+        var raw = compactText(payload.balance_raw || '0');
+        var address = compactText(payload.address || '');
+        resetRecoverLiveBalance('Canlı chain: ' + formatted + ' ' + symbol, 'Raw: ' + raw + (address ? ' · ' + address : ''));
+      })
+      .catch(function (error) {
+        if (requestID !== liveBalanceRequestID) return;
+        resetRecoverLiveBalance('Canlı chain: okunamadı', compactText(error.message || 'Bilinmeyen hata'));
+      });
+  }
+
   walletSelect.addEventListener('change', updateRecoverBalance);
+  walletSelect.addEventListener('change', fetchRecoverLiveBalance);
   assetSelect.addEventListener('change', updateRecoverBalance);
+  assetSelect.addEventListener('change', fetchRecoverLiveBalance);
   maxButton.addEventListener('click', function () {
     var maxRaw = maxButton.getAttribute('data-max-raw') || '';
     if (!maxRaw) return;
@@ -586,6 +641,7 @@ function initRecoverFundsBalance() {
   });
 
   updateRecoverBalance();
+  fetchRecoverLiveBalance();
 }
 
 function normalizeAssetKey(value) {

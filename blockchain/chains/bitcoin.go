@@ -137,12 +137,12 @@ func (b *BitcoinChain) Create(ctx context.Context) (*blockchain.WalletDetails, e
 }
 
 func (b *BitcoinChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	mnemonic, err := b.BaseChain.GetMnemonic()
+	hdPath := b.BaseChain.GetDerivedPath(int(Taproot), 0, 0, hdAccountId, hdWalletId)
+	mnemonic, err := b.BaseChain.GetMnemonicForPath(ctx, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := b.BaseChain.GetDerivedPath(int(Taproot), 0, 0, hdAccountId, hdWalletId)
 	wallet, err := b.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err

@@ -84,12 +84,12 @@ func (s *TronChain) Create(ctx context.Context) (*blockchain.WalletDetails, erro
 }
 
 func (s *TronChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	mnemonic, err := s.BaseChain.GetMnemonic()
+	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, hdAccountId, hdWalletId)
+	mnemonic, err := s.BaseChain.GetMnemonicForPath(ctx, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 195, 0, hdAccountId, hdWalletId)
 	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err

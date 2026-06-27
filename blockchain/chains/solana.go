@@ -81,12 +81,12 @@ func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, er
 }
 
 func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	mnemonic, err := s.BaseChain.GetMnemonic()
+	hdPath := fmt.Sprintf("m/44'/501'/%d'/%d'", hdAccountId, hdWalletId)
+	mnemonic, err := s.BaseChain.GetMnemonicForPath(ctx, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := fmt.Sprintf("m/44'/501'/%d'/%d'", hdAccountId, hdWalletId)
 	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err
@@ -114,6 +114,9 @@ func (s *SolanaChain) WithdrawToken(ctx context.Context, wallet blockchain.Walle
 func (s *SolanaChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
 	toAddress, err := solanaSweepDestination()
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
 		return nil, err
 	}
 
@@ -147,6 +150,9 @@ func (s *SolanaChain) sendLamports(ctx context.Context, wallet blockchain.Wallet
 	}
 	if !amount.IsUint64() {
 		return nil, errors.New("amount_raw exceeds uint64 lamports")
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "transfer.native", amount.String(), toAddress); err != nil {
+		return nil, err
 	}
 
 	rpcClient, err := s.solanaRPCClient()

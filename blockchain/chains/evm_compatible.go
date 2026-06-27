@@ -143,12 +143,12 @@ func (e *EVMCompatibleChain) Create(ctx context.Context) (*blockchain.WalletDeta
 }
 
 func (e *EVMCompatibleChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	mnemonic, err := e.BaseChain.GetMnemonic()
+	hdPath := e.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
+	mnemonic, err := e.BaseChain.GetMnemonicForPath(ctx, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := e.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
 	wallet, err := e.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err

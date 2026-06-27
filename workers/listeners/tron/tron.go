@@ -459,7 +459,7 @@ func (r *RpcListener) handleNativeTransfers(ctx context.Context, tx *pb.Transact
 			From:      helpers.StrPtr(tronAddress(transfer.GetOwnerAddress())),
 			To:        helpers.StrPtr(tronAddress(transfer.GetToAddress())),
 			Amount:    helpers.StrPtr(fmt.Sprintf("%d", transfer.GetAmount())),
-			LogIndex:  helpers.StrPtr(fmt.Sprintf("tx:%d:%d", txIndex, contractIndex)),
+			LogIndex:  helpers.StrPtr(fmt.Sprintf("tx:%d", contractIndex)),
 			Status:    helpers.StrPtr(status),
 		}
 		if err := r.dispatch(ctx, "native_transfer", txParam); err != nil {

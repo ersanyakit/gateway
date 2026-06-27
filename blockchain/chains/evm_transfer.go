@@ -53,6 +53,9 @@ func evmSweepNative(ctx context.Context, chainName string, chainID constants.Cha
 	if !common.IsHexAddress(toAddress) {
 		return nil, fmt.Errorf("invalid sweep address for %s: %s", chainName, toAddress)
 	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
+	}
 
 	client, err := dialFirstEVMRPC(ctx, rpcs)
 	if err != nil {
@@ -87,6 +90,13 @@ func evmSweepNative(ctx context.Context, chainName string, chainID constants.Cha
 func evmSendNative(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, wallet blockchain.WalletDetails, amountWei *big.Int, toAddress string) (*blockchain.TransactionResult, error) {
 	if !common.IsHexAddress(toAddress) {
 		return nil, fmt.Errorf("invalid recipient address for %s: %s", chainName, toAddress)
+	}
+	amountText := ""
+	if amountWei != nil {
+		amountText = amountWei.String()
+	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, wallet, "transfer.native", amountText, toAddress); err != nil {
+		return nil, err
 	}
 
 	client, err := dialFirstEVMRPC(ctx, rpcs)
@@ -205,6 +215,9 @@ func evmSweepNativeTo(ctx context.Context, chainName string, chainID constants.C
 	if !common.IsHexAddress(toAddress) {
 		return nil, fmt.Errorf("invalid sweep-to address for %s: %s", chainName, toAddress)
 	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
+	}
 
 	client, err := dialFirstEVMRPC(ctx, rpcs)
 	if err != nil {
@@ -290,6 +303,9 @@ func evmSweepERC20To(ctx context.Context, chainName string, chainID constants.Ch
 	if !common.IsHexAddress(toAddress) {
 		return nil, fmt.Errorf("invalid sweep-to address for %s: %s", chainName, toAddress)
 	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, wallet, "sweep.token", "max", toAddress); err != nil {
+		return nil, err
+	}
 
 	client, err := dialFirstEVMRPC(ctx, rpcs)
 	if err != nil {
@@ -325,6 +341,13 @@ func evmSendERC20(ctx context.Context, chainName string, chainID constants.Chain
 	}
 	if !common.IsHexAddress(toAddress) {
 		return nil, fmt.Errorf("invalid token recipient for %s: %s", chainName, toAddress)
+	}
+	amountText := ""
+	if amount != nil {
+		amountText = amount.String()
+	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, wallet, "transfer.token", amountText, toAddress); err != nil {
+		return nil, err
 	}
 
 	client, err := dialFirstEVMRPC(ctx, rpcs)
@@ -480,6 +503,14 @@ func evmBigIntBytes(value *big.Int) []byte {
 // evmPrefundGas sends minGas wei from reserveWallet to userAddress if the user's native balance is below threshold.
 // Returns true if a prefund transfer was actually sent.
 func evmPrefundGas(ctx context.Context, chainName string, chainID constants.ChainID, rpcs []string, reserveWallet blockchain.WalletDetails, userAddress string, threshold, prefundAmount *big.Int) (bool, error) {
+	prefundAmountText := ""
+	if prefundAmount != nil {
+		prefundAmountText = prefundAmount.String()
+	}
+	if err := authorizeWalletSigning(ctx, chainName, chainID, reserveWallet, "prefund.native", prefundAmountText, userAddress); err != nil {
+		return false, err
+	}
+
 	balance, err := evmNativeBalance(ctx, rpcs, userAddress)
 	if err != nil {
 		return false, fmt.Errorf("%s native balance check: %w", chainName, err)

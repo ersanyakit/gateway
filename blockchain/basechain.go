@@ -5,6 +5,7 @@ import (
 	"core/blockchain/walletcore"
 	"core/constants"
 	"core/models"
+	"core/services/signer"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +17,9 @@ type WalletDetails struct {
 	Address        string
 	PrivateKey     string
 	MnemonicPhrase string
+	KeyReference   string
+	DerivationPath string
+	SignerMode     string
 }
 
 type TransactionResult struct {
@@ -190,20 +194,19 @@ func (f *BaseChain) GenerateMnemonicPhrase() (string, error) {
 }
 
 func (f *BaseChain) GetMnemonic() (string, error) {
-	signerMode := strings.ToLower(strings.TrimSpace(os.Getenv("SIGNER_MODE")))
-	if signerMode == "" {
-		signerMode = "software"
-	}
-	switch signerMode {
-	case "software":
-		env := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
-		if env == "production" && strings.TrimSpace(os.Getenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION")) != "true" {
-			return "", errors.New("software signer is disabled in production; configure SIGNER_MODE=kms/hsm/mpc or set ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=true")
-		}
-	case "kms", "hsm", "mpc":
-		return "", fmt.Errorf("SIGNER_MODE=%s requires an external signer integration", signerMode)
-	default:
-		return "", fmt.Errorf("unsupported SIGNER_MODE: %s", signerMode)
+	return f.GetMnemonicForPath(context.Background(), "")
+}
+
+func (f *BaseChain) GetMnemonicForPath(ctx context.Context, hdPath string) (string, error) {
+	if _, err := signer.Authorize(ctx, signer.Request{
+		Chain:          f.ChainName,
+		ChainID:        int(f.ID),
+		KeyReference:   signer.KeyReference(f.ID, hdPath),
+		DerivationPath: hdPath,
+		Intent:         "wallet.derivation",
+		PolicyMetadata: map[string]string{"boundary": "wallet_derivation"},
+	}); err != nil {
+		return "", err
 	}
 	mnemonic := os.Getenv("MNEMONIC_PHRASE")
 	if !walletcore.ValidateMnemonic(mnemonic) {
@@ -229,6 +232,9 @@ func (f *BaseChain) GetDerivedWallet(mnemonic string, hdPath string) (*WalletDet
 		Address:        wallet.Address,
 		PrivateKey:     wallet.PrivateKey,
 		MnemonicPhrase: mnemonic,
+		KeyReference:   signer.KeyReference(f.ID, hdPath),
+		DerivationPath: hdPath,
+		SignerMode:     signer.CurrentMode(),
 	}, nil
 }
 
