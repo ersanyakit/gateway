@@ -2343,6 +2343,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		chain := constants.ChainName(*session.SelectedChainID)
 		claimedRefund, err := deps.RefundRepo.ClaimPendingWithHold(c.Context(), id, adminEmail, *session, deps.LedgerRepo)
 		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund başka bir işlem tarafından alınmış, artık pending değil veya ledger rezervasyonu yapılamadı: "+err.Error())
 		}
 		amountRaw := claimedRefund.AmountRaw
@@ -2373,6 +2374,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
 		}
 		if err := deps.RefundRepo.RecordBroadcast(c.Context(), id, adminEmail, result.TxHash); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak tx hash kaydedilemedi: "+err.Error())
 		}
 		claimedRefund.Status = models.RefundStatusProcessing
@@ -2381,6 +2383,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundBroadcastV1)
 		if err := deps.RefundRepo.MarkSucceededWithLedger(c.Context(), id, adminEmail, result.TxHash, *session, deps.LedgerRepo); err != nil {
 			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, "ledger/finalize failed: "+err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
 		}
 		claimedRefund.Status = models.RefundStatusSucceeded
@@ -2404,17 +2407,24 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 		if err != nil {
 			return redirectWithError(c, "/admin/refunds", "Geçersiz refund.")
 		}
+		refund, findErr := deps.RefundRepo.Find(c.Context(), id)
+		var merchantID *uuid.UUID
+		if findErr == nil && refund != nil {
+			merchantID = &refund.MerchantID
+		}
 		reason := strings.TrimSpace(c.FormValue("reason"))
 		if reason == "" {
 			reason = "Admin tarafından reddedildi."
 		}
 		if err := deps.RefundRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund reddedilemedi: "+err.Error())
 		}
 		if refund, err := deps.RefundRepo.Find(c.Context(), id); err == nil {
 			enqueueDealerRefundLifecycle(c.Context(), deps, *refund, constants.WebhookEventRefundRejectedV1)
+			merchantID = &refund.MerchantID
 		}
-		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason)
+		logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund talebi reddedildi.")
 	}
 }

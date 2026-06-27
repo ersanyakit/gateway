@@ -176,6 +176,23 @@ func TestOutboundHoldSchemaColumnsAreRequired(t *testing.T) {
 			t.Fatalf("VerifySchema does not require ledger_entries.%s", field)
 		}
 	}
+
+	requiredIndexes := map[string]bool{
+		"idx_ledger_entries_sweep_job_id": false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if index.table != "ledger_entries" {
+			continue
+		}
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require ledger_entries index %s", name)
+		}
+	}
 }
 
 func TestPaymentOutcomeSchemaColumnsAreRequired(t *testing.T) {

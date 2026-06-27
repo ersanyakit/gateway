@@ -565,6 +565,45 @@ func TestLedgerRepoSweepReleaseRestoresAvailableAfterSuccess(t *testing.T) {
 	}
 }
 
+func TestLedgerRepoSweepReleaseRejectsMismatchedTransaction(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	otherWalletID := uuid.New()
+	prefix := "sweep-release-mismatch-" + uuid.NewString()
+
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post standalone deposit: %v", err)
+	}
+	job := models.SweepJob{
+		ID:                    uuid.New(),
+		TransactionUniqueHash: depositTx.UniqueHash,
+		TransactionHash:       depositTx.Hash,
+		WalletID:              walletID,
+		MerchantID:            merchantID,
+		ChainID:               depositTx.ChainID,
+		Token:                 depositTx.Token,
+		Status:                models.SweepJobStatusProcessing,
+	}
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatalf("create sweep hold: %v", err)
+	}
+
+	mismatchedTx := ledgerTestTransaction(merchantID, domainID, otherWalletID, prefix+":other-deposit", "100")
+	err := repo.PostSweepRelease(ctx, job, mismatchedTx, "0xsweep")
+	if err == nil || !strings.Contains(err.Error(), "sweep job transaction mismatch") {
+		t.Fatalf("PostSweepRelease mismatch err = %v, want transaction mismatch", err)
+	}
+	requireLedgerCount(t, db, 0, "idempotency_key = ?", sweepReleaseKey(job.ID))
+}
+
 func TestLedgerRepoConcurrentWithdrawalHoldsPreventOverdraw(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {

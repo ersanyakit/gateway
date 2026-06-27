@@ -2,7 +2,7 @@
 story_id: "4.1"
 story_key: "4-1-reserve-ledger-holds-before-outbound-money-movement"
 epic: "Epic 4: Safe Outbound Funds & Custody Controls"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: c772d77
@@ -10,7 +10,7 @@ baseline_commit: c772d77
 
 # Story 4.1: Reserve Ledger Holds Before Outbound Money Movement
 
-Status: review
+Status: done
 
 ## Story
 
@@ -166,6 +166,12 @@ Codex
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: Senior review found and auto-fixed 3 issues: missing sweep hold schema index verification, sweep release mismatch validation gap, and incomplete refund operator audit logging.
+- 2026-06-27: Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
+- 2026-06-27: Review validation passed: focused handler tests for outbound reservation contracts, V1 error mapping, and operator audit logs.
+- 2026-06-27: Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
+- 2026-06-27: Review validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: Review full regression attempted with `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`; sandbox blocked tests that use `httptest.NewServer` with `listen tcp6 [::1]:0: bind: operation not permitted`.
 
 ### Completion Notes List
 
@@ -176,6 +182,29 @@ Codex
 - Admin recover-funds flow requires explicit amount for ledger reservation and routes explicit transfers through withdrawal hold plus approve workflow.
 - V1 payout insufficient-balance errors now return validation-style bad request status while preserving the V1 error envelope.
 - Ledger schema verification and migration plan now cover sweep hold/release/debit fields, entry types, and account.
+- Senior review added explicit `sweep_job_id` index verification, guarded sweep release against mismatched job/transaction pairs, and expanded refund approve/reject audit coverage.
+
+### Senior Developer Review (AI)
+
+Reviewer: Codex on 2026-06-27
+
+Outcome: Approved after auto-fixes. No critical issues remain.
+
+Findings fixed:
+
+- HIGH: `LedgerRepo.PostSweepRelease` could post release entries without revalidating that the sweep job still matched the transaction being released. Fixed by sharing the sweep job/transaction validation used by hold creation and adding mismatch coverage.
+- MEDIUM: `services/database.VerifySchema` required the new `ledger_entries.sweep_job_id` column but not the promised index. Fixed by requiring `idx_ledger_entries_sweep_job_id` and adding schema test coverage.
+- MEDIUM: Admin refund approval/rejection paths did not audit all operator-facing failure outcomes, including hold/reservation failure and reject failure. Fixed by logging refund approve and reject failures and extending audit source-contract tests.
+
+Checklist:
+
+- Story file loaded and status verified as reviewable.
+- Project context, PRD, epics, and architecture spine checked for FR19/FR21, NFR2/NFR3/NFR13/NFR14, and AD-3/AD-7.
+- MCP resource discovery attempted; no MCP documentation resources/templates were configured, so local project references were used.
+- Acceptance criteria and checked tasks cross-checked against implementation.
+- File list reviewed against story-owned implementation and review fix files.
+- Tests reviewed and expanded for schema index verification, sweep release mismatch, and refund audit evidence.
+- Security and money-safety review completed for changed files.
 
 ### File List
 
@@ -203,3 +232,4 @@ Codex
 
 - 2026-06-27: Created story with outbound ledger hold/reservation scope, current implementation snapshot, bypass risks, tests, and validation plan.
 - 2026-06-27: Implemented outbound ledger reservation gates, sweep hold/release lifecycle, schema verification, migration plan, tests, and moved story to review.
+- 2026-06-27: Senior review auto-fixed sweep release validation, sweep hold schema index verification, refund operator audit gaps, and moved story to done.

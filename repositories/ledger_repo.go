@@ -877,17 +877,8 @@ func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job model
 	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil || txModel.UniqueHash == "" {
 		return ErrLedgerReservationRequired
 	}
-	if job.TransactionUniqueHash != "" && job.TransactionUniqueHash != txModel.UniqueHash {
-		return errors.New("sweep job transaction mismatch")
-	}
-	if job.MerchantID != uuid.Nil && job.MerchantID != *txModel.MerchantID {
-		return errors.New("sweep job merchant mismatch")
-	}
-	if job.WalletID != uuid.Nil && job.WalletID != *txModel.WalletID {
-		return errors.New("sweep job wallet mismatch")
-	}
-	if job.Token != nil && txModel.Token != nil && !strings.EqualFold(strings.TrimSpace(*job.Token), strings.TrimSpace(*txModel.Token)) {
-		return errors.New("sweep job token mismatch")
+	if err := validateSweepJobTransaction(job, txModel); err != nil {
+		return err
 	}
 	if !r.amountIsPositive(txModel.Amount) {
 		return errors.New("sweep amount must be positive")
@@ -992,6 +983,9 @@ func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, jo
 	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return ErrLedgerReservationRequired
 	}
+	if err := validateSweepJobTransaction(job, txModel); err != nil {
+		return err
+	}
 	if err := r.RequireSweepHoldWithDB(ctx, tx, job.ID); err != nil {
 		return err
 	}
@@ -1057,6 +1051,26 @@ func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, jo
 		},
 	}
 	return tx.WithContext(ctx).Create(&entries).Error
+}
+
+func validateSweepJobTransaction(job models.SweepJob, txModel models.Transaction) error {
+	if job.TransactionUniqueHash != "" && job.TransactionUniqueHash != txModel.UniqueHash {
+		return errors.New("sweep job transaction mismatch")
+	}
+	if job.MerchantID != uuid.Nil {
+		if txModel.MerchantID == nil || job.MerchantID != *txModel.MerchantID {
+			return errors.New("sweep job merchant mismatch")
+		}
+	}
+	if job.WalletID != uuid.Nil {
+		if txModel.WalletID == nil || job.WalletID != *txModel.WalletID {
+			return errors.New("sweep job wallet mismatch")
+		}
+	}
+	if job.Token != nil && txModel.Token != nil && !strings.EqualFold(strings.TrimSpace(*job.Token), strings.TrimSpace(*txModel.Token)) {
+		return errors.New("sweep job token mismatch")
+	}
+	return nil
 }
 
 func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
