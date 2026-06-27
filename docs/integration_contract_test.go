@@ -116,6 +116,34 @@ func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
 	requireContains(t, string(guideBytes), "docs/money-event-catalog.md")
 }
 
+func TestMoneyEventOutboxMigrationPlanDocumentsSchema(t *testing.T) {
+	planBytes, err := os.ReadFile("outbox-migration-plan.md")
+	if err != nil {
+		t.Fatalf("read outbox migration plan: %v", err)
+	}
+	plan := string(planBytes)
+	for _, token := range []string{
+		"money_event_outboxes",
+		"event_id",
+		"event_type",
+		"event_version",
+		"aggregate_type",
+		"aggregate_id",
+		"merchant_id",
+		"domain_id",
+		"idempotency_key",
+		"payload_json",
+		"status",
+		"attempts",
+		"created_at",
+		"ux_money_event_outboxes_event_id",
+		"ux_money_event_outboxes_idempotency_scope",
+		"AutoMigrate",
+	} {
+		requireContains(t, plan, token)
+	}
+}
+
 func TestSwaggerContainsEpic1PartnerContract(t *testing.T) {
 	swaggerBytes, err := os.ReadFile("swagger.json")
 	if err != nil {

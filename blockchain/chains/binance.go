@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -156,12 +157,15 @@ func (e *BinanceChain) BatchBalances(ctx context.Context, addresses []string, wo
 		return nil
 	}
 
-	client, err := ethclient.Dial(e.RPCHttp[0])
+	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, e.RPCHttp)
 	if err != nil {
 		log.Println("RPC dial error:", err)
 		return nil
 	}
 	defer client.Close()
+	if len(e.RPCHttp) > 0 && strings.TrimSpace(e.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(e.RPCHttp[0]) {
+		log.Printf("[%s] balance RPC failover selected %s\n", e.Name(), selectedRPC)
+	}
 
 	out := make([]models.BalanceResult, 0, len(addresses))
 	batchSize := 100

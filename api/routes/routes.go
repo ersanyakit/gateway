@@ -39,27 +39,28 @@ type Router struct {
 	blockchains   *blockchain.ChainFactory
 	assetRegistry *asset.Registry
 
-	MerchantRepo        *repositories.MerchantRepo
-	DomainRepo          *repositories.DomainRepo
-	WalletRepo          *repositories.WalletRepo
-	ChainStateRepo      *repositories.ChainStateRepo
-	TransactionRepo     *repositories.TransactionRepo
-	PaymentRepo         *repositories.PaymentRepo
-	ProductRepo         *repositories.ProductRepo
-	WithdrawalRepo      *repositories.WithdrawalRequestRepo
-	LedgerRepo          *repositories.LedgerRepo
-	IdempotencyRepo     *repositories.IdempotencyRepo
-	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
-	SweepJobRepo        *repositories.SweepJobRepo
-	ReconciliationRepo  *repositories.ReconciliationRepo
-	RefundRepo          *repositories.RefundRepo
-	ActivityLogRepo     *repositories.ActivityLogRepo
-	AdminRepo           *repositories.AdminRepo
-	MerchantService     *services.MerchantService
-	WalletService       *services.WalletService
-	DomainService       *services.DomainService
-	PaymentHub          *realtime.PaymentHub
-	TxRescanService     *txrescan.Service
+	MerchantRepo         *repositories.MerchantRepo
+	DomainRepo           *repositories.DomainRepo
+	WalletRepo           *repositories.WalletRepo
+	ChainStateRepo       *repositories.ChainStateRepo
+	TransactionRepo      *repositories.TransactionRepo
+	PaymentRepo          *repositories.PaymentRepo
+	ProductRepo          *repositories.ProductRepo
+	WithdrawalRepo       *repositories.WithdrawalRequestRepo
+	LedgerRepo           *repositories.LedgerRepo
+	IdempotencyRepo      *repositories.IdempotencyRepo
+	MoneyEventOutboxRepo *repositories.MoneyEventOutboxRepo
+	WebhookDeliveryRepo  *repositories.WebhookDeliveryRepo
+	SweepJobRepo         *repositories.SweepJobRepo
+	ReconciliationRepo   *repositories.ReconciliationRepo
+	RefundRepo           *repositories.RefundRepo
+	ActivityLogRepo      *repositories.ActivityLogRepo
+	AdminRepo            *repositories.AdminRepo
+	MerchantService      *services.MerchantService
+	WalletService        *services.WalletService
+	DomainService        *services.DomainService
+	PaymentHub           *realtime.PaymentHub
+	TxRescanService      *txrescan.Service
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -134,6 +135,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.WithdrawalRepo = repositories.NewWithdrawalRequestRepo(r.db)
 	r.LedgerRepo = repositories.NewLedgerRepo(r.db)
 	r.IdempotencyRepo = repositories.NewIdempotencyRepo(r.db)
+	r.MoneyEventOutboxRepo = repositories.NewMoneyEventOutboxRepo(r.db)
 	r.WebhookDeliveryRepo = repositories.NewWebhookDeliveryRepo(r.db)
 	r.SweepJobRepo = repositories.NewSweepJobRepo(r.db)
 	r.ReconciliationRepo = repositories.NewReconciliationRepo(r.db)
@@ -307,6 +309,13 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/api/v1/common/qrcode", handlers.HandleV1CommonAddressQRCode())
 	r.fiber.Get("/api/v1/common/fiat-currencies", handlers.HandleV1CommonFiatCurrencies(v1Deps))
 	r.fiber.Get("/api/v1/common/networks", handlers.HandleV1CommonNetworks(v1Deps))
+	r.fiber.Get("/metrics", handlers.HandleOperationalMetrics(handlers.OperationalMetricsDeps{
+		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
+		SweepJobRepo:        r.SweepJobRepo,
+		ReconciliationRepo:  r.ReconciliationRepo,
+		ChainStateRepo:      r.ChainStateRepo,
+		Blockchains:         r.blockchains,
+	}))
 
 	// ── Wallet provider API ─────────────────────────────────────────────────
 	r.fiber.Post("/api/v1/wallet/create", handlers.HandleV1WalletCreate(v1Deps))

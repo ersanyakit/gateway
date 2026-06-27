@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	ethSDK "github.com/okx/go-wallet-sdk/coins/ethereum"
 )
 
@@ -135,12 +135,15 @@ func (s *ChilizSpicyChain) BatchBalances(ctx context.Context, addresses []string
 	if len(s.RPCHttp) == 0 {
 		return nil
 	}
-	client, err := ethclient.Dial(s.RPCHttp[0])
+	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, s.RPCHttp)
 	if err != nil {
 		log.Println("[chiliz-spicy] RPC dial error:", err)
 		return nil
 	}
 	defer client.Close()
+	if len(s.RPCHttp) > 0 && strings.TrimSpace(s.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(s.RPCHttp[0]) {
+		log.Printf("[%s] balance RPC failover selected %s\n", s.Name(), selectedRPC)
+	}
 
 	out := make([]models.BalanceResult, 0, len(addresses))
 	for _, addr := range addresses {

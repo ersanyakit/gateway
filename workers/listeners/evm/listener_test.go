@@ -6,7 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"core/blockchain"
 	"core/constants"
@@ -111,6 +113,33 @@ func TestIsBatchReceiptsUnavailableError(t *testing.T) {
 	if isBatchReceiptsUnavailableError(errors.New("context deadline exceeded")) {
 		t.Fatal("transient timeout should not disable batch receipts")
 	}
+}
+
+func TestRpcCallAnnotatesTimedOutEndpoint(t *testing.T) {
+	listener := &RpcListener{
+		chain: evmTestChain{rpcURL: "https://base.example.invalid"},
+		client: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, context.DeadlineExceeded
+		})},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	var out string
+	err := listener.rpcCall(ctx, "eth_blockNumber", nil, &out)
+	if err == nil {
+		t.Fatal("rpcCall returned nil error, want timeout")
+	}
+	if !strings.Contains(err.Error(), listener.chain.RPCs()[0]) {
+		t.Fatalf("rpcCall error %q does not include endpoint URL %q", err.Error(), listener.chain.RPCs()[0])
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 type evmTestChain struct {

@@ -118,6 +118,10 @@ DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
 PORT=:4001
 APP_ENV=development
 ALLOW_PRIVATE_WEBHOOK_URLS=true
+ALLOW_AUTOMIGRATE_IN_PRODUCTION=false
+SIGNER_MODE=software
+ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=false
+METRICS_BEARER_TOKEN=
 MASTER_KEY=32-byte-or-longer-secret
 MNEMONIC_PHRASE="your bip39 mnemonic phrase"
 ADMIN_EMAIL=admin@example.com
@@ -155,6 +159,10 @@ Zorunlu veya kritik değişkenler:
 | `PORT` | Fiber listen adresi. Örnek: `:4001`. |
 | `APP_ENV` | Çalışma ortamı. `production` değerinde bazı güvenlik kontrolleri sıkılaşır. Lokal geliştirme için `development` kullanılabilir. |
 | `ALLOW_PRIVATE_WEBHOOK_URLS` | Lokal geliştirmede `localhost`, `127.0.0.1` veya özel ağ IP'lerine webhook göndermeye izin verir. `APP_ENV=production` iken dikkate alınmaz. |
+| `ALLOW_AUTOMIGRATE_IN_PRODUCTION` | Varsayılan `false`. `APP_ENV=production` iken startup `AutoMigrate` çalışmaz; schema harici/versioned migration süreciyle yönetilmelidir. Sadece kontrollü bakım penceresinde geçici `true` yapılmalıdır. |
+| `SIGNER_MODE` | `software`, `kms`, `hsm` veya `mpc`. Mevcut üretim-ready custody için gerçek external signer entegrasyonu gerekir; placeholder external modlar readiness'ı bilerek geçirmez. |
+| `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Varsayılan `false`. `production` ortamında process içi mnemonic/private key signing kullanımını engeller; `true` değeri sadece kontrollü pilot risk kabulü içindir ve production readiness'ı geçirmez. |
+| `METRICS_BEARER_TOKEN` | `/metrics` Prometheus endpoint'i için bearer token. `APP_ENV=production` iken zorunludur; boş bırakılırsa endpoint 503 döner. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
 | `MNEMONIC_PHRASE` | Trust Wallet Core ile HD wallet üretimi için BIP39 mnemonic. |
 | `ADMIN_EMAIL` | Bootstrap admin hesabı için e-posta. |
@@ -372,7 +380,7 @@ swag init -g main.go -o docs
 
 ## Veritabanı
 
-Migration işlemi `services/database/database.go` içindeki `AutoMigrate` ile aşağıdaki ana tabloları yönetir:
+Development ortamında migration işlemi `services/database/database.go` içindeki `AutoMigrate` ile aşağıdaki ana tabloları yönetir:
 
 - `chain_states`
 - `domains`
@@ -391,7 +399,7 @@ Migration işlemi `services/database/database.go` içindeki `AutoMigrate` ile a�
 - `activity_logs`
 - `admins`
 
-Migration başında PostgreSQL `uuid-ossp` extension'ı etkinleştirilir.
+Migration başında PostgreSQL `uuid-ossp` extension'ı etkinleştirilir. `APP_ENV=production` iken startup `AutoMigrate` varsayılan olarak kapalıdır; uygulama yalnızca beklenen schema kolonlarını doğrular. Production DDL, ayrı bir versioned migration süreciyle ve bakım penceresinde yürütülmelidir.
 
 ## Worker'lar
 
@@ -406,11 +414,16 @@ Uygulama başlarken şu arka plan süreçlerini başlatır:
 
 Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispatcher event'i ilgili wallet ile eşleştirir, transaction kaydını oluşturur, payment session durumunu günceller ve gerekiyorsa webhook gönderir.
 
-Canlı ortamda gateway ve wallet provider hazırlığını doğrulamak için `GET /api/v1/common/readiness` kullanılmalıdır. Endpoint DB erişimini, tüm chain kayıtlarını, listener worker kayıtlarını, Trust Wallet Core HD wallet türetmesini ve canlı RPC/gRPC son blok erişimini kontrol eder; eksik veya bozuk bağımlılık varsa `503` döner.
+Canlı ortamda gateway ve wallet provider hazırlığını doğrulamak için `GET /api/v1/common/readiness` kullanılmalıdır. Endpoint DB erişimini, production migration politikasını, signer üretim kapısını, backlog/drift durumunu, tüm chain kayıtlarını, listener worker kayıtlarını, Trust Wallet Core HD wallet türetmesini ve canlı RPC/gRPC son blok erişimini kontrol eder; eksik veya bozuk bağımlılık varsa `503` döner.
+
+Prometheus uyumlu operasyon metrikleri için `GET /metrics` kullanılabilir. Endpoint webhook delivery backlog, sweep job backlog, reconciliation drift, chain worker count, chain state block/slot ve migration/signer readiness gauge'larını döndürür. `APP_ENV=production` altında `Authorization: Bearer <METRICS_BEARER_TOKEN>` zorunludur.
 
 ## Güvenlik Notları
 
 - `MASTER_KEY` ve `MNEMONIC_PHRASE` production ortamında secret manager, KMS veya benzeri güvenli bir sistemden sağlanmalıdır.
+- `APP_ENV=production` altında startup `AutoMigrate` açık bırakılmamalıdır; `ALLOW_AUTOMIGRATE_IN_PRODUCTION=true` readiness tarafından production launch blocker olarak raporlanır.
+- `/metrics` production ortamında sadece private network veya reverse proxy allowlist arkasından ve `METRICS_BEARER_TOKEN` ile açılmalıdır.
+- Production custody için process içi software signer yeterli değildir. KMS/HSM/MPC veya eşdeğer external signer entegrasyonu tamamlanmadan yüksek hacimli müşteri fonu tutulmamalıdır.
 - Admin parolası güçlü ve benzersiz olmalıdır.
 - Merchant portal/admin formları ve public API uçları production öncesinde CSRF, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
 - Webhook imzaları `X-Gateway-Signature`, `X-Gateway-Timestamp` ve `X-Gateway-Event` header'ları üzerinden doğrulanacak şekilde tasarlanmıştır.

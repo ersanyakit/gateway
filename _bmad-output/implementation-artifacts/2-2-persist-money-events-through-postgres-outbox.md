@@ -5,11 +5,12 @@ epic: "Epic 2: Reliable Money Event Delivery"
 status: ready-for-dev
 created: 2026-06-27
 updated: 2026-06-27
+baseline_commit: 3db844050e180146b55e4074815fd8e4b1dffc99
 ---
 
 # Story 2.2: Persist Money Events Through Postgres Outbox
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 

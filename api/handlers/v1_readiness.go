@@ -101,6 +101,12 @@ func v1RunReadinessChecks(ctx context.Context, deps V1APIDeps) []types.V1Readine
 		add("database", true, "database query succeeded", nil)
 	}
 
+	migrationOK, migrationDetails, migrationErr := v1MigrationStrategyReadiness()
+	add("migration.strategy", migrationOK, migrationDetails, migrationErr)
+
+	signerOK, signerDetails, signerErr := v1ProductionSignerReadiness()
+	add("signer.production", signerOK, signerDetails, signerErr)
+
 	v1AppendOperationalReadinessChecks(ctx, &checks, deps)
 
 	if deps.Blockchains == nil {
@@ -201,6 +207,48 @@ func v1AppendOperationalReadinessChecks(ctx context.Context, checks *[]types.V1R
 			v1ReadinessCountDetails(counts, reconciliationStatuses...),
 			nil,
 		)
+	}
+}
+
+func v1MigrationStrategyReadiness() (bool, string, error) {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
+		return true, "non-production AutoMigrate is enabled", nil
+	}
+	if v1ReadinessEnvBool("ALLOW_AUTOMIGRATE_IN_PRODUCTION") {
+		return false, "APP_ENV=production and ALLOW_AUTOMIGRATE_IN_PRODUCTION=true", errors.New("production AutoMigrate override must be disabled before launch")
+	}
+	return true, "production AutoMigrate is disabled; schema must be externally migrated", nil
+}
+
+func v1ReadinessEnvBool(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func v1ProductionSignerReadiness() (bool, string, error) {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
+		return true, "non-production signer policy", nil
+	}
+
+	signerMode := strings.ToLower(strings.TrimSpace(os.Getenv("SIGNER_MODE")))
+	if signerMode == "" {
+		signerMode = "software"
+	}
+
+	switch signerMode {
+	case "software":
+		if v1ReadinessEnvBool("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION") {
+			return false, "software signer override is enabled in production", errors.New("production software signer is not launch-ready")
+		}
+		return false, "software signer is blocked in production", errors.New("external KMS/HSM/MPC signer integration is required before production custody")
+	case "kms", "hsm", "mpc":
+		return false, fmt.Sprintf("SIGNER_MODE=%s is configured", signerMode), errors.New("external signer mode is declared but not implemented")
+	default:
+		return false, fmt.Sprintf("SIGNER_MODE=%s", signerMode), errors.New("unsupported signer mode")
 	}
 }
 
