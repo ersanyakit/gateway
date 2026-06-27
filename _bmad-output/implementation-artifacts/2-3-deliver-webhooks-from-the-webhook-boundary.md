@@ -179,7 +179,6 @@ Codex
 - Converted source money flows and admin test-deposit helpers to enqueue-only delivery behavior; explicit admin replay remains supported through the boundary path.
 - Added diagnostics redaction helpers and regression coverage for success, transient failure, timeout/permanent classification, backoff/claim behavior, callback validation/signing preservation, and no-inline source delivery.
 - Resolved code review finding by adapting the boundary processor to three-argument claim repositories and guarding nil retry-worker dependencies before constructing lookup callbacks.
-- Review fallback found and fixed a worker adapter mismatch so `DeliveryProcessor` supports the repository's claim-lock `ClaimDue(ctx, limit, lockFor)` signature.
 
 ### File List
 
@@ -210,4 +209,3 @@ Codex
 - 2026-06-27: Story created with Epic 2.3 acceptance criteria, webhook boundary guardrails, Story 2.1/2.2 learnings, and delivery/retry/redaction testing guidance.
 - 2026-06-27: Implemented webhook boundary delivery, due-claim leasing, enqueue-only source flows, sanitized diagnostics, validation tests, and moved story to review.
 - 2026-06-27: Addressed code review finding for production claim adapter compatibility and marked story done.
-- 2026-06-27: Fixed review-found `DeliveryProcessor` claim adapter mismatch and reran targeted/full validation.
