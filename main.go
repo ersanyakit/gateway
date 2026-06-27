@@ -1075,16 +1075,34 @@ func runLedgerInvariantReconciliation(ctx context.Context) {
 		return
 	}
 	for _, issue := range issues {
-		reason := "ledger_invariant:" + issue.IdempotencyKey
-		if len(reason) > 120 {
-			reason = reason[:120]
-		}
+		domainID := ledgerInvariantDomainID(issue.DomainID)
+		correlationID := ledgerInvariantCorrelationID(issue)
+		reason := ledgerInvariantReason(issue)
 		if _, created, err := router.ReconciliationRepo.CreateOpenIfMissing(ctx, constants.ChainID(issue.ChainID), 0, 0, reason); err != nil {
-			log.Printf("Reconciliation job create error key=%s: %v\n", issue.IdempotencyKey, err)
+			log.Printf("Reconciliation job create error correlation_id=%s merchant=%s domain=%s chain=%d token=%s symbol=%s net=%s: %v\n", correlationID, issue.MerchantID, domainID, issue.ChainID, ptrValue(issue.Token), issue.Symbol, issue.NetRaw, err)
 		} else if created {
-			log.Printf("Reconciliation job opened key=%s chain=%d net=%s\n", issue.IdempotencyKey, issue.ChainID, issue.NetRaw)
+			log.Printf("Reconciliation job opened correlation_id=%s merchant=%s domain=%s chain=%d token=%s symbol=%s net=%s\n", correlationID, issue.MerchantID, domainID, issue.ChainID, ptrValue(issue.Token), issue.Symbol, issue.NetRaw)
 		}
 	}
+}
+
+func ledgerInvariantCorrelationID(issue repositories.LedgerInvariantIssue) string {
+	return "ledger_invariant:" + issue.IdempotencyKey
+}
+
+func ledgerInvariantReason(issue repositories.LedgerInvariantIssue) string {
+	reason := fmt.Sprintf("ledger_invariant:%s:%s:%d:%s", issue.MerchantID.String(), ledgerInvariantDomainID(issue.DomainID), issue.ChainID, issue.IdempotencyKey)
+	if len(reason) > 120 {
+		return reason[:120]
+	}
+	return reason
+}
+
+func ledgerInvariantDomainID(domainID *uuid.UUID) string {
+	if domainID == nil {
+		return "none"
+	}
+	return domainID.String()
 }
 
 func runReserveBalanceReconciliation(ctx context.Context) {

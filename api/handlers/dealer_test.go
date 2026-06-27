@@ -118,6 +118,146 @@ func TestAdminWebhookReplaySourceContractAuditsDenialsAndUsesReplayRepo(t *testi
 	}
 }
 
+func TestBalanceAuthoritySourceContractsUseLedgerOnly(t *testing.T) {
+	dealerSource := readHandlerSource(t, "dealer.go")
+	for _, forbidden := range []string{
+		"MerchantDepositSummary(c.Context()",
+		"AllWalletDeposits(ctx)",
+		"buildWalletBalanceMap(c.Context(), deps.TransactionRepo",
+	} {
+		if strings.Contains(dealerSource, forbidden) {
+			t.Fatalf("dealer balance authority must not use transaction-derived source %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"LedgerRepo.MerchantBalances",
+		"WalletBalancesByWalletIDs",
+		"buildWalletBalanceMap(c.Context(), deps.LedgerRepo",
+	} {
+		if !strings.Contains(dealerSource, required) {
+			t.Fatalf("dealer balance authority missing ledger-derived source %q", required)
+		}
+	}
+
+	v1Source := readHandlerSource(t, "v1api.go")
+	commonBalance := extractHandlerFunctionBody(t, v1Source, "HandleV1CommonBalance")
+	walletBalance := extractHandlerFunctionBody(t, v1Source, "v1WalletBalances")
+	for name, body := range map[string]string{
+		"HandleV1CommonBalance": commonBalance,
+		"v1WalletBalances":      walletBalance,
+	} {
+		for _, forbidden := range []string{"TransactionRepo", "Blockchains", "BatchBalances", "Balance("} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("%s must not use non-ledger balance source %q", name, forbidden)
+			}
+		}
+	}
+	if !strings.Contains(commonBalance, "LedgerRepo.DomainBalances") {
+		t.Fatal("common balance endpoint must read domain ledger balances")
+	}
+	if !strings.Contains(walletBalance, "LedgerRepo.WalletBalances") {
+		t.Fatal("wallet balance endpoint must read wallet ledger balances")
+	}
+}
+
+func TestDealerBalanceViewsUseLedgerOnly(t *testing.T) {
+	sourceBytes, err := os.ReadFile("dealer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+
+	dashboard := extractHandlerFunctionBody(t, source, "HandleDealerDashboard")
+	for _, forbidden := range []string{
+		"MerchantDepositSummary",
+		"DomainDepositSummary",
+		"AllWalletDeposits",
+	} {
+		if strings.Contains(dashboard, forbidden) {
+			t.Fatalf("dealer dashboard balance path must not use transaction-derived helper %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"deps.LedgerRepo.MerchantBalances",
+		"dealerLedgerBalanceViews",
+	} {
+		if !strings.Contains(dashboard, required) {
+			t.Fatalf("dealer dashboard balance path missing ledger authority %q", required)
+		}
+	}
+
+	if !strings.Contains(source, "func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerRepo") {
+		t.Fatal("admin wallet balance map must accept LedgerRepo, not TransactionRepo")
+	}
+	walletMap := extractHandlerFunctionBody(t, source, "buildWalletBalanceMap")
+	for _, forbidden := range []string{
+		"TransactionRepo",
+		"AllWalletDeposits",
+		"MerchantDepositSummary",
+	} {
+		if strings.Contains(walletMap, forbidden) {
+			t.Fatalf("admin wallet balance map must not use transaction-derived helper %q", forbidden)
+		}
+	}
+	if !strings.Contains(walletMap, "WalletBalancesByWalletIDs") {
+		t.Fatal("admin wallet balance map must batch-read ledger balances")
+	}
+}
+
+func TestV1BalanceEndpointsUseLedgerOnly(t *testing.T) {
+	sourceBytes, err := os.ReadFile("v1api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(sourceBytes)
+	common := extractHandlerFunctionBody(t, source, "HandleV1CommonBalance")
+	wallet := extractHandlerFunctionBody(t, source, "v1WalletBalances")
+
+	for name, body := range map[string]string{
+		"common balance": common,
+		"wallet balance": wallet,
+	} {
+		for _, forbidden := range []string{
+			"TransactionRepo",
+			"MerchantDepositSummary",
+			"DomainDepositSummary",
+			"AllWalletDeposits",
+			"Blockchains",
+			"GetBalance",
+			"BalanceOf",
+		} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("%s path must not use non-ledger balance authority %q", name, forbidden)
+			}
+		}
+	}
+	if !strings.Contains(common, "deps.LedgerRepo.DomainBalances") {
+		t.Fatal("common balance endpoint must use LedgerRepo.DomainBalances")
+	}
+	if !strings.Contains(wallet, "deps.LedgerRepo.WalletBalances") {
+		t.Fatal("wallet balance endpoint must use LedgerRepo.WalletBalances")
+	}
+}
+
+func TestAddTokenAmountRawSumsSignedLedgerValues(t *testing.T) {
+	tests := map[string]struct {
+		current string
+		next    string
+		want    string
+	}{
+		"empty current":      {"", "13", "13"},
+		"positive sum":       {"25", "13", "38"},
+		"negative net":       {"25", "-30", "-5"},
+		"invalid current":    {"not-raw", "7", "7"},
+		"invalid next keeps": {"9", "bad", "9"},
+	}
+	for name, tc := range tests {
+		if got := addTokenAmountRaw(tc.current, tc.next); got != tc.want {
+			t.Fatalf("%s: addTokenAmountRaw(%q, %q) = %q, want %q", name, tc.current, tc.next, got, tc.want)
+		}
+	}
+}
+
 func TestDealerWebhookDeliveryViewsExposeDeadLetterReplayDiagnostics(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	originalID := uuid.New()
@@ -170,4 +310,40 @@ func TestWebhookDeliveryNextActionFallbacks(t *testing.T) {
 	if got := webhookDeliveryNextAction(models.WebhookDelivery{Status: models.WebhookDeliveryStatusFailed, OperatorAction: "custom_action"}); got != "custom_action" {
 		t.Fatalf("operator action override = %q, want custom_action", got)
 	}
+}
+
+func extractHandlerFunctionBody(t *testing.T, source, functionName string) string {
+	t.Helper()
+	start := strings.Index(source, "func "+functionName+"(")
+	if start == -1 {
+		t.Fatalf("function %s not found", functionName)
+	}
+	open := strings.Index(source[start:], "{")
+	if open == -1 {
+		t.Fatalf("function %s has no opening brace", functionName)
+	}
+	index := start + open
+	depth := 0
+	for i := index; i < len(source); i++ {
+		switch source[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[index : i+1]
+			}
+		}
+	}
+	t.Fatalf("function %s has no closing brace", functionName)
+	return ""
+}
+
+func readHandlerSource(t *testing.T, path string) string {
+	t.Helper()
+	sourceBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(sourceBytes)
 }

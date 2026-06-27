@@ -2,7 +2,7 @@
 story_id: "3.2"
 story_key: "3-2-match-deposits-and-gate-settlement-on-finality"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 93aace0
@@ -10,7 +10,7 @@ baseline_commit: 93aace0
 
 # Story 3.2: Match Deposits and Gate Settlement on Finality
 
-Status: review
+Status: done
 
 ## Story
 
@@ -118,6 +118,7 @@ Codex
 - 2026-06-27: Validation passed: `go test -count=1 ./...`.
 - 2026-06-27: Validation passed: `go vet ./...`.
 - 2026-06-27: Validation passed: `git diff --check`.
+- 2026-06-27: Code review validation passed with isolated cache: `go test -p=1 -count=1 ./...`, `go vet -p=1 ./...`, `git diff --check && git diff --cached --check`.
 
 ### Completion Notes List
 
@@ -150,3 +151,10 @@ Codex
 
 - 2026-06-27: Story created from Epic 3.2 with FR13/FR14, architecture finality flow, 3.1 chain fact boundary, and current transaction/payment/ledger compatibility notes.
 - 2026-06-27: Implemented deposit lifecycle matching, finality-gated settlement boundary, GORM schema registration, docs, and validation tests.
+- 2026-06-27: Code review approved; story marked done.
+
+### Senior Developer Review (AI)
+
+- Outcome: Approve
+- Findings: No blocking findings.
+- Validation: `go test -p=1 -count=1 ./...`, `go vet -p=1 ./...`, and `git diff --check && git diff --cached --check` passed.

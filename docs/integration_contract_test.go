@@ -162,6 +162,39 @@ func TestDepositFinalityBoundaryDocumentsSettlementGate(t *testing.T) {
 	}
 }
 
+func TestLedgerBalanceAuthorityDocumentsLedgerOnlyContract(t *testing.T) {
+	docBytes, err := os.ReadFile("ledger-balance-authority.md")
+	if err != nil {
+		t.Fatalf("read ledger balance authority: %v", err)
+	}
+	doc := string(docBytes)
+	for _, token := range []string{
+		"Ledger entries are the only authoritative source",
+		"LedgerRepo.DomainBalances",
+		"LedgerRepo.WalletBalances",
+		"LedgerRepo.MerchantBalances",
+		"LedgerRepo.WalletBalancesByWalletIDs",
+		"must not be summed as authoritative balance",
+		"`merchant_pending`",
+		"`merchant_available`",
+		"`withdrawal_transit`",
+		"`refund_transit`",
+		"`platform_clearing`",
+		"`voided` entries are excluded",
+		"`reorg_reversal` entries compensate",
+		"`adjustment` entries",
+		"`ux_ledger_idempotent_account`",
+		"LedgerRepo.FindInvariantIssues",
+		"`correlation_id`",
+		"merchant id",
+		"domain id",
+		"must not include API secrets",
+		"GORM-owned through model tags, `AutoMigrate`, and `services/database.VerifySchema`",
+	} {
+		requireContains(t, doc, token)
+	}
+}
+
 func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
 	catalogBytes, err := os.ReadFile("money-event-catalog.md")
 	if err != nil {

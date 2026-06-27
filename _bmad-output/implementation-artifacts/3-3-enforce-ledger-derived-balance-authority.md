@@ -2,7 +2,7 @@
 story_id: "3.3"
 story_key: "3-3-enforce-ledger-derived-balance-authority"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: ready-for-dev
+status: review
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 5adc975
@@ -10,7 +10,7 @@ baseline_commit: 5adc975
 
 # Story 3.3: Enforce Ledger-Derived Balance Authority
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -28,39 +28,39 @@ boylece available, pending, hold, transit, reversal ve adjustment bakiyeleri dep
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Remove transaction-derived balance authority from read paths (AC: 1, 4)
-  - [ ] Keep `api/handlers/v1api.go` common and wallet balance endpoints ledger-only; add source/contract tests proving they do not call `TransactionRepo` or live chain balance APIs.
-  - [ ] Replace dealer dashboard fallback from `TransactionRepo.MerchantDepositSummary` to ledger-only empty-state behavior or ledger projection rows.
-  - [ ] Replace admin wallet balance map from `TransactionRepo.AllWalletDeposits` with `LedgerRepo.WalletBalances`/batch ledger query support.
-  - [ ] Leave transaction summary helpers only for non-authoritative historical reporting if still needed; document that they must not feed balance views.
+- [x] Task 1: Remove transaction-derived balance authority from read paths (AC: 1, 4)
+  - [x] Keep `api/handlers/v1api.go` common and wallet balance endpoints ledger-only; add source/contract tests proving they do not call `TransactionRepo` or live chain balance APIs.
+  - [x] Replace dealer dashboard fallback from `TransactionRepo.MerchantDepositSummary` to ledger-only empty-state behavior or ledger projection rows.
+  - [x] Replace admin wallet balance map from `TransactionRepo.AllWalletDeposits` with `LedgerRepo.WalletBalances`/batch ledger query support.
+  - [x] Leave transaction summary helpers only for non-authoritative historical reporting if still needed; document that they must not feed balance views.
 
-- [ ] Task 2: Harden ledger-derived balance query/projection behavior (AC: 1, 2, 4)
-  - [ ] Add or refine ledger repository helpers for merchant/domain/wallet balance rows so pending, available, withdrawal transit, refund transit, reversal and adjustment accounts are represented explicitly.
-  - [ ] Ensure balance queries aggregate only numeric `amount_raw`, apply credit/debit signs consistently, exclude `voided` entries, and preserve asset metadata (`chain_id`, `token`, `symbol`, `decimals`).
-  - [ ] Add batch wallet balance lookup if needed for dealer/admin wallet list performance; do not reintroduce transaction row sums.
-  - [ ] Keep available balance checks backed by ledger rows and row/advisory locks before withdrawal/refund holds.
+- [x] Task 2: Harden ledger-derived balance query/projection behavior (AC: 1, 2, 4)
+  - [x] Add or refine ledger repository helpers for merchant/domain/wallet balance rows so pending, available, withdrawal transit, refund transit, reversal and adjustment accounts are represented explicitly.
+  - [x] Ensure balance queries aggregate only numeric `amount_raw`, apply credit/debit signs consistently, exclude `voided` entries, and preserve asset metadata (`chain_id`, `token`, `symbol`, `decimals`).
+  - [x] Add batch wallet balance lookup if needed for dealer/admin wallet list performance; do not reintroduce transaction row sums.
+  - [x] Keep available balance checks backed by ledger rows and row/advisory locks before withdrawal/refund holds.
 
-- [ ] Task 3: Strengthen ledger posting invariants and GORM schema checks (AC: 2, 3, 4)
-  - [ ] Verify deposit pending/available postings remain balanced by `idempotency_key`, account, direction, amount, tenant/wallet scope, and lifecycle reference.
-  - [ ] Add tests for duplicate idempotency no-op/reject behavior across deposit, withdrawal hold/debit, refund hold/debit, reversal and adjustment paths where implemented.
-  - [ ] Use GORM model tags, `services/database.VerifySchema`, and/or documented GORM migration plan for any new columns/indexes/check constraints; do not add raw SQL migration files.
-  - [ ] If DB-level balanced-movement enforcement cannot be expressed safely with current GORM/Postgres shape, document the explicit plan in `docs/ledger-balance-authority.md` and cover it with repository invariant tests.
+- [x] Task 3: Strengthen ledger posting invariants and GORM schema checks (AC: 2, 3, 4)
+  - [x] Verify deposit pending/available postings remain balanced by `idempotency_key`, account, direction, amount, tenant/wallet scope, and lifecycle reference.
+  - [x] Add tests for duplicate idempotency no-op/reject behavior across deposit, withdrawal hold/debit, refund hold/debit, reversal and adjustment paths where implemented.
+  - [x] Use GORM model tags, `services/database.VerifySchema`, and/or documented GORM migration plan for any new columns/indexes/check constraints; do not add raw SQL migration files.
+  - [x] If DB-level balanced-movement enforcement cannot be expressed safely with current GORM/Postgres shape, document the explicit plan in `docs/ledger-balance-authority.md` and cover it with repository invariant tests.
 
-- [ ] Task 4: Open scoped reconciliation for ledger invariant violations (AC: 5)
-  - [ ] Extend `LedgerRepo.FindInvariantIssues` output with enough scope for logs and reconciliation (`merchant_id`, optional `domain_id`, chain, token/symbol, idempotency/correlation key).
-  - [ ] Update `runLedgerInvariantReconciliation` to create/open a scoped reconciliation job or reason string carrying the ledger invariant scope without exposing secrets.
-  - [ ] Ensure logs include correlation id, merchant id, domain id when available, chain id, and net amount; avoid API secrets, webhook secrets, private keys, mnemonics, or raw signatures.
-  - [ ] Keep broader reconciliation lifecycle expansion for Story 3.6; this story only needs ledger invariant scope.
+- [x] Task 4: Open scoped reconciliation for ledger invariant violations (AC: 5)
+  - [x] Extend `LedgerRepo.FindInvariantIssues` output with enough scope for logs and reconciliation (`merchant_id`, optional `domain_id`, chain, token/symbol, idempotency/correlation key).
+  - [x] Update `runLedgerInvariantReconciliation` to create/open a scoped reconciliation job or reason string carrying the ledger invariant scope without exposing secrets.
+  - [x] Ensure logs include correlation id, merchant id, domain id when available, chain id, and net amount; avoid API secrets, webhook secrets, private keys, mnemonics, or raw signatures.
+  - [x] Keep broader reconciliation lifecycle expansion for Story 3.6; this story only needs ledger invariant scope.
 
-- [ ] Task 5: Documentation, contract tests, and validation (AC: 1, 2, 3, 4, 5)
-  - [ ] Add `docs/ledger-balance-authority.md` describing ledger-only balance reads, accounts, status semantics, idempotency, invariant detection, and GORM migration/schema plan.
-  - [ ] Add docs contract coverage in `docs/integration_contract_test.go`.
-  - [ ] Add source contract tests proving dealer/admin balance views no longer use `TransactionRepo.MerchantDepositSummary` or `TransactionRepo.AllWalletDeposits` as balance authority.
-  - [ ] Targeted validation: `go test -count=1 ./repositories ./api/handlers ./services/database ./docs`.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check && git diff --cached --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+- [x] Task 5: Documentation, contract tests, and validation (AC: 1, 2, 3, 4, 5)
+  - [x] Add `docs/ledger-balance-authority.md` describing ledger-only balance reads, accounts, status semantics, idempotency, invariant detection, and GORM migration/schema plan.
+  - [x] Add docs contract coverage in `docs/integration_contract_test.go`.
+  - [x] Add source contract tests proving dealer/admin balance views no longer use `TransactionRepo.MerchantDepositSummary` or `TransactionRepo.AllWalletDeposits` as balance authority.
+  - [x] Targeted validation: `go test -count=1 ./repositories ./api/handlers ./services/database ./docs`.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
 ## Dev Notes
 
@@ -112,16 +112,39 @@ Codex
 ### Debug Log References
 
 - 2026-06-27: Story created from Epic 3.3 with FR17/FR18/FR33, AD-3 ledger authority, Story 3.2 deposit finality implementation, and current dealer/admin transaction-sum fallback analysis.
+- 2026-06-27: Started dev-story implementation.
+- 2026-06-27: Removed dealer/admin transaction-derived balance fallbacks and added ledger batch wallet balance query support.
+- 2026-06-27: Extended ledger invariant issues with merchant/domain scope and scoped reconciliation logging/reason helpers.
+- 2026-06-27: Added ledger authority docs, docs/source contracts, repository invariant/idempotency tests, and GORM schema verification coverage.
+- 2026-06-27: Validation passed: `go test -count=1 ./repositories ./api/handlers ./services/database ./docs`.
+- 2026-06-27: Validation passed: `go test -count=1 ./...`.
+- 2026-06-27: Validation passed: `go vet ./...`.
+- 2026-06-27: Validation passed: `git diff --check`.
 
 ### Completion Notes List
 
-- Ready for dev-story implementation.
+- Balance read paths are ledger-only for V1 common/wallet endpoints, dealer merchant dashboard, and admin wallet list.
+- Added `LedgerRepo.WalletBalancesByWalletIDs` for batch wallet balance rows and extended ledger balance rows with domain/wallet scope.
+- Ledger balance queries exclude voided/non-numeric rows, preserve asset metadata, and keep account-level pending/available/transit visibility.
+- Ledger invariant reconciliation now carries correlation id plus merchant/domain/chain/token/symbol/net context without sensitive values.
+- Added documentation and tests for ledger-only balance authority, idempotency, GORM schema verification, source contracts, and invariant scope.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/3-3-enforce-ledger-derived-balance-authority.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `api/handlers/dealer.go`
+- `api/handlers/dealer_test.go`
+- `docs/integration_contract_test.go`
+- `docs/ledger-balance-authority.md`
+- `main.go`
+- `main_chain_fact_contract_test.go`
+- `repositories/ledger_repo.go`
+- `repositories/ledger_repo_test.go`
+- `services/database/database.go`
+- `services/database/outbox_schema_contract_test.go`
 
 ### Change Log
 
 - 2026-06-27: Created story with ledger-only balance authority scope, GORM migration guardrails, dealer/admin fallback risks, invariant reconciliation scope, and validation requirements.
+- 2026-06-27: Implemented ledger-only balance authority across API/dealer/admin views with scoped invariant reconciliation and validation coverage.

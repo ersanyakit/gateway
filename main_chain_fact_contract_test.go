@@ -101,6 +101,38 @@ func TestDepositFactWorkerOwnsDepositBoundary(t *testing.T) {
 	}
 }
 
+func TestLedgerInvariantReconciliationLogsScopedContext(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	source := string(sourceBytes)
+	body := extractMainFunctionBody(t, source, "runLedgerInvariantReconciliation")
+	for _, token := range []string{
+		"ledgerInvariantReason(issue)",
+		"ledgerInvariantCorrelationID(issue)",
+		"correlation_id=%s",
+		"merchant=%s",
+		"domain=%s",
+		"chain=%d",
+		"token=%s",
+		"symbol=%s",
+		"net=%s",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("ledger invariant reconciliation missing scoped token %q", token)
+		}
+	}
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "raw_signature"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("ledger invariant reconciliation must not log secret marker %q", forbidden)
+		}
+	}
+	if !strings.Contains(source, "func ledgerInvariantReason(") || !strings.Contains(source, "func ledgerInvariantDomainID(") {
+		t.Fatal("ledger invariant reconciliation helper functions are missing")
+	}
+}
+
 func TestChainConfirmationRequirementDefaults(t *testing.T) {
 	t.Setenv("FINALITY_CONFIRMATIONS_DEFAULT", "")
 	t.Setenv("CHAIN_0_CONFIRMATIONS", "")
@@ -128,6 +160,41 @@ func TestChainConfirmationRequirementDefaults(t *testing.T) {
 				t.Fatalf("chainConfirmationRequirement(%d) = %d, want %d", tc.chainID, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLedgerInvariantReconciliationUsesScopedContext(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	source := string(sourceBytes)
+	body := extractMainFunctionBody(t, source, "runLedgerInvariantReconciliation")
+	for _, token := range []string{
+		"correlationID",
+		"issue.MerchantID",
+		"domainID",
+		"ledgerInvariantReason(issue)",
+		"ledgerInvariantCorrelationID(issue)",
+		"CreateOpenIfMissing",
+		"Reconciliation job opened correlation_id=%s merchant=%s domain=%s",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("ledger invariant reconciliation missing scoped context token %q", token)
+		}
+	}
+	for _, token := range []string{
+		`"ledger_invariant:" + issue.IdempotencyKey`,
+		`fmt.Sprintf("ledger_invariant:%s:%s:%d:%s"`,
+	} {
+		if !strings.Contains(source, token) {
+			t.Fatalf("ledger invariant helper missing token %q", token)
+		}
+	}
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "raw_signature"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("ledger invariant reconciliation must not log sensitive token %q", forbidden)
+		}
 	}
 }
 

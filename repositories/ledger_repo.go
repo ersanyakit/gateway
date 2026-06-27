@@ -915,6 +915,8 @@ func ledgerChainIDFromName(name string) (constants.ChainID, bool) {
 
 type LedgerBalanceRow struct {
 	MerchantID uuid.UUID
+	DomainID   *uuid.UUID
+	WalletID   *uuid.UUID
 	ChainID    int64
 	Token      *string
 	Symbol     string
@@ -925,6 +927,8 @@ type LedgerBalanceRow struct {
 
 type LedgerInvariantIssue struct {
 	IdempotencyKey string
+	MerchantID     uuid.UUID
+	DomainID       *uuid.UUID
 	ChainID        int64
 	Token          *string
 	Symbol         string
@@ -938,6 +942,8 @@ func (r *LedgerRepo) FindInvariantIssues(ctx context.Context, limit int) ([]Ledg
 	var rows []LedgerInvariantIssue
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT idempotency_key,
+		       merchant_id,
+		       domain_id,
 		       chain_id,
 		       token,
 		       symbol,
@@ -946,11 +952,52 @@ func (r *LedgerRepo) FindInvariantIssues(ctx context.Context, limit int) ([]Ledg
 		WHERE idempotency_key <> ''
 		  AND status <> 'voided'
 		  AND amount_raw ~ '^[0-9]+$'
-		GROUP BY idempotency_key, chain_id, token, symbol
+		GROUP BY idempotency_key, merchant_id, domain_id, chain_id, token, symbol
 		HAVING SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END) <> 0
 		ORDER BY idempotency_key ASC
 		LIMIT ?
 	`, limit).Scan(&rows).Error
+	return rows, err
+}
+
+func (r *LedgerRepo) WalletBalancesByWalletIDs(ctx context.Context, walletIDs []uuid.UUID) ([]LedgerBalanceRow, error) {
+	if r == nil || r.db == nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	seen := make(map[uuid.UUID]struct{}, len(walletIDs))
+	ids := make([]uuid.UUID, 0, len(walletIDs))
+	for _, id := range walletIDs {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return []LedgerBalanceRow{}, nil
+	}
+
+	var rows []LedgerBalanceRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT merchant_id,
+		       domain_id,
+		       wallet_id,
+		       chain_id,
+		       token,
+		       symbol,
+		       decimals,
+		       account,
+		       SUM(CASE WHEN direction = 'credit' THEN amount_raw::numeric ELSE -amount_raw::numeric END)::text AS balance_raw
+		FROM ledger_entries
+		WHERE wallet_id IN ?
+		  AND status IN ('pending', 'posted')
+		  AND amount_raw ~ '^[0-9]+$'
+		GROUP BY merchant_id, domain_id, wallet_id, chain_id, token, symbol, decimals, account
+		ORDER BY wallet_id ASC, chain_id ASC, symbol ASC, account ASC
+	`, ids).Scan(&rows).Error
 	return rows, err
 }
 
@@ -978,6 +1025,7 @@ func (r *LedgerRepo) DomainBalances(ctx context.Context, merchantID, domainID uu
 	var rows []LedgerBalanceRow
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT merchant_id,
+		       domain_id,
 		       chain_id,
 		       token,
 		       symbol,
@@ -989,7 +1037,7 @@ func (r *LedgerRepo) DomainBalances(ctx context.Context, merchantID, domainID uu
 		  AND domain_id = ?
 		  AND status IN ('pending', 'posted')
 		  AND amount_raw ~ '^[0-9]+$'
-		GROUP BY merchant_id, chain_id, token, symbol, decimals, account
+		GROUP BY merchant_id, domain_id, chain_id, token, symbol, decimals, account
 		ORDER BY chain_id ASC, symbol ASC, account ASC
 	`, merchantID, domainID).Scan(&rows).Error
 	return rows, err
@@ -999,6 +1047,8 @@ func (r *LedgerRepo) WalletBalances(ctx context.Context, merchantID, domainID, w
 	var rows []LedgerBalanceRow
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT merchant_id,
+		       domain_id,
+		       wallet_id,
 		       chain_id,
 		       token,
 		       symbol,
@@ -1011,7 +1061,7 @@ func (r *LedgerRepo) WalletBalances(ctx context.Context, merchantID, domainID, w
 		  AND wallet_id = ?
 		  AND status IN ('pending', 'posted')
 		  AND amount_raw ~ '^[0-9]+$'
-		GROUP BY merchant_id, chain_id, token, symbol, decimals, account
+		GROUP BY merchant_id, domain_id, wallet_id, chain_id, token, symbol, decimals, account
 		ORDER BY chain_id ASC, symbol ASC, account ASC
 	`, merchantID, domainID, walletID).Scan(&rows).Error
 	return rows, err
