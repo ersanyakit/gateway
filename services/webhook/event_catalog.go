@@ -116,17 +116,17 @@ var moneyEventCatalog = []MoneyEventCatalogItem{
 	catalogItem("payment.underpaid.v1", "payment", "payment", "payment", "Payment received less than the expected amount and needs merchant/operator follow-up.", true, []string{
 		"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "shortfall_amount_raw", "payment_outcome",
 	}, []MoneyEventAlias{
-		{Name: constants.WebhookEventPaymentUnderpaid, Relation: EventRelationLegacyAlias, Note: "Current payment webhook name for explicit underpayment outcome."},
+		{Name: constants.WebhookEventPaymentUnderpaidOld, Relation: EventRelationLegacyAlias, Note: "Legacy underscore payment webhook name for explicit underpayment outcome."},
 	}, nil),
 	catalogItem("payment.overpaid.v1", "payment", "payment", "payment", "Payment received more than the expected amount and may require refund or reconciliation.", true, []string{
 		"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "excess_amount_raw", "payment_outcome",
 	}, []MoneyEventAlias{
-		{Name: constants.WebhookEventPaymentOverpaid, Relation: EventRelationLegacyAlias, Note: "Current payment webhook name for explicit overpayment outcome."},
+		{Name: constants.WebhookEventPaymentOverpaidOld, Relation: EventRelationLegacyAlias, Note: "Legacy underscore payment webhook name for explicit overpayment outcome."},
 	}, nil),
 	catalogItem("payment.partial_paid.v1", "payment", "payment", "payment", "Partial deposit received; automatic checkout aggregation is not supported.", true, []string{
 		"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "shortfall_amount_raw", "payment_outcome",
 	}, []MoneyEventAlias{
-		{Name: constants.WebhookEventPaymentPartialPaid, Relation: EventRelationLegacyAlias, Note: "Current payment webhook name for explicit partial payment outcome."},
+		{Name: constants.WebhookEventPaymentPartialPaidOld, Relation: EventRelationLegacyAlias, Note: "Legacy underscore payment webhook name for explicit partial payment outcome."},
 	}, nil),
 	catalogItem("withdrawal.requested.v1", "withdrawal", "withdrawal", "withdrawal", "Withdrawal/payout request was created and awaits review or policy checks.", false, []string{
 		"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address",

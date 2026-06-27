@@ -272,34 +272,39 @@ func (s *Service) evmRPC(ctx context.Context, chain blockchain.Chain, method str
 	}
 	var lastErr error
 	for _, rpcURL := range chain.RPCs() {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := s.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", chain.Name(), rpcURL, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("%s RPC returned HTTP %d: %s", chain.Name(), resp.StatusCode, string(respBody))
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", chain.Name(), rpcURL, resp.StatusCode, string(respBody))
 			continue
 		}
 		var rpcResp rpcResponse
 		if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		if rpcResp.Error != nil {
-			lastErr = fmt.Errorf("%s RPC %s error %d: %s", chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			lastErr = fmt.Errorf("%s %s RPC %s error %d: %s", chain.Name(), rpcURL, method, rpcResp.Error.Code, rpcResp.Error.Message)
 			continue
 		}
 		if string(rpcResp.Result) == "null" {
@@ -371,27 +376,32 @@ func (s *Service) scanBitcoin(ctx context.Context, chain blockchain.Chain, hash 
 func (s *Service) bitcoinGet(ctx context.Context, chain blockchain.Chain, path string) ([]byte, error) {
 	var lastErr error
 	for _, baseURL := range chain.RPCs() {
+		baseURL = strings.TrimSpace(baseURL)
+		if baseURL == "" {
+			continue
+		}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", chain.Name(), baseURL, err)
 			continue
 		}
 		resp, err := s.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", chain.Name(), baseURL, err)
 			continue
 		}
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", chain.Name(), baseURL, readErr)
 			continue
 		}
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, ErrTransactionNotFound
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("bitcoin API returned HTTP %d: %s", resp.StatusCode, string(body))
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", chain.Name(), baseURL, resp.StatusCode, string(body))
 			continue
 		}
 		return body, nil
@@ -523,34 +533,39 @@ func (s *Service) solanaRPC(ctx context.Context, chain blockchain.Chain, method 
 	}
 	var lastErr error
 	for _, rpcURL := range chain.RPCs() {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := s.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", chain.Name(), rpcURL, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("%s RPC returned HTTP %d: %s", chain.Name(), resp.StatusCode, string(respBody))
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", chain.Name(), rpcURL, resp.StatusCode, string(respBody))
 			continue
 		}
 		var rpcResp rpcResponse
 		if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", chain.Name(), rpcURL, err)
 			continue
 		}
 		if rpcResp.Error != nil {
-			lastErr = fmt.Errorf("%s RPC %s error %d: %s", chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			lastErr = fmt.Errorf("%s %s RPC %s error %d: %s", chain.Name(), rpcURL, method, rpcResp.Error.Code, rpcResp.Error.Message)
 			continue
 		}
 		if string(rpcResp.Result) == "null" {
@@ -638,9 +653,14 @@ func (s *Service) tronPost(ctx context.Context, path string, payload any) ([]byt
 	endpoints := tronHTTPEndpoints()
 	var lastErr error
 	for _, baseURL := range endpoints {
+		baseURL = strings.TrimSpace(baseURL)
+		if baseURL == "" {
+			continue
+		}
+
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+path, bytes.NewReader(body))
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", baseURL, path, err)
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -649,17 +669,17 @@ func (s *Service) tronPost(ctx context.Context, path string, payload any) ([]byt
 		}
 		resp, err := s.client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", baseURL, path, err)
 			continue
 		}
 		respBody, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", baseURL, path, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("tron API returned HTTP %d: %s", resp.StatusCode, string(respBody))
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", baseURL, path, resp.StatusCode, string(respBody))
 			continue
 		}
 		return respBody, nil

@@ -624,7 +624,7 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		log.Println("Payment match error:", err)
 		return
 	}
-	if matchResult == nil || !matchResult.Changed || matchResult.Session == nil {
+	if matchResult == nil || matchResult.Session == nil {
 		postStaticAddressDepositAvailable(ctx, txModel)
 		return
 	}
@@ -787,7 +787,12 @@ func paymentRealtimeBroadcastEvent(session *models.PaymentSession) realtime.Paym
 	switch session.Status {
 	case models.PaymentStatusPaid:
 		terminal = true
-	case models.PaymentStatusExpired, models.PaymentStatusCanceled, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+	case models.PaymentStatusExpired,
+		models.PaymentStatusCanceled,
+		models.PaymentStatusFailed,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid:
 		terminal = true
 	case models.PaymentStatusAwaitingPayment:
 		payable = true

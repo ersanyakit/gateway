@@ -2,7 +2,7 @@
 story_id: "3.4"
 story_key: "3-4-model-payment-matching-outcomes-explicitly"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 7f8c552
@@ -10,7 +10,7 @@ baseline_commit: 7f8c552
 
 # Story 3.4: Model Payment Matching Outcomes Explicitly
 
-Status: review
+Status: done
 
 ## Story
 
@@ -65,6 +65,13 @@ boylece checkout, API ve webhook consumer'lari belirsiz veya mismatch odeme duru
   - [x] Static validation: `go vet ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+
+### Review Findings
+
+- [x] [Review][Patch] Prefer exact payment matches before mismatch outcomes when multiple sessions share a wallet [`repositories/payment_repo.go`] — fixed with payment match decision priority and regression coverage.
+- [x] [Review][Patch] Reorg correction must update matched non-paid payment outcomes, not only paid sessions [`repositories/payment_repo.go`] — fixed by correcting every session with the transaction unique hash, resetting webhook retry fields, clearing stale `paid_at`, and adding coverage across paid/underpaid/overpaid/partial/expired/failed statuses.
+- [x] [Review][Patch] New mismatch webhook events must be emitted as canonical versioned events [`constants/webhook_events.go`] — fixed by emitting `payment.underpaid.v1`, `payment.overpaid.v1`, and `payment.partial_paid.v1` while retaining underscore aliases in the catalog.
+- [x] [Review][Patch] Realtime payment updates must mark `overpaid` and `partial_paid` terminal [`main.go`] — fixed with realtime contract coverage.
 
 ## Dev Notes
 
@@ -149,14 +156,22 @@ Codex
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: Tightened payment match candidate selection so exact chain+asset candidates are preferred before recording wrong-chain/wrong-asset failures.
+- 2026-06-27: Final validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./services/database ./docs`, `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`, `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`, and `git diff --check && git diff --cached --check`.
+- 2026-06-27: Code review found patch issues in shared-wallet matching priority, non-paid reorg correction, versioned mismatch webhook event emission, and realtime terminal flags; all were fixed with regression coverage.
 
 ### Completion Notes List
 
 - Added `overpaid` and `partial_paid` payment statuses plus persisted outcome metadata (`payment_outcome`, reason, matched amount, shortfall, excess) on `PaymentSession`.
 - Replaced the paid-only repository boundary with `MatchFinalizedTransaction`, preserving a compatibility `MarkPaidByTransaction` wrapper and stable transaction-hash idempotency locks.
+- Updated legacy finality/admin helper paths to consume explicit `MatchFinalizedTransaction` results instead of the paid-only wrapper.
 - Defined the settlement policy: exact amount is the only automatic `paid`; small underpayments become `underpaid`; larger underpayments become terminal `partial_paid` with automatic aggregation intentionally unsupported; overpayments become `overpaid`; expired/wrong-chain/wrong-asset deposits do not become paid.
+- Matching now prefers exact chain+asset candidates before recording wrong-chain/wrong-asset failures when multiple sessions share a wallet.
 - Updated deposit finality settlement so finalized funds on checkout wallets still post ledger availability for non-paid outcomes.
 - Updated checkout, V1 API, webhook payload/catalog, and integration docs to expose explicit outcome states and raw shortfall/excess metadata.
+- Reorg correction now updates all matched payment outcome statuses for the affected transaction hash, resets webhook retry fields, clears stale `paid_at`, and queues the correction event.
+- New mismatch webhook outcomes now emit canonical versioned event names while underscore names remain catalog aliases.
+- Code review patch findings were resolved; story is done.
 
 ### File List
 
@@ -186,6 +201,8 @@ Codex
 - `services/database/database_test.go`
 - `services/deposits/service.go`
 - `services/deposits/service_test.go`
+- `services/txrescan/service.go`
+- `services/txrescan/service_test.go`
 - `services/webhook/event_catalog.go`
 - `services/webhook/event_catalog_test.go`
 - `services/webhook/notifier.go`
@@ -197,3 +214,5 @@ Codex
 
 - 2026-06-27: Created story with explicit payment matching outcome scope, current paid-only matching risks, ledger authority constraints, webhook/API/checkout contract requirements, and validation plan.
 - 2026-06-27: Implemented explicit payment matching outcome model, deposit settlement integration, public API/checkout/webhook/docs contracts, and validation coverage; story moved to review.
+- 2026-06-27: Added exact-candidate match selection guard, legacy finality/admin explicit-match integration, idempotency validation, and txrescan endpoint annotation coverage.
+- 2026-06-27: Code review completed; fixed shared-wallet exact-match priority, non-paid reorg correction, canonical mismatch event emission, realtime terminal flags, and kept story status done.

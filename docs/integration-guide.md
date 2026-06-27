@@ -27,9 +27,9 @@ webhook:
     - payment_succeeded
     - payment_failed
     - payment_expired
-    - payment_underpaid
-    - payment_overpaid
-    - payment_partial_paid
+    - payment.underpaid.v1
+    - payment.overpaid.v1
+    - payment.partial_paid.v1
     - payout.requested.v1
     - payout.broadcast.v1
     - payout.finalized.v1
@@ -615,9 +615,9 @@ Event examples:
 - `payment_succeeded`
 - `payment_failed`
 - `payment_expired`
-- `payment_underpaid`
-- `payment_overpaid`
-- `payment_partial_paid`
+- `payment.underpaid.v1`
+- `payment.overpaid.v1`
+- `payment.partial_paid.v1`
 
 ```json
 {

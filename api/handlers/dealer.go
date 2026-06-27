@@ -3345,7 +3345,7 @@ func deliverAdminPaymentWebhookIfMatched(ctx context.Context, deps DealerDeps, t
 		return false, nil
 	}
 	matchResult, err := deps.PaymentRepo.MatchFinalizedTransaction(ctx, txModel)
-	if err != nil || matchResult == nil || !matchResult.Changed || matchResult.Session == nil {
+	if err != nil || matchResult == nil || matchResult.Session == nil {
 		return false, err
 	}
 	session := matchResult.Session

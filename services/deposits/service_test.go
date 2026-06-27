@@ -122,6 +122,9 @@ func TestFinalizedSettlementUsesExplicitPaymentMatchResult(t *testing.T) {
 	if strings.Contains(body, "MarkPaidByTransaction") {
 		t.Fatal("settlement must consume explicit match result instead of paid-only wrapper")
 	}
+	if strings.Contains(body, "matchResult != nil && matchResult.Changed && matchResult.Session") {
+		t.Fatal("ledger retry path must not require a newly changed payment match")
+	}
 }
 
 func TestFinalizedSettlementKeepsLedgerAvailableForUnmatchedCheckoutDeposits(t *testing.T) {

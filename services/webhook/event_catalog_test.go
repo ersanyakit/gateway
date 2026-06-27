@@ -131,6 +131,22 @@ func TestMoneyEventCatalogCoversCurrentWebhookConstants(t *testing.T) {
 	}
 }
 
+func TestPaymentMismatchWebhookConstantsEmitCanonicalVersionedEvents(t *testing.T) {
+	for _, eventName := range []string{
+		constants.WebhookEventPaymentUnderpaid,
+		constants.WebhookEventPaymentOverpaid,
+		constants.WebhookEventPaymentPartialPaid,
+	} {
+		entry, relation, ok := MoneyEventCatalogEntryForEmittedEvent(eventName)
+		if !ok {
+			t.Fatalf("mismatch event %q is missing from catalog", eventName)
+		}
+		if relation != EventRelationCanonical || entry.Name != eventName {
+			t.Fatalf("mismatch event %q maps to %q relation=%q, want canonical self", eventName, entry.Name, relation)
+		}
+	}
+}
+
 func webhookEventConstantsFromSource(t *testing.T) []string {
 	t.Helper()
 	contentBytes, err := os.ReadFile("../../constants/webhook_events.go")

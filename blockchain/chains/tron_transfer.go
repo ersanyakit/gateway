@@ -120,10 +120,14 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 	}
 
 	var res struct {
-		Result string `json:"result"`
+		Result string          `json:"result"`
+		Error  json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(body, &res); err != nil {
 		return 0, err
+	}
+	if len(res.Error) > 0 && string(res.Error) != "null" {
+		return 0, fmt.Errorf("tron eth_getBalance rpc error: %s", strings.TrimSpace(string(res.Error)))
 	}
 
 	hexStr := strings.TrimPrefix(strings.TrimSpace(res.Result), "0x")
@@ -138,6 +142,26 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 		return 0, fmt.Errorf("tron balance exceeds int64 SUN: %s", v.String())
 	}
 	return v.Int64(), nil
+}
+
+func tronGetTRXBalanceFromRPCs(ctx context.Context, rpcURLs []string, address string) (int64, error) {
+	var lastErr error
+	for _, rpcURL := range rpcURLs {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+
+		balance, err := tronGetTRXBalance(ctx, rpcURL, address)
+		if err == nil {
+			return balance, nil
+		}
+		lastErr = fmt.Errorf("%s tron TRX balance failed: %w", rpcURL, err)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no tron RPC endpoint configured")
+	}
+	return 0, lastErr
 }
 
 func tronGetTRC20Balance(ctx context.Context, rpcURL, contractAddr, ownerAddr string) (*big.Int, error) {
@@ -191,10 +215,14 @@ func tronGetTRC20Balance(ctx context.Context, rpcURL, contractAddr, ownerAddr st
 	}
 
 	var res struct {
-		Result string `json:"result"`
+		Result string          `json:"result"`
+		Error  json.RawMessage `json:"error"`
 	}
 	if err := json.Unmarshal(body, &res); err != nil {
 		return nil, err
+	}
+	if len(res.Error) > 0 && string(res.Error) != "null" {
+		return nil, fmt.Errorf("tron eth_call rpc error: %s", strings.TrimSpace(string(res.Error)))
 	}
 
 	hexStr := strings.TrimPrefix(strings.TrimSpace(res.Result), "0x")
@@ -206,6 +234,26 @@ func tronGetTRC20Balance(ctx context.Context, rpcURL, contractAddr, ownerAddr st
 		return nil, fmt.Errorf("tron parse TRC20 balance hex: %s", res.Result)
 	}
 	return v, nil
+}
+
+func tronGetTRC20BalanceFromRPCs(ctx context.Context, rpcURLs []string, contractAddr, ownerAddr string) (*big.Int, error) {
+	var lastErr error
+	for _, rpcURL := range rpcURLs {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+
+		balance, err := tronGetTRC20Balance(ctx, rpcURL, contractAddr, ownerAddr)
+		if err == nil {
+			return balance, nil
+		}
+		lastErr = fmt.Errorf("%s tron TRC20 balance failed: %w", rpcURL, err)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no tron RPC endpoint configured")
+	}
+	return nil, lastErr
 }
 
 func tronBroadcast(ctx context.Context, apiBase, signedTxHex string) (string, error) {
@@ -354,10 +402,9 @@ func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetai
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
-	rpcURL := rpcs[0]
 	apiBase := tronAPIBase(rpcs)
 
-	balance, err := tronGetTRC20Balance(ctx, rpcURL, contractAddr, wallet.Address)
+	balance, err := tronGetTRC20BalanceFromRPCs(ctx, rpcs, contractAddr, wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("tron TRC-20 balance: %w", err)
 	}
@@ -403,10 +450,9 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
-	rpcURL := rpcs[0]
 	apiBase := tronAPIBase(rpcs)
 
-	balance, err := tronGetTRXBalance(ctx, rpcURL, wallet.Address)
+	balance, err := tronGetTRXBalanceFromRPCs(ctx, rpcs, wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("tron TRX balance: %w", err)
 	}
@@ -456,10 +502,9 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
-	rpcURL := rpcs[0]
 	apiBase := tronAPIBase(rpcs)
 
-	balance, err := tronGetTRC20Balance(ctx, rpcURL, contractAddr, wallet.Address)
+	balance, err := tronGetTRC20BalanceFromRPCs(ctx, rpcs, contractAddr, wallet.Address)
 	if err != nil {
 		return nil, fmt.Errorf("tron TRC-20 balance: %w", err)
 	}
@@ -505,10 +550,9 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if len(rpcs) == 0 {
 		return false, fmt.Errorf("no tron RPC endpoint configured")
 	}
-	rpcURL := rpcs[0]
 	apiBase := tronAPIBase(rpcs)
 
-	balance, err := tronGetTRXBalance(ctx, rpcURL, userAddress)
+	balance, err := tronGetTRXBalanceFromRPCs(ctx, rpcs, userAddress)
 	if err != nil {
 		return false, fmt.Errorf("tron prefund balance check: %w", err)
 	}
