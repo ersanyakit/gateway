@@ -464,6 +464,26 @@ func TestCheckoutPayerStateMapsLifecycleStates(t *testing.T) {
 			terminal: true,
 			mode:     "underpaid",
 		},
+		{
+			name: "overpaid terminal",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusOverpaid,
+				ExpiresAt: &future,
+			},
+			status:   checkoutStateOverpaid,
+			terminal: true,
+			mode:     "overpaid",
+		},
+		{
+			name: "partial paid terminal",
+			session: models.PaymentSession{
+				Status:    models.PaymentStatusPartialPaid,
+				ExpiresAt: &future,
+			},
+			status:   checkoutStatePartialPaid,
+			terminal: true,
+			mode:     "partial_paid",
+		},
 	}
 
 	for _, tt := range tests {

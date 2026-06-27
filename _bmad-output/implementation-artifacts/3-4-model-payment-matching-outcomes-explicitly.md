@@ -2,7 +2,7 @@
 story_id: "3.4"
 story_key: "3-4-model-payment-matching-outcomes-explicitly"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: ready-for-dev
+status: in-progress
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 7f8c552
@@ -10,7 +10,7 @@ baseline_commit: 7f8c552
 
 # Story 3.4: Model Payment Matching Outcomes Explicitly
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 

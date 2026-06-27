@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"core/models"
+	webhooksvc "core/services/webhook"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func TestWebhookDeliveryClaimDueSourceContract(t *testing.T) {
@@ -80,6 +82,24 @@ func TestWebhookDeliveryFailureState(t *testing.T) {
 	status, action = webhookDeliveryFailureState(0, testPermanentError{err: errors.New("invalid callback")})
 	if status != models.WebhookDeliveryStatusDeadLetter || action != "replay_or_investigate" {
 		t.Fatalf("permanent state = %s/%s, want dead_letter/replay_or_investigate", status, action)
+	}
+}
+
+func TestWebhookDeliveryEnqueueLifecycleRequiresEntityMetadata(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	domain := models.Domain{ID: uuid.New(), MerchantID: uuid.New(), WebhookURL: "https://example.test/webhook"}
+
+	_, _, err := repo.EnqueueLifecycle(context.Background(), domain, webhooksvc.LifecyclePayload{
+		EventID:      "manual:event",
+		EventType:    "manual_test_deposit",
+		EventVersion: "v1",
+	})
+	if !errors.Is(err, gorm.ErrInvalidData) {
+		t.Fatalf("metadata-less lifecycle enqueue err = %v, want gorm.ErrInvalidData", err)
 	}
 }
 
@@ -179,6 +199,51 @@ func TestWebhookDeliveryClaimDuePostgresFiltersAndLocksRows(t *testing.T) {
 	}
 	if len(claimedAgain) != 0 {
 		t.Fatalf("claimed locked rows again: %#v", claimedAgain)
+	}
+}
+
+func TestWebhookDeliveryClaimDueSuppressesDuplicateActiveEventIDs(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	eventID := "evt-duplicate"
+
+	older := webhookDeliveryTestRow(merchantID, domainID, eventID, models.WebhookDeliveryStatusPending, nil)
+	newer := webhookDeliveryTestRow(merchantID, domainID, eventID, models.WebhookDeliveryStatusPending, nil)
+	older.UpdatedAt = time.Now().Add(-2 * time.Minute)
+	newer.UpdatedAt = time.Now().Add(-time.Minute)
+	if err := db.Create(&[]models.WebhookDelivery{older, newer}).Error; err != nil {
+		t.Fatalf("seed duplicate deliveries: %v", err)
+	}
+
+	claimed, err := repo.ClaimDue(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].EventID != eventID || claimed[0].ID != older.ID {
+		t.Fatalf("claimed duplicate rows = %#v, want only oldest %s", claimed, older.ID)
+	}
+
+	var olderAfter, newerAfter models.WebhookDelivery
+	if err := db.First(&olderAfter, "id = ?", older.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.First(&newerAfter, "id = ?", newer.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if olderAfter.Status != models.WebhookDeliveryStatusProcessing || olderAfter.OperatorAction != "delivery_in_progress" {
+		t.Fatalf("oldest row state = %s/%s, want processing/delivery_in_progress", olderAfter.Status, olderAfter.OperatorAction)
+	}
+	if newerAfter.Status != models.WebhookDeliveryStatusDeadLetter ||
+		newerAfter.OperatorAction != "duplicate_suppressed" ||
+		newerAfter.FailureCategory != "duplicate" ||
+		newerAfter.NextRetryAt != nil {
+		t.Fatalf("duplicate row state = %#v, want suppressed dead letter", newerAfter)
 	}
 }
 

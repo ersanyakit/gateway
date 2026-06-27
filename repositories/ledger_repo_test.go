@@ -206,6 +206,23 @@ func TestLedgerBalanceQueriesPreserveExpectedTenantScope(t *testing.T) {
 	}
 }
 
+func TestLedgerEntryGORMConstraintsCreated(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	for _, name := range []string{
+		"ledger_entries_entry_type_check",
+		"ledger_entries_account_check",
+		"ledger_entries_direction_check",
+		"ledger_entries_status_check",
+	} {
+		if !db.Migrator().HasConstraint(&models.LedgerEntry{}, name) {
+			t.Fatalf("ledger_entries constraint %s was not created", name)
+		}
+	}
+}
+
 func TestLedgerRepoWalletBalancesByWalletIDsAggregatesLedgerAccounts(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {

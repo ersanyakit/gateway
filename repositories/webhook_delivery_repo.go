@@ -135,7 +135,10 @@ func (r *WebhookDeliveryRepo) EnqueuePayment(ctx context.Context, domain models.
 }
 
 func (r *WebhookDeliveryRepo) EnqueueLifecycle(ctx context.Context, domain models.Domain, payload webhooksvc.LifecyclePayload) (*models.WebhookDelivery, bool, error) {
-	if payload.EventID == "" || payload.EventType == "" {
+	if strings.TrimSpace(payload.EventID) == "" ||
+		strings.TrimSpace(payload.EventType) == "" ||
+		strings.TrimSpace(payload.EntityType) == "" ||
+		strings.TrimSpace(payload.EntityID) == "" {
 		return nil, false, gorm.ErrInvalidData
 	}
 	body, err := payload.Body()
@@ -239,6 +242,22 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 		if len(rows) == 0 {
 			return nil
 		}
+		claimRows, duplicateRows := splitDuplicateClaimRows(rows)
+		if len(duplicateRows) > 0 {
+			duplicateIDs := make([]uuid.UUID, 0, len(duplicateRows))
+			for _, row := range duplicateRows {
+				duplicateIDs = append(duplicateIDs, row.ID)
+			}
+			if err := tx.Model(&models.WebhookDelivery{}).
+				Where("id IN ?", duplicateIDs).
+				Updates(webhookDuplicateSuppressedUpdates(now)).Error; err != nil {
+				return err
+			}
+		}
+		rows = claimRows
+		if len(rows) == 0 {
+			return nil
+		}
 		ids := make([]uuid.UUID, 0, len(rows))
 		for i := range rows {
 			rows[i].Status = models.WebhookDeliveryStatusProcessing
@@ -259,6 +278,36 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 			Update("next_retry_at", lockUntil).Error
 	})
 	return rows, err
+}
+
+func splitDuplicateClaimRows(rows []models.WebhookDelivery) ([]models.WebhookDelivery, []models.WebhookDelivery) {
+	claimed := make([]models.WebhookDelivery, 0, len(rows))
+	duplicates := make([]models.WebhookDelivery, 0)
+	seen := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		key := strings.TrimSpace(row.EventID)
+		if key == "" {
+			key = row.ID.String()
+		}
+		if _, ok := seen[key]; ok {
+			duplicates = append(duplicates, row)
+			continue
+		}
+		seen[key] = struct{}{}
+		claimed = append(claimed, row)
+	}
+	return claimed, duplicates
+}
+
+func webhookDuplicateSuppressedUpdates(now time.Time) map[string]any {
+	return map[string]any{
+		"status":           models.WebhookDeliveryStatusDeadLetter,
+		"last_error":       "duplicate webhook delivery event_id suppressed before delivery",
+		"failure_category": "duplicate",
+		"next_retry_at":    nil,
+		"operator_action":  "duplicate_suppressed",
+		"updated_at":       now,
+	}
 }
 
 func (r *WebhookDeliveryRepo) EnqueueReplay(ctx context.Context, params WebhookReplayParams) (*models.WebhookDelivery, bool, error) {

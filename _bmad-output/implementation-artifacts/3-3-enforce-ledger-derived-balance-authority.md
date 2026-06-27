@@ -127,6 +127,7 @@ Codex
 - 2026-06-27: Code review found one patch issue: long ledger invariant reasons could collide after fixed-length truncation. Added hash-suffixed bounded reason and regression coverage.
 - 2026-06-27: Post-review validation passed: `go test -count=1 ./...`, `go vet ./...`, and `git diff --check && git diff --cached --check`.
 - 2026-06-27: Added GORM-owned ledger check constraints for entry type, account, direction, and status, plus VerifySchema coverage.
+- 2026-06-27: Added Postgres coverage proving GORM creates ledger entry check constraints; validation passed with `OUTBOX_TEST_DATABASE_URL=... go test -count=1 ./repositories -run 'TestLedgerEntryGORMConstraintsCreated|TestLedgerRepoPostingIdempotencyAndNegativeBalanceGuard|TestLedgerRepoWalletBalancesByWalletIDsAggregatesLedgerAccounts|TestLedgerRepoFindInvariantIssuesIncludesTenantScope' -v`.
 
 ### Completion Notes List
 

@@ -228,26 +228,31 @@ func (e *BitcoinChain) BatchBalances(ctx context.Context, addresses []string, wo
 func (e *BitcoinChain) getBalance(client *http.Client, address string) (string, error) {
 	var lastErr error
 	for _, rpc := range e.RPCHttp {
+		rpc = strings.TrimSpace(rpc)
+		if rpc == "" {
+			continue
+		}
+
 		req, err := http.NewRequest(http.MethodGet, strings.TrimRight(rpc, "/")+"/address/"+address, nil)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request build failed: %w", e.Name(), rpc, err)
 			continue
 		}
 
 		resp, err := client.Do(req)
 		if err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s request failed: %w", e.Name(), rpc, err)
 			continue
 		}
 
 		body, readErr := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if readErr != nil {
-			lastErr = readErr
+			lastErr = fmt.Errorf("%s %s response read failed: %w", e.Name(), rpc, readErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("bitcoin API returned HTTP %d: %s", resp.StatusCode, string(body))
+			lastErr = fmt.Errorf("%s %s returned HTTP %d: %s", e.Name(), rpc, resp.StatusCode, string(body))
 			continue
 		}
 
@@ -262,7 +267,7 @@ func (e *BitcoinChain) getBalance(client *http.Client, address string) (string, 
 			} `json:"mempool_stats"`
 		}
 		if err := json.Unmarshal(body, &res); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", e.Name(), rpc, err)
 			continue
 		}
 
