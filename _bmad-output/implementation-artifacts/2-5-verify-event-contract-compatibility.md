@@ -59,6 +59,11 @@ boylece consumer'lar mevcut webhook isimlerinden versioned money event'lere kiri
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
+### Review Findings
+
+- [x] [Review][Patch] Alias contract test did not verify emitted-event lookup resolves each alias to its canonical target [services/webhook/event_catalog_test.go] — Added lookup assertions for every alias relation and tightened canonical `v1` target validation.
+- [x] [Review][Patch] Payment webhook request contract lacked direct header/payload coverage [services/webhook/notifier_test.go] — Added payment notifier coverage for event id/type/version headers, timestamp/signature, and payment identity/payload metadata.
+
 ## Dev Notes
 
 - Story 2.1 introduced `services/webhook/event_catalog.go` and catalog tests.
@@ -88,7 +93,7 @@ Codex
 - Strengthened alias migration tests so aliases must include relation, note, versioned canonical target, and migration/deprecation path.
 - Added Epic 2 integration evidence linking event catalog, outbox, delivery boundary, replay/dead-letter behavior, duplicate-safety, validation, and known production limits.
 - Added payment notifier contract coverage for signed headers and payment payload metadata.
-- Code review found no blocking issues in the 2.5 docs/test scope; full validation passed.
+- Code review fixes strengthened alias-to-canonical lookup assertions and added direct payment webhook request contract coverage; full validation passed.
 
 ### File List
 
@@ -103,4 +108,4 @@ Codex
 
 - 2026-06-27: Story created from Epic 2.5 acceptance criteria and Epic 2 continuity notes.
 - 2026-06-27: Implemented v1 event contract compatibility tests, Epic 2 integration evidence, docs contract checks, and validation; moved to review.
-- 2026-06-27: Code review completed cleanly and full validation passed; story completed.
+- 2026-06-27: Code review findings fixed and full validation passed; story completed.
