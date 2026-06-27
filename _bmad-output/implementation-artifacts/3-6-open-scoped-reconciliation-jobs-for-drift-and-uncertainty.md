@@ -2,7 +2,7 @@
 story_id: "3.6"
 story_key: "3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: e748c00
@@ -10,7 +10,7 @@ baseline_commit: e748c00
 
 # Story 3.6: Open Scoped Reconciliation Jobs for Drift and Uncertainty
 
-Status: review
+Status: done
 
 ## Story
 
@@ -58,6 +58,11 @@ boylece chain facts, ledger entries, lifecycle state, webhook delivery ve outbou
   - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
+
+### Review Findings
+
+- [x] [Review][Patch] Webhook drift and stuck lifecycle helpers must reject empty resource scopes — fixed with invalid scope guards and regression coverage in `repositories/reconciliation_repo_test.go`.
+- [x] [Review][Patch] Evidence redaction must cover generic `signature` keys, not only `raw_signature` — fixed in `repositories/reconciliation_repo.go` and covered by evidence redaction tests.
 
 ## Dev Notes
 
@@ -136,6 +141,24 @@ Codex
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Final validation rerun after JSONB default and evidence redaction assertion fixes passed: full `go test ./...`, full `go vet ./...`, and whitespace checks.
 - 2026-06-27: Added reserve scoped reconciliation Postgres coverage for job creation, active dedupe, evidence, affected ids, and tenant scope.
+- 2026-06-27: Code review found empty helper scope and generic signature redaction gaps; fixed and validated with `go test ./repositories ./services/reconciliation ./services/webhook`.
+
+### Senior Developer Review (AI)
+
+Reviewer: Codex on 2026-06-27
+
+Outcome: Approved after automatic fixes.
+
+Findings fixed:
+
+- [MEDIUM][AC1/AC4] `OpenWebhookDeliveryDrift` and `OpenStuckLifecycleJob` accepted empty identifiers, allowing unrelated drift/stuck lifecycle jobs to collapse under empty or low-quality scope keys. Fixed with invalid scope guards and tests.
+- [MEDIUM][Security] Evidence redaction covered `raw_signature` but not a generic `signature` key. Fixed by redacting generic signature keys and extending nested evidence tests.
+
+Review validation:
+
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/webhook`
+- `git diff --check`
 
 ### Completion Notes List
 
@@ -145,6 +168,7 @@ Codex
 - Reconciliation outcomes now support `needs_operator_action` and `retry_scheduled`; due retry jobs are claimable while future retries wait.
 - Ledger invariant, reserve drift, and Story 3.5 reorg reconciliation producers now open scoped jobs with evidence and affected resource ids.
 - Repository helpers cover webhook drift and stuck lifecycle uncertainty scopes.
+- Webhook drift and stuck lifecycle helper APIs now reject empty resource scopes before opening reconciliation jobs.
 - Metrics and V1 readiness include `needs_operator_action` and `retry_scheduled` reconciliation statuses.
 - Reserve reconciliation now has Postgres-backed coverage proving scoped job creation and dedupe behavior.
 
@@ -173,3 +197,4 @@ Codex
 - 2026-06-27: Implemented scoped reconciliation model, repository API, detector integrations, operator-visible statuses, tests, and validation; story moved to review.
 - 2026-06-27: Tightened JSONB defaults and sensitive evidence redaction tests, then reran Postgres, full regression, static, and whitespace validation.
 - 2026-06-27: Added reserve scoped reconciliation Postgres coverage for tenant/resource scope and active dedupe.
+- 2026-06-27: Addressed code review findings for empty helper scopes and generic signature redaction; story moved to done.
