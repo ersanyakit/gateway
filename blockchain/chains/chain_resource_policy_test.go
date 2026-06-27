@@ -77,7 +77,7 @@ func TestSolanaAndTronUseSequenceLeaseAndResourceFeePolicies(t *testing.T) {
 		body := extractChainFunctionBody(t, tron, functionName)
 		if !strings.Contains(body, "chainResourceSequenceLease") ||
 			!strings.Contains(body, "lease.Release()") ||
-			!strings.Contains(body, "tronSignBroadcastWithLease") {
+			(!strings.Contains(body, "tronSignBroadcastWithLease") && !strings.Contains(body, "tronBroadcastSignedWithLease")) {
 			t.Fatalf("%s missing TRON sequence lease guard", functionName)
 		}
 	}

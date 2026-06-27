@@ -81,6 +81,54 @@ func TestTronGetTRXBalanceFromRPCsAnnotatesEndpoint(t *testing.T) {
 	}
 }
 
+func TestTronEstimateBandwidthFeeSUNUsesAvailableResources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wallet/getaccountresource" {
+			t.Fatalf("path = %q, want /wallet/getaccountresource", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"freeNetLimit":80,"freeNetUsed":30,"NetLimit":100,"NetUsed":50}`))
+	}))
+	defer server.Close()
+
+	fee, err := tronEstimateBandwidthFeeSUN(context.Background(), []string{server.URL}, tronTestAddress, strings.Repeat("ab", 180))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fee != 80_000 {
+		t.Fatalf("fee = %d, want 80000", fee)
+	}
+}
+
+func TestTronEstimateBandwidthFeeSUNReturnsZeroWhenBandwidthCoversTx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"freeNetLimit":500,"freeNetUsed":0}`))
+	}))
+	defer server.Close()
+
+	fee, err := tronEstimateBandwidthFeeSUN(context.Background(), []string{server.URL}, tronTestAddress, strings.Repeat("ab", 180))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fee != 0 {
+		t.Fatalf("fee = %d, want 0", fee)
+	}
+}
+
+func TestTronGasPrefundDefaultsToTRC20FeeLimit(t *testing.T) {
+	t.Setenv("TRON_TRC20_FEE_LIMIT_SUN", "42000000")
+	t.Setenv("TRON_GAS_THRESHOLD_SUN", "")
+	t.Setenv("TRON_GAS_PREFUND_SUN", "")
+
+	if got := tronGasThresholdSUN(); got != 42_000_000 {
+		t.Fatalf("threshold = %d, want 42000000", got)
+	}
+	if got := tronGasPrefundSUN(); got != 42_000_000 {
+		t.Fatalf("prefund = %d, want 42000000", got)
+	}
+}
+
 func TestTronGetTRC20BalanceFromRPCsFallsBack(t *testing.T) {
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -4,6 +4,7 @@ document.addEventListener('DOMContentLoaded', function () {
   document.addEventListener('click', handleCopyClick);
   document.addEventListener('click', handleGenerateSecretClick);
   initAdminRichSelects();
+  initAdminDataTables();
   initRecoverFundsBalance();
 });
 
@@ -501,7 +502,7 @@ function initAdminRichSelects() {
 }
 
 function initRecoverFundsBalance() {
-  var form = document.getElementById('sweep-form');
+  var form = document.getElementById('recover-form') || document.getElementById('sweep-form');
   if (!form) return;
 
   var walletSelect = document.getElementById('recover-source-wallet');
@@ -611,7 +612,7 @@ function initRecoverFundsBalance() {
     params.set('wallet_id', walletID);
     params.set('asset', assetValue);
 
-    fetch('/admin/sweep/live-balance?' + params.toString(), {
+    fetch('/admin/recover/live-balance?' + params.toString(), {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
     })
@@ -652,6 +653,229 @@ function initRecoverFundsBalance() {
   });
 
   updateRecoverBalance();
+}
+
+function initAdminDataTables() {
+  document.querySelectorAll('table[data-admin-table]').forEach(function (table) {
+    if (table.getAttribute('data-admin-table-ready') === 'true') return;
+    table.setAttribute('data-admin-table-ready', 'true');
+
+    var tableID = compactText(table.id || '');
+    var tbody = table.tBodies[0];
+    if (!tableID || !tbody) return;
+
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr[data-admin-table-row]'));
+    var emptyRow = tbody.querySelector('tr[data-admin-table-empty]');
+    var detailRows = {};
+    var searchInput = findAdminDataTableControl('data-admin-table-search', tableID);
+    var countEl = findAdminDataTableControl('data-admin-table-count', tableID);
+    var sortState = {
+      column: -1,
+      direction: 'none',
+      type: 'text',
+    };
+
+    Array.prototype.slice.call(tbody.querySelectorAll('tr[data-admin-table-detail-for]')).forEach(function (row) {
+      var key = row.getAttribute('data-admin-table-detail-for') || '';
+      if (key) detailRows[key] = row;
+    });
+
+    rows.forEach(function (row, index) {
+      row.setAttribute('data-admin-table-index', String(index));
+      row.setAttribute('data-admin-row-expanded', 'false');
+      row.setAttribute('data-admin-table-search-value', normalize((row.getAttribute('data-search') || '') + ' ' + row.textContent));
+    });
+
+    Array.prototype.slice.call(table.querySelectorAll('thead th')).forEach(function (th, index) {
+      var button = th.querySelector('.admin-sort-button[data-admin-sort]');
+      if (!button) return;
+      th.setAttribute('aria-sort', 'none');
+      button.setAttribute('data-sort-direction', 'none');
+      button.addEventListener('click', function () {
+        var nextDirection = 'asc';
+        if (sortState.column === index && sortState.direction === 'asc') {
+          nextDirection = 'desc';
+        }
+        sortState = {
+          column: index,
+          direction: nextDirection,
+          type: button.getAttribute('data-admin-sort') || 'text',
+        };
+        renderAdminDataTable(table, tbody, rows, detailRows, emptyRow, countEl, sortState, searchInput ? searchInput.value : '');
+      });
+    });
+
+    table.addEventListener('click', function (event) {
+      handleAdminDataTableToggle(event, detailRows);
+    });
+
+    if (searchInput) {
+      searchInput.addEventListener('input', function () {
+        renderAdminDataTable(table, tbody, rows, detailRows, emptyRow, countEl, sortState, searchInput.value);
+      });
+    }
+
+    renderAdminDataTable(table, tbody, rows, detailRows, emptyRow, countEl, sortState, searchInput ? searchInput.value : '');
+  });
+}
+
+function renderAdminDataTable(table, tbody, rows, detailRows, emptyRow, countEl, sortState, query) {
+  var normalizedQuery = normalize(query || '');
+  var visibleCount = 0;
+  var sortedRows = rows.slice();
+
+  if (sortState.column >= 0 && sortState.direction !== 'none') {
+    sortedRows.sort(function (left, right) {
+      var comparison = compareAdminDataTableRows(left, right, sortState);
+      if (comparison === 0) {
+        comparison = Number(left.getAttribute('data-admin-table-index') || '0') - Number(right.getAttribute('data-admin-table-index') || '0');
+      }
+      return sortState.direction === 'desc' ? -comparison : comparison;
+    });
+  }
+
+  sortedRows.forEach(function (row) {
+    if (emptyRow) {
+      tbody.insertBefore(row, emptyRow);
+    } else {
+      tbody.appendChild(row);
+    }
+    var key = row.getAttribute('data-admin-table-key') || '';
+    var detailRow = key ? detailRows[key] : null;
+    if (detailRow) {
+      if (emptyRow) {
+        tbody.insertBefore(detailRow, emptyRow);
+      } else {
+        tbody.appendChild(detailRow);
+      }
+    }
+
+    var searchValue = row.getAttribute('data-admin-table-search-value') || '';
+    var hidden = normalizedQuery !== '' && searchValue.indexOf(normalizedQuery) === -1;
+    row.hidden = hidden;
+    if (detailRow) {
+      detailRow.hidden = hidden || row.getAttribute('data-admin-row-expanded') !== 'true';
+    }
+    if (!hidden) visibleCount += 1;
+  });
+
+  if (emptyRow) {
+    emptyRow.hidden = rows.length === 0 || visibleCount > 0;
+  }
+
+  updateAdminDataTableCount(countEl, visibleCount, rows.length, normalizedQuery !== '');
+  updateAdminDataTableSortControls(table, sortState);
+}
+
+function handleAdminDataTableToggle(event, detailRows) {
+  var button = event.target.closest('[data-admin-table-toggle]');
+  if (!button) return;
+
+  var row = button.closest('tr[data-admin-table-row]');
+  if (!row) return;
+
+  var key = button.getAttribute('data-admin-table-toggle') || row.getAttribute('data-admin-table-key') || '';
+  var detailRow = key ? detailRows[key] : null;
+  if (!detailRow) return;
+
+  var expanded = row.getAttribute('data-admin-row-expanded') !== 'true';
+  row.setAttribute('data-admin-row-expanded', expanded ? 'true' : 'false');
+  button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  button.setAttribute('data-expanded', expanded ? 'true' : 'false');
+  detailRow.hidden = row.hidden || !expanded;
+}
+
+function compareAdminDataTableRows(left, right, sortState) {
+  var leftValue = adminDataTableCellValue(left, sortState.column);
+  var rightValue = adminDataTableCellValue(right, sortState.column);
+  if (sortState.type === 'number') {
+    return compareIntegerStrings(leftValue, rightValue);
+  }
+  return normalize(leftValue).localeCompare(normalize(rightValue), 'tr', {
+    numeric: true,
+    sensitivity: 'base',
+  });
+}
+
+function adminDataTableCellValue(row, column) {
+  var cell = row.children[column];
+  if (!cell) return '';
+  var value = cell.getAttribute('data-sort-value');
+  if (value === null) value = cell.textContent || '';
+  return compactText(value);
+}
+
+function updateAdminDataTableSortControls(table, sortState) {
+  Array.prototype.slice.call(table.querySelectorAll('thead th')).forEach(function (th, index) {
+    var button = th.querySelector('.admin-sort-button[data-admin-sort]');
+    var direction = index === sortState.column ? sortState.direction : 'none';
+    th.setAttribute('aria-sort', direction === 'asc' ? 'ascending' : (direction === 'desc' ? 'descending' : 'none'));
+    if (button) {
+      button.setAttribute('data-sort-direction', direction);
+    }
+  });
+}
+
+function updateAdminDataTableCount(countEl, visibleCount, totalCount, filtered) {
+  if (!countEl) return;
+  var label = visibleCount + ' asset';
+  if (filtered && totalCount !== visibleCount) {
+    label = visibleCount + ' / ' + totalCount + ' asset';
+  }
+  countEl.textContent = label;
+}
+
+function findAdminDataTableControl(attribute, tableID) {
+  var nodes = document.querySelectorAll('[' + attribute + ']');
+  for (var i = 0; i < nodes.length; i += 1) {
+    if (nodes[i].getAttribute(attribute) === tableID) {
+      return nodes[i];
+    }
+  }
+  return null;
+}
+
+function compareIntegerStrings(left, right) {
+  var a = normalizeIntegerString(left);
+  var b = normalizeIntegerString(right);
+
+  if (typeof BigInt === 'function') {
+    try {
+      var leftBig = BigInt(a);
+      var rightBig = BigInt(b);
+      if (leftBig < rightBig) return -1;
+      if (leftBig > rightBig) return 1;
+      return 0;
+    } catch (error) {
+      // Fall through to string comparison for environments without full BigInt parsing.
+    }
+  }
+
+  var aNegative = a.charAt(0) === '-';
+  var bNegative = b.charAt(0) === '-';
+  if (aNegative !== bNegative) return aNegative ? -1 : 1;
+
+  var aValue = aNegative ? a.slice(1) : a;
+  var bValue = bNegative ? b.slice(1) : b;
+  var comparison = 0;
+  if (aValue.length !== bValue.length) {
+    comparison = aValue.length < bValue.length ? -1 : 1;
+  } else if (aValue < bValue) {
+    comparison = -1;
+  } else if (aValue > bValue) {
+    comparison = 1;
+  }
+  return aNegative ? -comparison : comparison;
+}
+
+function normalizeIntegerString(value) {
+  var raw = compactText(value);
+  if (!/^-?[0-9]+$/.test(raw)) return '0';
+  var negative = raw.charAt(0) === '-';
+  if (negative) raw = raw.slice(1);
+  raw = raw.replace(/^0+/, '');
+  if (raw === '') return '0';
+  return negative ? '-' + raw : raw;
 }
 
 function normalizeAssetKey(value) {

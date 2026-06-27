@@ -205,6 +205,7 @@ func NewRouter(db *gorm.DB) *Router {
 		WithdrawalRepo:      r.WithdrawalRepo,
 		RefundRepo:          r.RefundRepo,
 		LedgerRepo:          r.LedgerRepo,
+		SweepJobRepo:        r.SweepJobRepo,
 		TransactionRepo:     r.TransactionRepo,
 		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
 		ActivityLogRepo:     r.ActivityLogRepo,
@@ -267,7 +268,9 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/rescan", handlers.HandleAdminTxRescan(dealerDeps))
 	r.fiber.Post("/admin/webhooks/:id/replay", handlers.HandleAdminWebhookReplay(dealerDeps))
 	r.fiber.Get("/admin/sweep/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))
-	r.fiber.Post("/admin/sweep", handlers.HandleAdminSweep(dealerDeps))
+	r.fiber.Get("/admin/recover/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))
+	r.fiber.Post("/admin/recover", handlers.HandleAdminRecoverFunds(dealerDeps))
+	r.fiber.Post("/admin/sweep", handlers.HandleAdminRecoverFunds(dealerDeps))
 	r.fiber.Post("/admin/test-deposit", handlers.HandleAdminTestDeposit(dealerDeps))
 	r.fiber.Get("/admin", handlers.HandleAdminDashboard(dealerDeps))
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))

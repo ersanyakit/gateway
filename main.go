@@ -600,7 +600,12 @@ func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transac
 		return result, nil
 	}
 
-	result, err := chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)
+	var result *blockchain.TransactionResult
+	if txModel.ChainID == constants.TRON {
+		result, err = chain.SweepTo(ctx, *userDetails, reserveAddr)
+	} else {
+		result, err = chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sweep native transfer [chain=%d amount=%s]: %w", txModel.ChainID, txModel.Amount, err)
 	}
