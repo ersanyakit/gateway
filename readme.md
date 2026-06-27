@@ -278,7 +278,7 @@ Para hareketi veya işlem oluşturan POST endpoint'leri ayrıca HMAC imzası ist
 X-API-Key: <domain-api-key>
 X-API-Secret: <domain-api-secret>
 X-Gateway-Timestamp: <unix_seconds>
-X-Gateway-Signature: sha256=<hmac_sha256(timestamp + raw_body)>
+X-Gateway-Signature: sha256=<hmac_sha256(method + path/query + timestamp + raw_body)>
 ```
 
 Common endpoint'ler:
@@ -396,6 +396,9 @@ swag init -g main.go -o docs
 Development ortamında migration işlemi `services/database/database.go` içindeki `AutoMigrate` ile aşağıdaki ana tabloları yönetir:
 
 - `chain_states`
+- `blocks`
+- `chain_facts`
+- `deposits`
 - `domains`
 - `merchants`
 - `transactions`
@@ -404,7 +407,9 @@ Development ortamında migration işlemi `services/database/database.go` içinde
 - `products`
 - `payment_sessions`
 - `idempotency_keys`
+- `money_event_outboxes`
 - `webhook_deliveries`
+- `sweep_jobs`
 - `withdrawal_requests`
 - `refunds`
 - `price_quotes`
@@ -422,10 +427,12 @@ Uygulama başlarken şu arka plan süreçlerini başlatır:
 - Bootstrap admin hesabı oluşturma
 - Webhook retry worker
 - Payment session expiry worker
+- Deposit fact processing worker
 - Pending transaction finality worker
+- Ledger/reserve reconciliation worker
 - Bitcoin, Ethereum/EVM, Solana ve TRON listener worker'ları
 
-Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispatcher event'i ilgili wallet ile eşleştirir, transaction kaydını oluşturur, payment session durumunu günceller ve gerekiyorsa webhook gönderir.
+Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispatcher path'i once durable `chain_facts` kaydi olusturur; listener path'i payment paid yapmaz, ledger entry yazmaz, webhook enqueue etmez ve sweep job yaratmaz. Deposit fact worker bu fact'leri wallet ownership ile eslestirir, finality gate tamamlaninca transaction/deposit lifecycle'i, ledger posting, payment matching ve money event outbox akisini idempotent sekilde ilerletir.
 
 Canlı ortamda gateway ve wallet provider hazırlığını doğrulamak için `GET /api/v1/common/readiness` kullanılmalıdır. Endpoint DB erişimini, production migration politikasını, signer üretim kapısını, backlog/drift durumunu, tüm chain kayıtlarını, listener worker kayıtlarını, Trust Wallet Core HD wallet türetmesini ve canlı RPC/gRPC son blok erişimini kontrol eder; eksik veya bozuk bağımlılık varsa `503` döner.
 
