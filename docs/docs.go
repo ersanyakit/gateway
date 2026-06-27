@@ -496,7 +496,9 @@ const docTemplate = `{
                             "expired",
                             "canceled",
                             "failed",
-                            "underpaid"
+                            "underpaid",
+                            "overpaid",
+                            "partial_paid"
                         ],
                         "type": "string",
                         "description": "Filter by status",
@@ -2781,6 +2783,12 @@ const docTemplate = `{
                 "cancel_path": {
                     "type": "string"
                 },
+                "excess_amount_raw": {
+                    "type": "string"
+                },
+                "matched_amount_raw": {
+                    "type": "string"
+                },
                 "paid": {
                     "type": "boolean"
                 },
@@ -2788,6 +2796,15 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "payment_id": {
+                    "type": "string"
+                },
+                "payment_outcome": {
+                    "type": "string"
+                },
+                "payment_outcome_reason": {
+                    "type": "string"
+                },
+                "shortfall_amount_raw": {
                     "type": "string"
                 },
                 "status": {
@@ -3256,6 +3273,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"
                 },
+                "excess_amount_raw": {
+                    "type": "string",
+                    "example": ""
+                },
                 "expected_amount_raw": {
                     "type": "string",
                     "example": "25000000"
@@ -3263,6 +3284,10 @@ const docTemplate = `{
                 "expires_at": {
                     "type": "string",
                     "example": "2024-06-01T12:30:00Z"
+                },
+                "matched_amount_raw": {
+                    "type": "string",
+                    "example": "25000000"
                 },
                 "order_id": {
                     "type": "string",
@@ -3276,6 +3301,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "550e8400-e29b-41d4-a716-446655440000"
                 },
+                "payment_outcome": {
+                    "type": "string",
+                    "example": "exact"
+                },
+                "payment_outcome_reason": {
+                    "type": "string",
+                    "example": "deposit amount exactly matches expected amount"
+                },
                 "selected_asset": {
                     "type": "string",
                     "example": "USDT"
@@ -3283,6 +3316,10 @@ const docTemplate = `{
                 "selected_chain": {
                     "type": "string",
                     "example": "ethereum"
+                },
+                "shortfall_amount_raw": {
+                    "type": "string",
+                    "example": ""
                 },
                 "status": {
                     "type": "string",
@@ -3352,29 +3389,15 @@ const docTemplate = `{
         "types.V1PaymentStatisticsData": {
             "type": "object",
             "properties": {
-                "awaiting_payment": {
-                    "type": "integer",
-                    "example": 8
-                },
-                "expired": {
-                    "type": "integer",
-                    "example": 5
-                },
-                "paid": {
-                    "type": "integer",
-                    "example": 95
-                },
-                "pending": {
-                    "type": "integer",
-                    "example": 12
+                "statuses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/types.V1PaymentStatusStat"
+                    }
                 },
                 "total": {
                     "type": "integer",
                     "example": 120
-                },
-                "total_volume_usd": {
-                    "type": "string",
-                    "example": "48320.00"
                 }
             }
         },
@@ -3387,6 +3410,19 @@ const docTemplate = `{
                 "result": {
                     "type": "string",
                     "example": "ok"
+                }
+            }
+        },
+        "types.V1PaymentStatusStat": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "example": 95
+                },
+                "status": {
+                    "type": "string",
+                    "example": "paid"
                 }
             }
         },

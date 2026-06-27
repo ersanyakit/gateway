@@ -936,15 +936,7 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, fiber.StatusInternalServerError, "failed to fetch statistics")
 		}
 
-		statuses := []string{
-			models.PaymentStatusPending,
-			models.PaymentStatusAwaitingPayment,
-			models.PaymentStatusPaid,
-			models.PaymentStatusCanceled,
-			models.PaymentStatusExpired,
-			models.PaymentStatusFailed,
-			models.PaymentStatusUnderpaid,
-		}
+		statuses := v1PaymentStatisticStatuses()
 		var total int64
 		for _, s := range statuses {
 			total += stats[s]
@@ -958,6 +950,20 @@ func HandleV1PaymentStatistics(deps V1APIDeps) fiber.Handler {
 			"total":    total,
 			"statuses": statusCounts,
 		})
+	}
+}
+
+func v1PaymentStatisticStatuses() []string {
+	return []string{
+		models.PaymentStatusPending,
+		models.PaymentStatusAwaitingPayment,
+		models.PaymentStatusPaid,
+		models.PaymentStatusCanceled,
+		models.PaymentStatusExpired,
+		models.PaymentStatusFailed,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid,
 	}
 }
 

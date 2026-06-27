@@ -104,6 +104,27 @@ func TestDepositFactWorkerOwnsDepositBoundary(t *testing.T) {
 	}
 }
 
+func TestLegacyPaymentDepositHandlerUsesExplicitMatchResult(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := extractMainFunctionBody(t, string(sourceBytes), "handlePaymentDeposit")
+	for _, token := range []string{
+		"PaymentRepo.MatchFinalizedTransaction",
+		"matchResult.LedgerEligible",
+		"LedgerRepo.PostDepositAvailable",
+		"createPaymentWebhookDelivery",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("handlePaymentDeposit missing explicit matching token %q", token)
+		}
+	}
+	if strings.Contains(body, "PaymentRepo.MarkPaidByTransaction") {
+		t.Fatal("handlePaymentDeposit must not use paid-only matching wrapper")
+	}
+}
+
 func TestLedgerInvariantReconciliationLogsScopedContext(t *testing.T) {
 	sourceBytes, err := os.ReadFile("main.go")
 	if err != nil {

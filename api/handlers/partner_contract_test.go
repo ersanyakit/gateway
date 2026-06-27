@@ -101,6 +101,35 @@ func TestV1PaymentStatusTableUsesDocumentedContractShape(t *testing.T) {
 	}
 }
 
+func TestV1PaymentStatisticsStatusesCoverExplicitOutcomeStates(t *testing.T) {
+	statuses := v1PaymentStatisticStatuses()
+	expected := map[string]bool{
+		"pending":          false,
+		"awaiting_payment": false,
+		"paid":             false,
+		"expired":          false,
+		"canceled":         false,
+		"failed":           false,
+		"underpaid":        false,
+		"overpaid":         false,
+		"partial_paid":     false,
+	}
+	if len(statuses) != len(expected) {
+		t.Fatalf("stats statuses = %d, want %d", len(statuses), len(expected))
+	}
+	for _, status := range statuses {
+		if _, ok := expected[status]; !ok {
+			t.Fatalf("unexpected stats status %q", status)
+		}
+		expected[status] = true
+	}
+	for status, seen := range expected {
+		if !seen {
+			t.Fatalf("stats statuses missing %q", status)
+		}
+	}
+}
+
 func readSwaggerJSON(t *testing.T) map[string]any {
 	t.Helper()
 	body, err := os.ReadFile("../../docs/swagger.json")

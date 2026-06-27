@@ -212,22 +212,36 @@ func (s *Service) settleFinalizedTransaction(ctx context.Context, txModel *model
 		if matchResult.Status == models.PaymentStatusPaid {
 			summary.PaymentsSettled = 1
 		}
-		if s.deps.LedgerRepo != nil {
-			if matchResult.LedgerEligible {
-				if err := s.deps.LedgerRepo.PostDepositAvailable(ctx, *matchResult.Session, *txModel); err != nil {
-					return summary, err
-				}
+		if matchResult.LedgerEligible {
+			if err := s.postFinalizedDepositAvailable(ctx, *txModel, matchResult.Session); err != nil {
+				return summary, err
 			}
 		}
 		return summary, nil
 	}
-	if s.deps.LedgerRepo != nil && txModel.WalletID != nil {
-		wallet, err := s.deps.WalletRepo.FindByID(ctx, *txModel.WalletID)
-		if err == nil && isStandaloneDepositWalletProduct(wallet.ProductID) {
-			return summary, s.deps.LedgerRepo.PostStandaloneDepositAvailable(ctx, *txModel)
-		}
+	if err := s.postFinalizedDepositAvailable(ctx, *txModel, nil); err != nil {
+		return summary, err
 	}
 	return summary, nil
+}
+
+func (s *Service) postFinalizedDepositAvailable(ctx context.Context, txModel models.Transaction, session *models.PaymentSession) error {
+	if s.deps.LedgerRepo == nil || txModel.WalletID == nil {
+		return nil
+	}
+	if session != nil {
+		return s.deps.LedgerRepo.PostDepositAvailable(ctx, *session, txModel)
+	}
+	if s.deps.PaymentRepo != nil {
+		matchedSession, err := s.deps.PaymentRepo.FindByTxUniqueHash(ctx, txModel.UniqueHash)
+		if err == nil && matchedSession != nil {
+			return s.deps.LedgerRepo.PostDepositAvailable(ctx, *matchedSession, txModel)
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+	}
+	return s.deps.LedgerRepo.PostStandaloneDepositAvailable(ctx, txModel)
 }
 
 func (s *Service) factWithFinality(ctx context.Context, fact models.ChainFact) models.ChainFact {

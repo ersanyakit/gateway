@@ -111,11 +111,11 @@ func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
 
 func TestPaymentOutcomeSchemaColumnsAreRequired(t *testing.T) {
 	required := map[string]bool{
-		"PaymentOutcome":      false,
+		"PaymentOutcome":       false,
 		"PaymentOutcomeReason": false,
-		"MatchedAmountRaw":    false,
-		"ShortfallAmountRaw":  false,
-		"ExcessAmountRaw":     false,
+		"MatchedAmountRaw":     false,
+		"ShortfallAmountRaw":   false,
+		"ExcessAmountRaw":      false,
 	}
 	for _, column := range requiredSchemaColumns() {
 		if column.table != "payment_sessions" {

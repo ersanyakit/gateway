@@ -33,15 +33,15 @@ type PaymentMatchResult struct {
 }
 
 type paymentMatchDecision struct {
-	Status              string
-	Outcome             string
-	Reason              string
-	WebhookEvent        string
-	MatchedAmountRaw    string
-	ShortfallAmountRaw  string
-	ExcessAmountRaw     string
-	LedgerEligible      bool
-	ConfirmingPayment   bool
+	Status             string
+	Outcome            string
+	Reason             string
+	WebhookEvent       string
+	MatchedAmountRaw   string
+	ShortfallAmountRaw string
+	ExcessAmountRaw    string
+	LedgerEligible     bool
+	ConfirmingPayment  bool
 }
 
 func NewPaymentRepo(db *gorm.DB) *PaymentRepo {
@@ -123,6 +123,22 @@ func (r *PaymentRepo) FindByIDForDomain(ctx context.Context, merchantID, domainI
 		Preload("Wallet").
 		Where("merchant_id = ? AND domain_id = ? AND id = ?", merchantID, domainID, id).
 		First(&session).Error
+	if err != nil {
+		return nil, err
+	}
+	return &session, nil
+}
+
+func (r *PaymentRepo) FindByTxUniqueHash(ctx context.Context, uniqueHash string) (*models.PaymentSession, error) {
+	uniqueHash = strings.TrimSpace(uniqueHash)
+	if uniqueHash == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var session models.PaymentSession
+	err := r.db.WithContext(ctx).
+		Preload("Domain").
+		Preload("Wallet").
+		First(&session, "tx_unique_hash = ?", uniqueHash).Error
 	if err != nil {
 		return nil, err
 	}
@@ -438,26 +454,33 @@ func (r *PaymentRepo) MatchFinalizedTransaction(ctx context.Context, txModel mod
 	}
 
 	now := time.Now()
-	for _, candidate := range sessions {
-		if !paymentSessionAssetMatchesTransaction(candidate, txModel) {
-			continue
-		}
-		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
-		if !ok {
-			continue
-		}
-		return r.applyPaymentMatchDecision(ctx, candidate.ID, txModel, decision)
-	}
-
-	for _, candidate := range sessions {
-		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
-		if !ok {
-			continue
-		}
-		return r.applyPaymentMatchDecision(ctx, candidate.ID, txModel, decision)
+	sessionID, decision, ok := selectPaymentMatchCandidate(sessions, txModel, now)
+	if ok {
+		return r.applyPaymentMatchDecision(ctx, sessionID, txModel, decision)
 	}
 
 	return nil, nil
+}
+
+func selectPaymentMatchCandidate(sessions []models.PaymentSession, txModel models.Transaction, now time.Time) (uuid.UUID, paymentMatchDecision, bool) {
+	for _, candidate := range sessions {
+		if !paymentSessionChainMatchesTransaction(candidate, txModel) || !paymentSessionAssetMatchesTransaction(candidate, txModel) {
+			continue
+		}
+		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
+		if ok {
+			return candidate.ID, decision, true
+		}
+	}
+
+	for _, candidate := range sessions {
+		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
+		if ok {
+			return candidate.ID, decision, true
+		}
+	}
+
+	return uuid.Nil, paymentMatchDecision{}, false
 }
 
 func (r *PaymentRepo) applyPaymentMatchDecision(ctx context.Context, sessionID uuid.UUID, txModel models.Transaction, decision paymentMatchDecision) (*PaymentMatchResult, error) {
@@ -559,13 +582,13 @@ func paymentMatchDecisionForSession(session models.PaymentSession, txModel model
 	switch txAmount.Cmp(expected) {
 	case 0:
 		return paymentMatchDecision{
-			Status:             models.PaymentStatusPaid,
-			Outcome:            models.PaymentOutcomeExact,
-			Reason:             "deposit amount exactly matches expected amount",
-			WebhookEvent:       constants.WebhookEventPaymentSucceeded,
-			MatchedAmountRaw:   txModel.Amount,
-			LedgerEligible:     true,
-			ConfirmingPayment:  true,
+			Status:            models.PaymentStatusPaid,
+			Outcome:           models.PaymentOutcomeExact,
+			Reason:            "deposit amount exactly matches expected amount",
+			WebhookEvent:      constants.WebhookEventPaymentSucceeded,
+			MatchedAmountRaw:  txModel.Amount,
+			LedgerEligible:    true,
+			ConfirmingPayment: true,
 		}, true
 	case -1:
 		shortfall := new(big.Int).Sub(expected, txAmount).String()
@@ -617,6 +640,10 @@ func failedPaymentMatchDecision(txModel models.Transaction, outcome string, reas
 func paymentSessionAssetMatchesTransaction(session models.PaymentSession, txModel models.Transaction) bool {
 	return strings.EqualFold(strings.TrimSpace(session.SelectedSymbol), strings.TrimSpace(txModel.Symbol)) &&
 		paymentTokenMatches(session.SelectedToken, txModel.Token)
+}
+
+func paymentSessionChainMatchesTransaction(session models.PaymentSession, txModel models.Transaction) bool {
+	return session.SelectedChainID != nil && *session.SelectedChainID == txModel.ChainID
 }
 
 func paymentTokenMatches(expected, actual *string) bool {

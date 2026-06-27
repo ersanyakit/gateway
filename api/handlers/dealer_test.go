@@ -239,6 +239,23 @@ func TestV1BalanceEndpointsUseLedgerOnly(t *testing.T) {
 	}
 }
 
+func TestAdminTestDepositPaymentMatchUsesExplicitOutcomeBoundary(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	body := extractHandlerFunctionBody(t, source, "deliverAdminPaymentWebhookIfMatched")
+	for _, token := range []string{
+		"deps.PaymentRepo.MatchFinalizedTransaction",
+		"matchResult.Session",
+		"deps.WebhookDeliveryRepo.EnqueuePayment",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("admin test deposit payment match helper missing %q", token)
+		}
+	}
+	if strings.Contains(body, "MarkPaidByTransaction") {
+		t.Fatal("admin test deposit payment match helper must not use paid-only wrapper")
+	}
+}
+
 func TestAddTokenAmountRawSumsSignedLedgerValues(t *testing.T) {
 	tests := map[string]struct {
 		current string

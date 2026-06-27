@@ -34,7 +34,25 @@ func TestIntegrationGuideMatchesEpic1PartnerContract(t *testing.T) {
 	}
 
 	statusSection := markdownSection(guide, "## Query Payment", "## Create Payout Request")
-	for _, token := range []string{"`active`", "`pending`", "`confirming`", "`paid`", "`expired`", "`canceled`", "`failed`", "`underpaid`", "`payable`", "`terminal`"} {
+	for _, token := range []string{
+		"`active`",
+		"`pending`",
+		"`confirming`",
+		"`paid`",
+		"`expired`",
+		"`canceled`",
+		"`failed`",
+		"`underpaid`",
+		"`overpaid`",
+		"`partial_paid`",
+		"`payable`",
+		"`terminal`",
+		"`payment_outcome`",
+		"`matched_amount_raw`",
+		"`shortfall_amount_raw`",
+		"`excess_amount_raw`",
+		"partial deposits are not automatically aggregated",
+	} {
 		requireContains(t, statusSection, token)
 	}
 
@@ -308,6 +326,19 @@ func TestSwaggerContainsEpic1PartnerContract(t *testing.T) {
 	requireOperationParam(t, staticCreate, "X-Gateway-Signature")
 	requireOperationResponse(t, staticCreate, "200", "#/definitions/types.V1StaticAddressResponse")
 
+	paymentHistory := operation(t, paths, "/api/v1/payment/history", "get")
+	requireOperationParamEnum(t, paymentHistory, "status", []string{
+		"pending",
+		"awaiting_payment",
+		"paid",
+		"expired",
+		"canceled",
+		"failed",
+		"underpaid",
+		"overpaid",
+		"partial_paid",
+	})
+
 	checkoutStatus := operation(t, paths, "/checkout/{token}/status.json", "get")
 	requireOperationResponse(t, checkoutStatus, "200", "#/definitions/types.PaymentStatusResponse")
 
@@ -326,10 +357,22 @@ func TestSwaggerContainsEpic1PartnerContract(t *testing.T) {
 	}
 
 	checkoutPayload := definitionProperties(t, defs, "types.PaymentStatusResponse")
-	for _, field := range []string{"success", "status", "paid", "payment_id", "tx_hash", "success_path", "cancel_path", "payable", "terminal"} {
+	for _, field := range []string{"success", "status", "paid", "payment_id", "tx_hash", "success_path", "cancel_path", "payable", "terminal", "payment_outcome", "payment_outcome_reason", "matched_amount_raw", "shortfall_amount_raw", "excess_amount_raw"} {
 		if _, ok := checkoutPayload[field]; !ok {
 			t.Fatalf("types.PaymentStatusResponse missing property %q", field)
 		}
+	}
+
+	paymentDetail := definitionProperties(t, defs, "types.V1PaymentDetail")
+	for _, field := range []string{"payment_outcome", "payment_outcome_reason", "matched_amount_raw", "shortfall_amount_raw", "excess_amount_raw"} {
+		if _, ok := paymentDetail[field]; !ok {
+			t.Fatalf("types.V1PaymentDetail missing property %q", field)
+		}
+	}
+
+	paymentStats := definitionProperties(t, defs, "types.V1PaymentStatisticsData")
+	if _, ok := paymentStats["statuses"]; !ok {
+		t.Fatal("types.V1PaymentStatisticsData missing statuses property")
 	}
 }
 
@@ -389,6 +432,42 @@ func requireOperationParam(t *testing.T, operation map[string]any, name string) 
 		if paramObj["name"] == name {
 			return
 		}
+	}
+	t.Fatalf("operation missing parameter %q", name)
+}
+
+func requireOperationParamEnum(t *testing.T, operation map[string]any, name string, want []string) {
+	t.Helper()
+	params, ok := operation["parameters"].([]any)
+	if !ok {
+		t.Fatalf("operation has no parameters")
+	}
+	for _, param := range params {
+		paramObj := asMap(t, param, "parameter")
+		if paramObj["name"] != name {
+			continue
+		}
+		rawEnum, ok := paramObj["enum"].([]any)
+		if !ok {
+			t.Fatalf("parameter %q has no enum", name)
+		}
+		got := make(map[string]bool, len(rawEnum))
+		for _, raw := range rawEnum {
+			value, ok := raw.(string)
+			if !ok {
+				t.Fatalf("parameter %q enum value is not string: %#v", name, raw)
+			}
+			got[value] = true
+		}
+		for _, value := range want {
+			if !got[value] {
+				t.Fatalf("parameter %q enum missing %q from %#v", name, value, got)
+			}
+		}
+		if len(got) != len(want) {
+			t.Fatalf("parameter %q enum size = %d, want %d: %#v", name, len(got), len(want), got)
+		}
+		return
 	}
 	t.Fatalf("operation missing parameter %q", name)
 }

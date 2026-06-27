@@ -27,6 +27,9 @@ webhook:
     - payment_succeeded
     - payment_failed
     - payment_expired
+    - payment_underpaid
+    - payment_overpaid
+    - payment_partial_paid
     - payout.requested.v1
     - payout.broadcast.v1
     - payout.finalized.v1
@@ -309,6 +312,8 @@ Payment info/history statuses:
 - `canceled`
 - `failed`
 - `underpaid`
+- `overpaid`
+- `partial_paid`
 
 Checkout polling uses:
 
@@ -328,7 +333,12 @@ Example checkout status response:
   "success_path": "/checkout/token/return/success",
   "cancel_path": "/checkout/token/cancel",
   "payable": true,
-  "terminal": false
+  "terminal": false,
+  "payment_outcome": "partial_unsupported",
+  "payment_outcome_reason": "partial deposits are not automatically aggregated for checkout settlement",
+  "matched_amount_raw": "12500000",
+  "shortfall_amount_raw": "12500000",
+  "excess_amount_raw": ""
 }
 ```
 
@@ -342,12 +352,24 @@ Documented checkout status values:
 - `canceled`
 - `failed`
 - `underpaid`
+- `overpaid`
+- `partial_paid`
 
 ```json
-["active", "pending", "confirming", "paid", "expired", "canceled", "failed", "underpaid"]
+["active", "pending", "confirming", "paid", "expired", "canceled", "failed", "underpaid", "overpaid", "partial_paid"]
 ```
 
-`payable` is false for terminal states or sessions that should not accept a new payment attempt. `terminal` is true for final payer-facing states such as `paid`, `expired`, `canceled`, `failed`, and `underpaid`.
+`payable` is false for terminal states or sessions that should not accept a new payment attempt. `terminal` is true for final payer-facing states such as `paid`, `expired`, `canceled`, `failed`, `underpaid`, `overpaid`, and `partial_paid`.
+
+Payment outcome metadata appears when a finalized deposit creates an exception outcome:
+
+- `payment_outcome`: `exact`, `underpaid`, `overpaid`, `partial_unsupported`, `expired_after_deposit`, `wrong_asset`, or `wrong_chain`.
+- `payment_outcome_reason`: safe explanation for merchant/operator follow-up.
+- `matched_amount_raw`: raw integer amount received on-chain.
+- `shortfall_amount_raw`: raw integer shortfall for `underpaid` and `partial_paid`.
+- `excess_amount_raw`: raw integer excess for `overpaid`.
+
+Exact amount matches are the only automatic `paid` outcome. Any amount below expected becomes `underpaid` or terminal `partial_paid` according to policy. Automatic aggregation of multiple partial checkout deposits is intentionally unsupported; the first finalized partial deposit records `partial_paid` with shortfall metadata for reconciliation or merchant follow-up. Any amount above expected becomes `overpaid`. Wrong asset, wrong chain, and finalized-after-expiry deposits do not become paid.
 
 Terminal checkout example:
 
@@ -593,6 +615,9 @@ Event examples:
 - `payment_succeeded`
 - `payment_failed`
 - `payment_expired`
+- `payment_underpaid`
+- `payment_overpaid`
+- `payment_partial_paid`
 
 ```json
 {
@@ -615,6 +640,11 @@ Event examples:
   "decimals": 6,
   "expected_amount_raw": "25000000",
   "deposit_address": "0xDepositAddress",
+  "payment_outcome": "exact",
+  "payment_outcome_reason": "deposit amount exactly matches expected amount",
+  "matched_amount_raw": "25000000",
+  "shortfall_amount_raw": "",
+  "excess_amount_raw": "",
   "tx_hash": "0xhash",
   "tx_unique_hash": "1-0xhash-log:0",
   "created_at": "2026-06-06T09:55:00Z",

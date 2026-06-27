@@ -3344,10 +3344,11 @@ func deliverAdminPaymentWebhookIfMatched(ctx context.Context, deps DealerDeps, t
 	if deps.PaymentRepo == nil || deps.WebhookDeliveryRepo == nil {
 		return false, nil
 	}
-	session, changed, err := deps.PaymentRepo.MarkPaidByTransaction(ctx, txModel)
-	if err != nil || !changed || session == nil {
+	matchResult, err := deps.PaymentRepo.MatchFinalizedTransaction(ctx, txModel)
+	if err != nil || matchResult == nil || !matchResult.Changed || matchResult.Session == nil {
 		return false, err
 	}
+	session := matchResult.Session
 	_, _, err = deps.WebhookDeliveryRepo.EnqueuePayment(ctx, session.Domain, *session)
 	return true, err
 }

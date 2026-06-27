@@ -487,15 +487,15 @@ func paymentStatusTerminal(status string) bool {
 }
 
 const (
-	checkoutStateActive     = "active"
-	checkoutStatePending    = "pending"
-	checkoutStateConfirming = "confirming"
-	checkoutStatePaid       = "paid"
-	checkoutStateExpired    = "expired"
-	checkoutStateCanceled   = "canceled"
-	checkoutStateFailed     = "failed"
-	checkoutStateUnderpaid  = "underpaid"
-	checkoutStateOverpaid   = "overpaid"
+	checkoutStateActive      = "active"
+	checkoutStatePending     = "pending"
+	checkoutStateConfirming  = "confirming"
+	checkoutStatePaid        = "paid"
+	checkoutStateExpired     = "expired"
+	checkoutStateCanceled    = "canceled"
+	checkoutStateFailed      = "failed"
+	checkoutStateUnderpaid   = "underpaid"
+	checkoutStateOverpaid    = "overpaid"
 	checkoutStatePartialPaid = "partial_paid"
 )
 
@@ -730,12 +730,15 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
+		if paymentStatusTerminal(session.Status) {
+			if session.Status == models.PaymentStatusPaid {
+				return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
+			}
+			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
+		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
 			return renderPaymentError(c, fiber.StatusGone, "This payment session has expired.")
-		}
-		if session.Status == models.PaymentStatusPaid {
-			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
 		}
 
 		chainID, err := strconv.ParseInt(c.FormValue("chain_id"), 10, 64)
@@ -826,8 +829,11 @@ func HandleCheckoutChangeAsset(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		if session.Status == models.PaymentStatusPaid {
-			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
+		if paymentStatusTerminal(session.Status) {
+			if session.Status == models.PaymentStatusPaid {
+				return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
+			}
+			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
@@ -1008,7 +1014,7 @@ func HandleCheckoutCancel(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
-		if session.Status != models.PaymentStatusPaid {
+		if !paymentStatusTerminal(session.Status) {
 			session, _, err = deps.PaymentRepo.Cancel(c.Context(), session.SessionToken)
 			if err == nil {
 				deliverPaymentWebhook(c.Context(), deps, session)
@@ -1446,12 +1452,12 @@ func checkoutLanguage(c fiber.Ctx) string {
 }
 
 func markPaymentCanceledOrExpired(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession, status string) error {
-	if session == nil || session.Status == models.PaymentStatusPaid {
+	if session == nil || paymentStatusTerminal(session.Status) {
 		return nil
 	}
 	if status == models.PaymentStatusExpired {
 		session.Status = models.PaymentStatusExpired
-		session.WebhookEvent = "payment_failed"
+		session.WebhookEvent = constants.WebhookEventPaymentExpired
 		session.UpdatedAt = time.Now()
 		if err := deps.PaymentRepo.DB().WithContext(ctx).Save(session).Error; err != nil {
 			return err

@@ -37,6 +37,9 @@ timestamp + raw_body
 | `payment.succeeded.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Payment reached a successful terminal state. |
 | `payment.failed.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Payment reached a failed terminal state or was corrected. |
 | `payment.expired.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Checkout expired before successful settlement. |
+| `payment.underpaid.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Payment received less than expected and needs follow-up. |
+| `payment.overpaid.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Payment received more than expected and may require refund or reconciliation. |
+| `payment.partial_paid.v1` | payment | payment service | merchant, exchange, operator diagnostics | yes | Partial deposit received; automatic checkout aggregation is unsupported. |
 | `withdrawal.requested.v1` | withdrawal | withdrawal service | merchant, exchange, operator diagnostics | no | Withdrawal request was created and awaits policy checks. |
 | `withdrawal.broadcast.v1` | withdrawal | withdrawal service | merchant, exchange, operator diagnostics | no | Withdrawal transaction was broadcast and awaits finality. |
 | `withdrawal.finalized.v1` | withdrawal | withdrawal service | merchant, exchange, operator diagnostics | yes | Withdrawal completed on-chain. |
@@ -67,6 +70,9 @@ Legacy underscore event names remain supported until a published catalog migrati
 | `payment_succeeded` | Alias of `payment.succeeded.v1`. |
 | `payment_failed` | Alias of `payment.failed.v1`. |
 | `payment_expired` | Alias of `payment.expired.v1`. |
+| `payment_underpaid` | Alias of `payment.underpaid.v1`. |
+| `payment_overpaid` | Alias of `payment.overpaid.v1`. |
+| `payment_partial_paid` | Alias of `payment.partial_paid.v1`. |
 
 The current implementation also emits `payout.*.v1` names for withdrawal lifecycle callbacks. They remain current compatibility aliases until a versioned withdrawal naming migration is published:
 
@@ -84,7 +90,7 @@ No emitted event name should be removed silently. Removal requires a new catalog
 
 Deposit events add chain and transaction context: `chain_id`, `tx_hash`, `tx_unique_hash`, `log_index`, `amount_raw`, `symbol`, `token`, source address, destination address, and confirmation count.
 
-Payment events add checkout context: `payment_id`, `order_id`, amount/currency fields, optional transaction hash, and failure or expiry reason when applicable.
+Payment events add checkout context: `payment_id`, `order_id`, amount/currency fields, optional transaction hash, and failure, expiry, or mismatch outcome reason when applicable. Explicit mismatch outcomes include `payment_outcome`, `matched_amount_raw`, `shortfall_amount_raw`, and `excess_amount_raw` where relevant.
 
 Withdrawal, refund, and sweep events add resource-specific money movement fields: wallet/resource id, chain/symbol/token, integer raw amount, destination address when applicable, transaction hash when broadcast, and failure/rejection reason when terminal failure occurs.
 
