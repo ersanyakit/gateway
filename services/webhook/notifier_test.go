@@ -329,6 +329,59 @@ func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
 	}
 }
 
+func TestNotifierDeliverPaymentIncludesReorgCorrectionRelation(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received PaymentPayload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	session := models.PaymentSession{
+		ID:                   uuid.New(),
+		SessionToken:         "sess_reorg",
+		MerchantID:           uuid.New(),
+		DomainID:             uuid.New(),
+		WalletID:             uuid.New(),
+		OrderID:              "order-reorg",
+		Amount:               "25.00",
+		Currency:             "USDT",
+		Status:               models.PaymentStatusFailed,
+		PaymentOutcome:       models.PaymentOutcomeExact,
+		PaymentOutcomeReason: models.PaymentOutcomeReasonReorged,
+		WebhookEvent:         constants.WebhookEventPaymentFailed,
+		CreatedAt:            time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverPayment(context.Background(), models.Domain{
+		ID:            session.DomainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.OriginalEventID != session.ID.String()+":"+constants.WebhookEventPaymentSucceeded ||
+		received.OriginalResourceID != session.ID.String() ||
+		received.CorrectionReason != models.PaymentOutcomeReasonReorged {
+		t.Fatalf("payment correction relation fields = %#v", received)
+	}
+}
+
 func TestNotifierDeliveryErrorRedactsCallbackBody(t *testing.T) {
 	t.Setenv("MASTER_KEY", "webhook-test-master-key")
 	t.Setenv("APP_ENV", "test")

@@ -75,6 +75,10 @@ boylece sistem canonical chain degisimlerinden audit trail'i koruyarak recover e
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
+### Review Findings
+
+- [x] [Review][Patch] Reorg-corrected `payment.failed.v1` webhooks must carry `original_event_id`, `original_resource_id`, and `correction_reason` like transaction correction events [`services/webhook/notifier.go`] — fixed with payment payload relation fields, legacy paid outcome backfill, docs updates, and notifier/repository coverage.
+
 ## Dev Notes
 
 ### Baseline Implementation Snapshot
@@ -178,6 +182,30 @@ Codex
 - 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestTransactionRepoParentHashMismatchReorgsCanonicalBlockRange -v`.
 - 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
 - 2026-06-27: Final validation passed after ordering fix: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`, `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`, and whitespace checks.
+- 2026-06-27: Senior review found missing payment correction relation fields and incomplete File List/docs evidence; auto-fixed payload, preserved outcome derivation, docs, tests, and story record.
+
+### Senior Developer Review (AI)
+
+Reviewer: Codex on 2026-06-27
+
+Outcome: Approved after automatic fixes.
+
+Findings fixed:
+
+- [HIGH][AC3] Payment reorg correction reopened `payment_failed` delivery state, but the payment webhook payload did not include `original_event_id`, `original_resource_id`, or `correction_reason`. Fixed by deriving relation fields from preserved `PaymentOutcome`, backfilling legacy paid outcomes to `exact`, adding relation fields to `services/webhook.PaymentPayload`, and covering the reorg payment payload in `services/webhook/notifier_test.go`.
+- [MEDIUM][AC3/AC5] The money event documentation did not describe reorg-corrected `payment.failed.v1` relation fields even though the story marked webhook/catalog contracts complete. Fixed `docs/money-event-catalog.md` and `docs/integration-guide.md`.
+- [MEDIUM] Story File List was incomplete against the baseline diff: `main.go`, `main_chain_fact_contract_test.go`, `models/payment_session.go`, `services/webhook/event_catalog_test.go`, `docs/integration_contract_test.go`, and `docs/money-event-catalog.md` were missing or newly touched. Fixed this story record.
+
+Review validation checklist:
+
+- Story file loaded and status verified.
+- Story 3.5 IDs resolved from metadata and filename.
+- Project context, architecture spine, PRD/epic references, and local story context reviewed.
+- MCP resource search performed; no MCP documentation resources were available in this environment.
+- Acceptance Criteria and completed tasks cross-checked against implementation evidence.
+- File List compared with `git diff eb422ee --name-status` and current working tree changes.
+- Code, security, test quality, docs, and schema evidence reviewed for changed source files.
+- 2026-06-27: Code review found missing correction relation fields on reorg-corrected payment failure webhooks; added payload/catalog/docs support and regression coverage.
 
 ### Completion Notes List
 
@@ -196,6 +224,8 @@ Codex
 - Parent mismatch correction marks the affected canonical block range reorged and creates reconciliation with the affected from/to block range, not only the trigger block.
 - Parent/chain-continuity reorg detection now runs before generic same-height hash conflict handling, preserving `parent_mismatch` correction reasons and reconciliation scope.
 - Added checkout failed-state and ledger reversal skip/idempotency coverage for reorg-corrected payment and ledger paths.
+- Reorg-corrected payment failed webhooks now include correction relation fields derived from the preserved payment outcome, including legacy paid sessions backfilled to the `exact` outcome.
+- Reorg-corrected `payment.failed.v1` webhook payloads now include correction relation fields when the original payment lifecycle event can be derived from preserved outcome metadata.
 
 ### File List
 
@@ -205,10 +235,15 @@ Codex
 - `_bmad-output/implementation-artifacts/tests/test-summary.md`
 - `api/handlers/payment_test.go`
 - `constants/webhook_events.go`
+- `docs/integration_contract_test.go`
 - `docs/integration-guide.md`
+- `docs/money-event-catalog.md`
+- `main.go`
+- `main_chain_fact_contract_test.go`
 - `models/block.go`
 - `models/chain_fact.go`
 - `models/deposit.go`
+- `models/payment_session.go`
 - `models/transactions.go`
 - `repositories/chain_fact_repo.go`
 - `repositories/deposit_repo.go`
@@ -222,6 +257,7 @@ Codex
 - `services/deposits/service.go`
 - `services/deposits/service_test.go`
 - `services/webhook/event_catalog.go`
+- `services/webhook/event_catalog_test.go`
 - `services/webhook/notifier.go`
 - `services/webhook/notifier_test.go`
 - `types/transaction.go`
@@ -235,3 +271,4 @@ Codex
 - 2026-06-27: Aligned story record with final diff, EVM parent-hash propagation, ledger reversal skip coverage, checkout reorg-failed state coverage, and final validation results.
 - 2026-06-27: Added deterministic parent/child fork simulation and reconciliation range scoping for canonical block parent mismatches.
 - 2026-06-27: Fixed parent-mismatch correction ordering, reran Postgres integration/full regression/static checks, and moved story to done.
+- 2026-06-27: Addressed payment correction webhook review finding by adding relation fields to `payment.failed.v1` payloads, preserving/backfilling outcome context, updating docs, and adding tests.

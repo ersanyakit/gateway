@@ -419,7 +419,93 @@ func TestPaymentRepoMarkReorgedUpdatesAllMatchedOutcomeStatuses(t *testing.T) {
 			if updated.PaymentOutcomeReason != "matched transaction was reorged" {
 				t.Fatalf("reorg reason = %q", updated.PaymentOutcomeReason)
 			}
+			if updated.PaymentOutcome != models.PaymentOutcomeUnderpaid {
+				t.Fatalf("explicit payment outcome changed to %q", updated.PaymentOutcome)
+			}
 		})
+	}
+}
+
+func TestPaymentRepoMarkReorgedBackfillsLegacyPaidOutcome(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {
+		t.Fatalf("automigrate payment reorg models: %v", err)
+	}
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	txUniqueHash := "legacy-paid-reorg-" + uuid.NewString()
+	txHash := "0x" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	now := time.Now()
+
+	if err := db.WithContext(ctx).Create(&models.Merchant{
+		ID:        merchantID,
+		Name:      "Legacy Paid Reorg",
+		Email:     "legacy-paid-reorg-" + uuid.NewString() + "@example.test",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.Domain{
+		ID:          domainID,
+		MerchantID:  merchantID,
+		DomainURL:   "legacy-paid-reorg.example.test",
+		APIKey:      "pk_" + uuid.NewString(),
+		APISecret:   "secret",
+		HDAccountID: 7004,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}).Error; err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.Wallet{
+		ID:              walletID,
+		HDAccountID:     7004,
+		HDAddressId:     1,
+		MerchantID:      merchantID,
+		DomainID:        domainID,
+		ProductID:       "checkout:legacy-paid",
+		UserID:          "user-" + uuid.NewString(),
+		EthereumAddress: "0x" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}).Error; err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+
+	session := models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "legacy-paid-reorg-" + uuid.NewString(),
+		MerchantID:   merchantID,
+		DomainID:     domainID,
+		WalletID:     walletID,
+		OrderID:      "order-" + uuid.NewString(),
+		Amount:       "10.00",
+		Currency:     "USD",
+		Status:       models.PaymentStatusPaid,
+		TxUniqueHash: &txUniqueHash,
+		TxHash:       &txHash,
+		WebhookEvent: constants.WebhookEventPaymentSucceeded,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := db.WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("seed legacy paid session: %v", err)
+	}
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, txUniqueHash)
+	}); err != nil {
+		t.Fatalf("mark reorged: %v", err)
+	}
+
+	var updated models.PaymentSession
+	if err := db.WithContext(ctx).First(&updated, "id = ?", session.ID).Error; err != nil {
+		t.Fatalf("load updated session: %v", err)
+	}
+	if updated.PaymentOutcome != models.PaymentOutcomeExact || updated.PaymentOutcomeReason != models.PaymentOutcomeReasonReorged {
+		t.Fatalf("legacy paid correction outcome = %q/%q", updated.PaymentOutcome, updated.PaymentOutcomeReason)
 	}
 }
 

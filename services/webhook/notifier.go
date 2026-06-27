@@ -108,6 +108,9 @@ type PaymentPayload struct {
 	ExcessAmountRaw    string  `json:"excess_amount_raw,omitempty"`
 	TxHash             *string `json:"tx_hash,omitempty"`
 	TxUniqueHash       *string `json:"tx_unique_hash,omitempty"`
+	OriginalEventID    string  `json:"original_event_id,omitempty"`
+	OriginalResourceID string  `json:"original_resource_id,omitempty"`
+	CorrectionReason   string  `json:"correction_reason,omitempty"`
 	CreatedAt          string  `json:"created_at"`
 	PaidAt             *string `json:"paid_at,omitempty"`
 }
@@ -224,6 +227,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 		value := session.PaidAt.UTC().Format(time.RFC3339Nano)
 		paidAt = &value
 	}
+	originalEventID, originalResourceID, correctionReason := paymentCorrectionRelation(session)
 
 	payload := PaymentPayload{
 		EventID:            PaymentEventID(session),
@@ -253,6 +257,9 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 		ExcessAmountRaw:    session.ExcessAmountRaw,
 		TxHash:             session.TxHash,
 		TxUniqueHash:       session.TxUniqueHash,
+		OriginalEventID:    originalEventID,
+		OriginalResourceID: originalResourceID,
+		CorrectionReason:   correctionReason,
 		CreatedAt:          session.CreatedAt.UTC().Format(time.RFC3339Nano),
 		PaidAt:             paidAt,
 	}
@@ -294,6 +301,36 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 	}
 
 	return nil
+}
+
+func paymentCorrectionRelation(session models.PaymentSession) (string, string, string) {
+	if session.PaymentOutcomeReason != models.PaymentOutcomeReasonReorged {
+		return "", "", ""
+	}
+	originalEventType := paymentOriginalEventType(session)
+	if originalEventType == "" {
+		return "", session.ID.String(), session.PaymentOutcomeReason
+	}
+	return session.ID.String() + ":" + originalEventType, session.ID.String(), session.PaymentOutcomeReason
+}
+
+func paymentOriginalEventType(session models.PaymentSession) string {
+	switch session.PaymentOutcome {
+	case models.PaymentOutcomeExact:
+		return constants.WebhookEventPaymentSucceeded
+	case models.PaymentOutcomeUnderpaid:
+		return constants.WebhookEventPaymentUnderpaid
+	case models.PaymentOutcomeOverpaid:
+		return constants.WebhookEventPaymentOverpaid
+	case models.PaymentOutcomePartialUnsupported:
+		return constants.WebhookEventPaymentPartialPaid
+	case models.PaymentOutcomeExpiredAfterDeposit:
+		return constants.WebhookEventPaymentExpired
+	case models.PaymentOutcomeWrongAsset, models.PaymentOutcomeWrongChain:
+		return constants.WebhookEventPaymentFailed
+	default:
+		return ""
+	}
 }
 
 func (n *Notifier) DeliverRaw(ctx context.Context, domain models.Domain, eventType, eventID, eventVersion string, body []byte) error {

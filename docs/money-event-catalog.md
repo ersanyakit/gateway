@@ -90,7 +90,7 @@ No emitted event name should be removed silently. Removal requires a new catalog
 
 Deposit events add chain and transaction context: `chain_id`, `tx_hash`, `tx_unique_hash`, `log_index`, `amount_raw`, `symbol`, `token`, source address, destination address, and confirmation count.
 
-Payment events add checkout context: `payment_id`, `order_id`, amount/currency fields, optional transaction hash, and failure, expiry, or mismatch outcome reason when applicable. Explicit mismatch outcomes include `payment_outcome`, `matched_amount_raw`, `shortfall_amount_raw`, and `excess_amount_raw` where relevant.
+Payment events add checkout context: `payment_id`, `order_id`, amount/currency fields, optional transaction hash, and failure, expiry, or mismatch outcome reason when applicable. Explicit mismatch outcomes include `payment_outcome`, `matched_amount_raw`, `shortfall_amount_raw`, and `excess_amount_raw` where relevant. Reorg-corrected `payment.failed.v1` payloads also include `original_event_id`, `original_resource_id`, and `correction_reason`.
 
 Withdrawal, refund, and sweep events add resource-specific money movement fields: wallet/resource id, chain/symbol/token, integer raw amount, destination address when applicable, transaction hash when broadcast, and failure/rejection reason when terminal failure occurs.
 
@@ -98,7 +98,7 @@ Webhook delivery events add delivery id, target URL, attempt count, retry timing
 
 ## Corrections And Reorgs
 
-`transaction.reorged.v1` is a correction event. It includes `original_event_id`, `original_resource_id`, and `correction_reason` so consumers can relate the correction to previously processed state.
+`transaction.reorged.v1` is a correction event. It includes `original_event_id`, `original_resource_id`, and `correction_reason` so consumers can relate the correction to previously processed state. When a reorg corrects a payment lifecycle to failed, the `payment.failed.v1` payload carries the same relation fields and points back to the prior payment lifecycle event where it can be derived from the preserved matching outcome.
 
 Correction handling is non-destructive: prior event history remains immutable. Consumers should apply the correction by appending a compensating state transition, not by deleting prior event records.
 
