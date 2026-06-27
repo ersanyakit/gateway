@@ -2,6 +2,7 @@ package reconciliation
 
 import (
 	"context"
+	"encoding/json"
 	"math/big"
 	"net/url"
 	"os"
@@ -130,15 +131,15 @@ func TestReserveServiceOpenJobCreatesScopedReconciliation(t *testing.T) {
 	if job.ScopeKey != "reserve:deficit:1:"+merchantID.String()+":ETH" || job.ResourceID != "ETH" {
 		t.Fatalf("reserve reconciliation scope = key %q resource %q", job.ScopeKey, job.ResourceID)
 	}
-	for _, token := range []string{
-		`"kind":"deficit"`,
-		`"merchant_id":"` + merchantID.String() + `"`,
-		`"chain_id":1`,
-		`"symbol":"ETH"`,
-	} {
-		if !strings.Contains(job.EvidenceJSON, token) {
-			t.Fatalf("reserve reconciliation evidence missing %s: %s", token, job.EvidenceJSON)
-		}
+	var evidence map[string]any
+	if err := json.Unmarshal([]byte(job.EvidenceJSON), &evidence); err != nil {
+		t.Fatalf("parse reserve reconciliation evidence: %v", err)
+	}
+	if evidence["kind"] != "deficit" ||
+		evidence["merchant_id"] != merchantID.String() ||
+		evidence["chain_id"] != float64(constants.Ethereum) ||
+		evidence["symbol"] != "ETH" {
+		t.Fatalf("reserve reconciliation evidence = %#v raw=%s", evidence, job.EvidenceJSON)
 	}
 	for _, token := range []string{merchantID.String(), "ETH"} {
 		if !strings.Contains(job.AffectedResourceIDsJSON, token) {
