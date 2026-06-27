@@ -23,6 +23,27 @@ type PaymentRepo struct {
 	db *gorm.DB
 }
 
+type PaymentMatchResult struct {
+	Session        *models.PaymentSession
+	Changed        bool
+	Status         string
+	Outcome        string
+	WebhookEvent   string
+	LedgerEligible bool
+}
+
+type paymentMatchDecision struct {
+	Status              string
+	Outcome             string
+	Reason              string
+	WebhookEvent        string
+	MatchedAmountRaw    string
+	ShortfallAmountRaw  string
+	ExcessAmountRaw     string
+	LedgerEligible      bool
+	ConfirmingPayment   bool
+}
+
 func NewPaymentRepo(db *gorm.DB) *PaymentRepo {
 	return &PaymentRepo{db: db}
 }
@@ -366,7 +387,13 @@ func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.Payment
 
 func paymentStatusBlocksCancel(status string) bool {
 	switch status {
-	case models.PaymentStatusPaid, models.PaymentStatusCanceled, models.PaymentStatusExpired, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+	case models.PaymentStatusPaid,
+		models.PaymentStatusCanceled,
+		models.PaymentStatusExpired,
+		models.PaymentStatusFailed,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid:
 		return true
 	default:
 		return false
@@ -374,102 +401,237 @@ func paymentStatusBlocksCancel(status string) bool {
 }
 
 func (r *PaymentRepo) MarkPaidByTransaction(ctx context.Context, txModel models.Transaction) (*models.PaymentSession, bool, error) {
+	matchResult, err := r.MatchFinalizedTransaction(ctx, txModel)
+	if err != nil || matchResult == nil || matchResult.Session == nil {
+		return nil, false, err
+	}
+	if matchResult.Changed && matchResult.Status == models.PaymentStatusPaid {
+		return matchResult.Session, true, nil
+	}
+	return nil, false, nil
+}
+
+func (r *PaymentRepo) MatchFinalizedTransaction(ctx context.Context, txModel models.Transaction) (*PaymentMatchResult, error) {
 	if txModel.WalletID == nil || txModel.Amount == "" {
-		return nil, false, nil
+		return nil, nil
 	}
 	if txModel.Status != models.TransactionStatusConfirmed || txModel.FinalizedAt == nil {
-		return nil, false, nil
+		return nil, nil
 	}
 
 	txAmount, ok := new(big.Int).SetString(txModel.Amount, 10)
 	if !ok || txAmount.Sign() <= 0 {
-		return nil, false, nil
+		return nil, nil
+	}
+	if r == nil || r.db == nil {
+		return nil, nil
 	}
 
 	var sessions []models.PaymentSession
-	query := r.db.WithContext(ctx).
+	if err := r.db.WithContext(ctx).
 		Preload("Domain").
 		Where("wallet_id = ?", *txModel.WalletID).
-		Where("status = ?", models.PaymentStatusAwaitingPayment).
-		Where("selected_chain_id = ?", txModel.ChainID).
-		Where("selected_symbol = ?", txModel.Symbol)
-
-	if txModel.Token == nil || *txModel.Token == "" {
-		query = query.Where("selected_token IS NULL OR selected_token = ''")
-	} else {
-		query = query.Where("LOWER(selected_token) = LOWER(?)", *txModel.Token)
+		Where("status IN ?", []string{models.PaymentStatusAwaitingPayment, models.PaymentStatusExpired}).
+		Order("created_at ASC").
+		Find(&sessions).Error; err != nil {
+		return nil, err
 	}
 
-	if err := query.Order("created_at ASC").Find(&sessions).Error; err != nil {
-		return nil, false, err
+	now := time.Now()
+	for _, candidate := range sessions {
+		if !paymentSessionAssetMatchesTransaction(candidate, txModel) {
+			continue
+		}
+		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
+		if !ok {
+			continue
+		}
+		return r.applyPaymentMatchDecision(ctx, candidate.ID, txModel, decision)
 	}
 
 	for _, candidate := range sessions {
-		expected, ok := new(big.Int).SetString(candidate.ExpectedAmountRaw, 10)
-		if !ok || expected.Sign() <= 0 {
+		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
+		if !ok {
 			continue
 		}
-		// Accept up to 0.5% underpayment to handle price-rounding at conversion time.
-		// txAmount * 1000 >= expected * 995  →  txAmount >= expected * 99.5%
-		threshold := new(big.Int).Mul(expected, big.NewInt(995))
-		if new(big.Int).Mul(txAmount, big.NewInt(1000)).Cmp(threshold) < 0 {
-			continue
-		}
-		// Reject extreme overpayments so a reused/static wallet deposit cannot accidentally
-		// satisfy an unrelated checkout for the same asset.
-		upperBound := new(big.Int).Mul(expected, big.NewInt(120))
-		if new(big.Int).Mul(txAmount, big.NewInt(100)).Cmp(upperBound) > 0 {
-			continue
-		}
-
-		var paidSession models.PaymentSession
-		paid := false
-		err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "payment-tx:"+txModel.UniqueHash).Error; err != nil {
-				return err
-			}
-			var used int64
-			if err := tx.Model(&models.PaymentSession{}).
-				Where("tx_unique_hash = ?", txModel.UniqueHash).
-				Count(&used).Error; err != nil {
-				return err
-			}
-			if used > 0 {
-				return nil
-			}
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Preload("Domain").
-				First(&paidSession, "id = ?", candidate.ID).Error; err != nil {
-				return err
-			}
-			if paidSession.Status == models.PaymentStatusPaid {
-				return nil
-			}
-			if paidSession.Status != models.PaymentStatusAwaitingPayment {
-				return nil
-			}
-
-			now := time.Now()
-			paidSession.Status = models.PaymentStatusPaid
-			paidSession.PaidAt = &now
-			paidSession.ConfirmedAt = txModel.FinalizedAt
-			paidSession.ConfirmationsRequired = txModel.ConfirmationsRequired
-			paidSession.TxUniqueHash = &txModel.UniqueHash
-			paidSession.TxHash = &txModel.Hash
-			paidSession.WebhookEvent = "payment_succeeded"
-			paidSession.UpdatedAt = now
-			paid = true
-			return tx.Save(&paidSession).Error
-		})
-		if err != nil {
-			return nil, false, err
-		}
-		if paid {
-			return &paidSession, true, nil
-		}
+		return r.applyPaymentMatchDecision(ctx, candidate.ID, txModel, decision)
 	}
 
-	return nil, false, nil
+	return nil, nil
+}
+
+func (r *PaymentRepo) applyPaymentMatchDecision(ctx context.Context, sessionID uuid.UUID, txModel models.Transaction, decision paymentMatchDecision) (*PaymentMatchResult, error) {
+	var matchedSession models.PaymentSession
+	changed := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "payment-tx:"+txModel.UniqueHash).Error; err != nil {
+			return err
+		}
+		var used int64
+		if err := tx.Model(&models.PaymentSession{}).
+			Where("tx_unique_hash = ?", txModel.UniqueHash).
+			Count(&used).Error; err != nil {
+			return err
+		}
+		if used > 0 {
+			return nil
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Domain").
+			First(&matchedSession, "id = ?", sessionID).Error; err != nil {
+			return err
+		}
+		if matchedSession.TxUniqueHash != nil {
+			return nil
+		}
+		if matchedSession.Status != models.PaymentStatusAwaitingPayment && matchedSession.Status != models.PaymentStatusExpired {
+			return nil
+		}
+
+		now := time.Now()
+		matchedSession.Status = decision.Status
+		matchedSession.PaymentOutcome = decision.Outcome
+		matchedSession.PaymentOutcomeReason = decision.Reason
+		matchedSession.MatchedAmountRaw = decision.MatchedAmountRaw
+		matchedSession.ShortfallAmountRaw = decision.ShortfallAmountRaw
+		matchedSession.ExcessAmountRaw = decision.ExcessAmountRaw
+		if decision.Status == models.PaymentStatusPaid {
+			matchedSession.PaidAt = &now
+		}
+		matchedSession.ConfirmedAt = txModel.FinalizedAt
+		matchedSession.ConfirmationsRequired = txModel.ConfirmationsRequired
+		matchedSession.TxUniqueHash = &txModel.UniqueHash
+		matchedSession.TxHash = &txModel.Hash
+		matchedSession.WebhookEvent = decision.WebhookEvent
+		matchedSession.UpdatedAt = now
+		changed = true
+		return tx.Save(&matchedSession).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, nil
+	}
+	return &PaymentMatchResult{
+		Session:        &matchedSession,
+		Changed:        true,
+		Status:         decision.Status,
+		Outcome:        decision.Outcome,
+		WebhookEvent:   decision.WebhookEvent,
+		LedgerEligible: decision.LedgerEligible,
+	}, nil
+}
+
+func paymentMatchDecisionForSession(session models.PaymentSession, txModel models.Transaction, now time.Time) (paymentMatchDecision, bool) {
+	if session.Status != models.PaymentStatusAwaitingPayment && session.Status != models.PaymentStatusExpired {
+		return paymentMatchDecision{}, false
+	}
+	if session.SelectedChainID == nil {
+		return paymentMatchDecision{}, false
+	}
+	if *session.SelectedChainID != txModel.ChainID {
+		return failedPaymentMatchDecision(txModel, models.PaymentOutcomeWrongChain, "deposit chain does not match selected checkout chain"), true
+	}
+	if !paymentSessionAssetMatchesTransaction(session, txModel) {
+		return failedPaymentMatchDecision(txModel, models.PaymentOutcomeWrongAsset, "deposit asset does not match selected checkout asset"), true
+	}
+	if session.Status == models.PaymentStatusExpired || (!now.IsZero() && session.ExpiresAt != nil && now.After(*session.ExpiresAt)) {
+		return paymentMatchDecision{
+			Status:           models.PaymentStatusExpired,
+			Outcome:          models.PaymentOutcomeExpiredAfterDeposit,
+			Reason:           "deposit finalized after checkout expiry",
+			WebhookEvent:     constants.WebhookEventPaymentExpired,
+			MatchedAmountRaw: txModel.Amount,
+			LedgerEligible:   true,
+		}, true
+	}
+
+	expected, ok := new(big.Int).SetString(session.ExpectedAmountRaw, 10)
+	if !ok || expected.Sign() <= 0 {
+		return paymentMatchDecision{}, false
+	}
+	txAmount, ok := new(big.Int).SetString(txModel.Amount, 10)
+	if !ok || txAmount.Sign() <= 0 {
+		return paymentMatchDecision{}, false
+	}
+
+	switch txAmount.Cmp(expected) {
+	case 0:
+		return paymentMatchDecision{
+			Status:             models.PaymentStatusPaid,
+			Outcome:            models.PaymentOutcomeExact,
+			Reason:             "deposit amount exactly matches expected amount",
+			WebhookEvent:       constants.WebhookEventPaymentSucceeded,
+			MatchedAmountRaw:   txModel.Amount,
+			LedgerEligible:     true,
+			ConfirmingPayment:  true,
+		}, true
+	case -1:
+		shortfall := new(big.Int).Sub(expected, txAmount).String()
+		threshold := new(big.Int).Mul(expected, big.NewInt(995))
+		if new(big.Int).Mul(txAmount, big.NewInt(1000)).Cmp(threshold) >= 0 {
+			return paymentMatchDecision{
+				Status:             models.PaymentStatusUnderpaid,
+				Outcome:            models.PaymentOutcomeUnderpaid,
+				Reason:             "deposit amount is below expected amount",
+				WebhookEvent:       constants.WebhookEventPaymentUnderpaid,
+				MatchedAmountRaw:   txModel.Amount,
+				ShortfallAmountRaw: shortfall,
+				LedgerEligible:     true,
+			}, true
+		}
+		return paymentMatchDecision{
+			Status:             models.PaymentStatusPartialPaid,
+			Outcome:            models.PaymentOutcomePartialUnsupported,
+			Reason:             "partial deposits are not automatically aggregated for checkout settlement",
+			WebhookEvent:       constants.WebhookEventPaymentPartialPaid,
+			MatchedAmountRaw:   txModel.Amount,
+			ShortfallAmountRaw: shortfall,
+			LedgerEligible:     true,
+		}, true
+	default:
+		return paymentMatchDecision{
+			Status:           models.PaymentStatusOverpaid,
+			Outcome:          models.PaymentOutcomeOverpaid,
+			Reason:           "deposit amount exceeds expected amount",
+			WebhookEvent:     constants.WebhookEventPaymentOverpaid,
+			MatchedAmountRaw: txModel.Amount,
+			ExcessAmountRaw:  new(big.Int).Sub(txAmount, expected).String(),
+			LedgerEligible:   true,
+		}, true
+	}
+}
+
+func failedPaymentMatchDecision(txModel models.Transaction, outcome string, reason string) paymentMatchDecision {
+	return paymentMatchDecision{
+		Status:           models.PaymentStatusFailed,
+		Outcome:          outcome,
+		Reason:           reason,
+		WebhookEvent:     constants.WebhookEventPaymentFailed,
+		MatchedAmountRaw: txModel.Amount,
+		LedgerEligible:   true,
+	}
+}
+
+func paymentSessionAssetMatchesTransaction(session models.PaymentSession, txModel models.Transaction) bool {
+	return strings.EqualFold(strings.TrimSpace(session.SelectedSymbol), strings.TrimSpace(txModel.Symbol)) &&
+		paymentTokenMatches(session.SelectedToken, txModel.Token)
+}
+
+func paymentTokenMatches(expected, actual *string) bool {
+	expectedValue := ""
+	if expected != nil {
+		expectedValue = strings.TrimSpace(*expected)
+	}
+	actualValue := ""
+	if actual != nil {
+		actualValue = strings.TrimSpace(*actual)
+	}
+	if expectedValue == "" || actualValue == "" {
+		return expectedValue == "" && actualValue == ""
+	}
+	return strings.EqualFold(expectedValue, actualValue)
 }
 
 func (r *PaymentRepo) MarkWebhookAttempt(ctx context.Context, sessionID uuid.UUID, delivered bool, lastErr error) error {

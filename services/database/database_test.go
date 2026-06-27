@@ -109,6 +109,29 @@ func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
 	}
 }
 
+func TestPaymentOutcomeSchemaColumnsAreRequired(t *testing.T) {
+	required := map[string]bool{
+		"PaymentOutcome":      false,
+		"PaymentOutcomeReason": false,
+		"MatchedAmountRaw":    false,
+		"ShortfallAmountRaw":  false,
+		"ExcessAmountRaw":     false,
+	}
+	for _, column := range requiredSchemaColumns() {
+		if column.table != "payment_sessions" {
+			continue
+		}
+		if _, ok := required[column.field]; ok {
+			required[column.field] = true
+		}
+	}
+	for field, found := range required {
+		if !found {
+			t.Fatalf("VerifySchema does not require payment_sessions.%s", field)
+		}
+	}
+}
+
 func TestApplyGORMMigrationsEntrypointExists(t *testing.T) {
 	if reflect.ValueOf(ApplyGORMMigrations).IsNil() {
 		t.Fatal("ApplyGORMMigrations must be available for GORM-managed migration jobs")

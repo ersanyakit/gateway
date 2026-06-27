@@ -15,6 +15,18 @@ const (
 	PaymentStatusExpired         = "expired"
 	PaymentStatusFailed          = "failed"
 	PaymentStatusUnderpaid       = "underpaid"
+	PaymentStatusOverpaid        = "overpaid"
+	PaymentStatusPartialPaid     = "partial_paid"
+)
+
+const (
+	PaymentOutcomeExact               = "exact"
+	PaymentOutcomeUnderpaid           = "underpaid"
+	PaymentOutcomeOverpaid            = "overpaid"
+	PaymentOutcomePartialUnsupported  = "partial_unsupported"
+	PaymentOutcomeExpiredAfterDeposit = "expired_after_deposit"
+	PaymentOutcomeWrongAsset          = "wrong_asset"
+	PaymentOutcomeWrongChain          = "wrong_chain"
 )
 
 type PaymentSession struct {
@@ -45,6 +57,12 @@ type PaymentSession struct {
 	DepositAddress    string             `gorm:"size:128;index" json:"deposit_address,omitempty"`
 
 	Status string `gorm:"size:32;not null;index" json:"status"`
+
+	PaymentOutcome       string `gorm:"size:40;index" json:"payment_outcome,omitempty"`
+	PaymentOutcomeReason string `gorm:"size:500" json:"payment_outcome_reason,omitempty"`
+	MatchedAmountRaw     string `gorm:"type:text" json:"matched_amount_raw,omitempty"`
+	ShortfallAmountRaw   string `gorm:"type:text" json:"shortfall_amount_raw,omitempty"`
+	ExcessAmountRaw      string `gorm:"type:text" json:"excess_amount_raw,omitempty"`
 
 	PaidAt                *time.Time `json:"paid_at,omitempty"`
 	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
