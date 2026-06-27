@@ -2,7 +2,7 @@
 story_id: "3.5"
 story_key: "3-5-correct-reorgs-with-compensating-events-and-ledger-reversals"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: eb422ee
@@ -10,7 +10,7 @@ baseline_commit: eb422ee
 
 # Story 3.5: Correct Reorgs with Compensating Events and Ledger Reversals
 
-Status: review
+Status: done
 
 ## Story
 
@@ -68,7 +68,8 @@ boylece sistem canonical chain degisimlerinden audit trail'i koruyarak recover e
 - [x] Task 6: Tests, validation, and story record (AC: 1, 2, 3, 4, 5)
   - [x] Add repository/service tests for deterministic fork simulation, duplicate reorg handling, ledger reversal idempotency, payment stale-state correction, correction webhook payload, sweep dead-letter/blocking, and reconciliation job creation.
   - [x] Include integration/contract coverage for transaction correction event naming, original event references, and checkout/V1 payment state after reorg.
-  - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./api/handlers ./docs`.
+  - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/deposits ./services/webhook ./services/database ./api/handlers ./docs`.
+  - [x] Postgres integration validation: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
   - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
@@ -173,6 +174,10 @@ Codex
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Revalidated after Story 3.4 review merge point: targeted Story 3.5 packages, full `go test ./...`, `go vet ./...`, and whitespace checks all passed.
 - 2026-06-27: Added parent-hash block canonicality handling: EVM observed events carry parent hashes, parent mismatches reorg affected canonical block ranges, and reconciliation jobs use the affected from/to block range.
+- 2026-06-27: Postgres validation caught parent-mismatch corrections losing their specific reason to the generic height-conflict path; fixed transaction create ordering so canonical block continuity corrections run first.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestTransactionRepoParentHashMismatchReorgsCanonicalBlockRange -v`.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
+- 2026-06-27: Final validation passed after ordering fix: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`, `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`, and whitespace checks.
 
 ### Completion Notes List
 
@@ -189,6 +194,7 @@ Codex
 - Hardened `models.Block` with canonical/reorg state fields, parent hash support, and schema verification so block tracking can represent canonical replacements without a parallel table.
 - EVM listener dispatch now carries parent hash into native, token-transfer, and internal-transfer transaction params so parent/child mismatch detection can run from observed chain data.
 - Parent mismatch correction marks the affected canonical block range reorged and creates reconciliation with the affected from/to block range, not only the trigger block.
+- Parent/chain-continuity reorg detection now runs before generic same-height hash conflict handling, preserving `parent_mismatch` correction reasons and reconciliation scope.
 - Added checkout failed-state and ledger reversal skip/idempotency coverage for reorg-corrected payment and ledger paths.
 
 ### File List
@@ -228,3 +234,4 @@ Codex
 - 2026-06-27: Tightened repeated payment correction no-op behavior, replaced remaining raw payment failure literals in `PaymentRepo`, and added transaction block identity reorg regression coverage.
 - 2026-06-27: Aligned story record with final diff, EVM parent-hash propagation, ledger reversal skip coverage, checkout reorg-failed state coverage, and final validation results.
 - 2026-06-27: Added deterministic parent/child fork simulation and reconciliation range scoping for canonical block parent mismatches.
+- 2026-06-27: Fixed parent-mismatch correction ordering, reran Postgres integration/full regression/static checks, and moved story to done.
