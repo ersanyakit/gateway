@@ -57,11 +57,17 @@ type Service struct {
 }
 
 type Result struct {
-	ChainID      constants.ChainID `json:"chain_id"`
-	Chain        string            `json:"chain"`
-	Hash         string            `json:"hash"`
-	Events       int               `json:"events"`
-	UniqueHashes []string          `json:"unique_hashes"`
+	ChainID              constants.ChainID `json:"chain_id"`
+	Chain                string            `json:"chain"`
+	Hash                 string            `json:"hash"`
+	Events               int               `json:"events"`
+	DepositsCreated      int               `json:"deposits_created"`
+	DepositsMatched      int               `json:"deposits_matched"`
+	DepositsUnmatched    int               `json:"deposits_unmatched"`
+	DepositsFinalized    int               `json:"deposits_finalized"`
+	TransactionsRecorded int               `json:"transactions_recorded"`
+	PaymentsSettled      int               `json:"payments_settled"`
+	UniqueHashes         []string          `json:"unique_hashes"`
 }
 
 type eventCandidate struct {
@@ -134,7 +140,8 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 		if candidate.Tx == nil {
 			continue
 		}
-		if err := s.recordRescanFact(ctx, candidate); err != nil {
+		fact, err := s.recordRescanFact(ctx, candidate)
+		if err != nil {
 			return result, err
 		}
 		if err := s.Bus.DispatchAndWait(ctx, dispatcher.Event{
@@ -150,18 +157,20 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 				result.UniqueHashes = append(result.UniqueHashes, unique)
 			}
 		}
-	}
-	if result.Events > 0 {
-		if err := s.processDeposits(ctx); err != nil {
-			return result, err
+		if fact != nil {
+			summary, err := s.processDepositFact(ctx, *fact)
+			if err != nil {
+				return result, err
+			}
+			result.addDepositSummary(summary)
 		}
 	}
 	return result, nil
 }
 
-func (s *Service) recordRescanFact(ctx context.Context, candidate eventCandidate) error {
+func (s *Service) recordRescanFact(ctx context.Context, candidate eventCandidate) (*models.ChainFact, error) {
 	if s == nil || s.ChainFactRepo == nil || candidate.Tx == nil {
-		return nil
+		return nil, nil
 	}
 	fact, err := repositories.BuildChainFact(repositories.ChainFactBuildParams{
 		EventType:             candidate.Type,
@@ -170,17 +179,37 @@ func (s *Service) recordRescanFact(ctx context.Context, candidate eventCandidate
 		ConfirmationsRequired: candidate.ConfirmationsRequired,
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if candidate.ConfirmationsRequired > 0 {
 		failed := candidate.Tx.Status != nil && strings.EqualFold(*candidate.Tx.Status, models.TransactionStatusFailed)
 		fact.Finalized = !failed && candidate.Confirmations >= candidate.ConfirmationsRequired
 	}
-	_, _, err = s.ChainFactRepo.RecordOrUpdate(ctx, &fact)
-	return err
+	stored, _, err := s.ChainFactRepo.RecordOrUpdate(ctx, &fact)
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 func (s *Service) processDeposits(ctx context.Context) error {
+	service := s.depositProcessor()
+	if service == nil {
+		return nil
+	}
+	_, err := service.ProcessBatch(ctx, 200)
+	return err
+}
+
+func (s *Service) processDepositFact(ctx context.Context, fact models.ChainFact) (depositsvc.ProcessSummary, error) {
+	service := s.depositProcessor()
+	if service == nil {
+		return depositsvc.ProcessSummary{}, nil
+	}
+	return service.ProcessFact(ctx, fact)
+}
+
+func (s *Service) depositProcessor() *depositsvc.Service {
 	if s == nil ||
 		s.ChainFactRepo == nil ||
 		s.ChainStateRepo == nil ||
@@ -189,7 +218,7 @@ func (s *Service) processDeposits(ctx context.Context) error {
 		s.TransactionRepo == nil {
 		return nil
 	}
-	service := depositsvc.New(depositsvc.Dependencies{
+	return depositsvc.New(depositsvc.Dependencies{
 		ChainFactRepo:   s.ChainFactRepo,
 		ChainStateRepo:  s.ChainStateRepo,
 		DepositRepo:     s.DepositRepo,
@@ -198,8 +227,18 @@ func (s *Service) processDeposits(ctx context.Context) error {
 		PaymentRepo:     s.PaymentRepo,
 		LedgerRepo:      s.LedgerRepo,
 	}, s.Confirmations)
-	_, err := service.ProcessBatch(ctx, 200)
-	return err
+}
+
+func (r *Result) addDepositSummary(summary depositsvc.ProcessSummary) {
+	if r == nil {
+		return
+	}
+	r.DepositsCreated += summary.DepositsCreated
+	r.DepositsMatched += summary.Matched
+	r.DepositsUnmatched += summary.Unmatched
+	r.DepositsFinalized += summary.Finalized
+	r.TransactionsRecorded += summary.TransactionsRecorded
+	r.PaymentsSettled += summary.PaymentsSettled
 }
 
 func (s *Service) authorizeMerchantEvents(ctx context.Context, chainID constants.ChainID, events []eventCandidate, merchantID uuid.UUID) error {

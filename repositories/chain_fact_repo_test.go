@@ -157,6 +157,69 @@ func TestChainFactRepoRecordOrUpdateAdvancesFinality(t *testing.T) {
 	requirePostgresCount(t, db, &models.ChainFact{}, "event_id = ?", first.EventID, 1)
 }
 
+func TestChainFactRepoListForDepositProcessingSkipsUnownedUnmatchedFacts(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.ChainFact{}, &models.Deposit{}, &models.Wallet{}, &models.MoneyEventOutbox{}); err != nil {
+		t.Fatalf("automigrate deposit processing models: %v", err)
+	}
+
+	ctx := context.Background()
+	repo := NewChainFactRepo(db)
+	depositRepo := NewDepositRepo(db)
+
+	unowned := testDepositChainFact("1:0xunowned:log:1", true)
+	unowned.TxHash = "0xunowned"
+	unowned.ObservedAddress = "0xmissing"
+	unowned.Status = models.ChainFactStatusObserved
+	if err := db.WithContext(ctx).Create(&unowned).Error; err != nil {
+		t.Fatalf("create unowned fact: %v", err)
+	}
+	if _, _, err := depositRepo.ConsumeChainFact(ctx, unowned, nil); err != nil {
+		t.Fatalf("consume unowned fact: %v", err)
+	}
+
+	rematchable := testDepositChainFact("1:0xrematch:log:1", true)
+	rematchable.TxHash = "0xrematch"
+	rematchable.ObservedAddress = "0xto"
+	rematchable.Status = models.ChainFactStatusObserved
+	if err := db.WithContext(ctx).Create(&rematchable).Error; err != nil {
+		t.Fatalf("create rematchable fact: %v", err)
+	}
+	if _, _, err := depositRepo.ConsumeChainFact(ctx, rematchable, nil); err != nil {
+		t.Fatalf("consume rematchable fact: %v", err)
+	}
+	wallet := testDepositWallet()
+	if err := db.WithContext(ctx).Create(&wallet).Error; err != nil {
+		t.Fatalf("create wallet: %v", err)
+	}
+
+	newFact := testDepositChainFact("1:0xnew:log:1", true)
+	newFact.TxHash = "0xnew"
+	newFact.ObservedAddress = "0xnew"
+	newFact.Status = models.ChainFactStatusObserved
+	if err := db.WithContext(ctx).Create(&newFact).Error; err != nil {
+		t.Fatalf("create new fact: %v", err)
+	}
+
+	facts, err := repo.ListForDepositProcessing(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, fact := range facts {
+		seen[fact.EventID] = true
+	}
+	if seen[unowned.EventID] {
+		t.Fatal("unowned unmatched fact must not be reprocessed forever")
+	}
+	if !seen[rematchable.EventID] {
+		t.Fatal("unmatched fact must be selected after its wallet appears")
+	}
+	if !seen[newFact.EventID] {
+		t.Fatal("new fact without a deposit must still be selected")
+	}
+}
+
 func chainFactTestTx(chainID constants.ChainID, txHash, logIndex string) types.TransactionParam {
 	status := models.TransactionStatusConfirmed
 	return types.TransactionParam{

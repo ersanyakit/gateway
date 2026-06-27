@@ -47,6 +47,17 @@ func TestTxRescanMessages(t *testing.T) {
 	if got := txRescanSuccessMessage(&txrescan.Result{Chain: "ethereum", Events: 2}); got != "ethereum tx yeniden tarandı: 2 event işlendi." {
 		t.Fatalf("success message = %q", got)
 	}
+	got := txRescanSuccessMessage(&txrescan.Result{
+		Chain:                "tron",
+		Events:               1,
+		DepositsMatched:      1,
+		TransactionsRecorded: 1,
+		DepositsFinalized:    1,
+	})
+	want := "tron tx yeniden tarandı: 1 event işlendi, 1 deposit eşleşti, 1 transaction kaydedildi, 1 deposit finalize oldu."
+	if got != want {
+		t.Fatalf("detailed success message = %q, want %q", got, want)
+	}
 	tests := map[error]string{
 		txrescan.ErrTransactionNotFound: "Tx blockchain üzerinde bulunamadı.",
 		txrescan.ErrUnauthorizedTx:      "Bu tx üye işyeri wallet adresleriyle eşleşmiyor.",

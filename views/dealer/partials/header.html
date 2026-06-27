@@ -1,3 +1,18 @@
+{{if .AdminPanel}}
+<header class="admin-titlebar" role="banner">
+  <a class="admin-titlebar-brand" href="{{.AdminOverviewURL}}" aria-label="Gateway Admin">
+    <span class="admin-titlebar-mark">G</span>
+    <span class="admin-titlebar-name">Gateway</span>
+  </a>
+  <div class="admin-titlebar-command" aria-label="Admin command center">
+    <span class="admin-titlebar-path">admin / {{.AdminPanel}}</span>
+  </div>
+  <nav class="admin-titlebar-actions" aria-label="Admin actions">
+    <span class="admin-titlebar-user">{{.MerchantEmail}}</span>
+    <a class="admin-titlebar-link" href="{{.LogoutURL}}">Çıkış</a>
+  </nav>
+</header>
+{{else}}
 <header class="sticky top-0 z-40 border-b border-[rgba(19,19,19,0.07)] bg-white/[0.94] shadow-[0_1px_0_rgba(255,255,255,0.68)_inset] backdrop-blur-xl">
   <div class="mx-auto flex min-h-[64px] w-full max-w-[1180px] flex-col justify-center gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:py-0">
     <a class="flex min-w-0 max-w-full items-center gap-3 sm:max-w-[52%] lg:max-w-none" href="{{if .HasSession}}{{.DashboardURL}}{{else}}/{{end}}" aria-label="Gateway Üye İşyeri Portalı">
@@ -20,3 +35,4 @@
     </nav>
   </div>
 </header>
+{{end}}

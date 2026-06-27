@@ -128,11 +128,17 @@ func HandleV1TransactionRescan(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, status, txRescanErrorMessage(err))
 		}
 		return v1OK(c, fiber.Map{
-			"chain_id":      result.ChainID,
-			"chain":         result.Chain,
-			"tx_hash":       result.Hash,
-			"events":        result.Events,
-			"unique_hashes": result.UniqueHashes,
+			"chain_id":              result.ChainID,
+			"chain":                 result.Chain,
+			"tx_hash":               result.Hash,
+			"events":                result.Events,
+			"deposits_created":      result.DepositsCreated,
+			"deposits_matched":      result.DepositsMatched,
+			"deposits_unmatched":    result.DepositsUnmatched,
+			"deposits_finalized":    result.DepositsFinalized,
+			"transactions_recorded": result.TransactionsRecorded,
+			"payments_settled":      result.PaymentsSettled,
+			"unique_hashes":         result.UniqueHashes,
 		})
 	}
 }
@@ -184,7 +190,23 @@ func txRescanSuccessMessage(result *txrescan.Result) string {
 	if result == nil {
 		return "Tx yeniden tarandı."
 	}
-	return fmt.Sprintf("%s tx yeniden tarandı: %d event işlendi.", result.Chain, result.Events)
+	parts := []string{fmt.Sprintf("%s tx yeniden tarandı: %d event işlendi", result.Chain, result.Events)}
+	if result.DepositsMatched > 0 {
+		parts = append(parts, fmt.Sprintf("%d deposit eşleşti", result.DepositsMatched))
+	}
+	if result.DepositsUnmatched > 0 {
+		parts = append(parts, fmt.Sprintf("%d deposit unmatched kaldı", result.DepositsUnmatched))
+	}
+	if result.TransactionsRecorded > 0 {
+		parts = append(parts, fmt.Sprintf("%d transaction kaydedildi", result.TransactionsRecorded))
+	}
+	if result.DepositsFinalized > 0 {
+		parts = append(parts, fmt.Sprintf("%d deposit finalize oldu", result.DepositsFinalized))
+	}
+	if result.PaymentsSettled > 0 {
+		parts = append(parts, fmt.Sprintf("%d ödeme kapandı", result.PaymentsSettled))
+	}
+	return strings.Join(parts, ", ") + "."
 }
 
 func txRescanErrorMessage(err error) string {
