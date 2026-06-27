@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,6 +95,78 @@ func TestReconciliationRepoCreateScopedOpenIfMissingDedupesActiveScope(t *testin
 	}
 	if !created || afterFailed.ID == afterResolved.ID {
 		t.Fatalf("failed job should not suppress new issue, created=%v new=%s failed=%s", created, afterFailed.ID, afterResolved.ID)
+	}
+}
+
+func TestReconciliationRepoCreateScopedOpenIfMissingDedupesConcurrentActiveScope(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.ReconciliationJob{}); err != nil {
+		t.Fatalf("automigrate reconciliation jobs: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewReconciliationRepo(db)
+	scopeKey := "ledger_invariant:concurrent:" + uuid.NewString()
+	scope := ReconciliationScope{
+		ChainID:             constants.Ethereum,
+		FromBlock:           200,
+		ToBlock:             205,
+		Reason:              "ledger_invariant:concurrent",
+		ScopeKey:            scopeKey,
+		ResourceType:        "ledger_invariant",
+		ResourceID:          "concurrent-idem-key",
+		AffectedResourceIDs: []string{"concurrent-idem-key"},
+		Evidence: map[string]any{
+			"net_raw": "10",
+		},
+	}
+
+	type createResult struct {
+		id      uuid.UUID
+		created bool
+		err     error
+	}
+	const callers = 12
+	start := make(chan struct{})
+	results := make(chan createResult, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			job, created, err := repo.CreateScopedOpenIfMissing(ctx, scope)
+			result := createResult{created: created, err: err}
+			if job != nil {
+				result.id = job.ID
+			}
+			results <- result
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	createdCount := 0
+	ids := map[uuid.UUID]struct{}{}
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent create scoped job: %v", result.err)
+		}
+		if result.created {
+			createdCount++
+		}
+		ids[result.id] = struct{}{}
+	}
+	if createdCount != 1 || len(ids) != 1 {
+		t.Fatalf("concurrent scoped dedupe created=%d unique_ids=%d ids=%v", createdCount, len(ids), ids)
+	}
+
+	var count int64
+	if err := db.WithContext(ctx).Model(&models.ReconciliationJob{}).Where("scope_key = ?", scopeKey).Count(&count).Error; err != nil {
+		t.Fatalf("count scoped jobs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("scoped job count = %d, want 1", count)
 	}
 }
 

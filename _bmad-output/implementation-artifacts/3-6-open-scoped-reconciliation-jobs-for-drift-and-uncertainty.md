@@ -54,7 +54,8 @@ boylece chain facts, ledger entries, lifecycle state, webhook delivery ve outbou
 - [x] Task 5: Documentation, story record, and validation (AC: 1, 2, 3, 4)
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
   - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`.
-  - [x] Postgres integration validation: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
+  - [x] Postgres integration validation: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`.
+  - [x] Postgres reserve validation: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation -run TestReserveServiceOpenJobCreatesScopedReconciliation -v`.
   - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
@@ -63,6 +64,7 @@ boylece chain facts, ledger entries, lifecycle state, webhook delivery ve outbou
 
 - [x] [Review][Patch] Webhook drift and stuck lifecycle helpers must reject empty resource scopes — fixed with invalid scope guards and regression coverage in `repositories/reconciliation_repo_test.go`.
 - [x] [Review][Patch] Evidence redaction must cover generic `signature` keys, not only `raw_signature` — fixed in `repositories/reconciliation_repo.go` and covered by evidence redaction tests.
+- [x] [Review][Patch] Scoped aktif job dedupe concurrency-safe olmali — `scope_key` ile transaction-scoped PostgreSQL advisory lock eklendi ve `repositories/reconciliation_repo_test.go` icinde eszamanli regresyon kapsami yazildi.
 
 ## Dev Notes
 
@@ -135,13 +137,15 @@ Codex
 - 2026-06-27: Updated ledger invariant, reserve, and reorg-created reconciliation producers to include scoped context and evidence; added webhook drift and stuck lifecycle helper coverage.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`.
 - 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`.
-- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation -run TestReserveServiceOpenJobCreatesScopedReconciliation -v`.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/database`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Final validation rerun after JSONB default and evidence redaction assertion fixes passed: full `go test ./...`, full `go vet ./...`, and whitespace checks.
 - 2026-06-27: Added reserve scoped reconciliation Postgres coverage for job creation, active dedupe, evidence, affected ids, and tenant scope.
 - 2026-06-27: Code review found empty helper scope and generic signature redaction gaps; fixed and validated with `go test ./repositories ./services/reconciliation ./services/webhook`.
+- 2026-06-27: Story automator review, concurrent scoped dedupe akisinin race uretebilecegini buldu; transaction-scoped advisory lock ile duzeltildi ve hedefli repository/service/database/API kontrolleriyle dogrulandi.
 
 ### Senior Developer Review (AI)
 
@@ -153,12 +157,19 @@ Findings fixed:
 
 - [MEDIUM][AC1/AC4] `OpenWebhookDeliveryDrift` and `OpenStuckLifecycleJob` accepted empty identifiers, allowing unrelated drift/stuck lifecycle jobs to collapse under empty or low-quality scope keys. Fixed with invalid scope guards and tests.
 - [MEDIUM][Security] Evidence redaction covered `raw_signature` but not a generic `signature` key. Fixed by redacting generic signature keys and extending nested evidence tests.
+- [HIGH][AC1] `CreateScopedOpenIfMissing` per-scope transaction lock olmadan read-then-insert dedupe yapiyordu; bu nedenle eszamanli uncertainty detector'lari ayni issue icin duplicate aktif job acabiliyordu. Scoped creation, PostgreSQL transaction-scoped advisory lock ile serilestirildi ve concurrent active-scope dedupe testi eklendi.
 
 Review validation:
 
 - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation`
 - `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/webhook`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestOperationalMetrics|TestV1ReadinessCount'`
 - `git diff --check`
+
+Sandbox notu:
+
+- Full `./api/handlers` validasyonu bu execution sandbox'ta tamamlanamadi; `httptest.NewServer` local port bind ederken `operation not permitted` ile fail oldu. Local listener gerektirmeyen handler testleri gecti.
 
 ### Completion Notes List
 
@@ -169,6 +180,7 @@ Review validation:
 - Ledger invariant, reserve drift, and Story 3.5 reorg reconciliation producers now open scoped jobs with evidence and affected resource ids.
 - Repository helpers cover webhook drift and stuck lifecycle uncertainty scopes.
 - Webhook drift and stuck lifecycle helper APIs now reject empty resource scopes before opening reconciliation jobs.
+- Scoped reconciliation creation, concurrent duplicate aktif job acilmasini engellemek icin database transaction icinde `scope_key` basina active-job dedupe serilestiriyor.
 - Metrics and V1 readiness include `needs_operator_action` and `retry_scheduled` reconciliation statuses.
 - Reserve reconciliation now has Postgres-backed coverage proving scoped job creation and dedupe behavior.
 
@@ -198,3 +210,4 @@ Review validation:
 - 2026-06-27: Tightened JSONB defaults and sensitive evidence redaction tests, then reran Postgres, full regression, static, and whitespace validation.
 - 2026-06-27: Added reserve scoped reconciliation Postgres coverage for tenant/resource scope and active dedupe.
 - 2026-06-27: Addressed code review findings for empty helper scopes and generic signature redaction; story moved to done.
+- 2026-06-27: Concurrent scoped dedupe icin story automator review bulgusu giderildi; story done durumunda kaldi.

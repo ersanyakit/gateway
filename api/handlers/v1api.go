@@ -1103,7 +1103,11 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			RequestedBy: "api",
 		}
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), req, deps.LedgerRepo); err != nil {
-			return v1Err(c, fiber.StatusInternalServerError, "payout creation failed: "+err.Error())
+			status := fiber.StatusInternalServerError
+			if errors.Is(err, repositories.ErrInsufficientAvailableBalance) || errors.Is(err, repositories.ErrLedgerReservationRequired) {
+				status = fiber.StatusBadRequest
+			}
+			return v1Err(c, status, "payout creation failed: "+err.Error())
 		}
 		if deps.WebhookDeliveryRepo != nil {
 			payload := webhooksvc.NewPayoutPayload(constants.WebhookEventPayoutRequestedV1, *req)
@@ -1297,7 +1301,7 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		}
 		if err := deps.RefundRepo.CreateWithHold(c.Context(), refund, *session, deps.LedgerRepo); err != nil {
 			status := fiber.StatusInternalServerError
-			if errors.Is(err, repositories.ErrInsufficientAvailableBalance) {
+			if errors.Is(err, repositories.ErrInsufficientAvailableBalance) || errors.Is(err, repositories.ErrLedgerReservationRequired) {
 				status = fiber.StatusBadRequest
 			}
 			return v1Err(c, status, "refund creation failed: "+err.Error())

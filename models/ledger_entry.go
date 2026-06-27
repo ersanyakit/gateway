@@ -15,6 +15,9 @@ const (
 	LedgerEntryTypeWithdrawalDebit   = "withdrawal_debit"
 	LedgerEntryTypeRefundHold        = "refund_hold"
 	LedgerEntryTypeRefundDebit       = "refund_debit"
+	LedgerEntryTypeSweepHold         = "sweep_hold"
+	LedgerEntryTypeSweepRelease      = "sweep_release"
+	LedgerEntryTypeSweepDebit        = "sweep_debit"
 	LedgerEntryTypeReorgReversal     = "reorg_reversal"
 	LedgerEntryTypeAdjustment        = "adjustment"
 
@@ -30,6 +33,7 @@ const (
 	LedgerAccountPlatformClearing  = "platform_clearing"
 	LedgerAccountWithdrawalTransit = "withdrawal_transit"
 	LedgerAccountRefundTransit     = "refund_transit"
+	LedgerAccountSweepTransit      = "sweep_transit"
 )
 
 type LedgerEntry struct {
@@ -44,14 +48,15 @@ type LedgerEntry struct {
 	TransactionHash       string     `gorm:"size:128;index" json:"transaction_hash,omitempty"`
 	WithdrawalID          *uuid.UUID `gorm:"type:uuid;index" json:"withdrawal_id,omitempty"`
 	RefundID              *uuid.UUID `gorm:"type:uuid;index" json:"refund_id,omitempty"`
+	SweepJobID            *uuid.UUID `gorm:"type:uuid;index" json:"sweep_job_id,omitempty"`
 
 	ChainID  constants.ChainID `gorm:"type:bigint;not null;index" json:"chain_id"`
 	Token    *string           `gorm:"type:varchar(128);index" json:"token,omitempty"`
 	Symbol   string            `gorm:"size:20;not null;index" json:"symbol"`
 	Decimals uint8             `json:"decimals"`
 
-	EntryType string `gorm:"size:40;not null;index;check:ledger_entries_entry_type_check,entry_type IN ('deposit_pending','deposit_available','withdrawal_hold','withdrawal_release','withdrawal_debit','refund_hold','refund_debit','reorg_reversal','adjustment')" json:"entry_type"`
-	Account   string `gorm:"size:40;not null;index;uniqueIndex:ux_ledger_idempotent_account;check:ledger_entries_account_check,account IN ('merchant_pending','merchant_available','platform_clearing','withdrawal_transit','refund_transit')" json:"account"`
+	EntryType string `gorm:"size:40;not null;index;check:ledger_entries_entry_type_check,entry_type IN ('deposit_pending','deposit_available','withdrawal_hold','withdrawal_release','withdrawal_debit','refund_hold','refund_debit','sweep_hold','sweep_release','sweep_debit','reorg_reversal','adjustment')" json:"entry_type"`
+	Account   string `gorm:"size:40;not null;index;uniqueIndex:ux_ledger_idempotent_account;check:ledger_entries_account_check,account IN ('merchant_pending','merchant_available','platform_clearing','withdrawal_transit','refund_transit','sweep_transit')" json:"account"`
 	Direction string `gorm:"size:12;not null;index;check:ledger_entries_direction_check,direction IN ('credit','debit')" json:"direction"`
 	Status    string `gorm:"size:20;not null;index;check:ledger_entries_status_check,status IN ('pending','posted','voided')" json:"status"`
 	AmountRaw string `gorm:"type:text;not null" json:"amount_raw"`

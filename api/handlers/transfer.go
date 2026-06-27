@@ -41,17 +41,9 @@ func HandleWithdraw(walletRepo *repositories.WalletRepo, chains *blockchain.Chai
 			})
 		}
 
-		result, err := ExecuteWalletTransfer(walletRepo, chains, params, false)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"success": false,
-				"error":   err.Error(),
-			})
-		}
-
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{
-			"success": true,
-			"tx_hash": result.TxHash,
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   repositories.ErrLedgerReservationRequired.Error(),
 		})
 	}
 }
@@ -125,22 +117,22 @@ func HandleSweep(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFa
 			})
 		}
 
-		result, err := ExecuteWalletTransfer(walletRepo, chains, params, true)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"success": false,
-				"error":   err.Error(),
-			})
-		}
-
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{
-			"success": true,
-			"tx_hash": result.TxHash,
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"success": false,
+			"error":   repositories.ErrLedgerReservationRequired.Error(),
 		})
 	}
 }
 
 func ExecuteWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory, params requesttypes.TransferParams, sweep bool) (*blockchain.TransactionResult, error) {
+	return nil, repositories.ErrLedgerReservationRequired
+}
+
+func ExecuteReservedWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockchain.ChainFactory, params requesttypes.TransferParams, sweep bool) (*blockchain.TransactionResult, error) {
+	if sweep {
+		return nil, repositories.ErrLedgerReservationRequired
+	}
+
 	chain, err := chains.GetChain(*params.Chain)
 	if err != nil {
 		return nil, err
@@ -162,10 +154,6 @@ func ExecuteWalletTransfer(walletRepo *repositories.WalletRepo, chains *blockcha
 	}
 	if err := verifyDerivedWalletAddress(*wallet, chain.ChainID(), derivedWallet.Address); err != nil {
 		return nil, err
-	}
-
-	if sweep {
-		return chain.SweepTo(params.Context, *derivedWallet, *params.ToAddress)
 	}
 
 	if params.Token != nil && strings.TrimSpace(*params.Token) != "" {

@@ -239,6 +239,105 @@ func TestV1BalanceEndpointsUseLedgerOnly(t *testing.T) {
 	}
 }
 
+func TestOutboundHandlersRequireLedgerReservationContracts(t *testing.T) {
+	transferSource := readHandlerSource(t, "transfer.go")
+	executeBody := extractHandlerFunctionBody(t, transferSource, "ExecuteWalletTransfer")
+	if !strings.Contains(executeBody, "ErrLedgerReservationRequired") {
+		t.Fatal("ExecuteWalletTransfer must reject direct sweep calls without a ledger reservation")
+	}
+	handleWithdrawBody := extractHandlerFunctionBody(t, transferSource, "HandleWithdraw")
+	for _, forbidden := range []string{
+		"ExecuteWalletTransfer(walletRepo, chains, params, false)",
+		"ExecuteWalletTransfer(walletRepo, chains, params, true)",
+	} {
+		if strings.Contains(handleWithdrawBody, forbidden) {
+			t.Fatalf("legacy HandleWithdraw must not direct-broadcast without reservation: %q", forbidden)
+		}
+	}
+	handleSweepBody := extractHandlerFunctionBody(t, transferSource, "HandleSweep")
+	for _, forbidden := range []string{
+		"ExecuteWalletTransfer(walletRepo, chains, params, true)",
+		"ExecuteWalletTransfer(walletRepo, chains, params, false)",
+	} {
+		if strings.Contains(handleSweepBody, forbidden) {
+			t.Fatalf("legacy HandleSweep must not direct-broadcast without reservation: %q", forbidden)
+		}
+	}
+
+	dealerSource := readHandlerSource(t, "dealer.go")
+	adminSweepBody := extractHandlerFunctionBody(t, dealerSource, "HandleAdminSweep")
+	for _, required := range []string{
+		"CreateWithHold",
+		"ApproveWithTransfer",
+		"manual sweep requires an explicit amount",
+	} {
+		if !strings.Contains(adminSweepBody, required) {
+			t.Fatalf("admin sweep reservation contract missing %q", required)
+		}
+	}
+	if strings.Contains(adminSweepBody, "ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, isSweep)") {
+		t.Fatal("admin sweep must not direct-broadcast through ExecuteWalletTransfer without a hold")
+	}
+}
+
+func TestV1PayoutCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
+	source := readHandlerSource(t, "v1api.go")
+	body := extractHandlerFunctionBody(t, source, "HandleV1PayoutCreate")
+	for _, token := range []string{
+		"errors.Is(err, repositories.ErrInsufficientAvailableBalance)",
+		"fiber.StatusBadRequest",
+		"payout creation failed",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("V1 payout create insufficient-balance mapping missing %q", token)
+		}
+	}
+}
+
+func TestV1RefundCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
+	source := readHandlerSource(t, "v1api.go")
+	body := extractHandlerFunctionBody(t, source, "HandleV1RefundCreate")
+	for _, token := range []string{
+		"errors.Is(err, repositories.ErrInsufficientAvailableBalance)",
+		"fiber.StatusBadRequest",
+		"refund creation failed",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("V1 refund create insufficient-balance mapping missing %q", token)
+		}
+	}
+}
+
+func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	for _, tc := range []struct {
+		function string
+		tokens   []string
+	}{
+		{
+			function: "HandleAdminWithdrawalApprove",
+			tokens: []string{
+				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success"`,
+			},
+		},
+		{
+			function: "HandleAdminWithdrawalReject",
+			tokens: []string{
+				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success"`,
+			},
+		},
+	} {
+		body := extractHandlerFunctionBody(t, source, tc.function)
+		for _, token := range tc.tokens {
+			if !strings.Contains(body, token) {
+				t.Fatalf("%s audit contract missing %q", tc.function, token)
+			}
+		}
+	}
+}
+
 func TestAdminTestDepositPaymentMatchUsesExplicitOutcomeBoundary(t *testing.T) {
 	source := readHandlerSource(t, "dealer.go")
 	body := extractHandlerFunctionBody(t, source, "deliverAdminPaymentWebhookIfMatched")

@@ -63,50 +63,73 @@ func (r *ReconciliationRepo) CreateScopedOpenIfMissing(ctx context.Context, scop
 	if err != nil {
 		return nil, false, err
 	}
-	var existing models.ReconciliationJob
-	err = r.db.WithContext(ctx).
-		Where("scope_key = ? AND status IN ?", prepared.ScopeKey, activeReconciliationStatuses()).
-		First(&existing).Error
-	if err == nil {
-		return &existing, false, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, false, err
-	}
-	if strings.TrimSpace(scope.ScopeKey) == "" {
-		err = r.db.WithContext(ctx).
-			Where("chain_id = ? AND from_block = ? AND to_block = ? AND reason = ? AND status IN ?", prepared.ChainID, prepared.FromBlock, prepared.ToBlock, prepared.Reason, activeReconciliationStatuses()).
-			Order("created_at ASC").
+	var job *models.ReconciliationJob
+	created := false
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockReconciliationScope(ctx, tx, prepared.ScopeKey); err != nil {
+			return err
+		}
+
+		var existing models.ReconciliationJob
+		err := tx.WithContext(ctx).
+			Where("scope_key = ? AND status IN ?", prepared.ScopeKey, activeReconciliationStatuses()).
 			First(&existing).Error
 		if err == nil {
-			return &existing, false, nil
+			job = &existing
+			return nil
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, false, err
+			return err
 		}
-	}
-	now := time.Now()
-	job := &models.ReconciliationJob{
-		ID:                      uuid.New(),
-		ChainID:                 prepared.ChainID,
-		FromBlock:               prepared.FromBlock,
-		ToBlock:                 prepared.ToBlock,
-		Reason:                  prepared.Reason,
-		Status:                  models.ReconciliationStatusOpen,
-		MerchantID:              prepared.MerchantID,
-		DomainID:                prepared.DomainID,
-		ScopeKey:                prepared.ScopeKey,
-		ResourceType:            prepared.ResourceType,
-		ResourceID:              prepared.ResourceID,
-		AffectedResourceIDsJSON: prepared.AffectedResourceIDsJSON,
-		EvidenceJSON:            prepared.EvidenceJSON,
-		CreatedAt:               now,
-		UpdatedAt:               now,
-	}
-	if err := r.db.WithContext(ctx).Create(job).Error; err != nil {
+		if strings.TrimSpace(scope.ScopeKey) == "" {
+			err = tx.WithContext(ctx).
+				Where("chain_id = ? AND from_block = ? AND to_block = ? AND reason = ? AND status IN ?", prepared.ChainID, prepared.FromBlock, prepared.ToBlock, prepared.Reason, activeReconciliationStatuses()).
+				Order("created_at ASC").
+				First(&existing).Error
+			if err == nil {
+				job = &existing
+				return nil
+			}
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		now := time.Now()
+		next := &models.ReconciliationJob{
+			ID:                      uuid.New(),
+			ChainID:                 prepared.ChainID,
+			FromBlock:               prepared.FromBlock,
+			ToBlock:                 prepared.ToBlock,
+			Reason:                  prepared.Reason,
+			Status:                  models.ReconciliationStatusOpen,
+			MerchantID:              prepared.MerchantID,
+			DomainID:                prepared.DomainID,
+			ScopeKey:                prepared.ScopeKey,
+			ResourceType:            prepared.ResourceType,
+			ResourceID:              prepared.ResourceID,
+			AffectedResourceIDsJSON: prepared.AffectedResourceIDsJSON,
+			EvidenceJSON:            prepared.EvidenceJSON,
+			CreatedAt:               now,
+			UpdatedAt:               now,
+		}
+		if err := tx.WithContext(ctx).Create(next).Error; err != nil {
+			return err
+		}
+		job = next
+		created = true
+		return nil
+	})
+	if err != nil {
 		return nil, false, err
 	}
-	return job, true, nil
+	return job, created, nil
+}
+
+func lockReconciliationScope(ctx context.Context, tx *gorm.DB, scopeKey string) error {
+	if tx == nil || tx.Dialector == nil || tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?)::bigint)", scopeKey).Error
 }
 
 func (r *ReconciliationRepo) OpenWebhookDeliveryDrift(ctx context.Context, delivery models.WebhookDelivery, reason string) (*models.ReconciliationJob, bool, error) {

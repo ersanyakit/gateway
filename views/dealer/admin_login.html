@@ -1,17 +1,17 @@
 <section class="grid min-h-[calc(100vh-184px)] items-center gap-8 lg:grid-cols-[minmax(0,1fr)_430px]">
   <div class="grid max-w-2xl gap-5">
-    <span class="inline-flex w-fit rounded-full bg-[#fff3fc] px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Admin operations</span>
+    <span class="inline-flex w-fit rounded-full border border-line bg-white/90 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Admin operations</span>
     <h1 class="m-0 text-5xl font-black leading-[0.96] text-ink sm:text-6xl">Çekim onayları kontrollü operasyon akışında.</h1>
     <p class="m-0 max-w-xl text-base leading-8 text-muted">Üye işyeri çekim talepleri admin onayı olmadan gerçek transfer olarak gönderilmez.</p>
   </div>
 
-  <section class="grid gap-4 rounded-[28px] border border-line bg-white/90 p-5 shadow-soft" aria-labelledby="admin-login-title">
+  <section class="grid gap-5 rounded-[28px] border border-line bg-white/94 p-6 shadow-soft backdrop-blur" aria-labelledby="admin-login-title">
     <div class="flex items-start justify-between gap-4">
       <div>
         <h2 class="m-0 text-2xl font-black text-ink" id="admin-login-title">Admin girişi</h2>
         <p class="m-0 mt-2 text-sm leading-6 text-muted">{{.OIDCProvider}} veya şifre ile devam et.</p>
       </div>
-      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-accent text-sm font-black text-white shadow-glow">A</span>
+      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-line bg-white text-sm font-black text-accentHover shadow-sm">A</span>
     </div>
 
     {{if .Success}}<div class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-700">{{.Success}}</div>{{end}}
@@ -23,8 +23,8 @@
     </details>
     {{end}}
 
-    <a class="flex min-h-[72px] items-center gap-4 rounded-3xl border border-[#ffd1f2] bg-[#fff3fc] p-4 hover:bg-[#ffe9fa]" href="{{.OIDCLoginURL}}">
-      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-accent text-sm font-black text-white">O</span>
+    <a class="flex min-h-[72px] items-center gap-4 rounded-3xl border border-[#f6d9eb] bg-accent/5 p-4 hover:bg-accent/8" href="{{.OIDCLoginURL}}">
+      <span class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-white text-sm font-black text-accentHover shadow-sm">O</span>
       <span>
         <strong class="block text-sm font-black text-ink">OIDC ile devam et</strong>
         <small class="mt-1 block text-xs font-semibold text-muted">OIDC admin rolü gerekli</small>
@@ -39,10 +39,10 @@
 
     <form class="grid gap-3" method="post" action="/admin/login">
       <label class="grid gap-2 text-sm font-bold text-muted" for="email">E-posta
-        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="email" name="email" type="email" autocomplete="email" value="{{.AdminLoginEmail}}" required>
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-accent/10" id="email" name="email" type="email" autocomplete="email" value="{{.AdminLoginEmail}}" required>
       </label>
       <label class="grid gap-2 text-sm font-bold text-muted" for="password">Şifre
-        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-100" id="password" name="password" type="password" autocomplete="current-password" required>
+        <input class="min-h-12 rounded-2xl border border-line bg-white px-4 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-accent/10" id="password" name="password" type="password" autocomplete="current-password" required>
       </label>
       <label class="flex min-h-11 items-center gap-3 rounded-2xl border border-line bg-wash px-4 text-sm font-bold text-muted">
         <input class="h-4 w-4 rounded border-line text-accent focus:ring-pink-100" name="remember_me" type="checkbox" value="on" {{if .AdminRememberMe}}checked{{end}}>

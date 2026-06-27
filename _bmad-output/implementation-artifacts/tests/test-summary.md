@@ -1,5 +1,39 @@
 # Test Automation Summary
 
+## Story 4.1 - Generated Tests
+
+### API Tests
+- [x] `api/handlers/dealer_test.go` - V1 payout creation keeps insufficient ledger hold failures in the V1 error envelope with HTTP 400.
+- [x] `api/handlers/dealer_test.go` - V1 refund creation now has the same insufficient/reservation failure contract coverage as payout creation.
+- [x] `api/handlers/dealer_test.go` - Admin withdrawal approve/reject paths are contract-tested for operator audit logging on success and failure.
+
+### E2E / Service Workflow Tests
+- [x] `repositories/withdrawal_request_repo_test.go` - Withdrawal approval workflow now covers a successful hold followed by pre-broadcast transfer failure, failed request state, idempotent hold voiding, and no tx hash.
+- [x] `repositories/refund_repo_test.go` - Refund workflow now covers successful hold creation followed by pre-broadcast terminal failure, hold voiding, and idempotent duplicate release.
+- [x] Existing `repositories/ledger_repo_test.go` coverage exercises successful withdrawal/refund/sweep holds, insufficient funds, duplicate idempotency, concurrent overdraw prevention, sweep release, and ledger invariant balance projections.
+- [x] Existing handler contract coverage blocks direct unreserved sweep/withdraw broadcast paths and enforces reserved transfer helpers.
+
+## Story 4.1 - Coverage
+
+- API endpoints: V1 payout/refund hold failure mapping covered for validation-style bad request responses.
+- Operator UI handlers: admin withdrawal approval/rejection audit log contracts covered.
+- Ledger workflows: successful hold, insufficient funds, concurrent competing holds, duplicate idempotency, pre-broadcast failure release, post-broadcast hold preservation, sweep hold/release, and schema contracts covered.
+- UI E2E framework: no Playwright/Cypress-style UI runner exists in this Go server-rendered project; workflow coverage was added through existing Go handler/repository tests.
+
+## Story 4.1 - Validation
+
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestV1PayoutCreateMapsInsufficientHoldToBadRequest|TestV1RefundCreateMapsInsufficientHoldToBadRequest|TestAdminWithdrawalOperatorActionsWriteAuditLogs|TestOutboundHandlersRequireLedgerReservationContracts'`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./api/handlers ./services/database`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 . ./services/reconciliation`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
+- [x] `git diff --check && git diff --cached --check`
+- [i] The targeted and full commands that include `./api/handlers` were rerun outside the execution sandbox because `TestV1ProbeEVMRPC` uses `httptest.NewServer` and needs localhost bind permission.
+
+## Previous Generated Tests
+
 ## Generated Tests
 
 ### API Tests
@@ -27,7 +61,8 @@
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./api/handlers ./docs ./services/database ./services/deposits`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`
 - [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`
-- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`
+- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation -run TestReserveServiceOpenJobCreatesScopedReconciliation -v`
+- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/database`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
 - [x] `git diff --check && git diff --cached --check`
@@ -41,7 +76,7 @@
 
 ## Notes
 
-- Full repository validation passed on 2026-06-27 after running the Story 3.5 targeted packages, Postgres-backed repository/database packages, full test suite, static vet check, and whitespace checks.
+- Full repository validation passed on 2026-06-27 after running the Story 3.5 targeted packages, scoped Postgres-backed checks, full test suite, static vet check, and whitespace checks.
 - Postgres validation caught and the implementation fixed a parent-mismatch ordering issue where generic same-height hash conflict handling could mask the more specific `parent_mismatch` correction reason.
-- Story 3.6 validation passed after running targeted packages, Postgres-backed reconciliation/database packages, full test suite, static vet check, and whitespace checks. The earlier sandbox-only listener bind failure was resolved by rerunning the same tests with the required local test-server permission.
+- Story 3.6 validation passed after running targeted packages, scoped Postgres-backed reconciliation/database checks, full test suite, static vet check, and whitespace checks. The earlier sandbox-only listener bind failure was resolved by rerunning the same tests with the required local test-server permission.
 - QA E2E generation for Story 3.6 added reserve drift scoped reconciliation coverage. The new Postgres-backed reserve test skips when `OUTBOX_TEST_DATABASE_URL` is not configured and runs as part of `./services/reconciliation` when a test database DSN is available.
