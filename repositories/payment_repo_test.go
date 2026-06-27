@@ -364,8 +364,11 @@ func TestPaymentRepoMatchFinalizedTransactionPersistsOutcomeAndIsIdempotent(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repeated != nil {
-		t.Fatalf("repeated match = %#v, want no-op", repeated)
+	if repeated == nil || repeated.Changed || repeated.Session == nil {
+		t.Fatalf("repeated match = %#v, want existing no-op result", repeated)
+	}
+	if repeated.Session.ID != session.ID || !repeated.LedgerEligible || repeated.Outcome != models.PaymentOutcomeUnderpaid {
+		t.Fatalf("repeated match result = %#v", repeated)
 	}
 }
 

@@ -2,7 +2,7 @@
 story_id: "3.4"
 story_key: "3-4-model-payment-matching-outcomes-explicitly"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 7f8c552
@@ -10,7 +10,7 @@ baseline_commit: 7f8c552
 
 # Story 3.4: Model Payment Matching Outcomes Explicitly
 
-Status: review
+Status: done
 
 ## Story
 
@@ -65,6 +65,10 @@ boylece checkout, API ve webhook consumer'lari belirsiz veya mismatch odeme duru
   - [x] Static validation: `go vet ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+
+### Review Findings
+
+- [x] [Review][Patch] Story validation record claimed an unrun Postgres-specific validation [3-4-model-payment-matching-outcomes-explicitly.md] — Removed the inaccurate Postgres validation claim and recorded the actual test/vet/diff validation commands that were run.
 
 ## Dev Notes
 
@@ -151,6 +155,7 @@ Codex
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 - 2026-06-27: Tightened payment match candidate selection so exact chain+asset candidates are preferred before recording wrong-chain/wrong-asset failures.
 - 2026-06-27: Final validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./services/database ./docs`, `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`, `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`, and `git diff --check && git diff --cached --check`.
+- 2026-06-27: Code review found one patch issue in the story validation record. Corrected the record; no code-level patch, decision, or defer findings remained.
 
 ### Completion Notes List
 
@@ -161,6 +166,7 @@ Codex
 - Matching now prefers exact chain+asset candidates before recording wrong-chain/wrong-asset failures when multiple sessions share a wallet.
 - Updated deposit finality settlement so finalized funds on checkout wallets still post ledger availability for non-paid outcomes.
 - Updated checkout, V1 API, webhook payload/catalog, and integration docs to expose explicit outcome states and raw shortfall/excess metadata.
+- Code review completed with the only finding resolved in the story record; story is ready as done.
 
 ### File List
 
@@ -204,3 +210,4 @@ Codex
 - 2026-06-27: Created story with explicit payment matching outcome scope, current paid-only matching risks, ledger authority constraints, webhook/API/checkout contract requirements, and validation plan.
 - 2026-06-27: Implemented explicit payment matching outcome model, deposit settlement integration, public API/checkout/webhook/docs contracts, and validation coverage; story moved to review.
 - 2026-06-27: Added exact-candidate match selection guard, legacy finality/admin explicit-match integration, idempotency validation, and txrescan endpoint annotation coverage.
+- 2026-06-27: Code review completed; corrected validation record issue and moved story to done.
