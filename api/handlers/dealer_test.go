@@ -309,6 +309,22 @@ func TestOutboundHandlersRequireLedgerReservationContracts(t *testing.T) {
 	}
 }
 
+func TestAdminOutboundTransfersCarrySignerAuditContext(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	for name, body := range map[string]string{
+		"HandleAdminSweep":             extractHandlerFunctionBody(t, source, "HandleAdminSweep"),
+		"HandleAdminWithdrawalApprove": extractHandlerFunctionBody(t, source, "HandleAdminWithdrawalApprove"),
+		"HandleAdminRefundApprove":     extractHandlerFunctionBody(t, source, "HandleAdminRefundApprove"),
+	} {
+		if !strings.Contains(body, "ActorID:       adminEmail") {
+			t.Fatalf("%s must pass admin actor id into signer audit context", name)
+		}
+		if !strings.Contains(body, "CorrelationID: dealerSignerCorrelationID") {
+			t.Fatalf("%s must pass request/resource correlation id into signer audit context", name)
+		}
+	}
+}
+
 func TestV1PayoutCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
 	source := readHandlerSource(t, "v1api.go")
 	body := extractHandlerFunctionBody(t, source, "HandleV1PayoutCreate")

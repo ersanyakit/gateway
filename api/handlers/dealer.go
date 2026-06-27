@@ -3,6 +3,7 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"core/api/middleware"
 	"core/asset"
 	"core/blockchain"
 	"core/constants"
@@ -2139,12 +2140,14 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), request.ID, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
 			lockedWalletID := locked.WalletID.String()
 			transferParams := types.TransferParams{
-				Context:   c.Context(),
-				WalletID:  &lockedWalletID,
-				Chain:     &locked.Chain,
-				Token:     locked.Token,
-				ToAddress: &locked.ToAddress,
-				AmountRaw: &locked.AmountRaw,
+				Context:       c.Context(),
+				WalletID:      &lockedWalletID,
+				Chain:         &locked.Chain,
+				Token:         locked.Token,
+				ToAddress:     &locked.ToAddress,
+				AmountRaw:     &locked.AmountRaw,
+				ActorID:       adminEmail,
+				CorrelationID: dealerSignerCorrelationID(c, "admin_recover_funds:"+locked.ID.String()),
 			}
 			if err := transferParams.ValidateWithdraw(); err != nil {
 				return "", err
@@ -2191,6 +2194,18 @@ func adminLiveBalanceError(c fiber.Ctx, status int, message string) error {
 		"result":  "error",
 		"message": message,
 	})
+}
+
+func dealerSignerCorrelationID(c fiber.Ctx, fallback string) string {
+	requestID := middleware.RequestIDFromCtx(c)
+	fallback = strings.TrimSpace(fallback)
+	if requestID == "" {
+		return fallback
+	}
+	if fallback == "" {
+		return requestID
+	}
+	return requestID + ":" + fallback
 }
 
 func adminBalanceResultForAddress(results []models.BalanceResult, address string) (models.BalanceResult, bool) {
@@ -2445,12 +2460,14 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), id, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
 			walletID := locked.WalletID.String()
 			params := types.TransferParams{
-				Context:   c.Context(),
-				WalletID:  &walletID,
-				Chain:     &locked.Chain,
-				Token:     locked.Token,
-				ToAddress: &locked.ToAddress,
-				AmountRaw: &locked.AmountRaw,
+				Context:       c.Context(),
+				WalletID:      &walletID,
+				Chain:         &locked.Chain,
+				Token:         locked.Token,
+				ToAddress:     &locked.ToAddress,
+				AmountRaw:     &locked.AmountRaw,
+				ActorID:       adminEmail,
+				CorrelationID: dealerSignerCorrelationID(c, "withdrawal:"+locked.ID.String()),
 			}
 			if err := params.ValidateWithdraw(); err != nil {
 				return "", err
@@ -2567,12 +2584,14 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		}
 		amountRaw := claimedRefund.AmountRaw
 		params := types.TransferParams{
-			Context:   c.Context(),
-			WalletID:  &walletID,
-			Chain:     &chain,
-			Token:     session.SelectedToken,
-			ToAddress: &toAddress,
-			AmountRaw: &amountRaw,
+			Context:       c.Context(),
+			WalletID:      &walletID,
+			Chain:         &chain,
+			Token:         session.SelectedToken,
+			ToAddress:     &toAddress,
+			AmountRaw:     &amountRaw,
+			ActorID:       adminEmail,
+			CorrelationID: dealerSignerCorrelationID(c, "refund:"+id.String()),
 		}
 		if err := params.ValidateWithdraw(); err != nil {
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())

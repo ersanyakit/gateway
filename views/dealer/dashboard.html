@@ -1,15 +1,15 @@
 <section class="grid gap-4">
-  <header class="overflow-hidden rounded-[28px] border border-line bg-white/90 p-4 shadow-soft sm:p-5">
-    <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+  <header class="overflow-hidden rounded-[28px] border border-line bg-white/90 p-3 shadow-soft sm:p-4">
+    <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
       <div class="min-w-0">
-        <span class="inline-flex rounded-full border border-line bg-accent/5 px-3 py-2 text-xs font-extrabold uppercase tracking-[0.08em] text-accentHover">Merchant treasury</span>
-        <h1 class="m-0 mt-3 max-w-4xl text-3xl font-black tracking-normal text-ink sm:text-4xl">Üye işyeri kasası</h1>
-        <p class="m-0 mt-2 max-w-3xl text-sm leading-6 text-muted">Dashboard sadece merchant'ın biriken varlıklarını gösterir: hangi network, hangi asset, ne kadar bakiye.</p>
+        <span class="inline-flex rounded-full border border-line bg-accent/5 px-3 py-1.5 text-[10px] font-extrabold uppercase tracking-[0.08em] text-accentHover">Merchant treasury</span>
+        <h1 class="m-0 mt-2 max-w-4xl text-[28px] font-black leading-tight tracking-normal text-ink sm:text-[34px]">Üye işyeri kasası</h1>
+        <p class="m-0 mt-1.5 max-w-3xl text-[13px] leading-6 text-muted">Dashboard sadece merchant'ın biriken varlıklarını gösterir: hangi network, hangi asset, ne kadar bakiye.</p>
       </div>
       <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-        <a class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.DomainsPanelURL}}">Domain ekle</a>
-        <a class="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="{{.ProductsPanelURL}}">Payment link oluştur</a>
-        <a class="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" href="/swagger/index.html">API Docs</a>
+        <a class="inline-flex min-h-10 items-center justify-center rounded-full bg-accent px-4 text-[13px] font-extrabold text-white shadow-glow hover:bg-accentHover" href="{{.DomainsPanelURL}}">Domain ekle</a>
+        <a class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-[13px] font-extrabold text-ink shadow-sm hover:bg-wash" href="{{.ProductsPanelURL}}">Payment link oluştur</a>
+        <a class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-[13px] font-extrabold text-ink shadow-sm hover:bg-wash" href="/swagger/index.html">API Docs</a>
       </div>
     </div>
 
@@ -17,34 +17,34 @@
     {{if .Error}}<div class="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">{{.Error}}</div>{{end}}
 
     <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      <div class="rounded-3xl border border-line bg-wash p-4">
-        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Biriken asset</span>
-        <strong class="mt-2 block text-3xl font-black text-ink">{{.AssetCount}}</strong>
+      <div class="rounded-3xl border border-line bg-wash p-3.5">
+        <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Biriken asset</span>
+        <strong class="mt-2 block text-2xl font-black leading-none text-ink">{{.AssetCount}}</strong>
       </div>
-      <div class="rounded-3xl border border-line bg-wash p-4">
-        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Desteklenen ağ</span>
-        <strong class="mt-2 block text-3xl font-black text-ink">{{.NetworkCount}}</strong>
+      <div class="rounded-3xl border border-line bg-wash p-3.5">
+        <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Desteklenen ağ</span>
+        <strong class="mt-2 block text-2xl font-black leading-none text-ink">{{.NetworkCount}}</strong>
       </div>
-      <div class="rounded-3xl border border-line bg-wash p-4">
-        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Domain</span>
-        <strong class="mt-2 block text-3xl font-black text-ink">{{.DomainCount}}</strong>
+      <div class="rounded-3xl border border-line bg-wash p-3.5">
+        <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Domain</span>
+        <strong class="mt-2 block text-2xl font-black leading-none text-ink">{{.DomainCount}}</strong>
       </div>
-      <div class="rounded-3xl border border-line bg-wash p-4">
-        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Payment link</span>
-        <strong class="mt-2 block text-3xl font-black text-ink">{{.ProductCount}}</strong>
+      <div class="rounded-3xl border border-line bg-wash p-3.5">
+        <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Payment link</span>
+        <strong class="mt-2 block text-2xl font-black leading-none text-ink">{{.ProductCount}}</strong>
       </div>
-      <div class="rounded-3xl border border-line bg-wash p-4">
-        <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri</span>
+      <div class="rounded-3xl border border-line bg-wash p-3.5">
+        <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri</span>
         <strong class="mt-2 block truncate text-base font-black text-ink">{{.MerchantName}}</strong>
         <span class="mt-1 block truncate text-xs font-semibold text-muted">{{.MerchantEmail}}</span>
       </div>
-      <div class="rounded-3xl border border-line bg-wash p-4 xl:col-span-4">
+      <div class="rounded-3xl border border-line bg-wash p-3.5 xl:col-span-4">
         <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
           <div class="min-w-0">
-            <span class="text-xs font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri ID</span>
-            <code class="mt-2 block truncate rounded-2xl border border-line bg-white px-3 py-2 text-xs font-bold text-ink" id="merchantIdValue">{{.MerchantID}}</code>
+            <span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Üye işyeri ID</span>
+            <code class="mt-2 block truncate rounded-2xl border border-line bg-white px-3 py-1.5 text-[11px] font-bold text-ink" id="merchantIdValue">{{.MerchantID}}</code>
           </div>
-          <button class="inline-flex min-h-10 shrink-0 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="merchantIdValue">Kopyala</button>
+          <button class="inline-flex min-h-9 shrink-0 items-center justify-center rounded-full border border-line bg-white px-3.5 text-[13px] font-extrabold text-ink shadow-sm hover:bg-wash" type="button" data-copy-target="merchantIdValue">Kopyala</button>
         </div>
       </div>
     </div>
@@ -66,13 +66,13 @@
 
   <section class="grid{{if ne .ActivePanel "treasury"}} hidden{{end}} gap-4">
     <div class="grid gap-4">
-      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+      <section class="rounded-[28px] border border-line bg-white/90 p-4 shadow-soft">
+        <div class="mb-3.5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h2 class="m-0 text-xl font-black text-ink">Biriken varlıklar</h2>
-            <p class="m-0 mt-1 text-sm leading-6 text-muted">Her kart tek bir network + asset bakiyesini gösterir.</p>
+            <h2 class="m-0 text-[18px] font-black text-ink">Biriken varlıklar</h2>
+            <p class="m-0 mt-1 text-[13px] leading-6 text-muted">Her kart tek bir network + asset bakiyesini gösterir.</p>
           </div>
-          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.AssetCount}} asset</span>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-1.5 text-[10px] font-extrabold text-muted">{{.AssetCount}} asset</span>
         </div>
 
         <div class="overflow-hidden rounded-3xl border border-line">
@@ -104,22 +104,22 @@
         </div>
       </section>
 
-      <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-        <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+      <section class="rounded-[28px] border border-line bg-white/90 p-4 shadow-soft">
+        <div class="mb-3.5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h2 class="m-0 text-xl font-black text-ink">Network kasaları</h2>
-            <p class="m-0 mt-1 text-sm leading-6 text-muted">Tüm desteklenen chain'ler ve o chain altında biriken asset sayısı.</p>
+            <h2 class="m-0 text-[18px] font-black text-ink">Network kasaları</h2>
+            <p class="m-0 mt-1 text-[13px] leading-6 text-muted">Tüm desteklenen chain'ler ve o chain altında biriken asset sayısı.</p>
           </div>
-          <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.NetworkCount}} network</span>
+          <span class="w-fit rounded-full border border-line bg-wash px-3 py-1.5 text-[10px] font-extrabold text-muted">{{.NetworkCount}} network</span>
         </div>
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {{range .ChainVaults}}
-            <article class="rounded-3xl border border-line bg-wash p-4">
+            <article class="rounded-3xl border border-line bg-wash p-3.5">
               <div class="flex items-center gap-3">
                 {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="h-8 w-8 rounded-full border border-line bg-white p-1 object-contain">{{end}}
                 <div class="min-w-0">
                   <strong class="block truncate text-sm font-black text-ink">{{.Chain}}</strong>
-                  <span class="block text-xs font-semibold text-muted">{{if .Empty}}0 asset{{else}}{{len .Assets}} asset · {{.Deposits}} dep{{end}}</span>
+                  <span class="block text-[11px] font-semibold text-muted">{{if .Empty}}0 asset{{else}}{{len .Assets}} asset · {{.Deposits}} dep{{end}}</span>
                 </div>
               </div>
             </article>

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"core/constants"
 	"core/models"
 	"core/repositories"
+	"core/services/signer"
 	requesttypes "core/types"
 
 	"github.com/gofiber/fiber/v3"
@@ -132,6 +134,7 @@ func ExecuteReservedWalletTransfer(walletRepo *repositories.WalletRepo, chains *
 	if sweep {
 		return nil, repositories.ErrLedgerReservationRequired
 	}
+	params.Context = transferContextWithSignerAudit(params.Context, params)
 
 	chain, err := chains.GetChain(*params.Chain)
 	if err != nil {
@@ -161,6 +164,22 @@ func ExecuteReservedWalletTransfer(walletRepo *repositories.WalletRepo, chains *
 	}
 
 	return chain.Withdraw(params.Context, *derivedWallet, *params.AmountRaw, *params.ToAddress)
+}
+
+func transferContextWithSignerAudit(ctx context.Context, params requesttypes.TransferParams) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(params.ActorID) == "" &&
+		strings.TrimSpace(params.JobID) == "" &&
+		strings.TrimSpace(params.CorrelationID) == "" {
+		return ctx
+	}
+	return signer.WithAuditContext(ctx, signer.AuditContext{
+		ActorID:       strings.TrimSpace(params.ActorID),
+		JobID:         strings.TrimSpace(params.JobID),
+		CorrelationID: strings.TrimSpace(params.CorrelationID),
+	})
 }
 
 func verifyDerivedWalletAddress(wallet models.Wallet, chainID constants.ChainID, derivedAddress string) error {
