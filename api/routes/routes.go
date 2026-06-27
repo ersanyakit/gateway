@@ -43,6 +43,7 @@ type Router struct {
 	DomainRepo           *repositories.DomainRepo
 	WalletRepo           *repositories.WalletRepo
 	ChainStateRepo       *repositories.ChainStateRepo
+	ChainFactRepo        *repositories.ChainFactRepo
 	TransactionRepo      *repositories.TransactionRepo
 	PaymentRepo          *repositories.PaymentRepo
 	ProductRepo          *repositories.ProductRepo
@@ -137,6 +138,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Use("/api/v1", middleware.RateLimitAPIKey())
 
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
+	r.ChainFactRepo = repositories.NewChainFactRepo(r.db)
 	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
 	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
 	r.ProductRepo = repositories.NewProductRepo(r.db)

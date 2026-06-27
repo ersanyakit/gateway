@@ -148,6 +148,7 @@ func ApplyGORMMigrations(ctx context.Context, db *gorm.DB) error {
 func autoMigrateModels() []any {
 	return []any{
 		&models.ChainState{},
+		&models.ChainFact{},
 		&models.Domain{},
 		&models.Merchant{},
 		&models.Transaction{},
@@ -171,6 +172,14 @@ func autoMigrateModels() []any {
 func requiredSchemaColumns() []requiredSchemaColumn {
 	return []requiredSchemaColumn{
 		{table: "chain_states", model: &models.ChainState{}, field: "ChainID"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "EventID"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "ChainID"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "BlockNumber"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "TxHash"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "LogIndex"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "ObservedAddress"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "Amount"},
+		{table: "chain_facts", model: &models.ChainFact{}, field: "ConfirmationsRequired"},
 		{table: "domains", model: &models.Domain{}, field: "ID"},
 		{table: "merchants", model: &models.Merchant{}, field: "ID"},
 		{table: "transactions", model: &models.Transaction{}, field: "UniqueHash"},
@@ -207,6 +216,7 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 	return []requiredSchemaIndex{
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_event_id"},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_idempotency_scope"},
+		{table: "chain_facts", model: &models.ChainFact{}, name: "ux_chain_facts_event_id"},
 	}
 }
 

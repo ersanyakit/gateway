@@ -2,7 +2,7 @@
 story_id: "3.1"
 story_key: "3-1-emit-chain-facts-without-mutating-business-state"
 epic: "Epic 3: Trustworthy Deposit Settlement & Ledger Balances"
-status: ready-for-dev
+status: in-progress
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 90e5c93
@@ -10,7 +10,7 @@ baseline_commit: 90e5c93
 
 # Story 3.1: Emit Chain Facts Without Mutating Business State
 
-Status: ready-for-dev
+Status: in-progress
 
 ## Story
 
