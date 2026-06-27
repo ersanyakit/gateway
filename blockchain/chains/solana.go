@@ -6,6 +6,7 @@ import (
 	blockchain "core/blockchain"
 	"core/constants"
 	"core/models"
+	"core/services/chainresource"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,7 +126,7 @@ func (s *SolanaChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, err
 	}
 
-	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	from, err := solanaWalletAddress(wallet)
 	if err != nil {
 		return nil, err
 	}
@@ -135,12 +136,15 @@ func (s *SolanaChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, fmt.Errorf("%s balance fetch failed: %w", s.Name(), err)
 	}
 
-	const feeLamports uint64 = 5000
+	feeLamports, err := solanaTransferFeeLamports()
+	if err != nil {
+		return nil, err
+	}
 	if balance.Value <= feeLamports {
 		return nil, fmt.Errorf("%s sweep balance is not enough for fee: balance=%d fee=%d", s.Name(), balance.Value, feeLamports)
 	}
 
-	return s.sendLamportsWithClient(ctx, rpcClient, privateKey, from, balance.Value-feeLamports, toAddress)
+	return s.sendLamportsWithClient(ctx, rpcClient, wallet, from, balance.Value-feeLamports, toAddress, "sweep.native")
 }
 
 func (s *SolanaChain) sendLamports(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
@@ -160,15 +164,15 @@ func (s *SolanaChain) sendLamports(ctx context.Context, wallet blockchain.Wallet
 		return nil, err
 	}
 
-	privateKey, from, err := solanaPrivateKeyAndAddress(wallet)
+	from, err := solanaWalletAddress(wallet)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.sendLamportsWithClient(ctx, rpcClient, privateKey, from, amount.Uint64(), toAddress)
+	return s.sendLamportsWithClient(ctx, rpcClient, wallet, from, amount.Uint64(), toAddress, "transfer.native")
 }
 
-func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc.Client, privateKey solana.PrivateKey, from solana.PublicKey, lamports uint64, toAddress string) (*blockchain.TransactionResult, error) {
+func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc.Client, wallet blockchain.WalletDetails, from solana.PublicKey, lamports uint64, toAddress string, intent string) (*blockchain.TransactionResult, error) {
 	if lamports == 0 {
 		return nil, errors.New("amount_raw must be greater than zero")
 	}
@@ -177,23 +181,34 @@ func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc
 	if err != nil {
 		return nil, fmt.Errorf("invalid solana recipient address: %w", err)
 	}
-	if lamports > ^uint64(0)-solanaTransferFeeLamports {
+	feeLamports, err := solanaTransferFeeLamports()
+	if err != nil {
+		return nil, err
+	}
+	if lamports > ^uint64(0)-feeLamports {
 		return nil, errors.New("solana amount_raw plus fee exceeds uint64")
 	}
 	balance, err := rpcClient.GetBalance(ctx, from, rpc.CommitmentFinalized)
 	if err != nil {
 		return nil, fmt.Errorf("%s balance fetch failed: %w", s.Name(), err)
 	}
-	required := lamports + solanaTransferFeeLamports
+	required := lamports + feeLamports
 	if balance.Value < required {
 		return nil, fmt.Errorf("%s balance is not enough: balance=%d required=%d", s.Name(), balance.Value, required)
 	}
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, intent)
+	if err != nil {
+		return nil, fmt.Errorf("%s resource reservation failed: %w", s.Name(), err)
+	}
+
 	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("%s blockhash fetch failed: %w", s.Name(), err)
 	}
 	if recent == nil || recent.Value == nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("%s empty latest blockhash", s.Name())
 	}
 
@@ -205,27 +220,46 @@ func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc
 		solana.TransactionPayer(from),
 	)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("%s tx build failed: %w", s.Name(), err)
 	}
 
-	if _, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
+	privateKey, _, err := solanaPrivateKeyAndAddress(wallet)
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
+
+	signatures, err := tx.Sign(func(key solana.PublicKey) *solana.PrivateKey {
 		if key.Equals(from) {
 			return &privateKey
 		}
 		return nil
-	}); err != nil {
+	})
+	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("%s tx signing failed: %w", s.Name(), err)
 	}
 
 	signature, err := rpcClient.SendTransaction(ctx, tx)
 	if err != nil {
+		txSig := ""
+		if len(signatures) > 0 {
+			txSig = signatures[0].String()
+		}
+		_ = lease.Consume(txSig)
 		return nil, fmt.Errorf("%s tx broadcast failed: %w", s.Name(), err)
 	}
+	_ = lease.Consume(signature.String())
 
 	return &blockchain.TransactionResult{
 		TxHash:  signature.String(),
 		Success: true,
 	}, nil
+}
+
+func solanaTransferFeeLamports() (uint64, error) {
+	return chainresource.SolanaTransferFeeLamports()
 }
 
 func (s *SolanaChain) solanaRPCClient() (*rpc.Client, error) {
@@ -236,6 +270,14 @@ func (s *SolanaChain) solanaRPCClient() (*rpc.Client, error) {
 		}
 	}
 	return nil, errors.New("no solana RPC endpoint configured")
+}
+
+func solanaWalletAddress(wallet blockchain.WalletDetails) (solana.PublicKey, error) {
+	address := strings.TrimSpace(wallet.Address)
+	if address == "" {
+		return solana.PublicKey{}, errors.New("solana wallet address is required for chain resource reservation")
+	}
+	return solana.PublicKeyFromBase58(address)
 }
 
 func solanaPrivateKeyAndAddress(wallet blockchain.WalletDetails) (solana.PrivateKey, solana.PublicKey, error) {

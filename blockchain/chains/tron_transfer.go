@@ -16,6 +16,7 @@ import (
 	"time"
 
 	blockchain "core/blockchain"
+	"core/services/chainresource"
 
 	"github.com/btcsuite/btcd/btcec/v2"
 	tronSDK "github.com/okx/go-wallet-sdk/coins/tron"
@@ -306,7 +307,7 @@ func tronPrivateKey(wallet blockchain.WalletDetails) (*btcec.PrivateKey, error) 
 	return privKey, nil
 }
 
-func tronSignAndBroadcast(ctx context.Context, apiBase, rawTxHex string, privKey *btcec.PrivateKey) (string, error) {
+func tronSignRawTransaction(rawTxHex string, privKey *btcec.PrivateKey) (string, error) {
 	dataToSign, err := tronSDK.SignStart(rawTxHex)
 	if err != nil {
 		return "", fmt.Errorf("tron sign start: %w", err)
@@ -319,7 +320,30 @@ func tronSignAndBroadcast(ctx context.Context, apiBase, rawTxHex string, privKey
 	if err != nil {
 		return "", fmt.Errorf("tron sign end: %w", err)
 	}
+	return signedTx, nil
+}
+
+func tronSignAndBroadcast(ctx context.Context, apiBase, rawTxHex string, privKey *btcec.PrivateKey) (string, error) {
+	signedTx, err := tronSignRawTransaction(rawTxHex, privKey)
+	if err != nil {
+		return "", err
+	}
 	return tronBroadcast(ctx, apiBase, signedTx)
+}
+
+func tronSignBroadcastWithLease(ctx context.Context, apiBase, rawTxHex string, privKey *btcec.PrivateKey, lease *chainresource.SequenceLease) (string, error) {
+	signedTx, err := tronSignRawTransaction(rawTxHex, privKey)
+	if err != nil {
+		_ = lease.Release()
+		return "", err
+	}
+	txID, err := tronBroadcast(ctx, apiBase, signedTx)
+	if err != nil {
+		_ = lease.Consume("")
+		return "", err
+	}
+	_ = lease.Consume(txID)
+	return txID, nil
 }
 
 func tronGasThresholdSUN() int64 {
@@ -365,21 +389,29 @@ func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails
 	}
 	apiBase := tronAPIBase(rpcs)
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "transfer.native")
+	if err != nil {
+		return nil, fmt.Errorf("tron resource reservation failed: %w", err)
+	}
+
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 	rawTx, err := tronSDK.NewTransfer(wallet.Address, toAddress, sendAmount,
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("tron build transfer tx: %w", err)
 	}
 	privKey, err := tronPrivateKey(wallet)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
-	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	txID, err := tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -418,26 +450,38 @@ func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, fmt.Errorf("tron TRC-20 balance is not enough: balance=%s amount=%s", balance.String(), amount.String())
 	}
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "transfer.token")
+	if err != nil {
+		return nil, fmt.Errorf("tron resource reservation failed: %w", err)
+	}
+
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 
-	const trc20FeeLimit int64 = 50_000_000
+	trc20FeeLimit, err := chainresource.TronTRC20FeeLimitSUN()
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
 	rawTx, err := tronSDK.NewTRC20TokenTransfer(
 		wallet.Address, toAddress, contractAddr,
 		amount, trc20FeeLimit,
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("tron build TRC-20 tx: %w", err)
 	}
 
 	privKey, err := tronPrivateKey(wallet)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
-	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	txID, err := tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -466,14 +510,23 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, fmt.Errorf("tron TRX balance: %w", err)
 	}
 
-	const feeSUN int64 = 1_100_000 // ~1.1 TRX (safe margin for bandwidth)
+	feeSUN, err := chainresource.TronNativeSweepFeeSUN()
+	if err != nil {
+		return nil, err
+	}
 	sendAmount := balance - feeSUN
 	if sendAmount <= 0 {
 		return nil, fmt.Errorf("tron sweep balance not enough: balance=%d sun fee=%d sun", balance, feeSUN)
 	}
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "sweep.native")
+	if err != nil {
+		return nil, fmt.Errorf("tron resource reservation failed: %w", err)
+	}
+
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 
@@ -481,15 +534,17 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("tron build transfer tx: %w", err)
 	}
 
 	privKey, err := tronPrivateKey(wallet)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 
-	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	txID, err := tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -524,27 +579,39 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 		return nil, fmt.Errorf("tron TRC-20 balance is zero for %s", contractAddr)
 	}
 
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "sweep.token")
+	if err != nil {
+		return nil, fmt.Errorf("tron resource reservation failed: %w", err)
+	}
+
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 
-	const trc20FeeLimit int64 = 50_000_000 // 50 TRX energy limit
+	trc20FeeLimit, err := chainresource.TronTRC20FeeLimitSUN()
+	if err != nil {
+		_ = lease.Release()
+		return nil, err
+	}
 	rawTx, err := tronSDK.NewTRC20TokenTransfer(
 		wallet.Address, toAddress, contractAddr,
 		balance, trc20FeeLimit,
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {
+		_ = lease.Release()
 		return nil, fmt.Errorf("tron build TRC-20 tx: %w", err)
 	}
 
 	privKey, err := tronPrivateKey(wallet)
 	if err != nil {
+		_ = lease.Release()
 		return nil, err
 	}
 
-	txID, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey)
+	txID, err := tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -575,8 +642,14 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if balance >= tronGasThresholdSUN() {
 		return false, nil
 	}
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), reserveWallet, "prefund.native")
+	if err != nil {
+		return false, fmt.Errorf("tron resource reservation failed: %w", err)
+	}
+
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
+		_ = lease.Release()
 		return false, err
 	}
 
@@ -585,15 +658,18 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {
+		_ = lease.Release()
 		return false, fmt.Errorf("tron prefund tx build: %w", err)
 	}
 
 	privKey, err := tronPrivateKey(reserveWallet)
 	if err != nil {
+		_ = lease.Release()
 		return false, err
 	}
 
-	if _, err := tronSignAndBroadcast(ctx, apiBase, rawTx, privKey); err != nil {
+	_, err = tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
+	if err != nil {
 		return false, fmt.Errorf("tron prefund broadcast: %w", err)
 	}
 	return true, nil
