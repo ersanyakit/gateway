@@ -9,6 +9,7 @@
 - [x] `repositories/ledger_repo_test.go` - Ledger reversal workflow now proves reorg correction skips existing reversal rows, voided rows, and unrelated transaction hashes while remaining idempotent.
 - [x] Existing `repositories/transaction_repo_test.go` coverage exercises deterministic same-height fork replacement, parent mismatch block-range correction, duplicate reorg handling, webhook correction metadata, sweep dead-lettering, and reconciliation job creation.
 - [x] Existing `repositories/payment_repo_test.go` coverage exercises payment correction for paid, underpaid, overpaid, partial paid, expired-after-deposit, and already-corrected idempotent paths.
+- [x] `repositories/reconciliation_repo_test.go` - Scoped reconciliation coverage exercises active scope-key dedupe, legacy fallback dedupe, evidence recording, sensitive value redaction, retry scheduling, claim lifecycle, resolved/failed re-open behavior, webhook drift, and stuck lifecycle scopes.
 - [x] Existing `services/webhook/notifier_test.go` and `services/webhook/event_catalog_test.go` coverage exercises `transaction.reorged.v1` payload metadata, reorg-corrected `payment.failed` relation fields, and legacy alias/catalog contract.
 - [x] Existing `services/deposits/service_test.go`, `services/database/database_test.go`, and `docs/integration_contract_test.go` coverage exercises corrected chain fact processing guards, schema contract fields, and integration documentation contract.
 
@@ -18,10 +19,13 @@
 - Ledger reversal critical errors: existing reversal row, voided row, unrelated transaction row, duplicate correction call, and normal reversal path covered.
 - Story 3.5 acceptance coverage: deterministic fork simulation, duplicate reorg event handling, stale checkout/payment state, correction webhook metadata, ledger reversal, sweep blocking, and reconciliation job creation covered by generated plus existing tests.
 - Payment correction webhook coverage now includes relation fields and legacy paid outcome backfill for deriving the prior payment lifecycle event.
+- Story 3.6 acceptance coverage: scoped reconciliation schema, active dedupe, evidence/outcome lifecycle, reorg-created scope preservation, webhook drift, stuck lifecycle scope, reserve/ledger invariant scope, and operator-visible metrics/readiness statuses are covered.
 
 ## Validation
 
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./api/handlers ./docs ./services/database ./services/deposits`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`
+- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`
 - [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
@@ -34,4 +38,4 @@
 
 - Full repository validation passed on 2026-06-27 after running the Story 3.5 targeted packages, Postgres-backed repository/database packages, full test suite, static vet check, and whitespace checks.
 - Postgres validation caught and the implementation fixed a parent-mismatch ordering issue where generic same-height hash conflict handling could mask the more specific `parent_mismatch` correction reason.
-- Review rerun attempted `go test ./...`, but this sandbox blocks local listener creation used by `httptest.NewServer`; affected tests failed with `bind: operation not permitted`. Port-free Story 3.5 package validation, `go vet ./...`, and whitespace checks passed.
+- Story 3.6 validation passed after running targeted packages, Postgres-backed reconciliation/database packages, full test suite, static vet check, and whitespace checks. The earlier sandbox-only listener bind failure was resolved by rerunning the same tests with the required local test-server permission.

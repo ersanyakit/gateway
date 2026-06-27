@@ -54,6 +54,7 @@ boylece chain facts, ledger entries, lifecycle state, webhook delivery ve outbou
 - [x] Task 5: Documentation, story record, and validation (AC: 1, 2, 3, 4)
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
   - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`.
+  - [x] Postgres integration validation: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
   - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
@@ -128,15 +129,18 @@ Codex
 - 2026-06-27: Added scoped reconciliation fields, active dedupe by `scope_key`, legacy `CreateOpenIfMissing` fallback, evidence recording, outcome statuses, retry scheduling, and sensitive evidence redaction.
 - 2026-06-27: Updated ledger invariant, reserve, and reorg-created reconciliation producers to include scoped context and evidence; added webhook drift and stuck lifecycle helper coverage.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`.
+- 2026-06-27: Validation passed: `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: Final validation rerun after JSONB default and evidence redaction assertion fixes passed: full `go test ./...`, full `go vet ./...`, and whitespace checks.
 
 ### Completion Notes List
 
 - `ReconciliationJob` now carries merchant/domain, scope key, resource type/id, affected ids JSON, evidence JSON, outcome, and retry scheduling fields.
 - Active reconciliation dedupe now uses stable `scope_key` for scoped jobs while `CreateOpenIfMissing` remains backward compatible with legacy chain/from/to/reason callers and pre-scope active rows.
-- Evidence payloads are bounded and redact known sensitive keys before persistence.
+- Evidence payloads are bounded and redact known sensitive keys before persistence; JSONB fields default to valid empty JSON values.
 - Reconciliation outcomes now support `needs_operator_action` and `retry_scheduled`; due retry jobs are claimable while future retries wait.
 - Ledger invariant, reserve drift, and Story 3.5 reorg reconciliation producers now open scoped jobs with evidence and affected resource ids.
 - Repository helpers cover webhook drift and stuck lifecycle uncertainty scopes.
@@ -164,3 +168,4 @@ Codex
 
 - 2026-06-27: Created story with scoped reconciliation schema, dedupe, evidence, outcome, detector integration, and validation scope.
 - 2026-06-27: Implemented scoped reconciliation model, repository API, detector integrations, operator-visible statuses, tests, and validation; story moved to review.
+- 2026-06-27: Tightened JSONB defaults and sensitive evidence redaction tests, then reran Postgres, full regression, static, and whitespace validation.
