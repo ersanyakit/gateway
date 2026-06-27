@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"core/models"
@@ -10,10 +11,21 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type WebhookDeliveryRepo struct {
 	db *gorm.DB
+}
+
+var ErrWebhookReplayScopeDenied = errors.New("webhook delivery not found")
+
+type WebhookReplayParams struct {
+	DeliveryID  uuid.UUID
+	ActorEmail  string
+	MerchantID  *uuid.UUID
+	DomainID    *uuid.UUID
+	RequestedAt time.Time
 }
 
 func NewWebhookDeliveryRepo(db *gorm.DB) *WebhookDeliveryRepo {
@@ -160,15 +172,15 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		updates["status"] = models.WebhookDeliveryStatusSucceeded
 		updates["delivered_at"] = &now
 		updates["last_error"] = ""
+		updates["failure_category"] = ""
 		updates["next_retry_at"] = nil
+		updates["operator_action"] = ""
 	} else {
-		status := models.WebhookDeliveryStatusFailed
-		if isPermanentDeliveryError(lastErr) || current.Attempts+1 >= webhookMaxAttempts() {
-			status = models.WebhookDeliveryStatusDeadLetter
-		}
+		status, operatorAction := webhookDeliveryFailureState(current.Attempts, lastErr)
 		updates["status"] = status
 		if lastErr != nil {
-			updates["last_error"] = lastErr.Error()
+			updates["last_error"] = webhooksvc.SanitizeDeliveryError(lastErr)
+			updates["failure_category"] = webhooksvc.FailureCategory(lastErr)
 		}
 		if status == models.WebhookDeliveryStatusDeadLetter {
 			updates["next_retry_at"] = nil
@@ -176,6 +188,7 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 			next := time.Now().Add(webhookRetryBackoff(current.Attempts + 1))
 			updates["next_retry_at"] = &next
 		}
+		updates["operator_action"] = operatorAction
 	}
 	return r.db.WithContext(ctx).
 		Model(&models.WebhookDelivery{}).
@@ -183,26 +196,169 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		Updates(updates).Error
 }
 
+func webhookDeliveryFailureState(currentAttempts uint, lastErr error) (string, string) {
+	if isPermanentDeliveryError(lastErr) || currentAttempts+1 >= webhookMaxAttempts() {
+		return models.WebhookDeliveryStatusDeadLetter, "replay_or_investigate"
+	}
+	return models.WebhookDeliveryStatusFailed, "waiting_retry"
+}
+
 func webhookMaxAttempts() uint {
 	return uintFromEnv("WEBHOOK_MAX_ATTEMPTS", 8)
 }
 
-func (r *WebhookDeliveryRepo) ListDueLifecycle(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
+func webhookDeliveryClaimTimeout() time.Duration {
+	return durationFromEnv("WEBHOOK_DELIVERY_CLAIM_TIMEOUT", 2*time.Minute)
+}
+
+func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Duration) ([]models.WebhookDelivery, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	now := time.Now()
 	var rows []models.WebhookDelivery
-	err := r.db.WithContext(ctx).
-		Where("payment_id IS NULL").
-		Where("transaction_id IS NULL").
-		Where("payload_json <> ''").
-		Where("status IN ?", []string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed}).
-		Where("next_retry_at IS NULL OR next_retry_at <= ?", now).
-		Order("updated_at ASC").
-		Limit(limit).
-		Find(&rows).Error
+	lockDuration := webhookDeliveryClaimTimeout()
+	if lockFor > 0 {
+		lockDuration = lockFor
+	}
+	lockUntil := now.Add(lockDuration)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			Where(
+				"(status IN ? AND (next_retry_at IS NULL OR next_retry_at <= ?)) OR (status = ? AND next_retry_at <= ?)",
+				[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed},
+				now,
+				models.WebhookDeliveryStatusProcessing,
+				now,
+			).
+			Order("updated_at ASC").
+			Limit(limit).
+			Find(&rows).Error; err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		ids := make([]uuid.UUID, 0, len(rows))
+		for i := range rows {
+			rows[i].Status = models.WebhookDeliveryStatusProcessing
+			rows[i].NextRetryAt = &lockUntil
+			ids = append(ids, rows[i].ID)
+		}
+		if err := tx.Model(&models.WebhookDelivery{}).
+			Where("id IN ?", ids).
+			Updates(map[string]any{
+				"status":          models.WebhookDeliveryStatusProcessing,
+				"operator_action": "delivery_in_progress",
+				"updated_at":      now,
+			}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.WebhookDelivery{}).
+			Where("id IN ?", ids).
+			Update("next_retry_at", lockUntil).Error
+	})
 	return rows, err
+}
+
+func (r *WebhookDeliveryRepo) EnqueueReplay(ctx context.Context, params WebhookReplayParams) (*models.WebhookDelivery, bool, error) {
+	if params.DeliveryID == uuid.Nil {
+		return nil, false, gorm.ErrInvalidData
+	}
+	now := params.RequestedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
+	actor := webhooksvc.SanitizeDeliveryText(strings.TrimSpace(params.ActorEmail))
+
+	var delivery *models.WebhookDelivery
+	created := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var selected models.WebhookDelivery
+		if err := tx.First(&selected, "id = ?", params.DeliveryID).Error; err != nil {
+			return err
+		}
+
+		rootID := selected.ID
+		if selected.OriginalDeliveryID != nil {
+			rootID = *selected.OriginalDeliveryID
+		}
+		var root models.WebhookDelivery
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&root, "id = ?", rootID).Error; err != nil {
+			return err
+		}
+		if params.MerchantID != nil && root.MerchantID != *params.MerchantID {
+			return ErrWebhookReplayScopeDenied
+		}
+		if params.DomainID != nil && root.DomainID != *params.DomainID {
+			return ErrWebhookReplayScopeDenied
+		}
+
+		var existing models.WebhookDelivery
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("original_delivery_id = ? AND status IN ?", root.ID, webhookReplayActiveStatuses()).
+			Order("created_at DESC").
+			First(&existing).Error
+		if err == nil {
+			delivery = &existing
+			return nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		replay := newWebhookReplayDelivery(root, actor, now)
+		if err := r.createWithDB(ctx, tx, &replay); err != nil {
+			return err
+		}
+		delivery = &replay
+		created = true
+		return tx.Model(&models.WebhookDelivery{}).
+			Where("id = ?", root.ID).
+			Updates(map[string]any{
+				"replay_count":        gorm.Expr("replay_count + 1"),
+				"replay_requested_by": actor,
+				"replay_requested_at": &now,
+				"operator_action":     "replay_queued",
+				"updated_at":          now,
+			}).Error
+	})
+	return delivery, created, err
+}
+
+func webhookReplayActiveStatuses() []string {
+	return []string{
+		models.WebhookDeliveryStatusPending,
+		models.WebhookDeliveryStatusProcessing,
+		models.WebhookDeliveryStatusFailed,
+	}
+}
+
+func newWebhookReplayDelivery(root models.WebhookDelivery, actor string, now time.Time) models.WebhookDelivery {
+	return models.WebhookDelivery{
+		MerchantID:         root.MerchantID,
+		DomainID:           root.DomainID,
+		PaymentID:          root.PaymentID,
+		TransactionID:      root.TransactionID,
+		EventID:            root.EventID,
+		EventType:          root.EventType,
+		EventVersion:       root.EventVersion,
+		EntityType:         root.EntityType,
+		EntityID:           root.EntityID,
+		PayloadJSON:        root.PayloadJSON,
+		TargetURL:          root.TargetURL,
+		Status:             models.WebhookDeliveryStatusPending,
+		OriginalDeliveryID: &root.ID,
+		ReplayCount:        root.ReplayCount + 1,
+		ReplayRequestedBy:  actor,
+		ReplayRequestedAt:  &now,
+		OperatorAction:     "delivery_pending",
+	}
+}
+
+func (r *WebhookDeliveryRepo) ListDueLifecycle(ctx context.Context, limit int) ([]models.WebhookDelivery, error) {
+	return r.ClaimDue(ctx, limit, 0)
 }
 
 func (r *WebhookDeliveryRepo) ListPage(ctx context.Context, page, limit int, status string) ([]models.WebhookDelivery, int64, error) {

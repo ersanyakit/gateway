@@ -161,7 +161,7 @@ func (e *EthereumChain) BatchBalances(ctx context.Context, addresses []string, w
 	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, e.RPCHttp)
 	if err != nil {
 		log.Println("RPC dial error:", err)
-		return nil
+		return failedBalanceResults(addresses, "ETH:0 | WETH:0", err)
 	}
 	defer client.Close()
 	if len(e.RPCHttp) > 0 && strings.TrimSpace(e.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(e.RPCHttp[0]) {

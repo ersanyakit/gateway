@@ -313,16 +313,23 @@ type DealerWithdrawalView struct {
 }
 
 type DealerWebhookDeliveryView struct {
-	ID          string
-	EventID     string
-	EventType   string
-	TargetURL   string
-	Status      string
-	Attempts    uint
-	LastError   string
-	CreatedAt   string
-	UpdatedAt   string
-	DeliveredAt string
+	ID                 string
+	EventID            string
+	EventType          string
+	TargetURL          string
+	Status             string
+	Attempts           uint
+	LastError          string
+	FailureCategory    string
+	NextRetryAt        string
+	NextAction         string
+	OriginalDeliveryID string
+	ReplayCount        uint
+	ReplayRequestedBy  string
+	ReplayRequestedAt  string
+	CreatedAt          string
+	UpdatedAt          string
+	DeliveredAt        string
 }
 
 type DealerRefundView struct {
@@ -1920,69 +1927,39 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", c.Params("id"), "Geçersiz replay isteği.")
 			return redirectWithError(c, "/admin/webhooks", "Geçersiz webhook delivery.")
 		}
-		delivery, err := deps.WebhookDeliveryRepo.Find(c.Context(), id)
-		if err != nil {
-			return redirectWithError(c, "/admin/webhooks", "Webhook delivery bulunamadı.")
-		}
-		domainID := delivery.DomainID.String()
-		domain, err := deps.DomainService.FindByID(types.DomainParams{
-			Context:  c.Context(),
-			DomainID: &domainID,
+		delivery, created, err := deps.WebhookDeliveryRepo.EnqueueReplay(c.Context(), repositories.WebhookReplayParams{
+			DeliveryID: id,
+			ActorEmail: adminEmail,
 		})
 		if err != nil {
-			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-			return redirectWithError(c, "/admin/webhooks", "Domain bulunamadı: "+err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", id.String(), "Replay reddedildi veya delivery bulunamadı.")
+			return redirectWithError(c, "/admin/webhooks", "Webhook delivery bulunamadı veya replay yetkin yok.")
+		}
+		if !created {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Replay zaten aktif; duplicate istek no-op.")
+			return redirectWithSuccess(c, "/admin/webhooks", "Webhook replay zaten kuyrukta.")
 		}
 
-		if delivery.PaymentID != nil {
-			session, err := deps.PaymentRepo.FindByID(c.Context(), *delivery.PaymentID)
-			if err != nil {
-				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-				return redirectWithError(c, "/admin/webhooks", "Payment bulunamadı: "+err.Error())
-			}
-			if err := deps.Notifier.DeliverPayment(c.Context(), *domain, *session); err != nil {
-				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
-			}
-			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Payment webhook yeniden gönderildi.")
-			return redirectWithSuccess(c, "/admin/webhooks", "Payment webhook yeniden gönderildi.")
+		boundary := dealerWebhookDeliveryBoundary(deps)
+		if err := boundary.DeliverOne(c.Context(), *delivery); err != nil {
+			safeErr := webhooksvc.SanitizeDeliveryError(err)
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", delivery.ID.String(), "Replay başarısız: "+safeErr)
+			return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+safeErr)
 		}
-
-		if delivery.TransactionID != nil {
-			txModel, err := deps.TransactionRepo.FindByID(c.Context(), *delivery.TransactionID)
-			if err != nil {
-				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-				return redirectWithError(c, "/admin/webhooks", "Transaction bulunamadı: "+err.Error())
-			}
-			if err := deps.Notifier.Deliver(c.Context(), *domain, *txModel); err != nil {
-				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
-			}
-			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Transaction webhook yeniden gönderildi.")
-			return redirectWithSuccess(c, "/admin/webhooks", "Transaction webhook yeniden gönderildi.")
+		message := "Webhook yeniden gönderildi."
+		switch {
+		case delivery.PaymentID != nil:
+			message = "Payment webhook yeniden gönderildi."
+		case delivery.TransactionID != nil:
+			message = "Transaction webhook yeniden gönderildi."
+		case strings.TrimSpace(delivery.PayloadJSON) != "":
+			message = "Lifecycle webhook yeniden gönderildi."
 		}
-
-		if strings.TrimSpace(delivery.PayloadJSON) != "" {
-			eventVersion := delivery.EventVersion
-			if eventVersion == "" {
-				eventVersion = constants.WebhookEventVersionV1
-			}
-			if err := deps.Notifier.DeliverRaw(c.Context(), *domain, delivery.EventType, delivery.EventID, eventVersion, []byte(delivery.PayloadJSON)); err != nil {
-				_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-				return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
-			}
-			_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, true, nil)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Lifecycle webhook yeniden gönderildi.")
-			return redirectWithSuccess(c, "/admin/webhooks", "Lifecycle webhook yeniden gönderildi.")
-		}
-
-		err = errors.New("delivery payment veya transaction referansı taşımıyor")
-		_ = deps.WebhookDeliveryRepo.MarkAttempt(c.Context(), id, false, err)
-		return redirectWithError(c, "/admin/webhooks", err.Error())
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), message)
+		return redirectWithSuccess(c, "/admin/webhooks", message)
 	}
 }
 
@@ -2115,26 +2092,26 @@ func HandleAdminTestDeposit(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/test-deposit", "Ledger yüklenemedi: "+err.Error())
 		}
 
-		var deliveryErrors []string
+		var enqueueErrors []string
 		transactionDeliveryCtx, cancelTransactionDelivery := context.WithTimeout(context.Background(), 20*time.Second)
 		if err := deliverAdminTransactionWebhook(transactionDeliveryCtx, deps, wallet.Domain, *txModel); err != nil {
-			deliveryErrors = append(deliveryErrors, "deposit webhook: "+err.Error())
+			enqueueErrors = append(enqueueErrors, "deposit webhook: "+err.Error())
 		}
 		cancelTransactionDelivery()
 
 		paymentDeliveryCtx, cancelPaymentDelivery := context.WithTimeout(context.Background(), 20*time.Second)
 		if paymentWebhookSent, err := deliverAdminPaymentWebhookIfMatched(paymentDeliveryCtx, deps, *txModel); err != nil {
-			deliveryErrors = append(deliveryErrors, "payment webhook: "+err.Error())
+			enqueueErrors = append(enqueueErrors, "payment webhook: "+err.Error())
 		} else if paymentWebhookSent {
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.payment_webhook", "success", "transaction", hash, "Manual test deposit payment session ile eşleşti.")
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.payment_webhook", "success", "transaction", hash, "Manual test deposit payment session ile eşleşti ve webhook kuyruğa alındı.")
 		}
 		cancelPaymentDelivery()
 
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "test_deposit.create", "success", "transaction", hash, amount+" "+symbol+" manual test deposit oluşturuldu.")
-		if len(deliveryErrors) > 0 {
-			return redirectWithError(c, "/admin/test-deposit", "Test deposit işlendi, ancak "+strings.Join(deliveryErrors, " | "))
+		if len(enqueueErrors) > 0 {
+			return redirectWithError(c, "/admin/test-deposit", "Test deposit işlendi, ancak "+strings.Join(enqueueErrors, " | "))
 		}
-		return redirectWithSuccess(c, "/admin/test-deposit", "Test deposit işlendi, bakiye yüklendi ve webhook gönderildi. Tx: "+hash)
+		return redirectWithSuccess(c, "/admin/test-deposit", "Test deposit işlendi, bakiye yüklendi ve webhook kuyruğa alındı. Tx: "+hash)
 	}
 }
 
@@ -3369,31 +3346,64 @@ func dealerAssetOptions(registry *asset.Registry) []DealerAssetOption {
 }
 
 func deliverAdminTransactionWebhook(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) error {
-	if deps.Notifier == nil {
-		return errors.New("webhook notifier hazır değil")
+	if deps.WebhookDeliveryRepo == nil {
+		return errors.New("webhook delivery kuyruğu hazır değil")
 	}
-	deliveryID := createAdminTransactionWebhookDelivery(ctx, deps, domain, txModel)
-	err := deps.Notifier.Deliver(ctx, domain, txModel)
-	markAdminWebhookDeliveryAttempt(ctx, deps, deliveryID, err == nil, err)
-	if deps.TransactionRepo != nil {
-		_ = deps.TransactionRepo.MarkWebhookAttempt(context.Background(), txModel.UniqueHash, err == nil, err)
-	}
+	_, _, err := deps.WebhookDeliveryRepo.EnqueueTransaction(ctx, domain, txModel)
 	return err
 }
 
 func deliverAdminPaymentWebhookIfMatched(ctx context.Context, deps DealerDeps, txModel models.Transaction) (bool, error) {
-	if deps.PaymentRepo == nil || deps.Notifier == nil {
+	if deps.PaymentRepo == nil || deps.WebhookDeliveryRepo == nil {
 		return false, nil
 	}
 	session, changed, err := deps.PaymentRepo.MarkPaidByTransaction(ctx, txModel)
 	if err != nil || !changed || session == nil {
 		return false, err
 	}
-	deliveryID := createAdminPaymentWebhookDelivery(ctx, deps, session.Domain, *session)
-	err = deps.Notifier.DeliverPayment(ctx, session.Domain, *session)
-	markAdminWebhookDeliveryAttempt(ctx, deps, deliveryID, err == nil, err)
-	_ = deps.PaymentRepo.MarkWebhookAttempt(context.Background(), session.ID, err == nil, err)
+	_, _, err = deps.WebhookDeliveryRepo.EnqueuePayment(ctx, session.Domain, *session)
 	return true, err
+}
+
+func dealerWebhookDeliveryBoundary(deps DealerDeps) webhooksvc.WebhookDeliveryBoundary {
+	return webhooksvc.WebhookDeliveryBoundary{
+		Queue:    deps.WebhookDeliveryRepo,
+		Notifier: deps.Notifier,
+		FindDomain: func(ctx context.Context, id uuid.UUID) (*models.Domain, error) {
+			if deps.DomainService == nil {
+				return nil, errors.New("domain servisi hazır değil")
+			}
+			idString := id.String()
+			return deps.DomainService.FindByID(types.DomainParams{
+				Context:  ctx,
+				DomainID: &idString,
+			})
+		},
+		FindTransaction: func(ctx context.Context, id uuid.UUID) (*models.Transaction, error) {
+			if deps.TransactionRepo == nil {
+				return nil, errors.New("transaction repo hazır değil")
+			}
+			return deps.TransactionRepo.FindByID(ctx, id)
+		},
+		FindPayment: func(ctx context.Context, id uuid.UUID) (*models.PaymentSession, error) {
+			if deps.PaymentRepo == nil {
+				return nil, errors.New("payment repo hazır değil")
+			}
+			return deps.PaymentRepo.FindByID(ctx, id)
+		},
+		MarkTransactionAttempt: func(ctx context.Context, uniqueHash string, delivered bool, err error) error {
+			if deps.TransactionRepo == nil {
+				return nil
+			}
+			return deps.TransactionRepo.MarkWebhookAttempt(ctx, uniqueHash, delivered, err)
+		},
+		MarkPaymentAttempt: func(ctx context.Context, id uuid.UUID, delivered bool, err error) error {
+			if deps.PaymentRepo == nil {
+				return nil
+			}
+			return deps.PaymentRepo.MarkWebhookAttempt(ctx, id, delivered, err)
+		},
+	}
 }
 
 func createAdminTransactionWebhookDelivery(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) uuid.UUID {
@@ -3481,20 +3491,57 @@ func dealerWebhookDeliveryViews(rows []models.WebhookDelivery) []DealerWebhookDe
 		if row.DeliveredAt != nil {
 			deliveredAt = formatPanelTime(*row.DeliveredAt)
 		}
+		nextRetryAt := ""
+		if row.NextRetryAt != nil {
+			nextRetryAt = formatPanelTime(*row.NextRetryAt)
+		}
+		originalDeliveryID := ""
+		if row.OriginalDeliveryID != nil {
+			originalDeliveryID = row.OriginalDeliveryID.String()
+		}
+		replayRequestedAt := ""
+		if row.ReplayRequestedAt != nil {
+			replayRequestedAt = formatPanelTime(*row.ReplayRequestedAt)
+		}
 		views = append(views, DealerWebhookDeliveryView{
-			ID:          row.ID.String(),
-			EventID:     row.EventID,
-			EventType:   row.EventType,
-			TargetURL:   row.TargetURL,
-			Status:      row.Status,
-			Attempts:    row.Attempts,
-			LastError:   row.LastError,
-			CreatedAt:   formatPanelTime(row.CreatedAt),
-			UpdatedAt:   formatPanelTime(row.UpdatedAt),
-			DeliveredAt: deliveredAt,
+			ID:                 row.ID.String(),
+			EventID:            row.EventID,
+			EventType:          row.EventType,
+			TargetURL:          row.TargetURL,
+			Status:             row.Status,
+			Attempts:           row.Attempts,
+			LastError:          webhooksvc.SanitizeDeliveryText(row.LastError),
+			FailureCategory:    row.FailureCategory,
+			NextRetryAt:        nextRetryAt,
+			NextAction:         webhookDeliveryNextAction(row),
+			OriginalDeliveryID: originalDeliveryID,
+			ReplayCount:        row.ReplayCount,
+			ReplayRequestedBy:  row.ReplayRequestedBy,
+			ReplayRequestedAt:  replayRequestedAt,
+			CreatedAt:          formatPanelTime(row.CreatedAt),
+			UpdatedAt:          formatPanelTime(row.UpdatedAt),
+			DeliveredAt:        deliveredAt,
 		})
 	}
 	return views
+}
+
+func webhookDeliveryNextAction(row models.WebhookDelivery) string {
+	if strings.TrimSpace(row.OperatorAction) != "" {
+		return row.OperatorAction
+	}
+	switch row.Status {
+	case models.WebhookDeliveryStatusDeadLetter:
+		return "replay_or_investigate"
+	case models.WebhookDeliveryStatusFailed:
+		return "waiting_retry"
+	case models.WebhookDeliveryStatusPending:
+		return "delivery_pending"
+	case models.WebhookDeliveryStatusProcessing:
+		return "delivery_in_progress"
+	default:
+		return ""
+	}
 }
 
 func dealerRefundViews(rows []models.Refund) []DealerRefundView {

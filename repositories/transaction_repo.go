@@ -4,6 +4,7 @@ import (
 	"context"
 	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 	"core/types"
 	"errors"
 	"fmt"
@@ -419,7 +420,7 @@ func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash str
 		updates["webhook_sent_at"] = &now
 		updates["webhook_last_error"] = ""
 	} else if lastErr != nil {
-		updates["webhook_last_error"] = lastErr.Error()
+		updates["webhook_last_error"] = webhooksvc.SanitizeDeliveryError(lastErr)
 		if attempts < webhookMaxAttempts() {
 			lockUntil := time.Now().Add(webhookRetryBackoff(attempts))
 			updates["webhook_locked_until"] = &lockUntil

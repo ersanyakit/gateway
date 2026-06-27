@@ -14,10 +14,18 @@ func TestDatabaseMigrationRegistersMoneyEventOutbox(t *testing.T) {
 	source := string(sourceBytes)
 	for _, token := range []string{
 		"&models.MoneyEventOutbox{}",
+		"&models.WebhookDelivery{}",
 		"money_event_outboxes",
+		"webhook_deliveries",
 		"EventID",
 		"IdempotencyKey",
 		"PayloadJSON",
+		"FailureCategory",
+		"OriginalDeliveryID",
+		"ReplayCount",
+		"ReplayRequestedBy",
+		"ReplayRequestedAt",
+		"OperatorAction",
 	} {
 		if !strings.Contains(source, token) {
 			t.Fatalf("database schema registration missing %q", token)

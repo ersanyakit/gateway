@@ -41,7 +41,23 @@ func TestIntegrationGuideMatchesEpic1PartnerContract(t *testing.T) {
 	errorSection := markdownSection(guide, "## Error Handling", "## Security Checklist")
 	requireContains(t, errorSection, `"result": "error"`)
 	requireContains(t, errorSection, `"message"`)
+	requireContains(t, errorSection, "Gateway may replay a failed or dead-lettered webhook with the same event id/type/version")
 	requireNotContains(t, errorSection, `"error":`)
+
+	webhookSection := markdownSection(guide, "## Webhooks", "### Transaction Webhook Payload")
+	for _, token := range []string{
+		"Webhook delivery is at-least-once",
+		"operator replay can deliver the same event more than once",
+		"X-Gateway-Event-Id",
+		"event_id",
+		"event_type",
+		"event_version",
+		"merchant_id",
+		"domain_id",
+		"not as a new business event",
+	} {
+		requireContains(t, webhookSection, token)
+	}
 
 	for _, forbidden := range []string{"gw_secret_", "api_secret_value", "webhook_secret_value", "private_key", "mnemonic", "panic:", "goroutine "} {
 		requireNotContains(t, guide, forbidden)
@@ -67,6 +83,31 @@ func TestEpic1IntegrationEvidenceDocumentsCoveredContract(t *testing.T) {
 		"Known Production Limitations",
 		"go test -count=1 ./...",
 		"go vet ./...",
+	} {
+		requireContains(t, evidence, token)
+	}
+}
+
+func TestEpic2IntegrationEvidenceDocumentsEventDeliveryContract(t *testing.T) {
+	evidenceBytes, err := os.ReadFile("epic-2-integration-evidence.md")
+	if err != nil {
+		t.Fatalf("read Epic 2 integration evidence: %v", err)
+	}
+	evidence := string(evidenceBytes)
+	for _, token := range []string{
+		"docs/money-event-catalog.md",
+		"docs/outbox-migration-plan.md",
+		"webhook_deliveries",
+		"Replay and dead-letter",
+		"stable consumer idempotency metadata",
+		"native_transfer",
+		"payment_succeeded",
+		"payout.*.v1",
+		"at-least-once delivery",
+		"compatibility snapshot tests",
+		"go test -count=1 ./services/webhook ./docs",
+		"go vet ./...",
+		"does not claim full production custody readiness",
 	} {
 		requireContains(t, evidence, token)
 	}
@@ -139,8 +180,19 @@ func TestMoneyEventOutboxMigrationPlanDocumentsSchema(t *testing.T) {
 		"ux_money_event_outboxes_event_id",
 		"ux_money_event_outboxes_idempotency_scope",
 		"AutoMigrate",
+		"ApplyGORMMigrations",
+		"GORM",
+		"Migrator",
 	} {
 		requireContains(t, plan, token)
+	}
+	for _, forbidden := range []string{
+		"CREATE TABLE",
+		"CREATE UNIQUE INDEX",
+		"DROP TABLE",
+		"```sql",
+	} {
+		requireNotContains(t, plan, forbidden)
 	}
 }
 

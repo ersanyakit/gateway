@@ -138,7 +138,7 @@ func (s *ChilizSpicyChain) BatchBalances(ctx context.Context, addresses []string
 	client, selectedRPC, err := dialFirstHealthyEVMRPCWithURL(ctx, s.RPCHttp)
 	if err != nil {
 		log.Println("[chiliz-spicy] RPC dial error:", err)
-		return nil
+		return failedBalanceResults(addresses, "CHZ:0", err)
 	}
 	defer client.Close()
 	if len(s.RPCHttp) > 0 && strings.TrimSpace(s.RPCHttp[0]) != "" && selectedRPC != strings.TrimSpace(s.RPCHttp[0]) {

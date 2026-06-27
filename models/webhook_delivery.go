@@ -8,6 +8,7 @@ import (
 
 const (
 	WebhookDeliveryStatusPending    = "pending"
+	WebhookDeliveryStatusProcessing = "processing"
 	WebhookDeliveryStatusSucceeded  = "succeeded"
 	WebhookDeliveryStatusFailed     = "failed"
 	WebhookDeliveryStatusDeadLetter = "dead_letter"
@@ -30,10 +31,17 @@ type WebhookDelivery struct {
 	TargetURL    string     `gorm:"size:500;not null" json:"target_url"`
 	Status       string     `gorm:"size:24;not null;index" json:"status"`
 
-	Attempts    uint       `gorm:"not null;default:0" json:"attempts"`
-	LastError   string     `gorm:"type:text" json:"last_error,omitempty"`
-	NextRetryAt *time.Time `gorm:"index" json:"next_retry_at,omitempty"`
-	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	Attempts        uint       `gorm:"not null;default:0" json:"attempts"`
+	LastError       string     `gorm:"type:text" json:"last_error,omitempty"`
+	FailureCategory string     `gorm:"size:40;index" json:"failure_category,omitempty"`
+	NextRetryAt     *time.Time `gorm:"index" json:"next_retry_at,omitempty"`
+	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
+
+	OriginalDeliveryID *uuid.UUID `gorm:"type:uuid;index" json:"original_delivery_id,omitempty"`
+	ReplayCount        uint       `gorm:"not null;default:0" json:"replay_count"`
+	ReplayRequestedBy  string     `gorm:"size:255;index" json:"replay_requested_by,omitempty"`
+	ReplayRequestedAt  *time.Time `gorm:"index" json:"replay_requested_at,omitempty"`
+	OperatorAction     string     `gorm:"size:80;index" json:"operator_action,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

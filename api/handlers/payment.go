@@ -1418,29 +1418,13 @@ func deliverPaymentWebhook(ctx context.Context, deps PaymentHandlerDeps, session
 	}
 	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	var deliveryID uuid.UUID
 	if deps.WebhookDeliveryRepo != nil {
-		delivery, _, err := deps.WebhookDeliveryRepo.EnqueuePayment(deliveryCtx, session.Domain, *session)
-		if err != nil {
-			_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
-			return
-		}
-		if delivery != nil {
-			deliveryID = delivery.ID
+		if _, _, err := deps.WebhookDeliveryRepo.EnqueuePayment(deliveryCtx, session.Domain, *session); err != nil {
+			if deps.PaymentRepo != nil {
+				_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
+			}
 		}
 	}
-	err := deps.Notifier.DeliverPayment(deliveryCtx, session.Domain, *session)
-	if err != nil {
-		if deps.WebhookDeliveryRepo != nil && deliveryID != uuid.Nil {
-			_ = deps.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, false, err)
-		}
-		_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, false, err)
-		return
-	}
-	if deps.WebhookDeliveryRepo != nil && deliveryID != uuid.Nil {
-		_ = deps.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, true, nil)
-	}
-	_ = deps.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil)
 }
 
 func paymentURI(session models.PaymentSession) string {
