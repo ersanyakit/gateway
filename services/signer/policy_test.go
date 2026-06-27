@@ -51,6 +51,7 @@ func TestAuthorizeAllowsDevelopmentSoftwareSignerAndAudits(t *testing.T) {
 		"destination=0x1111111111111111111111111111111111111111",
 		"actor_id=admin-123",
 		"correlation_id=corr-123",
+		"metadata_keys=ledger_hold_id",
 		"policy_decision=allow",
 		"outcome=allowed",
 	)
@@ -59,6 +60,40 @@ func TestAuthorizeAllowsDevelopmentSoftwareSignerAndAudits(t *testing.T) {
 			t.Fatalf("audit log contains secret %q: %s", forbidden, logged)
 		}
 	}
+}
+
+func TestAuthorizeRejectsUnsupportedSignerModeAndAudits(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("SIGNER_MODE", "browser-wallet")
+
+	var audit bytes.Buffer
+	restore := SetAuditOutput(&audit)
+	defer restore()
+
+	_, err := Authorize(context.Background(), Request{
+		Chain:          "ethereum",
+		ChainID:        1,
+		KeyReference:   "chain:1:path:m/44'/60'/7'/0/9",
+		DerivationPath: "m/44'/60'/7'/0/9",
+		Intent:         "withdraw.native",
+		AmountRaw:      "100",
+		Destination:    "0x1111111111111111111111111111111111111111",
+		ActorID:        "operator-unsupported",
+		CorrelationID:  "corr-unsupported",
+	})
+	if !errors.Is(err, ErrUnsupportedSignerMode) {
+		t.Fatalf("Authorize unsupported mode err=%v, want ErrUnsupportedSignerMode", err)
+	}
+
+	requireLogContains(t, audit.String(),
+		"signer_mode=browser-wallet",
+		"key_reference=chain:1:path:m/44'/60'/7'/0/9",
+		"actor_id=operator-unsupported",
+		"correlation_id=corr-unsupported",
+		"policy_decision=deny",
+		"outcome=rejected",
+		"reason=unsupported_signer_mode",
+	)
 }
 
 func TestAuthorizeBlocksProductionSoftwareSignerEvenWithLegacyOverride(t *testing.T) {
@@ -183,6 +218,12 @@ func TestProductionReadinessUsesSignerPolicy(t *testing.T) {
 	ok, details, err = ProductionReadiness()
 	if ok || !errors.Is(err, ErrExternalSignerIntegrationRequired) {
 		t.Fatalf("production external custody readiness ok=%v details=%q err=%v, want external integration failure", ok, details, err)
+	}
+
+	t.Setenv("SIGNER_MODE", "browser-wallet")
+	ok, details, err = ProductionReadiness()
+	if ok || !errors.Is(err, ErrUnsupportedSignerMode) || !strings.Contains(details, "browser-wallet") {
+		t.Fatalf("production unsupported signer readiness ok=%v details=%q err=%v, want unsupported mode failure", ok, details, err)
 	}
 }
 

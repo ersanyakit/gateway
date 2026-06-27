@@ -72,8 +72,8 @@ development_status:
   epic-3-retrospective: done
   epic-4: in-progress
   4-1-reserve-ledger-holds-before-outbound-money-movement: done
-  4-2-enforce-external-signer-boundary-and-production-software-signer-guard: review
-  4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: backlog
+  4-2-enforce-external-signer-boundary-and-production-software-signer-guard: done
+  4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: in-progress
   4-4-run-auto-sweeps-as-durable-recoverable-jobs: backlog
   4-5-complete-withdrawal-payout-and-refund-lifecycle-events: backlog
   4-6-harden-admin-security-limits-whitelists-and-audit-trails: backlog

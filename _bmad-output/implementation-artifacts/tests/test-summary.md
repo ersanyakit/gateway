@@ -32,6 +32,30 @@
 - [x] `git diff --check && git diff --cached --check`
 - [i] The targeted and full commands that include `./api/handlers` were rerun outside the execution sandbox because `TestV1ProbeEVMRPC` uses `httptest.NewServer` and needs localhost bind permission.
 
+## Story 4.2 - Generated Tests
+
+### API Tests
+- [x] `api/handlers/metrics_test.go` - Production software signer gate is exposed as `gateway_production_signer_ready 0` on the protected metrics endpoint and does not leak secret-like environment values.
+
+### E2E / Integration Tests
+- [x] `services/signer/policy_test.go` - Unsupported signer modes now hard-fail with sanitized audit evidence.
+- [x] `services/signer/policy_test.go` - Signer audit metadata proves sensitive metadata keys are excluded while safe policy metadata keys remain visible.
+- [x] `services/signer/policy_test.go` - Production readiness now rejects unsupported signer modes explicitly.
+
+## Story 4.2 - Coverage
+
+- Signer policy acceptance criteria: 5/5 covered by unit and integration-style Go tests.
+- API operational signer visibility: metrics surface covered.
+- UI E2E coverage: not applicable; Story 4.2 has no browser UI workflow and this repository has no Playwright/Cypress setup.
+
+## Story 4.2 - Validation
+
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer -run 'TestAuthorize|TestProductionReadiness'`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestOperationalMetricsReportsProductionSignerGate|TestOperationalMetricsIncludesBacklogAndChainState|TestV1ProductionSignerReadiness'`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./blockchain/chains -run 'TestEVMSendNativeChecksSignerPolicyBeforeRPCAndPrivateKey|TestBitcoinSendChecksSignerPolicyBeforePrivateKey|TestSolanaWithdrawChecksSignerPolicyBeforeRPCAndPrivateKey|TestTronSendChecksSignerPolicyBeforeRPCAndPrivateKey'`
+- [x] `git diff --check`
+- [i] Full package validation for `./api/handlers`, `./blockchain/chains`, and `./...` was attempted, but the local sandbox blocks `httptest.NewServer` TCP listen calls with `bind: operation not permitted`. The new tests were isolated and passed.
+
 ## Previous Generated Tests
 
 ## Generated Tests

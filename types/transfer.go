@@ -17,6 +17,10 @@ type TransferParams struct {
 	Token     *string `json:"token,omitempty"`
 	ToAddress *string `json:"to_address,omitempty"`
 	AmountRaw *string `json:"amount_raw,omitempty"`
+
+	ActorID       string `json:"-"`
+	JobID         string `json:"-"`
+	CorrelationID string `json:"-"`
 }
 
 func (p *TransferParams) ValidateWithdraw() error {
