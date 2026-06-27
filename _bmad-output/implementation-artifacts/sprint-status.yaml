@@ -57,7 +57,7 @@ development_status:
   epic-1-retrospective: optional
   epic-2: in-progress
   2-1-define-versioned-money-event-catalog: done
-  2-2-persist-money-events-through-postgres-outbox: in-progress
+  2-2-persist-money-events-through-postgres-outbox: review
   2-3-deliver-webhooks-from-the-webhook-boundary: backlog
   2-4-support-replay-dead-letter-and-duplicate-delivery-safety: backlog
   2-5-verify-event-contract-compatibility: backlog

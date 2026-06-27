@@ -3,7 +3,9 @@ package repositories
 import (
 	"context"
 	"errors"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 
 	"core/constants"
@@ -85,7 +87,7 @@ func TestValidateMoneyEventOutboxValidationAndDefaults(t *testing.T) {
 
 	invalid := base
 	invalid.EventID = ""
-	if err := validateMoneyEventOutbox(&invalid); !errors.Is(err, gorm.ErrInvalidData) {
+	if err := validateMoneyEventOutbox(&invalid); !errors.Is(err, ErrMoneyEventOutboxInvalid) {
 		t.Fatalf("missing event id err = %v", err)
 	}
 
@@ -128,26 +130,9 @@ func TestMoneyEventOutboxCompatibility(t *testing.T) {
 }
 
 func TestMoneyEventOutboxRepoPostgresTransactionSemantics(t *testing.T) {
-	dsn := os.Getenv("MONEY_OUTBOX_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set MONEY_OUTBOX_TEST_DATABASE_URL to run Postgres outbox transaction tests")
-	}
-
 	ctx := context.Background()
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatalf("connect test postgres: %v", err)
-	}
-	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`).Error; err != nil {
-		t.Fatalf("enable uuid extension: %v", err)
-	}
-	if err := db.AutoMigrate(&models.MoneyEventOutbox{}, &moneyOutboxTestState{}); err != nil {
-		t.Fatalf("automigrate test schema: %v", err)
-	}
-
+	db := openMoneyEventOutboxPostgresTestDB(t)
 	prefix := "money-outbox-test-" + uuid.NewString()
-	defer db.Where("event_id LIKE ?", prefix+"%").Delete(&models.MoneyEventOutbox{})
-	defer db.Where("name LIKE ?", prefix+"%").Delete(&moneyOutboxTestState{})
 
 	repo := NewMoneyEventOutboxRepo(db)
 	merchantID := uuid.New()
@@ -178,7 +163,7 @@ func TestMoneyEventOutboxRepoPostgresTransactionSemantics(t *testing.T) {
 	rollbackEvent := testMoneyEventOutboxWithIDs(prefix+":event:rollback", prefix+":idem:rollback", merchantID, domainID)
 	rollbackEvent.AggregateID = rollbackStateID.String()
 	errRollback := errors.New("force rollback")
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	rollbackErr := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&moneyOutboxTestState{ID: rollbackStateID, Name: prefix + ":rollback"}).Error; err != nil {
 			return err
 		}
@@ -187,8 +172,8 @@ func TestMoneyEventOutboxRepoPostgresTransactionSemantics(t *testing.T) {
 		}
 		return errRollback
 	})
-	if !errors.Is(err, errRollback) {
-		t.Fatalf("rollback err = %v", err)
+	if !errors.Is(rollbackErr, errRollback) {
+		t.Fatalf("rollback err = %v", rollbackErr)
 	}
 	requirePostgresCount(t, db, &moneyOutboxTestState{}, "id = ?", rollbackStateID, 0)
 	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", rollbackEvent.EventID, 0)
@@ -246,4 +231,71 @@ func requirePostgresCount(t *testing.T, db *gorm.DB, model any, query string, ar
 	if count != want {
 		t.Fatalf("count %s = %d, want %d", query, count, want)
 	}
+}
+
+func openMoneyEventOutboxPostgresTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := os.Getenv("OUTBOX_TEST_DATABASE_URL")
+	if dsn == "" {
+		dsn = os.Getenv("MONEY_OUTBOX_TEST_DATABASE_URL")
+	}
+	if dsn == "" {
+		dsn = os.Getenv("TEST_DATABASE_URL")
+	}
+	if dsn == "" {
+		t.Skip("set OUTBOX_TEST_DATABASE_URL to run Postgres outbox transaction tests")
+	}
+
+	adminDB, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("connect test postgres: %v", err)
+	}
+	if err := adminDB.Exec(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`).Error; err != nil {
+		t.Fatalf("enable uuid extension: %v", err)
+	}
+	schemaName := "money_outbox_test_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
+	quotedSchema := quotePostgresIdentifier(schemaName)
+	if err := adminDB.Exec("CREATE SCHEMA " + quotedSchema).Error; err != nil {
+		t.Fatalf("create test schema: %v", err)
+	}
+
+	db, err := gorm.Open(postgres.Open(postgresDSNWithSearchPath(dsn, schemaName)), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("connect schema-scoped test postgres: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get test sql db: %v", err)
+	}
+	sqlDB.SetMaxOpenConns(1)
+
+	if err := db.AutoMigrate(&models.MoneyEventOutbox{}, &moneyOutboxTestState{}); err != nil {
+		t.Fatalf("automigrate test schema: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+		_ = adminDB.Exec("DROP SCHEMA IF EXISTS " + quotedSchema + " CASCADE").Error
+		if adminSQL, err := adminDB.DB(); err == nil {
+			_ = adminSQL.Close()
+		}
+	})
+	return db
+}
+
+func postgresDSNWithSearchPath(dsn, schemaName string) string {
+	searchPath := schemaName + ",public"
+	if strings.Contains(dsn, "://") {
+		parsed, err := url.Parse(dsn)
+		if err == nil {
+			query := parsed.Query()
+			query.Set("search_path", searchPath)
+			parsed.RawQuery = query.Encode()
+			return parsed.String()
+		}
+	}
+	return strings.TrimSpace(dsn) + " search_path=" + searchPath
+}
+
+func quotePostgresIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
 }

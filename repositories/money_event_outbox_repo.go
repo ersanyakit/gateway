@@ -17,7 +17,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrMoneyEventOutboxConflict = errors.New("money event outbox idempotency key conflicts with an existing event")
+var (
+	ErrMoneyEventOutboxInvalid  = errors.New("invalid money event outbox record")
+	ErrMoneyEventOutboxConflict = errors.New("money event outbox idempotency key conflicts with an existing event")
+)
 
 type MoneyEventOutboxRepo struct {
 	db *gorm.DB
@@ -26,6 +29,17 @@ type MoneyEventOutboxRepo struct {
 type MoneyEventOutboxBuildInput struct {
 	EventID        string
 	EventType      string
+	AggregateType  string
+	AggregateID    string
+	MerchantID     uuid.UUID
+	DomainID       uuid.UUID
+	IdempotencyKey string
+	Payload        any
+}
+
+type MoneyEventOutboxBuildParams struct {
+	EventName      string
+	EventID        string
 	AggregateType  string
 	AggregateID    string
 	MerchantID     uuid.UUID
@@ -49,17 +63,11 @@ func (r *MoneyEventOutboxRepo) RecordWithDB(ctx context.Context, tx *gorm.DB, ev
 	if tx == nil {
 		return nil, false, gorm.ErrInvalidDB
 	}
-	if err := validateMoneyEventOutbox(event); err != nil {
+	prepared, err := prepareMoneyEventOutbox(event)
+	if err != nil {
 		return nil, false, err
 	}
-	if event.ID == uuid.Nil {
-		event.ID = uuid.New()
-	}
-	now := time.Now()
-	if event.CreatedAt.IsZero() {
-		event.CreatedAt = now
-	}
-	event.UpdatedAt = now
+	*event = prepared
 
 	result := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(event)
 	if result.Error != nil {
@@ -79,69 +87,105 @@ func (r *MoneyEventOutboxRepo) RecordWithDB(ctx context.Context, tx *gorm.DB, ev
 	return existing, false, nil
 }
 
-func BuildMoneyEventOutboxRecord(input MoneyEventOutboxBuildInput) (*models.MoneyEventOutbox, error) {
-	eventType := strings.TrimSpace(input.EventType)
-	catalogEntry, _, ok := webhooksvc.MoneyEventCatalogEntryForEmittedEvent(eventType)
+func BuildMoneyEventOutbox(params MoneyEventOutboxBuildParams) (models.MoneyEventOutbox, error) {
+	eventName := strings.TrimSpace(params.EventName)
+	catalogEntry, _, ok := webhooksvc.MoneyEventCatalogEntryForEmittedEvent(eventName)
 	if !ok {
-		return nil, fmt.Errorf("money event type %q is not cataloged", eventType)
+		return models.MoneyEventOutbox{}, invalidMoneyEventOutbox("event type %q is not cataloged", eventName)
 	}
-	payloadJSON, err := marshalMoneyEventOutboxPayload(input.Payload)
+	payloadJSON, err := marshalMoneyEventOutboxPayload(params.Payload)
 	if err != nil {
-		return nil, err
+		return models.MoneyEventOutbox{}, err
 	}
-	aggregateType := strings.TrimSpace(input.AggregateType)
+	aggregateType := strings.TrimSpace(params.AggregateType)
 	if aggregateType == "" {
 		aggregateType = catalogEntry.ResourceType
 	}
-	record := &models.MoneyEventOutbox{
-		EventID:        strings.TrimSpace(input.EventID),
-		EventType:      eventType,
+	record := models.MoneyEventOutbox{
+		EventID:        strings.TrimSpace(params.EventID),
+		EventType:      eventName,
 		EventVersion:   catalogEntry.Version,
 		AggregateType:  aggregateType,
+		AggregateID:    strings.TrimSpace(params.AggregateID),
+		MerchantID:     params.MerchantID,
+		DomainID:       params.DomainID,
+		IdempotencyKey: strings.TrimSpace(params.IdempotencyKey),
+		PayloadJSON:    payloadJSON,
+		Status:         models.MoneyEventOutboxStatusPending,
+	}
+	return prepareMoneyEventOutbox(&record)
+}
+
+func BuildMoneyEventOutboxRecord(input MoneyEventOutboxBuildInput) (*models.MoneyEventOutbox, error) {
+	record, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventID:        strings.TrimSpace(input.EventID),
+		EventName:      strings.TrimSpace(input.EventType),
+		AggregateType:  strings.TrimSpace(input.AggregateType),
 		AggregateID:    strings.TrimSpace(input.AggregateID),
 		MerchantID:     input.MerchantID,
 		DomainID:       input.DomainID,
 		IdempotencyKey: strings.TrimSpace(input.IdempotencyKey),
-		PayloadJSON:    payloadJSON,
-		Status:         models.MoneyEventOutboxStatusPending,
-	}
-	if err := validateMoneyEventOutbox(record); err != nil {
+		Payload:        input.Payload,
+	})
+	if err != nil {
 		return nil, err
 	}
-	return record, nil
+	return &record, nil
 }
 
 func validateMoneyEventOutbox(event *models.MoneyEventOutbox) error {
-	if event == nil {
-		return gorm.ErrInvalidData
-	}
-	event.EventID = strings.TrimSpace(event.EventID)
-	event.EventType = strings.TrimSpace(event.EventType)
-	event.EventVersion = strings.TrimSpace(event.EventVersion)
-	event.AggregateType = strings.TrimSpace(event.AggregateType)
-	event.AggregateID = strings.TrimSpace(event.AggregateID)
-	event.IdempotencyKey = strings.TrimSpace(event.IdempotencyKey)
-	event.Status = strings.TrimSpace(event.Status)
-
-	if event.EventID == "" ||
-		event.EventType == "" ||
-		event.EventVersion == "" ||
-		event.AggregateType == "" ||
-		event.AggregateID == "" ||
-		event.IdempotencyKey == "" ||
-		event.MerchantID == uuid.Nil ||
-		event.DomainID == uuid.Nil {
-		return gorm.ErrInvalidData
-	}
-	if event.Status == "" {
-		event.Status = models.MoneyEventOutboxStatusPending
-	}
-	payloadJSON, err := canonicalMoneyEventOutboxJSON(event.PayloadJSON)
+	prepared, err := prepareMoneyEventOutbox(event)
 	if err != nil {
 		return err
 	}
-	event.PayloadJSON = payloadJSON
+	*event = prepared
 	return nil
+}
+
+func prepareMoneyEventOutbox(event *models.MoneyEventOutbox) (models.MoneyEventOutbox, error) {
+	if event == nil {
+		return models.MoneyEventOutbox{}, invalidMoneyEventOutbox("record is nil")
+	}
+	prepared := *event
+	prepared.EventID = strings.TrimSpace(prepared.EventID)
+	prepared.EventType = strings.TrimSpace(prepared.EventType)
+	prepared.EventVersion = strings.TrimSpace(prepared.EventVersion)
+	prepared.AggregateType = strings.TrimSpace(prepared.AggregateType)
+	prepared.AggregateID = strings.TrimSpace(prepared.AggregateID)
+	prepared.IdempotencyKey = strings.TrimSpace(prepared.IdempotencyKey)
+	prepared.Status = strings.TrimSpace(prepared.Status)
+
+	if prepared.EventVersion == "" {
+		prepared.EventVersion = "v1"
+	}
+	if prepared.Status == "" {
+		prepared.Status = models.MoneyEventOutboxStatusPending
+	}
+	if prepared.ID == uuid.Nil {
+		prepared.ID = uuid.New()
+	}
+	now := time.Now()
+	if prepared.CreatedAt.IsZero() {
+		prepared.CreatedAt = now
+	}
+	prepared.UpdatedAt = now
+
+	if prepared.EventID == "" ||
+		prepared.EventType == "" ||
+		prepared.EventVersion == "" ||
+		prepared.AggregateType == "" ||
+		prepared.AggregateID == "" ||
+		prepared.IdempotencyKey == "" ||
+		prepared.MerchantID == uuid.Nil ||
+		prepared.DomainID == uuid.Nil {
+		return models.MoneyEventOutbox{}, invalidMoneyEventOutbox("required field is empty")
+	}
+	payloadJSON, err := canonicalMoneyEventOutboxJSON(prepared.PayloadJSON)
+	if err != nil {
+		return models.MoneyEventOutbox{}, err
+	}
+	prepared.PayloadJSON = payloadJSON
+	return prepared, nil
 }
 
 func findExistingMoneyEventOutbox(ctx context.Context, tx *gorm.DB, event *models.MoneyEventOutbox) (*models.MoneyEventOutbox, error) {
@@ -188,7 +232,7 @@ func moneyEventOutboxCompatible(existing, incoming *models.MoneyEventOutbox) boo
 
 func marshalMoneyEventOutboxPayload(payload any) (string, error) {
 	if payload == nil {
-		return "", gorm.ErrInvalidData
+		return "", invalidMoneyEventOutbox("payload is nil")
 	}
 	if raw, ok := payload.(json.RawMessage); ok {
 		return canonicalMoneyEventOutboxJSON(string(raw))
@@ -209,19 +253,19 @@ func marshalMoneyEventOutboxPayload(payload any) (string, error) {
 func canonicalMoneyEventOutboxJSON(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", gorm.ErrInvalidData
+		return "", invalidMoneyEventOutbox("payload is empty")
 	}
 	var payload any
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return "", err
+		return "", invalidMoneyEventOutbox("payload JSON is invalid: %v", err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
-		return "", gorm.ErrInvalidData
+		return "", invalidMoneyEventOutbox("payload JSON has trailing data")
 	} else if !errors.Is(err, io.EOF) {
-		return "", err
+		return "", invalidMoneyEventOutbox("payload JSON is invalid: %v", err)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -229,7 +273,14 @@ func canonicalMoneyEventOutboxJSON(raw string) (string, error) {
 	}
 	bodyString := strings.TrimSpace(string(body))
 	if bodyString == "" || bodyString == "null" {
-		return "", gorm.ErrInvalidData
+		return "", invalidMoneyEventOutbox("payload JSON must be an object or array")
 	}
 	return bodyString, nil
+}
+
+func invalidMoneyEventOutbox(format string, args ...any) error {
+	if format == "" {
+		return errors.Join(ErrMoneyEventOutboxInvalid, gorm.ErrInvalidData)
+	}
+	return errors.Join(ErrMoneyEventOutboxInvalid, gorm.ErrInvalidData, fmt.Errorf(format, args...))
 }
