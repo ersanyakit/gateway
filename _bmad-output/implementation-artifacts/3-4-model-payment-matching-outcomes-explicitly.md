@@ -149,12 +149,16 @@ Codex
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: Tightened payment match candidate selection so exact chain+asset candidates are preferred before recording wrong-chain/wrong-asset failures.
+- 2026-06-27: Final validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/deposits ./api/handlers ./services/webhook ./services/database ./docs`, `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`, `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`, and `git diff --check && git diff --cached --check`.
 
 ### Completion Notes List
 
 - Added `overpaid` and `partial_paid` payment statuses plus persisted outcome metadata (`payment_outcome`, reason, matched amount, shortfall, excess) on `PaymentSession`.
 - Replaced the paid-only repository boundary with `MatchFinalizedTransaction`, preserving a compatibility `MarkPaidByTransaction` wrapper and stable transaction-hash idempotency locks.
+- Updated legacy finality/admin helper paths to consume explicit `MatchFinalizedTransaction` results instead of the paid-only wrapper.
 - Defined the settlement policy: exact amount is the only automatic `paid`; small underpayments become `underpaid`; larger underpayments become terminal `partial_paid` with automatic aggregation intentionally unsupported; overpayments become `overpaid`; expired/wrong-chain/wrong-asset deposits do not become paid.
+- Matching now prefers exact chain+asset candidates before recording wrong-chain/wrong-asset failures when multiple sessions share a wallet.
 - Updated deposit finality settlement so finalized funds on checkout wallets still post ledger availability for non-paid outcomes.
 - Updated checkout, V1 API, webhook payload/catalog, and integration docs to expose explicit outcome states and raw shortfall/excess metadata.
 
@@ -186,6 +190,8 @@ Codex
 - `services/database/database_test.go`
 - `services/deposits/service.go`
 - `services/deposits/service_test.go`
+- `services/txrescan/service.go`
+- `services/txrescan/service_test.go`
 - `services/webhook/event_catalog.go`
 - `services/webhook/event_catalog_test.go`
 - `services/webhook/notifier.go`
@@ -197,3 +203,4 @@ Codex
 
 - 2026-06-27: Created story with explicit payment matching outcome scope, current paid-only matching risks, ledger authority constraints, webhook/API/checkout contract requirements, and validation plan.
 - 2026-06-27: Implemented explicit payment matching outcome model, deposit settlement integration, public API/checkout/webhook/docs contracts, and validation coverage; story moved to review.
+- 2026-06-27: Added exact-candidate match selection guard, legacy finality/admin explicit-match integration, idempotency validation, and txrescan endpoint annotation coverage.
