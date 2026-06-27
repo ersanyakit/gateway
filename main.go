@@ -265,6 +265,29 @@ func transactionWalletMatch(ctx context.Context, txParam types.TransactionParam)
 	return nil, false, false, nil
 }
 
+func handleChainIndexerEvent(ctx context.Context, event dispatcher.Event) error {
+	if event.Transaction == nil {
+		return nil
+	}
+	_, _, err := recordChainFactObservation(ctx, event.Type, *event.Transaction)
+	return err
+}
+
+func recordChainFactObservation(ctx context.Context, eventType string, txParam types.TransactionParam) (*models.ChainFact, bool, error) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.ChainFactRepo == nil {
+		return nil, false, errors.New("chain fact repository is not configured")
+	}
+	fact, err := repositories.BuildChainFact(repositories.ChainFactBuildParams{
+		EventType:             eventType,
+		Transaction:           txParam,
+		ConfirmationsRequired: uint(chainConfirmationRequirement(txParam.ChainID)),
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	return coreApplication.CORE.Router.ChainFactRepo.Record(ctx, &fact)
+}
+
 func bindTransactionWallet(ctx context.Context, eventType string, txParam types.TransactionParam, wallet *models.Wallet) (*models.Transaction, error) {
 	uniqueHash, err := coreApplication.CORE.Router.TransactionRepo.UniqueHash(txParam)
 	if err != nil {
@@ -1245,53 +1268,9 @@ func main() {
 							)
 						}
 
-						wallet, inbound, matched, err := transactionWalletMatch(mainCtx, *tx)
+						err := handleChainIndexerEvent(mainCtx, event)
 						if err != nil {
-							fmt.Println("Wallet match error:", err)
-							if event.Ack != nil {
-								event.Ack <- err
-							}
-							continue
-						}
-						if !matched {
-							if event.Ack != nil {
-								event.Ack <- nil
-							}
-							continue
-						}
-
-						err = coreApplication.CORE.Router.TransactionRepo.Create(*tx)
-						if err != nil {
-							fmt.Println("Transaction save error:", err)
-						} else {
-							if _, finalityErr := applyTransactionFinality(mainCtx, *tx); finalityErr != nil {
-								err = finalityErr
-								fmt.Println("Transaction finality error:", finalityErr)
-							}
-							if err == nil {
-								if inbound {
-									txModel, webhookErr := handleDepositWebhook(mainCtx, webhookNotifier, event.Type, *tx)
-									if webhookErr != nil {
-										err = webhookErr
-										fmt.Println("Deposit processing error:", webhookErr)
-									}
-									if err == nil {
-										if txModel == nil {
-											if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
-												err = bindErr
-												fmt.Println("Transaction wallet bind error:", bindErr)
-											}
-										} else {
-											handlePaymentDeposit(mainCtx, webhookNotifier, txModel)
-										}
-									}
-								} else {
-									if _, bindErr := bindTransactionWallet(mainCtx, event.Type, *tx, wallet); bindErr != nil {
-										err = bindErr
-										fmt.Println("Transaction wallet bind error:", bindErr)
-									}
-								}
-							}
+							fmt.Println("Chain fact record error:", err)
 						}
 						if event.Ack != nil {
 							event.Ack <- err

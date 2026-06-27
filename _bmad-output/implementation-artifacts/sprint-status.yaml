@@ -63,7 +63,7 @@ development_status:
   2-5-verify-event-contract-compatibility: done
   epic-2-retrospective: optional
   epic-3: in-progress
-  3-1-emit-chain-facts-without-mutating-business-state: in-progress
+  3-1-emit-chain-facts-without-mutating-business-state: done
   3-2-match-deposits-and-gate-settlement-on-finality: backlog
   3-3-enforce-ledger-derived-balance-authority: backlog
   3-4-model-payment-matching-outcomes-explicitly: backlog
