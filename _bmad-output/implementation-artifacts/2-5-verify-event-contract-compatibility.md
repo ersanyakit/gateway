@@ -87,6 +87,7 @@ Codex
 - Added a v1 field snapshot for public canonical money events so silent field removal or untracked new v1 events fail tests.
 - Strengthened alias migration tests so aliases must include relation, note, versioned canonical target, and migration/deprecation path.
 - Added Epic 2 integration evidence linking event catalog, outbox, delivery boundary, replay/dead-letter behavior, duplicate-safety, validation, and known production limits.
+- Added payment notifier contract coverage for signed headers and payment payload metadata.
 - Code review found no blocking issues in the 2.5 docs/test scope; full validation passed.
 
 ### File List
@@ -96,6 +97,7 @@ Codex
 - `docs/epic-2-integration-evidence.md`
 - `docs/integration_contract_test.go`
 - `services/webhook/event_catalog_test.go`
+- `services/webhook/notifier_test.go`
 
 ### Change Log
 

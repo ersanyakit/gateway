@@ -205,7 +205,7 @@ func TestMoneyEventCatalogDocumentsAliasDeprecationNotes(t *testing.T) {
 		if strings.TrimSpace(entry.DeprecationNote) == "" {
 			t.Fatalf("entry %s has aliases without deprecation/migration note", entry.Name)
 		}
-		if !strings.Contains(entry.Name, ".v1") {
+		if !strings.HasSuffix(entry.Name, "."+constants.WebhookEventVersionV1) || strings.Count(entry.Name, ".") < 2 {
 			t.Fatalf("alias target %s is not a versioned canonical event", entry.Name)
 		}
 		for _, alias := range entry.Aliases {
@@ -214,6 +214,13 @@ func TestMoneyEventCatalogDocumentsAliasDeprecationNotes(t *testing.T) {
 			}
 			if alias.Relation == EventRelationCanonical {
 				t.Fatalf("alias %s on %s must not be marked canonical", alias.Name, entry.Name)
+			}
+			resolved, relation, ok := MoneyEventCatalogEntryForEmittedEvent(alias.Name)
+			if !ok {
+				t.Fatalf("alias %s on %s does not resolve through emitted-event lookup", alias.Name, entry.Name)
+			}
+			if resolved.Name != entry.Name || relation != alias.Relation {
+				t.Fatalf("alias %s resolved to %s/%s, want %s/%s", alias.Name, resolved.Name, relation, entry.Name, alias.Relation)
 			}
 		}
 	}
