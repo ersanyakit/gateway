@@ -25,17 +25,43 @@ func TestTransactionUniqueHashIncludesChainHashAndLogIndex(t *testing.T) {
 	}
 }
 
-func TestTransactionUniqueHashAllowsEmptyLogIndex(t *testing.T) {
+func TestTransactionUniqueHashNormalizesHashAndLogIndex(t *testing.T) {
 	repo := NewTransactionRepo(nil)
 	unique, err := repo.UniqueHash(types.TransactionParam{
+		ChainID:  constants.Ethereum,
+		Hash:     helpers.StrPtr("  0xABCDEF  "),
+		LogIndex: helpers.StrPtr(" LOG:0x0a "),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unique != "1-0xabcdef-log:10" {
+		t.Fatalf("unique hash = %q", unique)
+	}
+}
+
+func TestTransactionUniqueHashNormalizesNilAndEmptyLogIndex(t *testing.T) {
+	repo := NewTransactionRepo(nil)
+	nilLogIndex, err := repo.UniqueHash(types.TransactionParam{
 		ChainID: constants.Bitcoin,
 		Hash:    helpers.StrPtr("btc-hash"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unique != "0-btc-hash-" {
-		t.Fatalf("unique hash = %q", unique)
+	emptyLogIndex, err := repo.UniqueHash(types.TransactionParam{
+		ChainID:  constants.Bitcoin,
+		Hash:     helpers.StrPtr("btc-hash"),
+		LogIndex: helpers.StrPtr("   "),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nilLogIndex != "0-btc-hash-" {
+		t.Fatalf("unique hash = %q", nilLogIndex)
+	}
+	if emptyLogIndex != nilLogIndex {
+		t.Fatalf("empty logIndex unique hash = %q, want %q", emptyLogIndex, nilLogIndex)
 	}
 }
 
@@ -43,6 +69,9 @@ func TestTransactionUniqueHashRequiresHash(t *testing.T) {
 	repo := NewTransactionRepo(nil)
 	if _, err := repo.UniqueHash(types.TransactionParam{ChainID: constants.Ethereum}); err == nil {
 		t.Fatal("missing hash should fail")
+	}
+	if _, err := repo.UniqueHash(types.TransactionParam{ChainID: constants.Ethereum, Hash: helpers.StrPtr("   ")}); err == nil {
+		t.Fatal("blank hash should fail")
 	}
 }
 

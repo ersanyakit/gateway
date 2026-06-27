@@ -158,3 +158,48 @@ func TestV1ProductionSignerReadiness(t *testing.T) {
 		t.Fatalf("unimplemented external signer ok=%v err=%v, want failure", ok, err)
 	}
 }
+
+func TestV1MetricsAccessReadiness(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("METRICS_BEARER_TOKEN", "")
+	ok, _, err := v1MetricsAccessReadiness()
+	if !ok || err != nil {
+		t.Fatalf("development metrics readiness ok=%v err=%v, want ok", ok, err)
+	}
+
+	t.Setenv("APP_ENV", "production")
+	ok, _, err = v1MetricsAccessReadiness()
+	if ok || err == nil {
+		t.Fatalf("production missing metrics token ok=%v err=%v, want failure", ok, err)
+	}
+
+	t.Setenv("METRICS_BEARER_TOKEN", "metrics-token")
+	ok, _, err = v1MetricsAccessReadiness()
+	if !ok || err != nil {
+		t.Fatalf("production metrics token ok=%v err=%v, want ok", ok, err)
+	}
+}
+
+func TestV1PortalCSRFReadiness(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("CSRF_JWT_SECRET", "")
+	t.Setenv("DEALER_SESSION_SECRET", "")
+	t.Setenv("SESSION_SECRET", "")
+	t.Setenv("MASTER_KEY", "")
+	ok, _, err := v1PortalCSRFReadiness()
+	if !ok || err != nil {
+		t.Fatalf("development csrf readiness ok=%v err=%v, want ok", ok, err)
+	}
+
+	t.Setenv("APP_ENV", "production")
+	ok, _, err = v1PortalCSRFReadiness()
+	if ok || err == nil {
+		t.Fatalf("production missing csrf secret ok=%v err=%v, want failure", ok, err)
+	}
+
+	t.Setenv("MASTER_KEY", "stable-production-master-key")
+	ok, _, err = v1PortalCSRFReadiness()
+	if !ok || err != nil {
+		t.Fatalf("production csrf secret ok=%v err=%v, want ok", ok, err)
+	}
+}

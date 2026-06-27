@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 )
@@ -44,4 +45,28 @@ func IsOriginAllowed(origin string, allowed map[string]struct{}) bool {
 	}
 	_, ok := allowed[origin]
 	return ok
+}
+
+func HTTPReadTimeout() time.Duration {
+	return envDuration("HTTP_READ_TIMEOUT", 15*time.Second)
+}
+
+func HTTPWriteTimeout() time.Duration {
+	return envDuration("HTTP_WRITE_TIMEOUT", 30*time.Second)
+}
+
+func HTTPIdleTimeout() time.Duration {
+	return envDuration("HTTP_IDLE_TIMEOUT", 60*time.Second)
+}
+
+func envDuration(key string, fallback time.Duration) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }

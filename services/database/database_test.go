@@ -67,6 +67,24 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 			t.Fatalf("VerifySchema does not require money_event_outboxes.%s", field)
 		}
 	}
+
+	requiredIndexes := map[string]bool{
+		"ux_money_event_outboxes_event_id":          false,
+		"ux_money_event_outboxes_idempotency_scope": false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if index.table != "money_event_outboxes" {
+			continue
+		}
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require money_event_outboxes index %s", name)
+		}
+	}
 }
 
 func autoMigrateModelsIncludes(want any) bool {

@@ -2,7 +2,7 @@
 story_id: "2.2"
 story_key: "2-2-persist-money-events-through-postgres-outbox"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: ready-for-dev
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 3db844050e180146b55e4074815fd8e4b1dffc99
@@ -10,7 +10,7 @@ baseline_commit: 3db844050e180146b55e4074815fd8e4b1dffc99
 
 # Story 2.2: Persist Money Events Through Postgres Outbox
 
-Status: in-progress
+Status: done
 
 ## Story
 
@@ -38,40 +38,45 @@ boylece process crash olsa bile event delivery kaybolmaz, replay edilebilir ve d
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Define durable outbox model and schema contract (AC: 2, 5, 6)
-  - [ ] Add a `MoneyEventOutbox` model/table for durable money lifecycle events; do not overload `webhook_deliveries` because delivery attempts are Story 2.3 boundary work.
-  - [ ] Persist fields required by AC2: `event_id`, `event_type`, `event_version`, `aggregate_type`, `aggregate_id`, `merchant_id`, `domain_id`, `idempotency_key`, `payload_json`, `status`, `attempts`, `created_at`, `updated_at`, and optional `locked_until`/`last_error` if needed for future workers.
-  - [ ] Add DB-level uniqueness for `event_id` and/or `idempotency_key` so duplicate lifecycle retries cannot create duplicate outbox obligations.
-  - [ ] Include the model in development `AutoMigrate` and `VerifySchema`, but also add an explicit production migration plan/artifact under `docs/` or another existing repo docs location.
-  - [ ] Keep payloads JSON text or `json.RawMessage` compatible with GORM/Postgres without adding new dependencies.
+- [x] Task 1: Define durable outbox model and schema contract (AC: 2, 5, 6)
+  - [x] Add a `MoneyEventOutbox` model/table for durable money lifecycle events; do not overload `webhook_deliveries` because delivery attempts are Story 2.3 boundary work.
+  - [x] Persist fields required by AC2: `event_id`, `event_type`, `event_version`, `aggregate_type`, `aggregate_id`, `merchant_id`, `domain_id`, `idempotency_key`, `payload_json`, `status`, `attempts`, `created_at`, `updated_at`, and optional `locked_until`/`last_error` if needed for future workers.
+  - [x] Add DB-level uniqueness for `event_id` and/or `idempotency_key` so duplicate lifecycle retries cannot create duplicate outbox obligations.
+  - [x] Include the model in development `AutoMigrate` and `VerifySchema`, but also add an explicit production migration plan/artifact under `docs/` or another existing repo docs location.
+  - [x] Keep payloads JSON text or `json.RawMessage` compatible with GORM/Postgres without adding new dependencies.
 
-- [ ] Task 2: Add repository boundary with transaction-aware insert/no-op semantics (AC: 1, 2, 3, 4, 6)
-  - [ ] Add `repositories.MoneyEventOutboxRepo` or equivalent near repository ownership patterns.
-  - [ ] Provide a transaction-aware method that can operate on caller-owned `*gorm.DB` transactions, plus a regular wrapper for standalone inserts.
-  - [ ] Validate required fields before insert: event id/type/version, aggregate type/id, idempotency key, tenant/domain scope where applicable, and valid JSON payload.
-  - [ ] On duplicate event/idempotency key, return the existing row and `created=false` instead of erroring when payload/event identity is compatible.
-  - [ ] If the duplicate idempotency key points to a different event id/type/payload, fail explicitly instead of silently merging incompatible events.
+- [x] Task 2: Add repository boundary with transaction-aware insert/no-op semantics (AC: 1, 2, 3, 4, 6)
+  - [x] Add `repositories.MoneyEventOutboxRepo` or equivalent near repository ownership patterns.
+  - [x] Provide a transaction-aware method that can operate on caller-owned `*gorm.DB` transactions, plus a regular wrapper for standalone inserts.
+  - [x] Validate required fields before insert: event id/type/version, aggregate type/id, idempotency key, tenant/domain scope where applicable, and valid JSON payload.
+  - [x] On duplicate event/idempotency key, return the existing row and `created=false` instead of erroring when payload/event identity is compatible.
+  - [x] If the duplicate idempotency key points to a different event id/type/payload, fail explicitly instead of silently merging incompatible events.
 
-- [ ] Task 3: Prove same-transaction commit/rollback behavior (AC: 1, 3, 4, 6)
-  - [ ] Add repository tests using the existing Postgres test patterns or a deterministic GORM test DB helper already present in the repo.
-  - [ ] Test committing a state row and outbox row in the same transaction makes both visible.
-  - [ ] Test returning an error from the transaction rolls back both the state row and the outbox row.
-  - [ ] Test retrying the same lifecycle idempotency key does not create duplicate outbox rows.
-  - [ ] Test incompatible duplicate idempotency key is rejected.
+- [x] Task 3: Prove same-transaction commit/rollback behavior (AC: 1, 3, 4, 6)
+  - [x] Add repository tests using the existing Postgres test patterns or a deterministic GORM test DB helper already present in the repo.
+  - [x] Test committing a state row and outbox row in the same transaction makes both visible.
+  - [x] Test returning an error from the transaction rolls back both the state row and the outbox row.
+  - [x] Test retrying the same lifecycle idempotency key does not create duplicate outbox rows.
+  - [x] Test incompatible duplicate idempotency key is rejected.
 
-- [ ] Task 4: Add first integration seam without changing delivery semantics (AC: 1, 4, 5, 6)
-  - [ ] Wire the outbox repository into the application route/dependency graph only as needed for tested persistence seams.
-  - [ ] Add a narrow helper for building outbox records from Story 2.1 catalog metadata or existing webhook payloads; keep live webhook delivery behavior unchanged until Story 2.3.
-  - [ ] Do not remove existing `WebhookDeliveryRepo.Enqueue*` calls yet; this story creates the durable substrate and tests same-transaction persistence.
-  - [ ] If touching payment/transaction state methods, keep repository-owned transactions intact and avoid direct handler-side table mutation.
+- [x] Task 4: Add first integration seam without changing delivery semantics (AC: 1, 4, 5, 6)
+  - [x] Wire the outbox repository into the application route/dependency graph only as needed for tested persistence seams.
+  - [x] Add a narrow helper for building outbox records from Story 2.1 catalog metadata or existing webhook payloads; keep live webhook delivery behavior unchanged until Story 2.3.
+  - [x] Do not remove existing `WebhookDeliveryRepo.Enqueue*` calls yet; this story creates the durable substrate and tests same-transaction persistence.
+  - [x] If touching payment/transaction state methods, keep repository-owned transactions intact and avoid direct handler-side table mutation.
 
-- [ ] Task 5: Validate and update story record (AC: 1, 2, 3, 4, 5, 6)
-  - [ ] Targeted validation: `go test -count=1 ./repositories ./models ./services/database`.
-  - [ ] Outbox/catalog validation: `go test -count=1 ./services/webhook ./constants` if catalog helpers are touched.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status according to `bmad-dev-story`.
+- [x] Task 5: Validate and update story record (AC: 1, 2, 3, 4, 5, 6)
+  - [x] Targeted validation: `go test -count=1 ./repositories ./models ./services/database`.
+  - [x] Outbox/catalog validation: `go test -count=1 ./services/webhook ./constants` if catalog helpers are touched.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status according to `bmad-dev-story`.
+
+### Review Findings
+
+- [x] [Review][Patch] Require object payloads for outbox JSON validation [repositories/money_event_outbox_repo.go:253] — fixed by rejecting primitive JSON payloads and adding regression coverage.
+- [x] [Review][Patch] Verify outbox unique indexes during production schema checks [services/database/database.go:193] — fixed by adding required index verification and schema tests.
 
 ## Dev Notes
 
@@ -164,17 +169,53 @@ Codex
 
 ### Debug Log References
 
-- Not started.
+- Baseline commit: `3db844050e180146b55e4074815fd8e4b1dffc99`
+- Validation: `go test -count=1 ./repositories ./models ./services/database ./docs ./services/webhook ./constants` passed.
+- Validation: `go test -count=1 ./...` passed.
+- Validation: `go vet ./...` passed.
+- Validation: `git diff --check` passed.
+- Code review patch: tightened `canonicalMoneyEventOutboxJSON` to require JSON object payloads.
+- Code review patch: added production `VerifySchema` checks for `ux_money_event_outboxes_event_id` and `ux_money_event_outboxes_idempotency_scope`.
+- Post-review validation: `go test -count=1 ./repositories ./models ./services/database` passed.
+- Post-review validation: `go test -count=1 ./services/webhook ./constants` passed.
+- Post-review validation: `go test -count=1 ./docs` passed.
+- Post-review validation: `OUTBOX_TEST_DATABASE_URL=... go test -count=1 ./repositories -run TestMoneyEventOutboxRepoPostgresTransactionSemantics -v` passed against local Postgres.
+- Post-review validation: `go test -count=1 ./...` passed.
+- Post-review validation: `go vet ./...` passed.
+- Post-review validation: `git diff --check` passed.
+
+### Implementation Plan
+
+- Add `models.MoneyEventOutbox` as the durable event substrate, separate from `webhook_deliveries`.
+- Add `repositories.MoneyEventOutboxRepo` with caller-owned `*gorm.DB` support, canonical JSON payload validation, duplicate no-op semantics, and explicit conflict detection.
+- Register outbox schema in development migration/schema verification and publish production DDL guidance under `docs/outbox-migration-plan.md`.
+- Preserve existing live webhook delivery behavior for Story 2.3; this story creates persistence substrate and tests.
 
 ### Completion Notes List
 
-- Not started.
+- Added durable `money_event_outboxes` model with stable event id, scoped idempotency uniqueness, aggregate/resource metadata, tenant/domain scope, canonical payload JSON, status, attempts, timestamps, and future worker lock/error fields.
+- Added outbox repository helpers that build records from Story 2.1 catalog event names, validate/canonicalize payload JSON, insert through caller-owned transactions, no-op compatible duplicates, and reject incompatible duplicate idempotency records.
+- Added schema registration/verification evidence and `docs/outbox-migration-plan.md` production migration guidance so startup `AutoMigrate` is not the only production schema mechanism.
+- Added unit/docs/schema tests plus optional Postgres integration coverage for commit, rollback, duplicate, and conflict semantics when a test DSN is available.
+- Resolved code review finding by requiring outbox payload JSON to be an object instead of allowing primitive JSON values.
+- Resolved code review finding by making production schema verification fail if the outbox unique indexes are missing.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-2-persist-money-events-through-postgres-outbox.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `docs/integration_contract_test.go`
+- `docs/outbox-migration-plan.md`
+- `models/money_event_outbox.go`
+- `repositories/money_event_outbox_repo.go`
+- `repositories/money_event_outbox_repo_test.go`
+- `services/database/database.go`
+- `services/database/database_test.go`
+- `services/database/outbox_schema_contract_test.go`
 
 ### Change Log
 
 - 2026-06-27: Story created with Epic 2.2 acceptance criteria, outbox architecture guardrails, Story 2.1 learnings, and migration/test guidance.
+- 2026-06-27: Implemented durable money event outbox schema, repository boundary, migration plan, schema/docs tests, and validation evidence.
+- 2026-06-27: Addressed code review finding for primitive payload JSON validation and marked story done.
+- 2026-06-27: Addressed code review finding for production outbox unique index verification.

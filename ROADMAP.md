@@ -52,7 +52,8 @@ Completed in this pass:
 - P0-20260626-4 partial: same-chain/same-height block hash conflicts now mark old transactions as `reorged`, enqueue `transaction_reorged` webhooks, reverse linked ledger entries with idempotent `reorg_reversal` entries, fail linked paid sessions with correction webhooks, dead-letter pending sweep jobs, and open reconciliation jobs.
 - P2-20260626-3 partial: ledger invariant scanning now opens reconciliation jobs when a non-zero debit/credit imbalance is detected by idempotency key.
 - P1-20260626-1 partial: `APP_ENV=production` now disables startup `AutoMigrate` by default, runs schema verification instead, reports migration policy in readiness, and documents the versioned-migration launch requirement.
-- P0-20260626-8 partial: `/metrics` now exposes Prometheus-compatible gauges for webhook backlog, sweep backlog, reconciliation drift, chain worker/state lag, migration policy, and signer policy; production access requires `METRICS_BEARER_TOKEN`.
+- P0-20260626-8 partial: `/metrics` now exposes Prometheus-compatible gauges for webhook backlog, sweep backlog, reconciliation drift, chain worker/state lag, migration policy, and signer policy; production access requires `METRICS_BEARER_TOKEN`. HTTP request correlation, panic recovery, bounded server timeouts, and structured request logs are now installed at the Fiber boundary without logging bodies, query strings, or secret headers.
+- T0-5: transaction `unique_hash` generation now trims hash/logIndex input, canonicalizes `0x` hashes and hex log indexes, rejects blank hashes, and keeps nil/empty logIndex values on the same backward-compatible unique-key suffix.
 - T1-4: `SECURITY.md` now documents secret handling, mnemonic/software-signer limits, production migration discipline, webhook egress, and launch gates.
 
 Still open:
@@ -62,7 +63,7 @@ Still open:
 - P0-20260626-4: full reorg accounting still needs canonical parent/child block hash storage, proactive rollback-window scanning, and fork simulation tests.
 - P0-20260626-6/P1-20260626-4: advanced fee, nonce, UTXO, stuck transaction, RBF/CPFP, priority fee, and TRON resource policies are still open.
 - P1-20260626-1: production still needs actual versioned migration files/runner and rollback workflow; startup `AutoMigrate` is now guarded but not replaced by a full migration system.
-- P0-20260626-8: structured logs, traces, dashboards, alert rules, and SLO thresholds are still open beyond the `/metrics` baseline.
+- P0-20260626-8: distributed traces, dashboards, alert rules, and SLO thresholds are still open beyond the `/metrics` and HTTP request-log baseline.
 - P2-20260626-2: custody policy platform remains open.
 
 Older audit sections below remain for historical continuity; some statuses may have changed after the latest implementation work.
@@ -83,7 +84,7 @@ Auditor: Senior payment systems architect / Go backend engineer
 | T0-2 | Fix webhook secret decryption fallback — remove silent fallback to ciphertext bytes as HMAC key | `services/webhook/notifier.go:126` | ✅ Done |
 | T0-3 | Fix payment amount matching — accept ±0.5% tolerance, reject extreme overpayment, emit `payment.underpaid` event instead of silently dropping | `repositories/payment_repo.go:225` | ✅ Done |
 | T0-4 | Add N-confirmation gate — do not mark session `paid` until N block confirmations per chain (1 EVM, 3 BTC, 1 SOL) | `workers/listeners/`, `models/payment_session.go` | ❌ Open |
-| T0-5 | Fix `UniqueHash` nil/empty logIndex normalization — prevent duplicate transaction processing on EVM logs without logIndex | `repositories/transaction_repo.go` | ❌ Open |
+| T0-5 | Fix `UniqueHash` nil/empty logIndex normalization — prevent duplicate transaction processing on EVM logs without logIndex | `repositories/transaction_repo.go` | ✅ Done |
 
 ---
 
