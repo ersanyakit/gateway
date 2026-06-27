@@ -41,7 +41,23 @@ func TestIntegrationGuideMatchesEpic1PartnerContract(t *testing.T) {
 	errorSection := markdownSection(guide, "## Error Handling", "## Security Checklist")
 	requireContains(t, errorSection, `"result": "error"`)
 	requireContains(t, errorSection, `"message"`)
+	requireContains(t, errorSection, "Gateway may replay a failed or dead-lettered webhook with the same event id/type/version")
 	requireNotContains(t, errorSection, `"error":`)
+
+	webhookSection := markdownSection(guide, "## Webhooks", "### Transaction Webhook Payload")
+	for _, token := range []string{
+		"Webhook delivery is at-least-once",
+		"operator replay can deliver the same event more than once",
+		"X-Gateway-Event-Id",
+		"event_id",
+		"event_type",
+		"event_version",
+		"merchant_id",
+		"domain_id",
+		"not as a new business event",
+	} {
+		requireContains(t, webhookSection, token)
+	}
 
 	for _, forbidden := range []string{"gw_secret_", "api_secret_value", "webhook_secret_value", "private_key", "mnemonic", "panic:", "goroutine "} {
 		requireNotContains(t, guide, forbidden)

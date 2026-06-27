@@ -56,6 +56,7 @@ Required GORM-managed indexes:
 - The production migration pipeline should call `ApplyGORMMigrations` explicitly, then start the application with schema verification only.
 - `VerifySchema` must fail startup if required outbox columns or unique indexes are missing.
 - Existing `webhook_deliveries` behavior remains live while Story 2.3 moves delivery behind the webhook boundary.
+- Story 2.4 extends `webhook_deliveries` with replay lineage and operator diagnostics columns: `original_delivery_id`, `replay_count`, `replay_requested_by`, `replay_requested_at`, and `operator_action`. These remain delivery-attempt metadata, not generic money outbox fields.
 - GORM does not automatically drop fields on rollback. Rollback means disabling the writer code path or deploying the prior application version while preserving durable event history.
 
 ## Verification

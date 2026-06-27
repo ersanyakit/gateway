@@ -537,6 +537,19 @@ Reject webhooks when:
 - Signature is invalid.
 - `event_id` was already processed.
 
+### Delivery, Replay, and Deduplication
+
+Webhook delivery is at-least-once. Retries and operator replay can deliver the same event more than once. A replay preserves the original event id, event type, event version, merchant/domain scope, and payload idempotency fields so consumers can safely deduplicate.
+
+Use these fields as the consumer dedupe key:
+
+- `X-Gateway-Event-Id` header and `event_id` payload field.
+- `X-Gateway-Event` / `event_type`.
+- `X-Gateway-Event-Version` / `event_version`.
+- `merchant_id` and `domain_id` scope.
+
+Persist the dedupe decision before fulfilling an order, crediting an account, or triggering irreversible downstream work. A replay should be treated as recovery of the same event, not as a new business event.
+
 ### Transaction Webhook Payload
 
 Event example: `native_transfer`
@@ -706,6 +719,7 @@ The same V1 envelope is used for validation failures, idempotency conflicts, uns
 Webhook delivery behavior:
 
 - Gateway retries failed webhook deliveries.
+- Gateway may replay a failed or dead-lettered webhook with the same event id/type/version.
 - Merchant endpoint should return any `2xx` status after successfully persisting the event.
 - Merchant endpoint should be idempotent because retries can happen.
 

@@ -37,6 +37,12 @@ type WebhookDelivery struct {
 	NextRetryAt     *time.Time `gorm:"index" json:"next_retry_at,omitempty"`
 	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
 
+	OriginalDeliveryID *uuid.UUID `gorm:"type:uuid;index" json:"original_delivery_id,omitempty"`
+	ReplayCount        uint       `gorm:"not null;default:0" json:"replay_count"`
+	ReplayRequestedBy  string     `gorm:"size:255;index" json:"replay_requested_by,omitempty"`
+	ReplayRequestedAt  *time.Time `gorm:"index" json:"replay_requested_at,omitempty"`
+	OperatorAction     string     `gorm:"size:80;index" json:"operator_action,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

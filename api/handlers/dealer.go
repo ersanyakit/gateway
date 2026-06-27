@@ -313,16 +313,23 @@ type DealerWithdrawalView struct {
 }
 
 type DealerWebhookDeliveryView struct {
-	ID          string
-	EventID     string
-	EventType   string
-	TargetURL   string
-	Status      string
-	Attempts    uint
-	LastError   string
-	CreatedAt   string
-	UpdatedAt   string
-	DeliveredAt string
+	ID                 string
+	EventID            string
+	EventType          string
+	TargetURL          string
+	Status             string
+	Attempts           uint
+	LastError          string
+	FailureCategory    string
+	NextRetryAt        string
+	NextAction         string
+	OriginalDeliveryID string
+	ReplayCount        uint
+	ReplayRequestedBy  string
+	ReplayRequestedAt  string
+	CreatedAt          string
+	UpdatedAt          string
+	DeliveredAt        string
 }
 
 type DealerRefundView struct {
@@ -1920,16 +1927,27 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", c.Params("id"), "Geçersiz replay isteği.")
 			return redirectWithError(c, "/admin/webhooks", "Geçersiz webhook delivery.")
 		}
-		delivery, err := deps.WebhookDeliveryRepo.Find(c.Context(), id)
+		delivery, created, err := deps.WebhookDeliveryRepo.EnqueueReplay(c.Context(), repositories.WebhookReplayParams{
+			DeliveryID: id,
+			ActorEmail: adminEmail,
+		})
 		if err != nil {
-			return redirectWithError(c, "/admin/webhooks", "Webhook delivery bulunamadı.")
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", id.String(), "Replay reddedildi veya delivery bulunamadı.")
+			return redirectWithError(c, "/admin/webhooks", "Webhook delivery bulunamadı veya replay yetkin yok.")
+		}
+		if !created {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), "Replay zaten aktif; duplicate istek no-op.")
+			return redirectWithSuccess(c, "/admin/webhooks", "Webhook replay zaten kuyrukta.")
 		}
 
 		boundary := dealerWebhookDeliveryBoundary(deps)
 		if err := boundary.DeliverOne(c.Context(), *delivery); err != nil {
-			return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+err.Error())
+			safeErr := webhooksvc.SanitizeDeliveryError(err)
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", delivery.ID.String(), "Replay başarısız: "+safeErr)
+			return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+safeErr)
 		}
 		message := "Webhook yeniden gönderildi."
 		switch {
@@ -3473,20 +3491,57 @@ func dealerWebhookDeliveryViews(rows []models.WebhookDelivery) []DealerWebhookDe
 		if row.DeliveredAt != nil {
 			deliveredAt = formatPanelTime(*row.DeliveredAt)
 		}
+		nextRetryAt := ""
+		if row.NextRetryAt != nil {
+			nextRetryAt = formatPanelTime(*row.NextRetryAt)
+		}
+		originalDeliveryID := ""
+		if row.OriginalDeliveryID != nil {
+			originalDeliveryID = row.OriginalDeliveryID.String()
+		}
+		replayRequestedAt := ""
+		if row.ReplayRequestedAt != nil {
+			replayRequestedAt = formatPanelTime(*row.ReplayRequestedAt)
+		}
 		views = append(views, DealerWebhookDeliveryView{
-			ID:          row.ID.String(),
-			EventID:     row.EventID,
-			EventType:   row.EventType,
-			TargetURL:   row.TargetURL,
-			Status:      row.Status,
-			Attempts:    row.Attempts,
-			LastError:   row.LastError,
-			CreatedAt:   formatPanelTime(row.CreatedAt),
-			UpdatedAt:   formatPanelTime(row.UpdatedAt),
-			DeliveredAt: deliveredAt,
+			ID:                 row.ID.String(),
+			EventID:            row.EventID,
+			EventType:          row.EventType,
+			TargetURL:          row.TargetURL,
+			Status:             row.Status,
+			Attempts:           row.Attempts,
+			LastError:          row.LastError,
+			FailureCategory:    row.FailureCategory,
+			NextRetryAt:        nextRetryAt,
+			NextAction:         webhookDeliveryNextAction(row),
+			OriginalDeliveryID: originalDeliveryID,
+			ReplayCount:        row.ReplayCount,
+			ReplayRequestedBy:  row.ReplayRequestedBy,
+			ReplayRequestedAt:  replayRequestedAt,
+			CreatedAt:          formatPanelTime(row.CreatedAt),
+			UpdatedAt:          formatPanelTime(row.UpdatedAt),
+			DeliveredAt:        deliveredAt,
 		})
 	}
 	return views
+}
+
+func webhookDeliveryNextAction(row models.WebhookDelivery) string {
+	if strings.TrimSpace(row.OperatorAction) != "" {
+		return row.OperatorAction
+	}
+	switch row.Status {
+	case models.WebhookDeliveryStatusDeadLetter:
+		return "replay_or_investigate"
+	case models.WebhookDeliveryStatusFailed:
+		return "waiting_retry"
+	case models.WebhookDeliveryStatusPending:
+		return "delivery_pending"
+	case models.WebhookDeliveryStatusProcessing:
+		return "delivery_in_progress"
+	default:
+		return ""
+	}
 }
 
 func dealerRefundViews(rows []models.Refund) []DealerRefundView {

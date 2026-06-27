@@ -21,6 +21,9 @@ func TestDatabaseMigrationRegistersMoneyEventOutbox(t *testing.T) {
 		"IdempotencyKey",
 		"PayloadJSON",
 		"FailureCategory",
+		"OriginalDeliveryID",
+		"ReplayCount",
+		"OperatorAction",
 	} {
 		if !strings.Contains(source, token) {
 			t.Fatalf("database schema registration missing %q", token)

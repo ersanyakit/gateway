@@ -746,7 +746,7 @@
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table">
-        <thead><tr><th>Event</th><th>Target</th><th>Status</th><th>Attempts</th><th>Error</th><th>Updated</th><th>Action</th></tr></thead>
+        <thead><tr><th>Event</th><th>Target</th><th>Status</th><th>Attempts</th><th>Diagnostics</th><th>Updated</th><th>Action</th></tr></thead>
         <tbody>
         {{range .AdminWebhooks}}
         <tr>
@@ -754,7 +754,15 @@
           <td><code class="block max-w-[260px] truncate">{{.TargetURL}}</code></td>
           <td><span class="badge {{if eq .Status "succeeded"}}badge-green{{else if eq .Status "failed"}}badge-red{{else if eq .Status "dead_letter"}}badge-violet{{else}}badge-amber{{end}}">{{.Status}}</span></td>
           <td class="font-black">{{.Attempts}}</td>
-          <td><code class="block max-w-[260px] truncate text-red-700">{{.LastError}}</code></td>
+          <td>
+            {{if .FailureCategory}}<span class="block text-[10px] font-black uppercase tracking-[0.06em] text-muted">{{.FailureCategory}}</span>{{end}}
+            {{if .LastError}}<code class="block max-w-[260px] truncate text-red-700">{{.LastError}}</code>{{end}}
+            {{if .NextAction}}<span class="block text-xs font-semibold text-ink">Action: {{.NextAction}}</span>{{end}}
+            {{if .NextRetryAt}}<span class="block text-xs text-muted">Next: {{.NextRetryAt}}</span>{{end}}
+            {{if .OriginalDeliveryID}}<code class="block max-w-[260px] truncate text-muted">Replay of {{.OriginalDeliveryID}}</code>{{end}}
+            {{if .ReplayCount}}<span class="block text-xs text-muted">Replay count: {{.ReplayCount}}</span>{{end}}
+            {{if .ReplayRequestedBy}}<span class="block text-xs text-muted">Requested by {{.ReplayRequestedBy}}{{if .ReplayRequestedAt}} · {{.ReplayRequestedAt}}{{end}}</span>{{end}}
+          </td>
           <td class="text-muted">{{.UpdatedAt}}</td>
           <td>
             {{if ne .Status "succeeded"}}

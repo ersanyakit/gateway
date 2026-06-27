@@ -45,6 +45,67 @@ func TestMoneyEventCatalogCoversRequiredCanonicalEvents(t *testing.T) {
 	}
 }
 
+func TestMoneyEventCatalogExamplesMatchDeclaredSchemas(t *testing.T) {
+	for _, entry := range MoneyEventCatalog() {
+		t.Run(entry.Name, func(t *testing.T) {
+			requireExampleFields(t, entry, entry.RequiredFields...)
+			if got, _ := entry.Example["event_type"].(string); got != entry.Name {
+				t.Fatalf("example event_type = %q, want %q", got, entry.Name)
+			}
+			if got, _ := entry.Example["event_version"].(string); got != constants.WebhookEventVersionV1 {
+				t.Fatalf("example event_version = %q, want %q", got, constants.WebhookEventVersionV1)
+			}
+			if got, _ := entry.Example["resource_type"].(string); got != entry.ResourceType {
+				t.Fatalf("example resource_type = %q, want %q", got, entry.ResourceType)
+			}
+		})
+	}
+}
+
+func TestMoneyEventCatalogV1FieldSnapshot(t *testing.T) {
+	expectedFamilyFields := map[string][]string{
+		"deposit.detected.v1":                  {"chain_id", "tx_hash", "tx_unique_hash", "log_index", "amount_raw", "symbol", "token", "from_address", "to_address", "confirmations"},
+		"deposit.finalized.v1":                 {"chain_id", "tx_hash", "tx_unique_hash", "amount_raw", "symbol", "token", "wallet_id"},
+		"payment.succeeded.v1":                 {"payment_id", "order_id", "amount", "currency", "tx_hash", "tx_unique_hash"},
+		"payment.failed.v1":                    {"payment_id", "order_id", "amount", "currency", "failure_reason"},
+		"payment.expired.v1":                   {"payment_id", "order_id", "amount", "currency", "expires_at"},
+		"withdrawal.requested.v1":              {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address"},
+		"withdrawal.broadcast.v1":              {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address", "tx_hash"},
+		"withdrawal.finalized.v1":              {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address", "tx_hash"},
+		"withdrawal.failed.v1":                 {"withdrawal_id", "wallet_id", "chain", "symbol", "token", "amount_raw", "to_address", "failure_reason"},
+		"refund.requested.v1":                  {"refund_id", "payment_id", "amount_raw", "reason"},
+		"refund.broadcast.v1":                  {"refund_id", "payment_id", "amount_raw", "tx_hash"},
+		"refund.succeeded.v1":                  {"refund_id", "payment_id", "amount_raw", "tx_hash"},
+		"refund.rejected.v1":                   {"refund_id", "payment_id", "amount_raw", "reason"},
+		"refund.failed.v1":                     {"refund_id", "payment_id", "amount_raw", "failure_reason"},
+		"sweep.requested.v1":                   {"sweep_id", "wallet_id", "chain_id", "amount_raw"},
+		"sweep.succeeded.v1":                   {"sweep_id", "wallet_id", "chain_id", "amount_raw", "sweep_tx_hash"},
+		"sweep.failed.v1":                      {"sweep_id", "wallet_id", "chain_id", "failure_reason"},
+		"sweep.dead_lettered.v1":               {"sweep_id", "wallet_id", "chain_id", "failure_reason", "operator_action"},
+		"transaction.reorged.v1":               {"transaction_id", "tx_unique_hash", "original_event_id", "original_resource_id", "correction_reason"},
+		"webhook.delivery.succeeded.v1":        {"delivery_id", "target_url", "attempts"},
+		"webhook.delivery.failed.v1":           {"delivery_id", "attempts", "failure_reason", "next_retry_at"},
+		"webhook.delivery.dead_lettered.v1":    {"delivery_id", "attempts", "failure_reason", "operator_action"},
+		"webhook.delivery.replayed.v1":         {"delivery_id", "original_event_id", "replay_reason"},
+	}
+
+	catalog := MoneyEventCatalog()
+	if len(catalog) != len(expectedFamilyFields) {
+		t.Fatalf("catalog entries = %d, snapshot entries = %d", len(catalog), len(expectedFamilyFields))
+	}
+	commonFields := CommonMoneyEventFields()
+	for _, entry := range catalog {
+		t.Run(entry.Name, func(t *testing.T) {
+			wantFamilyFields, ok := expectedFamilyFields[entry.Name]
+			if !ok {
+				t.Fatalf("new v1 event %q must be added to compatibility snapshot", entry.Name)
+			}
+			requireExactFields(t, entry.FamilyFields, wantFamilyFields...)
+			requireExactFields(t, entry.RequiredFields, append(cloneStrings(commonFields), wantFamilyFields...)...)
+		})
+	}
+}
+
 func TestMoneyEventCatalogCoversCurrentWebhookConstants(t *testing.T) {
 	currentEvents := webhookEventConstantsFromSource(t)
 
@@ -144,6 +205,17 @@ func TestMoneyEventCatalogDocumentsAliasDeprecationNotes(t *testing.T) {
 		if strings.TrimSpace(entry.DeprecationNote) == "" {
 			t.Fatalf("entry %s has aliases without deprecation/migration note", entry.Name)
 		}
+		if !strings.Contains(entry.Name, ".v1") {
+			t.Fatalf("alias target %s is not a versioned canonical event", entry.Name)
+		}
+		for _, alias := range entry.Aliases {
+			if strings.TrimSpace(alias.Name) == "" || strings.TrimSpace(alias.Relation) == "" || strings.TrimSpace(alias.Note) == "" {
+				t.Fatalf("entry %s has incomplete alias migration metadata: %#v", entry.Name, alias)
+			}
+			if alias.Relation == EventRelationCanonical {
+				t.Fatalf("alias %s on %s must not be marked canonical", alias.Name, entry.Name)
+			}
+		}
 	}
 }
 
@@ -181,6 +253,18 @@ func requireExampleFields(t *testing.T, entry MoneyEventCatalogItem, required ..
 	for _, field := range required {
 		if _, ok := entry.Example[field]; !ok {
 			t.Fatalf("example for %s missing %q: %#v", entry.Name, field, entry.Example)
+		}
+	}
+}
+
+func requireExactFields(t *testing.T, got []string, want ...string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("fields = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("fields = %v, want %v", got, want)
 		}
 	}
 }
