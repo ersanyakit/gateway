@@ -472,24 +472,43 @@ func (r *PaymentRepo) MatchFinalizedTransaction(ctx context.Context, txModel mod
 }
 
 func selectPaymentMatchCandidate(sessions []models.PaymentSession, txModel models.Transaction, now time.Time) (uuid.UUID, paymentMatchDecision, bool) {
+	selectedPriority := 0
+	var selectedID uuid.UUID
+	var selectedDecision paymentMatchDecision
+	selected := false
 	for _, candidate := range sessions {
-		if !paymentSessionChainMatchesTransaction(candidate, txModel) || !paymentSessionAssetMatchesTransaction(candidate, txModel) {
+		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
+		if !ok {
 			continue
 		}
-		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
-		if ok {
-			return candidate.ID, decision, true
+		priority := paymentMatchDecisionPriority(decision)
+		if !selected || priority < selectedPriority {
+			selected = true
+			selectedPriority = priority
+			selectedID = candidate.ID
+			selectedDecision = decision
 		}
 	}
 
-	for _, candidate := range sessions {
-		decision, ok := paymentMatchDecisionForSession(candidate, txModel, now)
-		if ok {
-			return candidate.ID, decision, true
-		}
+	if selected {
+		return selectedID, selectedDecision, true
 	}
-
 	return uuid.Nil, paymentMatchDecision{}, false
+}
+
+func paymentMatchDecisionPriority(decision paymentMatchDecision) int {
+	switch {
+	case decision.Status == models.PaymentStatusPaid && decision.Outcome == models.PaymentOutcomeExact:
+		return 0
+	case decision.Status == models.PaymentStatusUnderpaid || decision.Status == models.PaymentStatusPartialPaid || decision.Status == models.PaymentStatusOverpaid:
+		return 10
+	case decision.Outcome == models.PaymentOutcomeExpiredAfterDeposit:
+		return 20
+	case decision.Outcome == models.PaymentOutcomeWrongChain || decision.Outcome == models.PaymentOutcomeWrongAsset:
+		return 100
+	default:
+		return 50
+	}
 }
 
 func (r *PaymentRepo) applyPaymentMatchDecision(ctx context.Context, sessionID uuid.UUID, txModel models.Transaction, decision paymentMatchDecision) (*PaymentMatchResult, error) {
@@ -721,15 +740,17 @@ func (r *PaymentRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *go
 	return tx.WithContext(ctx).
 		Model(&models.PaymentSession{}).
 		Where("tx_unique_hash = ?", uniqueHash).
-		Where("status = ?", models.PaymentStatusPaid).
 		Updates(map[string]any{
-			"status":               models.PaymentStatusFailed,
-			"webhook_event":        "payment_failed",
-			"webhook_sent_at":      nil,
-			"webhook_attempts":     0,
-			"webhook_last_error":   "",
-			"webhook_locked_until": nil,
-			"updated_at":           now,
+			"status":                 models.PaymentStatusFailed,
+			"payment_outcome_reason": "matched transaction was reorged",
+			"paid_at":                nil,
+			"confirmed_at":           nil,
+			"webhook_event":          constants.WebhookEventPaymentFailed,
+			"webhook_sent_at":        nil,
+			"webhook_attempts":       0,
+			"webhook_last_error":     "",
+			"webhook_locked_until":   nil,
+			"updated_at":             now,
 		}).Error
 }
 

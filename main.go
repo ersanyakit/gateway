@@ -787,7 +787,12 @@ func paymentRealtimeBroadcastEvent(session *models.PaymentSession) realtime.Paym
 	switch session.Status {
 	case models.PaymentStatusPaid:
 		terminal = true
-	case models.PaymentStatusExpired, models.PaymentStatusCanceled, models.PaymentStatusFailed, models.PaymentStatusUnderpaid:
+	case models.PaymentStatusExpired,
+		models.PaymentStatusCanceled,
+		models.PaymentStatusFailed,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid:
 		terminal = true
 	case models.PaymentStatusAwaitingPayment:
 		payable = true

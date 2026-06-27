@@ -2,6 +2,7 @@ package main
 
 import (
 	"core/constants"
+	"core/models"
 	"core/repositories"
 	"os"
 	"strings"
@@ -122,6 +123,26 @@ func TestLegacyPaymentDepositHandlerUsesExplicitMatchResult(t *testing.T) {
 	}
 	if strings.Contains(body, "PaymentRepo.MarkPaidByTransaction") {
 		t.Fatal("handlePaymentDeposit must not use paid-only matching wrapper")
+	}
+}
+
+func TestPaymentRealtimeBroadcastTreatsExplicitOutcomeStatusesAsTerminal(t *testing.T) {
+	for _, status := range []string{
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid,
+	} {
+		t.Run(status, func(t *testing.T) {
+			session := &models.PaymentSession{
+				ID:           uuid.New(),
+				SessionToken: "token-" + status,
+				Status:       status,
+			}
+			event := paymentRealtimeBroadcastEvent(session)
+			if event.Status != status || !event.Terminal || event.Payable || event.Paid {
+				t.Fatalf("event for %s = %#v, want terminal non-payable non-paid", status, event)
+			}
+		})
 	}
 }
 

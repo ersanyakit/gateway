@@ -11,6 +11,7 @@ import (
 	"core/models"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func TestPaymentStatusBlocksCancelIncludesExplicitOutcomeStatuses(t *testing.T) {
@@ -220,6 +221,33 @@ func TestPaymentMatchSelectionPrefersExactCandidateBeforeFailure(t *testing.T) {
 	}
 }
 
+func TestPaymentMatchSelectionPrefersExactCandidateBeforeSameAssetMismatch(t *testing.T) {
+	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
+	future := now.Add(10 * time.Minute)
+	token := "0xToken"
+	olderPartial := models.PaymentSession{
+		ID:                uuid.New(),
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   ptr(constants.Ethereum),
+		SelectedSymbol:    "USDC",
+		SelectedToken:     &token,
+		ExpectedAmountRaw: "1000",
+		ExpiresAt:         &future,
+	}
+	exact := olderPartial
+	exact.ID = uuid.New()
+	exact.ExpectedAmountRaw = "500"
+	txModel := paymentMatchTestTx(constants.Ethereum, "USDC", &token, "500")
+
+	sessionID, decision, ok := selectPaymentMatchCandidate([]models.PaymentSession{olderPartial, exact}, txModel, now)
+	if !ok {
+		t.Fatal("expected exact candidate to be selected")
+	}
+	if sessionID != exact.ID || decision.Status != models.PaymentStatusPaid || decision.Outcome != models.PaymentOutcomeExact {
+		t.Fatalf("selected session=%s decision=%#v, want exact paid session %s", sessionID, decision, exact.ID)
+	}
+}
+
 func TestPaymentMatchSelectionRecordsFailureWhenNoExactCandidateExists(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	future := now.Add(10 * time.Minute)
@@ -244,6 +272,22 @@ func TestPaymentMatchSelectionRecordsFailureWhenNoExactCandidateExists(t *testin
 	}
 }
 
+func TestPaymentMatchDecisionPriorityOrdersExactBeforeMismatchAndFailures(t *testing.T) {
+	priorities := []paymentMatchDecision{
+		{Status: models.PaymentStatusPaid, Outcome: models.PaymentOutcomeExact},
+		{Status: models.PaymentStatusUnderpaid, Outcome: models.PaymentOutcomeUnderpaid},
+		{Status: models.PaymentStatusPartialPaid, Outcome: models.PaymentOutcomePartialUnsupported},
+		{Status: models.PaymentStatusOverpaid, Outcome: models.PaymentOutcomeOverpaid},
+		{Status: models.PaymentStatusExpired, Outcome: models.PaymentOutcomeExpiredAfterDeposit},
+		{Status: models.PaymentStatusFailed, Outcome: models.PaymentOutcomeWrongChain},
+	}
+	for i := 1; i < len(priorities); i++ {
+		if paymentMatchDecisionPriority(priorities[i-1]) > paymentMatchDecisionPriority(priorities[i]) {
+			t.Fatalf("priority[%d]=%d should be <= priority[%d]=%d", i-1, paymentMatchDecisionPriority(priorities[i-1]), i, paymentMatchDecisionPriority(priorities[i]))
+		}
+	}
+}
+
 func TestPaymentMatchSourceKeepsIdempotencyGuardrails(t *testing.T) {
 	source := readPaymentRepoSource(t)
 	for _, token := range []string{
@@ -258,6 +302,124 @@ func TestPaymentMatchSourceKeepsIdempotencyGuardrails(t *testing.T) {
 		if !contains(source, token) {
 			t.Fatalf("payment matching source missing %q", token)
 		}
+	}
+}
+
+func TestPaymentRepoMarkReorgedUpdatesAllMatchedOutcomeStatuses(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {
+		t.Fatalf("automigrate payment reorg models: %v", err)
+	}
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	now := time.Now()
+	merchant := models.Merchant{
+		ID:        merchantID,
+		Name:      "Payment Reorg Test",
+		Email:     "payment-reorg-" + uuid.NewString() + "@example.test",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	domain := models.Domain{
+		ID:          domainID,
+		MerchantID:  merchantID,
+		DomainURL:   "payment-reorg.example.test",
+		APIKey:      "pk_" + uuid.NewString(),
+		APISecret:   "secret",
+		HDAccountID: 7002,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	wallet := models.Wallet{
+		ID:              walletID,
+		HDAccountID:     7002,
+		HDAddressId:     1,
+		MerchantID:      merchantID,
+		DomainID:        domainID,
+		ProductID:       "checkout:test",
+		UserID:          "user-" + uuid.NewString(),
+		EthereumAddress: "0x" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if err := db.WithContext(ctx).Create(&merchant).Error; err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&domain).Error; err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&wallet).Error; err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+
+	statuses := []string{
+		models.PaymentStatusPaid,
+		models.PaymentStatusUnderpaid,
+		models.PaymentStatusOverpaid,
+		models.PaymentStatusPartialPaid,
+		models.PaymentStatusExpired,
+		models.PaymentStatusFailed,
+	}
+	for _, status := range statuses {
+		t.Run(status, func(t *testing.T) {
+			txUniqueHash := "reorg-payment-" + status + "-" + uuid.NewString()
+			txHash := "0x" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			webhookSentAt := now.Add(-time.Minute)
+			paidAt := now.Add(-2 * time.Minute)
+			session := models.PaymentSession{
+				ID:                 uuid.New(),
+				SessionToken:       "reorg-" + uuid.NewString(),
+				MerchantID:         merchantID,
+				DomainID:           domainID,
+				WalletID:           walletID,
+				OrderID:            "order-" + uuid.NewString(),
+				Amount:             "10.00",
+				Currency:           "USD",
+				Status:             status,
+				TxUniqueHash:       &txUniqueHash,
+				TxHash:             &txHash,
+				PaidAt:             &paidAt,
+				ConfirmedAt:        &paidAt,
+				WebhookEvent:       constants.WebhookEventPaymentUnderpaid,
+				WebhookSentAt:      &webhookSentAt,
+				WebhookAttempts:    3,
+				WebhookLastError:   "previous failure",
+				PaymentOutcome:     models.PaymentOutcomeUnderpaid,
+				MatchedAmountRaw:   "997",
+				ShortfallAmountRaw: "3",
+				CreatedAt:          now,
+				UpdatedAt:          now,
+			}
+			if err := db.WithContext(ctx).Create(&session).Error; err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				return NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, txUniqueHash)
+			}); err != nil {
+				t.Fatalf("mark reorged: %v", err)
+			}
+			var updated models.PaymentSession
+			if err := db.WithContext(ctx).First(&updated, "id = ?", session.ID).Error; err != nil {
+				t.Fatalf("load updated session: %v", err)
+			}
+			if updated.Status != models.PaymentStatusFailed || updated.WebhookEvent != constants.WebhookEventPaymentFailed {
+				t.Fatalf("reorged session status/event = %q/%q", updated.Status, updated.WebhookEvent)
+			}
+			if updated.WebhookSentAt != nil || updated.WebhookAttempts != 0 || updated.WebhookLastError != "" {
+				t.Fatalf("reorged session webhook retry fields not reset: %#v", updated)
+			}
+			if updated.PaidAt != nil {
+				t.Fatalf("reorged session paid_at = %#v, want nil", updated.PaidAt)
+			}
+			if updated.ConfirmedAt != nil {
+				t.Fatalf("reorged session confirmed_at = %#v, want nil", updated.ConfirmedAt)
+			}
+			if updated.PaymentOutcomeReason != "matched transaction was reorged" {
+				t.Fatalf("reorg reason = %q", updated.PaymentOutcomeReason)
+			}
+		})
 	}
 }
 
