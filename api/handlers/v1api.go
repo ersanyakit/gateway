@@ -876,7 +876,7 @@ func HandleV1PaymentInfo(deps V1APIDeps) fiber.Handler {
 // @Security ApiKeyAuth
 // @Param page query int false "Page number" default(1)
 // @Param limit query int false "Items per page (max 100)" default(20)
-// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed,underpaid)
+// @Param status query string false "Filter by status" Enums(pending,awaiting_payment,paid,expired,canceled,failed,underpaid,overpaid,partial_paid)
 // @Success 200 {object} types.V1PaymentHistoryResponse
 // @Failure 401 {object} types.V1ErrorResponse
 // @Router /api/v1/payment/history [get]
@@ -1013,6 +1013,8 @@ func v1PaymentStatusTable() []types.V1StatusTableItem {
 		{Status: models.PaymentStatusCanceled, Description: "Manually canceled by the customer or merchant.", IsFinal: true},
 		{Status: models.PaymentStatusFailed, Description: "Deposit detected but amount or confirmations did not match.", IsFinal: true},
 		{Status: models.PaymentStatusUnderpaid, Description: "Deposit amount is below the expected payment amount.", IsFinal: true},
+		{Status: models.PaymentStatusOverpaid, Description: "Deposit amount exceeds the expected payment amount and needs operator or refund follow-up.", IsFinal: true},
+		{Status: models.PaymentStatusPartialPaid, Description: "Partial deposit received; automatic multi-deposit aggregation is not supported for checkout settlement.", IsFinal: true},
 	}
 }
 
@@ -1794,7 +1796,7 @@ func v1PaymentResponse(s models.PaymentSession) fiber.Map {
 	if s.SelectedToken != nil {
 		token = *s.SelectedToken
 	}
-	return fiber.Map{
+	response := fiber.Map{
 		"payment_id":          s.ID.String(),
 		"track_id":            s.SessionToken,
 		"order_id":            s.OrderID,
@@ -1814,6 +1816,8 @@ func v1PaymentResponse(s models.PaymentSession) fiber.Map {
 		"expires_at":          expiresAt,
 		"created_at":          s.CreatedAt.UTC().Format(time.RFC3339),
 	}
+	copyPaymentOutcomeFields(response, s)
+	return response
 }
 
 func v1PayoutResponse(r models.WithdrawalRequest) fiber.Map {
