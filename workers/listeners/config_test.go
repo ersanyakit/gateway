@@ -3,6 +3,8 @@ package listeners
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"core/blockchain"
@@ -90,5 +92,31 @@ func TestConfiguredStartBlockIgnoresZero(t *testing.T) {
 
 	if got, ok := ConfiguredStartBlock(configTestChain{id: constants.Bitcoin, name: "bitcoin"}); ok {
 		t.Fatalf("ConfiguredStartBlock ok with value %d, want false", got)
+	}
+}
+
+func TestSupportedListenersRespectConfiguredStartBlock(t *testing.T) {
+	for _, path := range []string{
+		"evm/listener.go",
+		"bitcoin/bitcoin.go",
+		"solana/listener.go",
+		"tron/tron.go",
+	} {
+		t.Run(path, func(t *testing.T) {
+			sourceBytes, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			source := string(sourceBytes)
+			for _, token := range []string{
+				"ConfiguredStartBlock(r.chain)",
+				"configuredStart := false",
+				"if from <= 1 && !configuredStart",
+			} {
+				if !strings.Contains(source, token) {
+					t.Fatalf("%s does not preserve configured start block behavior %q", path, token)
+				}
+			}
+		})
 	}
 }

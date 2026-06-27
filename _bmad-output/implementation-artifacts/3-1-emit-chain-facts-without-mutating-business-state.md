@@ -109,6 +109,7 @@ Codex
 - `go test -count=1 ./repositories ./services/database ./docs ./workers/listeners/... ./blockchain/chains ./services/webhook`
 - `go test -count=1 ./workers/listeners/... ./repositories ./services/database`
 - `go test -count=1 ./services/webhook ./docs ./constants`
+- `go test -count=1 ./workers/listeners`
 - `go test -count=1 .`
 - `go test -count=1 ./api/routes`
 - `go test -count=1 ./docs`
@@ -137,8 +138,10 @@ Codex
 - `repositories/chain_fact_repo_test.go`
 - `services/database/database.go`
 - `services/database/outbox_schema_contract_test.go`
+- `workers/listeners/config_test.go`
 
 ### Change Log
 
 - 2026-06-27: Story created from Epic 3.1 with FR11/FR12, architecture AD-4/AD-9, current listener flow, and Epic 2 continuity notes.
 - 2026-06-27: Implemented durable chain facts, indexer no-mutation boundary, docs, tests, and validation; story marked done.
+- 2026-06-27: Added listener source contract coverage for configured start block behavior across EVM, Bitcoin, Solana, and TRON.
