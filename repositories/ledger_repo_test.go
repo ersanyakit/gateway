@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,6 +68,8 @@ func TestLedgerIdempotencyKeys(t *testing.T) {
 		withdrawalDebitKey(id): "withdrawal-debit:11111111-1111-1111-1111-111111111111",
 		refundHoldKey(id):      "refund-hold:11111111-1111-1111-1111-111111111111",
 		refundDebitKey(id):     "refund-debit:11111111-1111-1111-1111-111111111111",
+		sweepHoldKey(id):       "sweep-hold:11111111-1111-1111-1111-111111111111",
+		sweepReleaseKey(id):    "sweep-release:11111111-1111-1111-1111-111111111111",
 	}
 	for got, want := range cases {
 		if got != want {
@@ -115,6 +118,14 @@ func TestLedgerPostingFunctionsUseStableIdempotencyGuards(t *testing.T) {
 		},
 		"PostRefundDebitWithDB": {
 			"refundDebitKey",
+			"r.existsWithDB(ctx, tx, key)",
+		},
+		"createSweepHold": {
+			"sweepHoldKey",
+			"r.existsWithDB(ctx, tx, key)",
+		},
+		"PostSweepReleaseWithDB": {
+			"sweepReleaseKey",
 			"r.existsWithDB(ctx, tx, key)",
 		},
 	}
@@ -242,6 +253,7 @@ func TestLedgerRepoWalletBalancesByWalletIDsAggregatesLedgerAccounts(t *testing.
 		testLedgerEntryWithType(prefix+":pending-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositPending, models.LedgerAccountMerchantPending, models.LedgerDirectionCredit, models.LedgerStatusPending, "50"),
 		testLedgerEntryWithType(prefix+":withdrawal-transit-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeWithdrawalHold, models.LedgerAccountWithdrawalTransit, models.LedgerDirectionCredit, models.LedgerStatusPending, "25"),
 		testLedgerEntryWithType(prefix+":refund-transit-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeRefundHold, models.LedgerAccountRefundTransit, models.LedgerDirectionCredit, models.LedgerStatusPending, "13"),
+		testLedgerEntryWithType(prefix+":sweep-transit-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeSweepHold, models.LedgerAccountSweepTransit, models.LedgerDirectionCredit, models.LedgerStatusPending, "8"),
 		testLedgerEntryWithType(prefix+":reversal-debit", merchantID, &domainID, &walletID, models.LedgerEntryTypeReorgReversal, models.LedgerAccountMerchantAvailable, models.LedgerDirectionDebit, models.LedgerStatusPosted, "5"),
 		testLedgerEntryWithType(prefix+":adjustment-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeAdjustment, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusPosted, "3"),
 		testLedgerEntryWithType(prefix+":voided-credit", merchantID, &domainID, &walletID, models.LedgerEntryTypeAdjustment, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusVoided, "999"),
@@ -268,6 +280,9 @@ func TestLedgerRepoWalletBalancesByWalletIDsAggregatesLedgerAccounts(t *testing.
 	}
 	if got[models.LedgerAccountRefundTransit] != "13" {
 		t.Fatalf("refund transit = %q, want 13 rows=%#v", got[models.LedgerAccountRefundTransit], rows)
+	}
+	if got[models.LedgerAccountSweepTransit] != "8" {
+		t.Fatalf("sweep transit = %q, want 8 rows=%#v", got[models.LedgerAccountSweepTransit], rows)
 	}
 	for _, row := range rows {
 		if row.WalletID == nil || *row.WalletID != walletID {
@@ -440,6 +455,175 @@ func TestLedgerRepoPostingIdempotencyAndNegativeBalanceGuard(t *testing.T) {
 		t.Fatalf("poor withdrawal err = %v, want ErrInsufficientAvailableBalance", err)
 	}
 	requireLedgerCount(t, db, 0, "idempotency_key = ?", withdrawalHoldKey(poorWithdrawal.ID))
+}
+
+func TestLedgerRepoSweepHoldIsIdempotentAndReleasable(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	prefix := "sweep-hold-test-" + uuid.NewString()
+
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post standalone deposit: %v", err)
+	}
+	job := models.SweepJob{
+		ID:                    uuid.New(),
+		TransactionUniqueHash: depositTx.UniqueHash,
+		TransactionHash:       depositTx.Hash,
+		WalletID:              walletID,
+		MerchantID:            merchantID,
+		ChainID:               depositTx.ChainID,
+		Token:                 depositTx.Token,
+		Status:                models.SweepJobStatusProcessing,
+	}
+
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatalf("create sweep hold: %v", err)
+	}
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatalf("duplicate sweep hold: %v", err)
+	}
+	requireLedgerCount(t, db, 2, "idempotency_key = ?", sweepHoldKey(job.ID))
+
+	rows, err := repo.DomainBalances(ctx, merchantID, domainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ledgerRowsByAccount(rows)
+	if got[models.LedgerAccountMerchantAvailable] != "0" || got[models.LedgerAccountSweepTransit] != "100" {
+		t.Fatalf("balances with sweep hold = %#v", got)
+	}
+
+	if err := repo.VoidSweepHold(ctx, job.ID); err != nil {
+		t.Fatalf("void sweep hold: %v", err)
+	}
+	if err := repo.VoidSweepHold(ctx, job.ID); err != nil {
+		t.Fatalf("duplicate void sweep hold: %v", err)
+	}
+	rows, err = repo.DomainBalances(ctx, merchantID, domainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = ledgerRowsByAccount(rows)
+	if got[models.LedgerAccountMerchantAvailable] != "100" {
+		t.Fatalf("available after sweep hold release = %#v", got)
+	}
+}
+
+func TestLedgerRepoSweepReleaseRestoresAvailableAfterSuccess(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	prefix := "sweep-release-test-" + uuid.NewString()
+
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post standalone deposit: %v", err)
+	}
+	job := models.SweepJob{
+		ID:                    uuid.New(),
+		TransactionUniqueHash: depositTx.UniqueHash,
+		TransactionHash:       depositTx.Hash,
+		WalletID:              walletID,
+		MerchantID:            merchantID,
+		ChainID:               depositTx.ChainID,
+		Token:                 depositTx.Token,
+		Status:                models.SweepJobStatusProcessing,
+	}
+
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatalf("create sweep hold: %v", err)
+	}
+	if err := repo.PostSweepRelease(ctx, job, depositTx, "0xsweep"); err != nil {
+		t.Fatalf("post sweep release: %v", err)
+	}
+	if err := repo.PostSweepRelease(ctx, job, depositTx, "0xsweep"); err != nil {
+		t.Fatalf("duplicate sweep release: %v", err)
+	}
+	requireLedgerCount(t, db, 2, "idempotency_key = ?", sweepReleaseKey(job.ID))
+
+	rows, err := repo.DomainBalances(ctx, merchantID, domainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ledgerRowsByAccount(rows)
+	if got[models.LedgerAccountMerchantAvailable] != "100" || got[models.LedgerAccountSweepTransit] != "0" {
+		t.Fatalf("balances after sweep release = %#v", got)
+	}
+}
+
+func TestLedgerRepoConcurrentWithdrawalHoldsPreventOverdraw(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	prefix := "concurrent-withdrawal-hold-" + uuid.NewString()
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post standalone deposit: %v", err)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			request := models.WithdrawalRequest{
+				ID:         uuid.New(),
+				MerchantID: merchantID,
+				DomainID:   &domainID,
+				WalletID:   walletID,
+				Chain:      "ethereum",
+				Symbol:     "ETH",
+				Decimals:   18,
+				AmountRaw:  "80",
+				Status:     models.WithdrawalStatusPending,
+				ToAddress:  "0xto",
+			}
+			results <- repo.CreateWithdrawalHold(ctx, request)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	insufficient := 0
+	for err := range results {
+		if err == nil {
+			successes++
+			continue
+		}
+		if errors.Is(err, ErrInsufficientAvailableBalance) {
+			insufficient++
+			continue
+		}
+		t.Fatalf("unexpected hold error: %v", err)
+	}
+	if successes != 1 || insufficient != 1 {
+		t.Fatalf("successes=%d insufficient=%d, want 1/1", successes, insufficient)
+	}
 }
 
 func TestLedgerRepoPostTransactionReversalSkipsReversalVoidedAndUnrelatedRows(t *testing.T) {

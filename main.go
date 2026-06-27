@@ -489,7 +489,7 @@ func enqueueSweepJob(ctx context.Context, txModel *models.Transaction) {
 		return
 	}
 	if coreApplication.CORE.Router.SweepJobRepo == nil {
-		go autoSweepDeposit(txModel)
+		log.Printf("sweep enqueue: durable sweep job repo is required before broadcast tx=%s", txModel.UniqueHash)
 		return
 	}
 	job, created, err := coreApplication.CORE.Router.SweepJobRepo.EnqueueForTransaction(ctx, *txModel)
@@ -519,7 +519,7 @@ func autoSweepDeposit(txModel *models.Transaction) {
 
 // executeAutoSweepDeposit moves funds from a user wallet (HDAddressId > 0) to the merchant reserve wallet.
 func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
-	return executeAutoSweepDepositWithJob(ctx, txModel, nil)
+	return nil, repositories.ErrLedgerReservationRequired
 }
 
 func executeSweepJob(ctx context.Context, job models.SweepJob, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
@@ -529,6 +529,12 @@ func executeSweepJob(ctx context.Context, job models.SweepJob, txModel *models.T
 func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transaction, job *models.SweepJob) (*blockchain.TransactionResult, error) {
 	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return nil, nil
+	}
+	if job == nil || job.ID == uuid.Nil || coreApplication.CORE.Router.LedgerRepo == nil {
+		return nil, repositories.ErrLedgerReservationRequired
+	}
+	if err := coreApplication.CORE.Router.LedgerRepo.CreateSweepHold(ctx, *job, *txModel); err != nil {
+		return nil, err
 	}
 
 	userWallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
@@ -1018,6 +1024,7 @@ func processSweepJobs(ctx context.Context) {
 			log.Printf("Sweep job transaction lookup error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
 			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
 			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
+				releaseSweepHoldOnPreBroadcastDeadLetter(ctx, *updated, nil, err)
 				eventType := constants.WebhookEventSweepFailedV1
 				if updated.Status == models.SweepJobStatusDeadLetter {
 					eventType = constants.WebhookEventSweepDeadLetteredV1
@@ -1033,6 +1040,7 @@ func processSweepJobs(ctx context.Context) {
 			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
 			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
 			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
+				releaseSweepHoldOnPreBroadcastDeadLetter(ctx, *updated, txModel, err)
 				eventType := constants.WebhookEventSweepFailedV1
 				if updated.Status == models.SweepJobStatusDeadLetter {
 					eventType = constants.WebhookEventSweepDeadLetteredV1
@@ -1045,6 +1053,12 @@ func processSweepJobs(ctx context.Context) {
 		if result != nil {
 			txHash = result.TxHash
 		}
+		if router.LedgerRepo != nil {
+			if err := router.LedgerRepo.PostSweepRelease(ctx, job, *txModel, txHash); err != nil {
+				log.Printf("Sweep job ledger release error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
+				openSweepLedgerReconciliation(ctx, job, txModel, "sweep_ledger_release_failed", err)
+			}
+		}
 		if err := router.SweepJobRepo.MarkSucceeded(ctx, job.ID, txHash); err != nil {
 			log.Printf("Sweep job mark succeeded error job=%s: %v\n", job.ID, err)
 			continue
@@ -1054,6 +1068,88 @@ func processSweepJobs(ctx context.Context) {
 		job.LastError = ""
 		enqueueSweepLifecycleWebhook(ctx, job, txModel, constants.WebhookEventSweepSucceededV1, "")
 		log.Printf("Sweep job succeeded job=%s tx=%s sweep_tx=%s\n", job.ID, job.TransactionUniqueHash, txHash)
+	}
+}
+
+func releaseSweepHoldOnPreBroadcastDeadLetter(ctx context.Context, job models.SweepJob, txModel *models.Transaction, err error) {
+	if job.Status != models.SweepJobStatusDeadLetter || strings.TrimSpace(job.SweepTxHash) != "" {
+		return
+	}
+	if !sweepFailureLikelyBeforeBroadcast(err) {
+		return
+	}
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.LedgerRepo == nil {
+		return
+	}
+	if releaseErr := coreApplication.CORE.Router.LedgerRepo.VoidSweepHold(ctx, job.ID); releaseErr != nil {
+		log.Printf("Sweep job hold release error job=%s: %v\n", job.ID, releaseErr)
+		openSweepLedgerReconciliation(ctx, job, txModel, "sweep_hold_release_failed", releaseErr)
+	}
+}
+
+func sweepFailureLikelyBeforeBroadcast(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, repositories.ErrLedgerReservationRequired) || errors.Is(err, repositories.ErrInsufficientAvailableBalance) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"not found",
+		"no reserve wallet",
+		"has no address",
+		"re-derive",
+		"reservation",
+		"amount must be positive",
+		"mismatch",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func openSweepLedgerReconciliation(ctx context.Context, job models.SweepJob, txModel *models.Transaction, reason string, err error) {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.ReconciliationRepo == nil {
+		return
+	}
+	chainID := job.ChainID
+	merchantID := job.MerchantID
+	var domainID *uuid.UUID
+	affected := []string{job.ID.String(), job.TransactionUniqueHash}
+	evidence := map[string]any{
+		"kind":                    reason,
+		"sweep_job_id":            job.ID.String(),
+		"transaction_unique_hash": job.TransactionUniqueHash,
+	}
+	if err != nil {
+		evidence["error"] = err.Error()
+	}
+	if txModel != nil {
+		chainID = txModel.ChainID
+		if txModel.MerchantID != nil {
+			merchantID = *txModel.MerchantID
+		}
+		domainID = txModel.DomainID
+		if txModel.UniqueHash != "" {
+			affected = append(affected, txModel.UniqueHash)
+		}
+	}
+	_, _, openErr := coreApplication.CORE.Router.ReconciliationRepo.CreateScopedOpenIfMissing(ctx, repositories.ReconciliationScope{
+		ChainID:             chainID,
+		Reason:              reason,
+		MerchantID:          &merchantID,
+		DomainID:            domainID,
+		ScopeKey:            reason + ":" + job.ID.String(),
+		ResourceType:        "sweep_job",
+		ResourceID:          job.ID.String(),
+		AffectedResourceIDs: affected,
+		Evidence:            evidence,
+	})
+	if openErr != nil {
+		log.Printf("Sweep reconciliation open error job=%s: %v\n", job.ID, openErr)
 	}
 }
 

@@ -216,12 +216,17 @@ type DealerWalletView struct {
 }
 
 type DealerWalletBalanceRow struct {
-	Chain     string
-	Symbol    string
-	LogoURL   string
-	Deposited string
-	Locked    string
-	Available string
+	Chain        string
+	ChainID      string
+	Symbol       string
+	Token        string
+	AssetKey     string
+	LogoURL      string
+	Deposited    string
+	Locked       string
+	Available    string
+	AvailableRaw string
+	Decimals     uint8
 }
 
 type DealerMissingChainView struct {
@@ -349,6 +354,7 @@ type DealerRefundView struct {
 
 type DealerAssetOption struct {
 	Value    string
+	AssetKey string
 	Label    string
 	Chain    string
 	Symbol   string
@@ -1834,7 +1840,15 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			if err != nil {
 				return renderAdminDashboardError(c, data, "Sweep wallet listesi okunamadı", err)
 			}
-			data.WithdrawalWallets = dealerWalletViews(wallets)
+			balanceMap := buildWalletBalanceMap(c.Context(), deps.LedgerRepo, wallets, deps.AssetRegistry)
+			data.WithdrawalWallets = dealerWalletViewsWithBalances(wallets, balanceMap)
+			formWallets, err := deps.WalletRepo.List(c.Context(), 500)
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Recover funds wallet listesi okunamadı", err)
+			}
+			formBalanceMap := buildWalletBalanceMap(c.Context(), deps.LedgerRepo, formWallets, deps.AssetRegistry)
+			data.AdminWallets = dealerWalletViewsWithBalances(formWallets, formBalanceMap)
+			data.AdminAssets = dealerAssetOptions(deps.AssetRegistry)
 			data.AdminPagination = dealerPaginationView(page, limit, walletTotal, "/admin/sweep")
 
 		case "test-deposit":
@@ -1956,47 +1970,142 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
+		if deps.WalletRepo == nil || deps.Blockchains == nil || deps.WithdrawalRepo == nil || deps.LedgerRepo == nil {
+			return redirectWithError(c, "/admin/sweep", "Recover funds altyapısı hazır değil.")
+		}
 		walletID := strings.TrimSpace(c.FormValue("wallet_id"))
-		chain := strings.TrimSpace(c.FormValue("chain"))
+		selectedAsset, err := parseAdminAssetSelection(deps.AssetRegistry, c.FormValue("asset"))
+		if err != nil {
+			return redirectWithError(c, "/admin/sweep", err.Error())
+		}
+		selectedChainID := selectedAsset.GetChainID()
+		chain := constants.ChainName(selectedChainID)
+		if chain == "" {
+			return redirectWithError(c, "/admin/sweep", fmt.Sprintf("unsupported chain: %d", selectedAsset.GetChainID()))
+		}
+		token := tokenForSelectedAsset(selectedAsset)
+		assetLabel := strings.TrimSpace(selectedAsset.GetSymbol())
+		if assetLabel == "" {
+			assetLabel = chain
+		}
+		decimals := selectedAsset.GetDecimals()
+
+		sourceWalletID, err := uuid.Parse(walletID)
+		if err != nil {
+			return redirectWithError(c, "/admin/sweep", "Geçerli source wallet seçmelisin.")
+		}
+		sourceWallet, err := deps.WalletRepo.FindByID(c.Context(), sourceWalletID)
+		if err != nil {
+			return redirectWithError(c, "/admin/sweep", "Source wallet bulunamadı: "+err.Error())
+		}
 		toAddress := strings.TrimSpace(c.FormValue("to_address"))
+		destinationWalletID := strings.TrimSpace(c.FormValue("destination_wallet_id"))
+		destinationLabel := strings.TrimSpace(toAddress)
+		if destinationWalletID != "" {
+			destinationID, err := uuid.Parse(destinationWalletID)
+			if err != nil {
+				return redirectWithError(c, "/admin/sweep", "Geçerli hedef wallet seçmelisin.")
+			}
+			if destinationID == sourceWalletID {
+				return redirectWithError(c, "/admin/sweep", "Source ve hedef wallet aynı olamaz.")
+			}
+			destinationWallet, err := deps.WalletRepo.FindByID(c.Context(), destinationID)
+			if err != nil {
+				return redirectWithError(c, "/admin/sweep", "Hedef wallet bulunamadı: "+err.Error())
+			}
+			toAddress = strings.TrimSpace(repositories.WalletAddressForChainID(*destinationWallet, selectedChainID))
+			if toAddress == "" {
+				return redirectWithError(c, "/admin/sweep", "Hedef wallet için "+constants.ChainName(selectedChainID)+" adresi yok.")
+			}
+			destinationLabel = destinationWallet.ID.String()
+		}
 		amountRaw := strings.TrimSpace(c.FormValue("amount_raw"))
 		isSweep := amountRaw == "" || amountRaw == "0"
+		if isSweep {
+			msg := "manual sweep requires an explicit amount for ledger reservation"
+			if deps.ActivityLogRepo != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, msg)
+			}
+			return redirectWithError(c, "/admin/sweep", "Recover funds için amount_raw zorunlu; "+msg+".")
+		}
 
 		if walletID == "" || chain == "" || toAddress == "" {
-			return redirectWithError(c, "/admin/sweep", "Wallet, chain ve hedef adres zorunlu.")
+			return redirectWithError(c, "/admin/sweep", "Source wallet, asset ve hedef wallet/adres zorunlu.")
 		}
 
 		params := types.TransferParams{
 			Context:   c.Context(),
 			WalletID:  &walletID,
 			Chain:     &chain,
+			Token:     token,
 			ToAddress: &toAddress,
 		}
 		if !isSweep {
 			params.AmountRaw = &amountRaw
 		}
 
-		if isSweep {
-			if err := params.ValidateSweep(); err != nil {
-				return redirectWithError(c, "/admin/sweep", err.Error())
+		if err := params.ValidateWithdraw(); err != nil {
+			return redirectWithError(c, "/admin/sweep", err.Error())
+		}
+		domainID := sourceWallet.DomainID
+		request := &models.WithdrawalRequest{
+			MerchantID:  sourceWallet.MerchantID,
+			DomainID:    &domainID,
+			WalletID:    sourceWallet.ID,
+			Chain:       *params.Chain,
+			Token:       token,
+			Symbol:      assetLabel,
+			Decimals:    decimals,
+			ToAddress:   *params.ToAddress,
+			AmountRaw:   *params.AmountRaw,
+			Note:        "admin recover funds to " + destinationLabel,
+			Status:      models.WithdrawalStatusPending,
+			RequestedBy: adminEmail,
+		}
+		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
+			if deps.ActivityLogRepo != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, err.Error())
 			}
-		} else {
-			if err := params.ValidateWithdraw(); err != nil {
-				return redirectWithError(c, "/admin/sweep", err.Error())
-			}
+			return redirectWithError(c, "/admin/sweep", "Ledger rezervasyonu başarısız: "+err.Error())
 		}
 
-		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, isSweep)
+		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), request.ID, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
+			lockedWalletID := locked.WalletID.String()
+			transferParams := types.TransferParams{
+				Context:   c.Context(),
+				WalletID:  &lockedWalletID,
+				Chain:     &locked.Chain,
+				Token:     locked.Token,
+				ToAddress: &locked.ToAddress,
+				AmountRaw: &locked.AmountRaw,
+			}
+			if err := transferParams.ValidateWithdraw(); err != nil {
+				return "", err
+			}
+			result, err := ExecuteReservedWalletTransfer(deps.WalletRepo, deps.Blockchains, transferParams, false)
+			if err != nil {
+				return "", err
+			}
+			return result.TxHash, nil
+		})
 		if err != nil {
 			if deps.ActivityLogRepo != nil {
-				logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.sweep", "failed", "wallet", walletID, err.Error())
+				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "withdrawal", request.ID.String(), err.Error())
 			}
 			return redirectWithError(c, "/admin/sweep", "Transfer başarısız: "+err.Error())
 		}
 		if deps.ActivityLogRepo != nil {
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.sweep", "success", "wallet", walletID, "Tx: "+result.TxHash)
+			txHash := ""
+			if approvedRequest != nil {
+				txHash = approvedRequest.TxHash
+			}
+			logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "success", "withdrawal", request.ID.String(), assetLabel+" -> "+destinationLabel+" tx: "+txHash)
 		}
-		return redirectWithSuccess(c, "/admin/sweep", "Transfer gönderildi. Tx: "+result.TxHash)
+		txHash := ""
+		if approvedRequest != nil {
+			txHash = approvedRequest.TxHash
+		}
+		return redirectWithSuccess(c, "/admin/sweep", "Recover funds transferi gönderildi ("+assetLabel+"). Tx: "+txHash)
 	}
 }
 
@@ -2129,13 +2238,14 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			if err := params.ValidateWithdraw(); err != nil {
 				return "", err
 			}
-			result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
+			result, err := ExecuteReservedWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
 			if err != nil {
 				return "", err
 			}
 			return result.TxHash, nil
 		})
 		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), err.Error())
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
 				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
 				return redirectWithError(c, "/admin/withdrawals", "Transfer gönderildi ancak ledger güncellenemedi: "+err.Error())
@@ -2151,6 +2261,7 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			enqueueDealerPayoutLifecycle(c.Context(), deps, broadcastRequest, constants.WebhookEventPayoutBroadcastV1)
 			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFinalizedV1)
 		}
+		logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success", "withdrawal", id.String(), "Çekim onaylandı ve transfer gönderildi.")
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
 	}
 }
@@ -2165,15 +2276,18 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		if err != nil {
 			return redirectWithError(c, "/admin/withdrawals", "Geçersiz talep.")
 		}
+		request, findErr := deps.WithdrawalRepo.Find(c.Context(), id)
 		reason := strings.TrimSpace(c.FormValue("reason"))
 		if reason == "" {
 			reason = "Admin tarafından reddedildi."
 		}
 		if err := deps.WithdrawalRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", id.String(), err.Error())
 			return redirectWithError(c, "/admin/withdrawals", "Talep reddedilemedi: "+err.Error())
 		}
-		if request, err := deps.WithdrawalRepo.Find(c.Context(), id); err == nil {
+		if findErr == nil && request != nil {
 			enqueueDealerPayoutLifecycle(c.Context(), deps, *request, constants.WebhookEventPayoutRejectedV1)
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason)
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi reddedildi.")
 	}
@@ -2249,7 +2363,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/refunds", err.Error())
 		}
 
-		result, err := ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
+		result, err := ExecuteReservedWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
 		if err != nil {
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
 			claimedRefund.Status = models.RefundStatusFailed
@@ -3322,6 +3436,7 @@ func dealerAssetOptions(registry *asset.Registry) []DealerAssetOption {
 		label := fmt.Sprintf("%s / %s / %s / %d decimals", chainName, item.GetSymbol(), tokenLabel, item.GetDecimals())
 		options = append(options, DealerAssetOption{
 			Value:    fmt.Sprintf("%d|%s", item.GetChainID(), item.GetIdentifier()),
+			AssetKey: dealerAssetKey(item.GetChainID(), item.GetIdentifier()),
 			Label:    label,
 			Chain:    chainName,
 			Symbol:   item.GetSymbol(),
@@ -3330,6 +3445,10 @@ func dealerAssetOptions(registry *asset.Registry) []DealerAssetOption {
 		})
 	}
 	return options
+}
+
+func dealerAssetKey(chainID constants.ChainID, identifier string) string {
+	return fmt.Sprintf("%d|%s", chainID, strings.ToLower(strings.TrimSpace(identifier)))
 }
 
 func deliverAdminTransactionWebhook(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) error {
@@ -3720,6 +3839,10 @@ func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerR
 		if r.Token != nil {
 			token = strings.ToLower(strings.TrimSpace(*r.Token))
 		}
+		identifier := token
+		if identifier == "" {
+			identifier = strings.TrimSpace(r.Symbol)
+		}
 		key := fmt.Sprintf("%d:%s:%s", r.ChainID, strings.ToUpper(strings.TrimSpace(r.Symbol)), token)
 		if buckets[walletID] == nil {
 			buckets[walletID] = make(map[string]*DealerWalletBalanceRow)
@@ -3729,9 +3852,13 @@ func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerR
 		if row == nil {
 			order[walletID] = append(order[walletID], key)
 			row = &DealerWalletBalanceRow{
-				Chain:   chainLabel(constants.ChainID(r.ChainID)),
-				Symbol:  r.Symbol,
-				LogoURL: registryLogoURL(registry, r.Symbol),
+				Chain:    chainLabel(constants.ChainID(r.ChainID)),
+				ChainID:  strconv.FormatInt(r.ChainID, 10),
+				Symbol:   r.Symbol,
+				Token:    token,
+				AssetKey: dealerAssetKey(constants.ChainID(r.ChainID), identifier),
+				LogoURL:  registryLogoURL(registry, r.Symbol),
+				Decimals: r.Decimals,
 			}
 			buckets[walletID][key] = row
 		}
@@ -3739,12 +3866,13 @@ func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerR
 		switch r.Account {
 		case models.LedgerAccountMerchantAvailable:
 			row.Available = display
+			row.AvailableRaw = r.BalanceRaw
 			row.Deposited = display
 		case models.LedgerAccountMerchantPending:
 			if row.Deposited == "" {
 				row.Deposited = display
 			}
-		case models.LedgerAccountWithdrawalTransit, models.LedgerAccountRefundTransit:
+		case models.LedgerAccountWithdrawalTransit, models.LedgerAccountRefundTransit, models.LedgerAccountSweepTransit:
 			lockedTotals[walletID][key] = addTokenAmountRaw(lockedTotals[walletID][key], r.BalanceRaw)
 			row.Locked = formatTokenAmount(lockedTotals[walletID][key], r.Decimals)
 			if row.Deposited == "" {
@@ -3761,6 +3889,12 @@ func buildWalletBalanceMap(ctx context.Context, ledgerRepo *repositories.LedgerR
 			row := buckets[walletID][key]
 			if row.Deposited == "" {
 				row.Deposited = "0"
+			}
+			if row.Available == "" {
+				row.Available = "0"
+			}
+			if row.AvailableRaw == "" {
+				row.AvailableRaw = "0"
 			}
 			result[walletID] = append(result[walletID], *row)
 		}

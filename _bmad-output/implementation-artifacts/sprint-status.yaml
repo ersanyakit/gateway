@@ -69,9 +69,9 @@ development_status:
   3-4-model-payment-matching-outcomes-explicitly: done
   3-5-correct-reorgs-with-compensating-events-and-ledger-reversals: done
   3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
   epic-4: in-progress
-  4-1-reserve-ledger-holds-before-outbound-money-movement: ready-for-dev
+  4-1-reserve-ledger-holds-before-outbound-money-movement: review
   4-2-enforce-external-signer-boundary-and-production-software-signer-guard: backlog
   4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: backlog
   4-4-run-auto-sweeps-as-durable-recoverable-jobs: backlog
@@ -85,3 +85,25 @@ development_status:
   5-4-provide-money-path-observability-slos-alerts-and-runbooks: backlog
   5-5-produce-controlled-launch-and-exchange-grade-readiness-evidence: backlog
   epic-5-retrospective: optional
+
+action_items:
+  - epic: 3
+    action: "Epic 4.1 outbound bypass kapatma: withdrawal, refund, payout, admin sweep ve worker path'leri ledger hold olmadan signing/broadcast cagirmaz; nil-ledger bypass testleri kapsanir."
+    owner: "Amelia (Developer)"
+    status: open
+  - epic: 3
+    action: "Money schema degisiklikleri icin migration evidence standardi: GORM schema verification yaninda production migration plan veya explicit gate notu bulunur."
+    owner: "Winston (Architect)"
+    status: open
+  - epic: 3
+    action: "Event/API docs synchronization gate: yeni veya degisen money event'leri docs, OpenAPI/docs tests ve story File List icinde dogrulanir."
+    owner: "Paige (Technical Writer)"
+    status: open
+  - epic: 3
+    action: "Outbound reconciliation reuse: hold, broadcast, signer veya sweep uncertainty durumlari scoped reconciliation job, evidence redaction ve active dedupe ile testlenir."
+    owner: "Murat (Test Architect)"
+    status: open
+  - epic: 3
+    action: "Validation record discipline: her money-path story targeted tests, full regression, static validation, whitespace validation ve varsa sandbox kisitini listeler."
+    owner: "Amelia (Developer)"
+    status: open

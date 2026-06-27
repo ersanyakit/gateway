@@ -2,7 +2,7 @@
 story_id: "4.1"
 story_key: "4-1-reserve-ledger-holds-before-outbound-money-movement"
 epic: "Epic 4: Safe Outbound Funds & Custody Controls"
-status: ready-for-dev
+status: review
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: c772d77
@@ -10,7 +10,7 @@ baseline_commit: c772d77
 
 # Story 4.1: Reserve Ledger Holds Before Outbound Money Movement
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -28,45 +28,45 @@ boylece outbound para hareketleri bakiyeyi asamaz, ayni fon iki kez harcanamaz v
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Make ledger hold a mandatory outbound gate (AC: 1, 2)
-  - [ ] Preserve and extend `LedgerRepo`; do not create a second balance authority or a parallel reservation table unless the ledger model cannot represent a required hold.
-  - [ ] Ensure `WithdrawalRequestRepo.CreateWithHold`, `RefundRepo.CreateWithHold`, `RefundRepo.ClaimPendingWithHold`, and approval/broadcast paths hard-fail when `LedgerRepo` is nil or hold creation/check fails.
-  - [ ] Add a repo-level hold existence/assertion before any withdrawal/refund transfer callback can run, so legacy rows created without a hold cannot sign or broadcast.
-  - [ ] Map insufficient ledger balance to operator/API-visible validation errors instead of generic 500 responses on V1 payout/refund creation.
+- [x] Task 1: Make ledger hold a mandatory outbound gate (AC: 1, 2)
+  - [x] Preserve and extend `LedgerRepo`; do not create a second balance authority or a parallel reservation table unless the ledger model cannot represent a required hold.
+  - [x] Ensure `WithdrawalRequestRepo.CreateWithHold`, `RefundRepo.CreateWithHold`, `RefundRepo.ClaimPendingWithHold`, and approval/broadcast paths hard-fail when `LedgerRepo` is nil or hold creation/check fails.
+  - [x] Add a repo-level hold existence/assertion before any withdrawal/refund transfer callback can run, so legacy rows created without a hold cannot sign or broadcast.
+  - [x] Map insufficient ledger balance to operator/API-visible validation errors instead of generic 500 responses on V1 payout/refund creation.
 
-- [ ] Task 2: Harden withdrawal/payout/refund hold lifecycle (AC: 1, 2, 3, 5)
-  - [ ] Keep current double-entry hold model: merchant_available debit plus withdrawal/refund transit credit with stable idempotency keys.
-  - [ ] Preserve `pg_advisory_xact_lock` balance locking and `ensureAvailableBalance` semantics for tenant/domain/asset scope.
-  - [ ] Verify duplicate hold/debit calls remain idempotent and do not create extra ledger rows.
-  - [ ] Release pending holds only for rejected or pre-broadcast terminal failures; do not void holds after a tx hash exists unless reconciliation/correction proves it is safe.
-  - [ ] Add ActivityLog/audit evidence for create, hold failure, approve, reject, failure release, and broadcast/finalize outcomes where the action is operator-facing.
+- [x] Task 2: Harden withdrawal/payout/refund hold lifecycle (AC: 1, 2, 3, 5)
+  - [x] Keep current double-entry hold model: merchant_available debit plus withdrawal/refund transit credit with stable idempotency keys.
+  - [x] Preserve `pg_advisory_xact_lock` balance locking and `ensureAvailableBalance` semantics for tenant/domain/asset scope.
+  - [x] Verify duplicate hold/debit calls remain idempotent and do not create extra ledger rows.
+  - [x] Release pending holds only for rejected or pre-broadcast terminal failures; do not void holds after a tx hash exists unless reconciliation/correction proves it is safe.
+  - [x] Add ActivityLog/audit evidence for create, hold failure, approve, reject, failure release, and broadcast/finalize outcomes where the action is operator-facing.
 
-- [ ] Task 3: Add or explicitly gate sweep reservation (AC: 1, 3, 4, 5)
-  - [ ] Remove direct unreserved sweep/broadcast paths from admin and legacy handlers; `ExecuteWalletTransfer(..., sweep=true)` must not be callable from a money path without a recorded reservation decision.
-  - [ ] For auto-sweeps, reserve against the known finalized deposit amount and asset from `SweepJob.TransactionUniqueHash` before `executeSweepJob` signs/broadcasts.
-  - [ ] If a manual "sweep all" request has no deterministic amount, reject it with a policy/validation error until Story 4.3 fee/resource policy can determine a safe amount.
-  - [ ] If adding real sweep ledger rows, extend `LedgerEntry` with `SweepJobID` and sweep hold/release/debit entry types plus schema verification; otherwise document the explicit migration plan and keep unheld sweeps blocked.
-  - [ ] Release sweep holds idempotently on pre-broadcast terminal failure and preserve the hold for broadcasted but unresolved sweep jobs.
+- [x] Task 3: Add or explicitly gate sweep reservation (AC: 1, 3, 4, 5)
+  - [x] Remove direct unreserved sweep/broadcast paths from admin and legacy handlers; `ExecuteWalletTransfer(..., sweep=true)` must not be callable from a money path without a recorded reservation decision.
+  - [x] For auto-sweeps, reserve against the known finalized deposit amount and asset from `SweepJob.TransactionUniqueHash` before `executeSweepJob` signs/broadcasts.
+  - [x] If a manual "sweep all" request has no deterministic amount, reject it with a policy/validation error until Story 4.3 fee/resource policy can determine a safe amount.
+  - [x] If adding real sweep ledger rows, extend `LedgerEntry` with `SweepJobID` and sweep hold/release/debit entry types plus schema verification; otherwise document the explicit migration plan and keep unheld sweeps blocked.
+  - [x] Release sweep holds idempotently on pre-broadcast terminal failure and preserve the hold for broadcasted but unresolved sweep jobs.
 
-- [ ] Task 4: Schema, migration, and invariant coverage (AC: 2, 3, 4)
-  - [ ] Update `models.LedgerEntry` constraints and `services/database.VerifySchema` for any new fields, entry types, accounts, indexes, or constraints.
-  - [ ] Add `_bmad-output/implementation-artifacts/4-1-migration-plan.md` if production schema changes are not expressed as versioned migrations in this repo.
-  - [ ] Extend ledger invariant tests so pending holds reduce available balance and voided releases are excluded from available/transit totals.
-  - [ ] Add a Postgres concurrency test where competing requests over the same merchant/domain/asset cannot both reserve more than available.
+- [x] Task 4: Schema, migration, and invariant coverage (AC: 2, 3, 4)
+  - [x] Update `models.LedgerEntry` constraints and `services/database.VerifySchema` for any new fields, entry types, accounts, indexes, or constraints.
+  - [x] Add `_bmad-output/implementation-artifacts/4-1-migration-plan.md` if production schema changes are not expressed as versioned migrations in this repo.
+  - [x] Extend ledger invariant tests so pending holds reduce available balance and voided releases are excluded from available/transit totals.
+  - [x] Add a Postgres concurrency test where competing requests over the same merchant/domain/asset cannot both reserve more than available.
 
-- [ ] Task 5: Handler/API integration and UX-safe operator feedback (AC: 1, 3, 5)
-  - [ ] V1 payout/refund, dealer withdrawal, admin withdrawal, admin refund, and admin sweep routes must all surface hold failures without signing/broadcasting.
-  - [ ] Preserve V1 error envelope shape: `{"result":"error","message":"..."}`.
-  - [ ] Keep dealer/admin UI copy concise and action-focused; show hold/policy failure without exposing secrets or raw diagnostic blobs.
-  - [ ] Preserve tenant/domain isolation: one domain must not learn whether another domain has funds, requests, or wallets.
+- [x] Task 5: Handler/API integration and UX-safe operator feedback (AC: 1, 3, 5)
+  - [x] V1 payout/refund, dealer withdrawal, admin withdrawal, admin refund, and admin sweep routes must all surface hold failures without signing/broadcasting.
+  - [x] Preserve V1 error envelope shape: `{"result":"error","message":"..."}`.
+  - [x] Keep dealer/admin UI copy concise and action-focused; show hold/policy failure without exposing secrets or raw diagnostic blobs.
+  - [x] Preserve tenant/domain isolation: one domain must not learn whether another domain has funds, requests, or wallets.
 
-- [ ] Task 6: Documentation, story record, and validation (AC: 1, 2, 3, 4, 5)
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
-  - [ ] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./api/handlers ./services/database`.
-  - [ ] Sweep/worker validation if touched: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 . ./services/reconciliation`.
-  - [ ] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
-  - [ ] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
-  - [ ] Whitespace validation: `git diff --check && git diff --cached --check`.
+- [x] Task 6: Documentation, story record, and validation (AC: 1, 2, 3, 4, 5)
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
+  - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./api/handlers ./services/database`.
+  - [x] Sweep/worker validation if touched: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 . ./services/reconciliation`.
+  - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+  - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
+  - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
 
 ## Dev Notes
 
@@ -159,16 +159,47 @@ Codex
 ### Debug Log References
 
 - 2026-06-27: Story created from Epic 4.1 with PRD FR19/FR21, architecture AD-3/AD-7, existing ledger hold implementation, and current direct sweep bypass analysis.
+- 2026-06-27: Story moved to in-progress; added failing tests for mandatory ledger reservation, sweep hold schema/lifecycle, direct sweep gating, insufficient balance response mapping, and concurrent hold behavior.
+- 2026-06-27: Implemented mandatory ledger reservation guards, withdrawal/refund hold assertions before transfer/finalize, sweep hold/release ledger rows, direct unreserved sweep blocking, and schema verification updates.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./api/handlers ./services/database`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 . ./services/reconciliation`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
+- 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
 
 ### Completion Notes List
 
-- Story context created and marked ready-for-dev.
+- Ledger reservation is now mandatory for withdrawal/payout/refund creation, approval, and finalization paths; nil ledger dependencies no longer allow unheld outbound flow.
+- Withdrawal/refund final debit paths require existing hold rows, and post-broadcast failure handling preserves holds instead of voiding uncertain money state.
+- Sweep jobs now reserve ledger-derived available balance through `sweep_hold` rows before broadcast and post `sweep_release` rows on successful lifecycle completion.
+- Legacy direct sweep/withdraw handlers and `ExecuteWalletTransfer(..., sweep=true)` no longer provide an unreserved broadcast path.
+- Admin recover-funds flow requires explicit amount for ledger reservation and routes explicit transfers through withdrawal hold plus approve workflow.
+- V1 payout insufficient-balance errors now return validation-style bad request status while preserving the V1 error envelope.
+- Ledger schema verification and migration plan now cover sweep hold/release/debit fields, entry types, and account.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/4-1-reserve-ledger-holds-before-outbound-money-movement.md`
+- `_bmad-output/implementation-artifacts/4-1-migration-plan.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `api/handlers/dealer.go`
+- `api/handlers/dealer_test.go`
+- `api/handlers/transfer.go`
+- `api/handlers/v1api.go`
+- `main.go`
+- `models/ledger_entry.go`
+- `repositories/ledger_repo.go`
+- `repositories/ledger_repo_test.go`
+- `repositories/refund_repo.go`
+- `repositories/refund_repo_test.go`
+- `repositories/withdrawal_request_repo.go`
+- `repositories/withdrawal_request_repo_test.go`
+- `services/database/database.go`
+- `services/database/database_test.go`
+- `views/assets/dashboard.js`
+- `views/dealer/admin_dashboard.html`
 
 ### Change Log
 
 - 2026-06-27: Created story with outbound ledger hold/reservation scope, current implementation snapshot, bypass risks, tests, and validation plan.
+- 2026-06-27: Implemented outbound ledger reservation gates, sweep hold/release lifecycle, schema verification, migration plan, tests, and moved story to review.

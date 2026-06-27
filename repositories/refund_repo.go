@@ -31,6 +31,9 @@ func (r *RefundRepo) Create(ctx context.Context, refund *models.Refund) error {
 }
 
 func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, session models.PaymentSession, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
 	if refund.ID == uuid.Nil {
 		refund.ID = uuid.New()
 	}
@@ -40,9 +43,6 @@ func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(refund).Error; err != nil {
 			return err
-		}
-		if ledger == nil {
-			return nil
 		}
 		return NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, *refund, session)
 	})
@@ -210,6 +210,9 @@ func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy 
 }
 
 func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, reviewedBy string, session models.PaymentSession, ledger *LedgerRepo) (*models.Refund, error) {
+	if ledger == nil {
+		return nil, ErrLedgerReservationRequired
+	}
 	var claimed models.Refund
 	now := time.Now()
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -218,10 +221,8 @@ func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, rev
 			First(&refund, "id = ? AND status = ?", id, models.RefundStatusPending).Error; err != nil {
 			return err
 		}
-		if ledger != nil {
-			if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, refund, session); err != nil {
-				return err
-			}
+		if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, refund, session); err != nil {
+			return err
 		}
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status = ?", id, models.RefundStatusPending).
@@ -290,6 +291,9 @@ func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy
 }
 
 func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string, session models.PaymentSession, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var refund models.Refund
@@ -297,10 +301,8 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 			First(&refund, "id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).Error; err != nil {
 			return err
 		}
-		if ledger != nil {
-			if err := NewLedgerRepo(tx).PostRefundDebitWithDB(ctx, tx, refund, session, txHash); err != nil {
-				return err
-			}
+		if err := NewLedgerRepo(tx).PostRefundDebitWithDB(ctx, tx, refund, session, txHash); err != nil {
+			return err
 		}
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).

@@ -30,14 +30,14 @@ func (r *WithdrawalRequestRepo) Create(ctx context.Context, request *models.With
 }
 
 func (r *WithdrawalRequestRepo) CreateWithHold(ctx context.Context, request *models.WithdrawalRequest, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(request).Error; err != nil {
 			return err
 		}
-		if ledger == nil {
-			return nil
-		}
-		return ledger.CreateWithdrawalHoldWithDB(ctx, tx, *request)
+		return NewLedgerRepo(tx).CreateWithdrawalHoldWithDB(ctx, tx, *request)
 	})
 }
 
@@ -185,16 +185,17 @@ func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUI
 }
 
 func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context, id uuid.UUID, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var request models.WithdrawalRequest
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			First(&request, "id = ? AND status = ? AND tx_hash <> ''", id, models.WithdrawalStatusProcessing).Error; err != nil {
 			return err
 		}
-		if ledger != nil {
-			if err := ledger.PostWithdrawalDebitWithDB(ctx, tx, request, request.TxHash); err != nil {
-				return err
-			}
+		if err := NewLedgerRepo(tx).PostWithdrawalDebitWithDB(ctx, tx, request, request.TxHash); err != nil {
+			return err
 		}
 		now := time.Now()
 		result := tx.Model(&models.WithdrawalRequest{}).
@@ -259,6 +260,11 @@ func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, 
 func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy string, errText string) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&request, "id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).Error; err != nil {
+			return err
+		}
 		result := tx.Model(&models.WithdrawalRequest{}).
 			Where("id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).
 			Updates(map[string]any{
@@ -272,6 +278,9 @@ func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, re
 		}
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
+		}
+		if strings.TrimSpace(request.TxHash) != "" {
+			return nil
 		}
 		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
 	})
@@ -293,6 +302,9 @@ func (r *WithdrawalRequestRepo) LockPending(ctx context.Context, id uuid.UUID) (
 func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid.UUID, reviewedBy string, ledger *LedgerRepo, transfer func(*models.WithdrawalRequest) (string, error)) (*models.WithdrawalRequest, error) {
 	if transfer == nil {
 		return nil, errors.New("transfer callback is required")
+	}
+	if ledger == nil {
+		return nil, ErrLedgerReservationRequired
 	}
 
 	var request models.WithdrawalRequest
@@ -317,6 +329,9 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		}
 		if activeCount > 0 {
 			return ErrWithdrawalWalletBusy
+		}
+		if err := NewLedgerRepo(tx).RequireWithdrawalHoldWithDB(ctx, tx, request.ID); err != nil {
+			return err
 		}
 
 		now := time.Now()
@@ -380,10 +395,7 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		request.ReviewedAt = &now
 		request.TxHash = txHash
 		request.Error = ""
-		if ledger != nil {
-			return ledger.PostWithdrawalDebitWithDB(ctx, tx, request, txHash)
-		}
-		return nil
+		return NewLedgerRepo(tx).PostWithdrawalDebitWithDB(ctx, tx, request, txHash)
 	})
 	if err != nil {
 		msg := "ledger/finalize failed: " + err.Error()

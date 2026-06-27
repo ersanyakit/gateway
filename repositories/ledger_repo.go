@@ -20,6 +20,7 @@ type LedgerRepo struct {
 }
 
 var ErrInsufficientAvailableBalance = errors.New("insufficient available balance")
+var ErrLedgerReservationRequired = errors.New("ledger reservation is required before outbound transfer")
 
 func NewLedgerRepo(db *gorm.DB) *LedgerRepo {
 	return &LedgerRepo{db: db}
@@ -451,6 +452,9 @@ func (r *LedgerRepo) postWithdrawalDebit(ctx context.Context, tx *gorm.DB, reque
 	if !r.amountIsPositive(request.AmountRaw) {
 		return errors.New("withdrawal amount must be positive")
 	}
+	if err := r.RequireWithdrawalHoldWithDB(ctx, tx, request.ID); err != nil {
+		return err
+	}
 	now := time.Now()
 	withdrawalID := request.ID
 	walletID := request.WalletID
@@ -533,6 +537,45 @@ func (r *LedgerRepo) voidWithdrawalHold(ctx context.Context, tx *gorm.DB, withdr
 		}).Error
 }
 
+func (r *LedgerRepo) RequireWithdrawalHoldWithDB(ctx context.Context, tx *gorm.DB, withdrawalID uuid.UUID) error {
+	return requireLedgerHold(ctx, tx, "withdrawal_id", withdrawalID, models.LedgerEntryTypeWithdrawalHold, models.LedgerAccountWithdrawalTransit)
+}
+
+func (r *LedgerRepo) RequireRefundHoldWithDB(ctx context.Context, tx *gorm.DB, refundID uuid.UUID) error {
+	return requireLedgerHold(ctx, tx, "refund_id", refundID, models.LedgerEntryTypeRefundHold, models.LedgerAccountRefundTransit)
+}
+
+func (r *LedgerRepo) RequireSweepHoldWithDB(ctx context.Context, tx *gorm.DB, sweepJobID uuid.UUID) error {
+	return requireLedgerHold(ctx, tx, "sweep_job_id", sweepJobID, models.LedgerEntryTypeSweepHold, models.LedgerAccountSweepTransit)
+}
+
+func requireLedgerHold(ctx context.Context, tx *gorm.DB, idColumn string, id uuid.UUID, entryType string, transitAccount string) error {
+	if tx == nil || id == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	var rows []struct {
+		Account string
+		Count   int64
+	}
+	if err := tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Select("account, COUNT(*) AS count").
+		Where(idColumn+" = ? AND entry_type = ? AND status = ?", id, entryType, models.LedgerStatusPending).
+		Where("account IN ?", []string{models.LedgerAccountMerchantAvailable, transitAccount}).
+		Group("account").
+		Scan(&rows).Error; err != nil {
+		return err
+	}
+	seen := map[string]int64{}
+	for _, row := range rows {
+		seen[row.Account] = row.Count
+	}
+	if seen[models.LedgerAccountMerchantAvailable] < 1 || seen[transitAccount] < 1 {
+		return ErrLedgerReservationRequired
+	}
+	return nil
+}
+
 func (r *LedgerRepo) existsWithDB(ctx context.Context, tx *gorm.DB, key string) (bool, error) {
 	var count int64
 	err := tx.WithContext(ctx).
@@ -592,6 +635,7 @@ func (r *LedgerRepo) PostTransactionReversalWithDB(ctx context.Context, tx *gorm
 			TransactionHash:       original.TransactionHash,
 			WithdrawalID:          original.WithdrawalID,
 			RefundID:              original.RefundID,
+			SweepJobID:            original.SweepJobID,
 			ChainID:               original.ChainID,
 			Token:                 original.Token,
 			Symbol:                original.Symbol,
@@ -679,6 +723,14 @@ func refundHoldKey(id uuid.UUID) string {
 
 func refundDebitKey(id uuid.UUID) string {
 	return "refund-debit:" + id.String()
+}
+
+func sweepHoldKey(id uuid.UUID) string {
+	return "sweep-hold:" + id.String()
+}
+
+func sweepReleaseKey(id uuid.UUID) string {
+	return "sweep-release:" + id.String()
 }
 
 func ledgerRefundAssetFromSession(session models.PaymentSession) (constants.ChainID, string, uint8, error) {
@@ -806,6 +858,207 @@ func (r *LedgerRepo) voidRefundHold(ctx context.Context, tx *gorm.DB, refundID u
 		}).Error
 }
 
+func (r *LedgerRepo) CreateSweepHold(ctx context.Context, job models.SweepJob, txModel models.Transaction) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.createSweepHold(ctx, tx, job, txModel)
+	})
+}
+
+func (r *LedgerRepo) CreateSweepHoldWithDB(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction) error {
+	return r.createSweepHold(ctx, tx, job, txModel)
+}
+
+func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction) error {
+	key := sweepHoldKey(job.ID)
+	exists, err := r.existsWithDB(ctx, tx, key)
+	if err != nil || exists {
+		return err
+	}
+	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil || txModel.UniqueHash == "" {
+		return ErrLedgerReservationRequired
+	}
+	if job.TransactionUniqueHash != "" && job.TransactionUniqueHash != txModel.UniqueHash {
+		return errors.New("sweep job transaction mismatch")
+	}
+	if job.MerchantID != uuid.Nil && job.MerchantID != *txModel.MerchantID {
+		return errors.New("sweep job merchant mismatch")
+	}
+	if job.WalletID != uuid.Nil && job.WalletID != *txModel.WalletID {
+		return errors.New("sweep job wallet mismatch")
+	}
+	if job.Token != nil && txModel.Token != nil && !strings.EqualFold(strings.TrimSpace(*job.Token), strings.TrimSpace(*txModel.Token)) {
+		return errors.New("sweep job token mismatch")
+	}
+	if !r.amountIsPositive(txModel.Amount) {
+		return errors.New("sweep amount must be positive")
+	}
+	chainID := txModel.ChainID
+	if job.ChainID != 0 {
+		chainID = job.ChainID
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(txModel.Symbol))
+	if symbol == "" {
+		symbol = strings.ToUpper(constants.ChainName(chainID))
+	}
+	if err := r.lockLedgerAsset(ctx, tx, *txModel.MerchantID, txModel.DomainID, chainID, txModel.Token); err != nil {
+		return err
+	}
+	if err := r.ensureAvailableBalance(ctx, tx, *txModel.MerchantID, txModel.DomainID, chainID, txModel.Token, txModel.Amount); err != nil {
+		return err
+	}
+	now := time.Now()
+	sweepJobID := job.ID
+	entries := []models.LedgerEntry{
+		{
+			ID:                    uuid.New(),
+			MerchantID:            *txModel.MerchantID,
+			DomainID:              txModel.DomainID,
+			WalletID:              txModel.WalletID,
+			TransactionUniqueHash: txModel.UniqueHash,
+			TransactionHash:       txModel.Hash,
+			SweepJobID:            &sweepJobID,
+			ChainID:               chainID,
+			Token:                 txModel.Token,
+			Symbol:                symbol,
+			Decimals:              txModel.Decimals,
+			EntryType:             models.LedgerEntryTypeSweepHold,
+			Account:               models.LedgerAccountMerchantAvailable,
+			Direction:             models.LedgerDirectionDebit,
+			Status:                models.LedgerStatusPending,
+			AmountRaw:             txModel.Amount,
+			IdempotencyKey:        key,
+			Reference:             job.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		},
+		{
+			ID:                    uuid.New(),
+			MerchantID:            *txModel.MerchantID,
+			DomainID:              txModel.DomainID,
+			WalletID:              txModel.WalletID,
+			TransactionUniqueHash: txModel.UniqueHash,
+			TransactionHash:       txModel.Hash,
+			SweepJobID:            &sweepJobID,
+			ChainID:               chainID,
+			Token:                 txModel.Token,
+			Symbol:                symbol,
+			Decimals:              txModel.Decimals,
+			EntryType:             models.LedgerEntryTypeSweepHold,
+			Account:               models.LedgerAccountSweepTransit,
+			Direction:             models.LedgerDirectionCredit,
+			Status:                models.LedgerStatusPending,
+			AmountRaw:             txModel.Amount,
+			IdempotencyKey:        key,
+			Reference:             job.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		},
+	}
+	return tx.WithContext(ctx).Create(&entries).Error
+}
+
+func (r *LedgerRepo) VoidSweepHold(ctx context.Context, sweepJobID uuid.UUID) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.VoidSweepHoldWithDB(ctx, tx, sweepJobID)
+	})
+}
+
+func (r *LedgerRepo) VoidSweepHoldWithDB(ctx context.Context, tx *gorm.DB, sweepJobID uuid.UUID) error {
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("sweep_job_id = ? AND entry_type = ? AND status = ?", sweepJobID, models.LedgerEntryTypeSweepHold, models.LedgerStatusPending).
+		Updates(map[string]any{
+			"status":     models.LedgerStatusVoided,
+			"voided_at":  &now,
+			"updated_at": now,
+		}).Error
+}
+
+func (r *LedgerRepo) PostSweepRelease(ctx context.Context, job models.SweepJob, txModel models.Transaction, sweepTxHash string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return r.PostSweepReleaseWithDB(ctx, tx, job, txModel, sweepTxHash)
+	})
+}
+
+func (r *LedgerRepo) PostSweepReleaseWithDB(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction, sweepTxHash string) error {
+	key := sweepReleaseKey(job.ID)
+	exists, err := r.existsWithDB(ctx, tx, key)
+	if err != nil || exists {
+		return err
+	}
+	if job.ID == uuid.Nil || txModel.MerchantID == nil || txModel.WalletID == nil {
+		return ErrLedgerReservationRequired
+	}
+	if err := r.RequireSweepHoldWithDB(ctx, tx, job.ID); err != nil {
+		return err
+	}
+	if !r.amountIsPositive(txModel.Amount) {
+		return errors.New("sweep amount must be positive")
+	}
+	chainID := txModel.ChainID
+	if job.ChainID != 0 {
+		chainID = job.ChainID
+	}
+	symbol := strings.ToUpper(strings.TrimSpace(txModel.Symbol))
+	if symbol == "" {
+		symbol = strings.ToUpper(constants.ChainName(chainID))
+	}
+	now := time.Now()
+	sweepJobID := job.ID
+	entries := []models.LedgerEntry{
+		{
+			ID:                    uuid.New(),
+			MerchantID:            *txModel.MerchantID,
+			DomainID:              txModel.DomainID,
+			WalletID:              txModel.WalletID,
+			TransactionUniqueHash: txModel.UniqueHash,
+			TransactionHash:       strings.TrimSpace(sweepTxHash),
+			SweepJobID:            &sweepJobID,
+			ChainID:               chainID,
+			Token:                 txModel.Token,
+			Symbol:                symbol,
+			Decimals:              txModel.Decimals,
+			EntryType:             models.LedgerEntryTypeSweepRelease,
+			Account:               models.LedgerAccountMerchantAvailable,
+			Direction:             models.LedgerDirectionCredit,
+			Status:                models.LedgerStatusPosted,
+			AmountRaw:             txModel.Amount,
+			IdempotencyKey:        key,
+			Reference:             job.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		},
+		{
+			ID:                    uuid.New(),
+			MerchantID:            *txModel.MerchantID,
+			DomainID:              txModel.DomainID,
+			WalletID:              txModel.WalletID,
+			TransactionUniqueHash: txModel.UniqueHash,
+			TransactionHash:       strings.TrimSpace(sweepTxHash),
+			SweepJobID:            &sweepJobID,
+			ChainID:               chainID,
+			Token:                 txModel.Token,
+			Symbol:                symbol,
+			Decimals:              txModel.Decimals,
+			EntryType:             models.LedgerEntryTypeSweepRelease,
+			Account:               models.LedgerAccountSweepTransit,
+			Direction:             models.LedgerDirectionDebit,
+			Status:                models.LedgerStatusPosted,
+			AmountRaw:             txModel.Amount,
+			IdempotencyKey:        key,
+			Reference:             job.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		},
+	}
+	return tx.WithContext(ctx).Create(&entries).Error
+}
+
 func (r *LedgerRepo) PostRefundDebit(ctx context.Context, refund models.Refund, session models.PaymentSession, txHash string) error {
 	return r.PostRefundDebitWithDB(ctx, r.db, refund, session, txHash)
 }
@@ -819,7 +1072,7 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 	if !r.amountIsPositive(refund.AmountRaw) {
 		return errors.New("refund amount must be positive")
 	}
-	if err := r.createRefundHold(ctx, tx, refund, session); err != nil {
+	if err := r.RequireRefundHoldWithDB(ctx, tx, refund.ID); err != nil {
 		return err
 	}
 	now := time.Now()

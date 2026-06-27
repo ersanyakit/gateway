@@ -159,6 +159,25 @@ func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
 	}
 }
 
+func TestOutboundHoldSchemaColumnsAreRequired(t *testing.T) {
+	required := map[string]bool{
+		"SweepJobID": false,
+	}
+	for _, column := range requiredSchemaColumns() {
+		if column.table != "ledger_entries" {
+			continue
+		}
+		if _, ok := required[column.field]; ok {
+			required[column.field] = true
+		}
+	}
+	for field, found := range required {
+		if !found {
+			t.Fatalf("VerifySchema does not require ledger_entries.%s", field)
+		}
+	}
+}
+
 func TestPaymentOutcomeSchemaColumnsAreRequired(t *testing.T) {
 	required := map[string]bool{
 		"PaymentOutcome":       false,

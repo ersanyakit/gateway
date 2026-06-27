@@ -247,6 +247,7 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "TransactionUniqueHash"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "WithdrawalID"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "RefundID"},
+		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "SweepJobID"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "ChainID"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "Token"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, field: "Symbol"},

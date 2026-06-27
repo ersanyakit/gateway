@@ -68,6 +68,7 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   initAdminRichSelects();
+  initRecoverFundsBalance();
 
   document.querySelectorAll('[data-generate-secret]').forEach(function (button) {
     button.addEventListener('click', function () {
@@ -493,6 +494,107 @@ function initAdminRichSelects() {
       control.close();
     });
   });
+}
+
+function initRecoverFundsBalance() {
+  var form = document.getElementById('sweep-form');
+  if (!form) return;
+
+  var walletSelect = document.getElementById('recover-source-wallet');
+  var assetSelect = form.querySelector('select[name="asset"]');
+  var amountInput = document.getElementById('recover-amount-raw');
+  var maxButton = document.getElementById('recover-max-button');
+  var balanceDisplay = document.getElementById('recover-balance-display');
+  var balanceRaw = document.getElementById('recover-balance-raw');
+  var balanceState = document.getElementById('recover-balance-state');
+  if (!walletSelect || !assetSelect || !amountInput || !maxButton || !balanceDisplay || !balanceRaw || !balanceState) return;
+
+  var balances = {};
+  document.querySelectorAll('[data-recover-balance]').forEach(function (node) {
+    var walletID = compactText(node.getAttribute('data-wallet-id') || '');
+    var assetKey = normalizeAssetKey(node.getAttribute('data-asset-key') || '');
+    if (!walletID || !assetKey) return;
+    balances[walletID + '::' + assetKey] = {
+      chain: compactText(node.getAttribute('data-chain') || ''),
+      symbol: compactText(node.getAttribute('data-symbol') || ''),
+      available: compactText(node.getAttribute('data-available') || '0'),
+      availableRaw: compactText(node.getAttribute('data-available-raw') || '0'),
+      locked: compactText(node.getAttribute('data-locked') || ''),
+    };
+  });
+
+  function selectedAssetOption() {
+    return assetSelect.options[assetSelect.selectedIndex] || null;
+  }
+
+  function selectedAssetKey() {
+    var option = selectedAssetOption();
+    if (!option || !option.value) return '';
+    return normalizeAssetKey(option.getAttribute('data-balance-key') || option.value);
+  }
+
+  function selectedAssetSymbol() {
+    var option = selectedAssetOption();
+    if (!option || !option.value) return '';
+    return compactText(option.getAttribute('data-primary') || option.textContent || '');
+  }
+
+  function updateRecoverBalance() {
+    var walletID = compactText(walletSelect.value || '');
+    var assetKey = selectedAssetKey();
+    var symbol = selectedAssetSymbol();
+    maxButton.disabled = true;
+    maxButton.removeAttribute('data-max-raw');
+
+    if (!walletID || !assetKey) {
+      balanceDisplay.textContent = 'Wallet ve asset seç';
+      balanceRaw.textContent = 'Raw: -';
+      balanceState.textContent = 'Bekliyor';
+      return;
+    }
+
+    var balance = balances[walletID + '::' + assetKey] || {
+      chain: '',
+      symbol: symbol,
+      available: '0',
+      availableRaw: '0',
+      locked: '',
+    };
+    var label = balance.symbol || symbol || 'Asset';
+    balanceDisplay.textContent = balance.available + ' ' + label;
+    balanceRaw.textContent = 'Raw: ' + balance.availableRaw + (balance.locked ? ' · Locked: ' + balance.locked : '');
+
+    if (isPositiveIntegerString(balance.availableRaw)) {
+      balanceState.textContent = 'Kullanılabilir';
+      maxButton.disabled = false;
+      maxButton.setAttribute('data-max-raw', balance.availableRaw);
+      return;
+    }
+
+    balanceState.textContent = 'Bakiye yok';
+  }
+
+  walletSelect.addEventListener('change', updateRecoverBalance);
+  assetSelect.addEventListener('change', updateRecoverBalance);
+  maxButton.addEventListener('click', function () {
+    var maxRaw = maxButton.getAttribute('data-max-raw') || '';
+    if (!maxRaw) return;
+    amountInput.value = maxRaw;
+    amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+    amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+    amountInput.focus();
+  });
+
+  updateRecoverBalance();
+}
+
+function normalizeAssetKey(value) {
+  return compactText(value).toLocaleLowerCase('tr-TR');
+}
+
+function isPositiveIntegerString(value) {
+  var raw = compactText(value);
+  return /^[0-9]+$/.test(raw) && raw.replace(/^0+/, '') !== '';
 }
 
 function readOption(option) {
