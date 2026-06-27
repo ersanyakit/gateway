@@ -298,9 +298,6 @@ func (e *SolanaChain) BatchBalances(ctx context.Context, addresses []string, wor
 }
 
 func (e *SolanaChain) getBalance(client *http.Client, address string) (string, error) {
-	// en iyi RPC seçimi (round-robin basit)
-	rpc := e.RPCHttp[0]
-
 	reqBody := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -310,27 +307,48 @@ func (e *SolanaChain) getBalance(client *http.Client, address string) (string, e
 
 	data, _ := json.Marshal(reqBody)
 
-	req, _ := http.NewRequest("POST", rpc, bytes.NewReader(data))
-	req.Header.Set("Content-Type", "application/json")
+	var lastErr error
+	for _, rpc := range e.RPCHttp {
+		rpc = strings.TrimSpace(rpc)
+		if rpc == "" {
+			continue
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequest("POST", rpc, bytes.NewReader(data))
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
 
-	var res struct {
-		Result struct {
-			Value uint64 `json:"value"`
-		} `json:"result"`
-		Error json.RawMessage `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return "", err
-	}
-	if res.Error != nil {
-		return "", fmt.Errorf("rpc error")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		var res struct {
+			Result struct {
+				Value uint64 `json:"value"`
+			} `json:"result"`
+			Error json.RawMessage `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			_ = resp.Body.Close()
+			lastErr = err
+			continue
+		}
+		_ = resp.Body.Close()
+		if res.Error != nil {
+			lastErr = fmt.Errorf("rpc error")
+			continue
+		}
+
+		return fmt.Sprintf("%d", res.Result.Value), nil
 	}
 
-	return fmt.Sprintf("%d", res.Result.Value), nil
+	if lastErr == nil {
+		lastErr = errors.New("no solana RPC endpoint configured")
+	}
+	return "", lastErr
 }
