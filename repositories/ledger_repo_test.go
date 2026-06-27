@@ -145,7 +145,7 @@ func TestLedgerBalanceQueriesExcludeVoidedAndNonNumericRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(sourceBytes)
-	for _, functionName := range []string{"MerchantBalances", "DomainBalances", "WalletBalances", "WalletBalancesByWalletIDs"} {
+	for _, functionName := range []string{"MerchantBalances", "PlatformBalances", "DomainBalances", "WalletBalances", "WalletBalancesByWalletIDs"} {
 		body := extractLedgerFunctionBody(t, source, functionName)
 		for _, token := range []string{
 			"status IN ('pending', 'posted')",
@@ -177,6 +177,19 @@ func TestLedgerBalanceQueriesPreserveExpectedTenantScope(t *testing.T) {
 	}
 	if strings.Contains(merchantBody, "GROUP BY merchant_id, domain_id") {
 		t.Fatal("MerchantBalances must aggregate merchant balances across domains")
+	}
+
+	platformBody := extractLedgerFunctionBody(t, source, "PlatformBalances")
+	for _, token := range []string{
+		"account IN ('merchant_pending', 'merchant_available', 'withdrawal_transit', 'refund_transit', 'sweep_transit')",
+		"GROUP BY chain_id, token, symbol, decimals, account",
+	} {
+		if !strings.Contains(platformBody, token) {
+			t.Fatalf("PlatformBalances missing platform aggregate token %q", token)
+		}
+	}
+	if strings.Contains(platformBody, "merchant_id") || strings.Contains(platformBody, "platform_clearing") {
+		t.Fatal("PlatformBalances must aggregate across merchants and exclude platform clearing")
 	}
 
 	for _, tc := range []struct {

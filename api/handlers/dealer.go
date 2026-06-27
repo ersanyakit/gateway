@@ -72,7 +72,7 @@ type adminHeaderStats struct {
 	DepositCount    int
 	WithdrawalCount int
 	WalletCountAll  int
-	ActivityCount    int
+	ActivityCount   int
 }
 
 var adminHeaderStatsCache = struct {
@@ -90,6 +90,7 @@ type DealerDeps struct {
 	WithdrawalRepo      *repositories.WithdrawalRequestRepo
 	RefundRepo          *repositories.RefundRepo
 	LedgerRepo          *repositories.LedgerRepo
+	SweepJobRepo        *repositories.SweepJobRepo
 	TransactionRepo     *repositories.TransactionRepo
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
 	ActivityLogRepo     *repositories.ActivityLogRepo
@@ -167,20 +168,25 @@ type DealerPageData struct {
 	AdminWebhooks     []DealerWebhookDeliveryView
 	AdminRefunds      []DealerRefundView
 	AdminAssets       []DealerAssetOption
+	AdminVaults       []DealerVaultAssetView
+	AdminSweepStats   []DealerSweepStatusView
 
 	AdminPanel          string
 	AdminOverviewURL    string
 	AdminMerchantsURL   string
+	AdminVaultURL       string
 	AdminPaymentsURL    string
 	AdminDepositsURL    string
 	AdminWithdrawalsURL string
 	AdminWalletsURL     string
 	AdminActivityURL    string
 	AdminSweepURL       string
+	AdminRecoverURL     string
 	AdminLinksURL       string
 	AdminWebhooksURL    string
 	AdminRefundsURL     string
 	AdminRescanURL      string
+	AdminTestsURL       string
 	AdminTestDepositURL string
 	DepositCount        int
 	WithdrawalCount     int
@@ -380,6 +386,74 @@ type DealerAssetOption struct {
 	Symbol   string
 	Token    string
 	Decimals uint8
+}
+
+type DealerSweepStatusView struct {
+	Status string
+	Label  string
+	Count  int64
+}
+
+type DealerVaultAssetView struct {
+	ID                string
+	Symbol            string
+	LogoURL           string
+	SearchText        string
+	NetworkCount      int
+	VariantCount      int
+	Details           []DealerVaultBalanceView
+	VaultRaw          string
+	VaultDisplay      string
+	VaultSort         string
+	AvailableRaw      string
+	AvailableDisplay  string
+	AvailableSort     string
+	PendingRaw        string
+	PendingDisplay    string
+	PendingSort       string
+	WithdrawalRaw     string
+	WithdrawalDisplay string
+	WithdrawalSort    string
+	RefundRaw         string
+	RefundDisplay     string
+	RefundSort        string
+	SweepRaw          string
+	SweepDisplay      string
+	SweepSort         string
+	LockedRaw         string
+	LockedDisplay     string
+	LockedSort        string
+}
+
+type DealerVaultBalanceView struct {
+	Chain             string
+	ChainLogoURL      string
+	Symbol            string
+	Token             string
+	DisplayToken      string
+	LogoURL           string
+	Decimals          uint8
+	VaultRaw          string
+	VaultDisplay      string
+	VaultSort         string
+	AvailableRaw      string
+	AvailableDisplay  string
+	AvailableSort     string
+	PendingRaw        string
+	PendingDisplay    string
+	PendingSort       string
+	WithdrawalRaw     string
+	WithdrawalDisplay string
+	WithdrawalSort    string
+	RefundRaw         string
+	RefundDisplay     string
+	RefundSort        string
+	SweepRaw          string
+	SweepDisplay      string
+	SweepSort         string
+	LockedRaw         string
+	LockedDisplay     string
+	LockedSort        string
 }
 
 type DealerBalanceView struct {
@@ -1738,7 +1812,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			limit = 50
 		}
 
-			adminHeaderStatsFor(c.Context(), deps).applyTo(&data)
+		adminHeaderStatsFor(c.Context(), deps).applyTo(&data)
 
 		switch panel {
 		case "merchants":
@@ -1756,6 +1830,13 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			}
 			data.Payments = dealerPaymentViews(c, rows)
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/payments")
+
+		case "vault":
+			rows, err := deps.LedgerRepo.PlatformBalances(c.Context())
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Vault bakiyeleri okunamadı", err)
+			}
+			data.AdminVaults = dealerVaultBalanceViews(rows, deps.AssetRegistry)
 
 		case "deposits":
 			fromFilter := strings.TrimSpace(c.Query("from"))
@@ -1843,9 +1924,24 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminPagination = dealerPaginationView(page, limit, total, refundBase)
 
 		case "sweep":
+			if deps.SweepJobRepo != nil {
+				counts, err := deps.SweepJobRepo.CountByStatus(c.Context(),
+					models.SweepJobStatusPending,
+					models.SweepJobStatusProcessing,
+					models.SweepJobStatusFailed,
+					models.SweepJobStatusDeadLetter,
+					models.SweepJobStatusSucceeded,
+				)
+				if err != nil {
+					return renderAdminDashboardError(c, data, "Sweep job durumları okunamadı", err)
+				}
+				data.AdminSweepStats = dealerSweepStatusViews(counts)
+			}
+
+		case "recover":
 			wallets, walletTotal, err := deps.WalletRepo.ListPage(c.Context(), page, limit)
 			if err != nil {
-				return renderAdminDashboardError(c, data, "Sweep wallet listesi okunamadı", err)
+				return renderAdminDashboardError(c, data, "Recover wallet listesi okunamadı", err)
 			}
 			balanceMap := buildWalletBalanceMap(c.Context(), deps.LedgerRepo, wallets, deps.AssetRegistry)
 			data.WithdrawalWallets = dealerWalletViewsWithBalances(wallets, balanceMap)
@@ -1856,7 +1952,10 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			formBalanceMap := buildWalletBalanceMap(c.Context(), deps.LedgerRepo, formWallets, deps.AssetRegistry)
 			data.AdminWallets = dealerWalletViewsWithBalances(formWallets, formBalanceMap)
 			data.AdminAssets = dealerAssetOptions(deps.AssetRegistry)
-			data.AdminPagination = dealerPaginationView(page, limit, walletTotal, "/admin/sweep")
+			data.AdminPagination = dealerPaginationView(page, limit, walletTotal, "/admin/recover")
+
+		case "tests":
+			// Menu-only panel.
 
 		case "test-deposit":
 			wallets, err := deps.WalletRepo.List(c.Context(), 500)
@@ -2038,28 +2137,28 @@ func HandleAdminSweepLiveBalance(deps DealerDeps) fiber.Handler {
 	}
 }
 
-func HandleAdminSweep(deps DealerDeps) fiber.Handler {
+func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
 		if deps.WalletRepo == nil || deps.Blockchains == nil || deps.WithdrawalRepo == nil || deps.LedgerRepo == nil {
-			return redirectWithError(c, "/admin/sweep", "Recover funds altyapısı hazır değil.")
+			return redirectWithError(c, "/admin/recover", "Recover funds altyapısı hazır değil.")
 		}
 		walletID := strings.TrimSpace(c.FormValue("wallet_id"))
 		selectedAsset, err := parseAdminAssetSelection(deps.AssetRegistry, c.FormValue("asset"))
 		if err != nil {
-			return redirectWithError(c, "/admin/sweep", err.Error())
+			return redirectWithError(c, "/admin/recover", err.Error())
 		}
 		selectedChainID := selectedAsset.GetChainID()
 		chain := constants.ChainName(selectedChainID)
 		if chain == "" {
-			return redirectWithError(c, "/admin/sweep", fmt.Sprintf("unsupported chain: %d", selectedAsset.GetChainID()))
+			return redirectWithError(c, "/admin/recover", fmt.Sprintf("unsupported chain: %d", selectedAsset.GetChainID()))
 		}
 		chainObj, err := deps.Blockchains.GetChainByID(selectedChainID)
 		if err != nil {
-			return redirectWithError(c, "/admin/sweep", "Chain hazır değil: "+err.Error())
+			return redirectWithError(c, "/admin/recover", "Chain hazır değil: "+err.Error())
 		}
 		token := tokenForSelectedAsset(selectedAsset)
 		assetLabel := strings.TrimSpace(selectedAsset.GetSymbol())
@@ -2070,11 +2169,11 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 
 		sourceWalletID, err := uuid.Parse(walletID)
 		if err != nil {
-			return redirectWithError(c, "/admin/sweep", "Geçerli source wallet seçmelisin.")
+			return redirectWithError(c, "/admin/recover", "Geçerli source wallet seçmelisin.")
 		}
 		sourceWallet, err := deps.WalletRepo.FindByID(c.Context(), sourceWalletID)
 		if err != nil {
-			return redirectWithError(c, "/admin/sweep", "Source wallet bulunamadı: "+err.Error())
+			return redirectWithError(c, "/admin/recover", "Source wallet bulunamadı: "+err.Error())
 		}
 		toAddress := strings.TrimSpace(c.FormValue("to_address"))
 		destinationWalletID := strings.TrimSpace(c.FormValue("destination_wallet_id"))
@@ -2082,29 +2181,29 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		if destinationWalletID != "" {
 			destinationID, err := uuid.Parse(destinationWalletID)
 			if err != nil {
-				return redirectWithError(c, "/admin/sweep", "Geçerli hedef wallet seçmelisin.")
+				return redirectWithError(c, "/admin/recover", "Geçerli hedef wallet seçmelisin.")
 			}
 			if destinationID == sourceWalletID {
-				return redirectWithError(c, "/admin/sweep", "Source ve hedef wallet aynı olamaz.")
+				return redirectWithError(c, "/admin/recover", "Source ve hedef wallet aynı olamaz.")
 			}
 			destinationWallet, err := deps.WalletRepo.FindByID(c.Context(), destinationID)
 			if err != nil {
-				return redirectWithError(c, "/admin/sweep", "Hedef wallet bulunamadı: "+err.Error())
+				return redirectWithError(c, "/admin/recover", "Hedef wallet bulunamadı: "+err.Error())
 			}
 			toAddress = strings.TrimSpace(repositories.WalletAddressForChainID(*destinationWallet, selectedChainID))
 			if toAddress == "" {
-				return redirectWithError(c, "/admin/sweep", "Hedef wallet için "+constants.ChainName(selectedChainID)+" adresi yok.")
+				return redirectWithError(c, "/admin/recover", "Hedef wallet için "+constants.ChainName(selectedChainID)+" adresi yok.")
 			}
 			destinationLabel = destinationWallet.ID.String()
 		}
 		amountRaw := strings.TrimSpace(c.FormValue("amount_raw"))
-		isSweep := amountRaw == "" || amountRaw == "0"
-		if isSweep {
+		amountMissing := amountRaw == "" || amountRaw == "0"
+		if amountMissing {
 			msg := "manual sweep requires an explicit amount for ledger reservation"
 			if deps.ActivityLogRepo != nil {
 				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, msg)
 			}
-			return redirectWithError(c, "/admin/sweep", "Recover funds için amount_raw zorunlu; "+msg+".")
+			return redirectWithError(c, "/admin/recover", "Recover funds için amount_raw zorunlu; "+msg+".")
 		}
 		grossAmountRaw := amountRaw
 		networkFeeRaw := "0"
@@ -2112,13 +2211,13 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		netAmountRaw, feeRaw, err := adminRecoverNetAmountRaw(feeCtx, chainObj, selectedAsset, amountRaw)
 		feeCancel()
 		if err != nil {
-			return redirectWithError(c, "/admin/sweep", err.Error())
+			return redirectWithError(c, "/admin/recover", err.Error())
 		}
 		amountRaw = netAmountRaw
 		networkFeeRaw = feeRaw
 
 		if walletID == "" || chain == "" || toAddress == "" {
-			return redirectWithError(c, "/admin/sweep", "Source wallet, asset ve hedef wallet/adres zorunlu.")
+			return redirectWithError(c, "/admin/recover", "Source wallet, asset ve hedef wallet/adres zorunlu.")
 		}
 
 		params := types.TransferParams{
@@ -2128,12 +2227,10 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			Token:     token,
 			ToAddress: &toAddress,
 		}
-		if !isSweep {
-			params.AmountRaw = &amountRaw
-		}
+		params.AmountRaw = &amountRaw
 
 		if err := params.ValidateWithdraw(); err != nil {
-			return redirectWithError(c, "/admin/sweep", err.Error())
+			return redirectWithError(c, "/admin/recover", err.Error())
 		}
 		domainID := sourceWallet.DomainID
 		note := "admin recover funds to " + destinationLabel
@@ -2158,7 +2255,7 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			if deps.ActivityLogRepo != nil {
 				logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, err.Error())
 			}
-			return redirectWithError(c, "/admin/sweep", "Ledger rezervasyonu başarısız: "+err.Error())
+			return redirectWithError(c, "/admin/recover", "Ledger rezervasyonu başarısız: "+err.Error())
 		}
 
 		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), request.ID, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
@@ -2191,12 +2288,12 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			}
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
 				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
-				return redirectWithError(c, "/admin/sweep", "Transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
+				return redirectWithError(c, "/admin/recover", "Transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
 			}
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusFailed {
 				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFailedV1)
 			}
-			return redirectWithError(c, "/admin/sweep", "Transfer başarısız: "+err.Error())
+			return redirectWithError(c, "/admin/recover", "Transfer başarısız: "+err.Error())
 		}
 		if deps.ActivityLogRepo != nil {
 			txHash := ""
@@ -2213,7 +2310,7 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		if networkFeeRaw != "0" {
 			message = "Recover funds transferi gönderildi (" + assetLabel + "). Network fee raw düşüldü: " + networkFeeRaw + ". Tx: " + txHash
 		}
-		return redirectWithSuccess(c, "/admin/sweep", message)
+		return redirectWithSuccess(c, "/admin/recover", message)
 	}
 }
 
@@ -3683,6 +3780,8 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "merchants"
 	case "/admin/payments":
 		return "payments"
+	case "/admin/vault":
+		return "vault"
 	case "/admin/deposits":
 		return "deposits"
 	case "/admin/withdrawals":
@@ -3697,8 +3796,12 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "refunds"
 	case "/admin/rescan":
 		return "rescan"
+	case "/admin/tests":
+		return "tests"
 	case "/admin/sweep":
 		return "sweep"
+	case "/admin/recover":
+		return "recover"
 	case "/admin/test-deposit":
 		return "test-deposit"
 	case "/admin/admins":
@@ -3723,17 +3826,20 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminPanel:          panel,
 		AdminOverviewURL:    "/admin",
 		AdminMerchantsURL:   "/admin/merchants",
+		AdminVaultURL:       "/admin/vault",
 		AdminPaymentsURL:    "/admin/payments",
 		AdminDepositsURL:    "/admin/deposits",
 		AdminWithdrawalsURL: "/admin/withdrawals",
 		AdminWalletsURL:     "/admin/wallets",
 		AdminActivityURL:    "/admin/activity",
 		AdminSweepURL:       "/admin/sweep",
+		AdminRecoverURL:     "/admin/recover",
 		AdminSecurityURL:    "/admin/security",
 		AdminLinksURL:       "/admin/links",
 		AdminWebhooksURL:    "/admin/webhooks",
 		AdminRefundsURL:     "/admin/refunds",
 		AdminRescanURL:      "/admin/rescan",
+		AdminTestsURL:       "/admin/tests",
 		AdminTestDepositURL: "/admin/test-deposit",
 	}
 	return data
@@ -3763,7 +3869,7 @@ func adminHeaderStatsFor(ctx context.Context, deps DealerDeps) adminHeaderStats 
 		DepositCount:    int(depositTotal),
 		WithdrawalCount: int(withdrawalTotal),
 		WalletCountAll:  int(walletTotal),
-		ActivityCount:    int(activityTotal),
+		ActivityCount:   int(activityTotal),
 	}
 
 	adminHeaderStatsCache.Lock()
@@ -3854,6 +3960,28 @@ func dealerAssetOptions(registry *asset.Registry) []DealerAssetOption {
 
 func dealerAssetKey(chainID constants.ChainID, identifier string) string {
 	return fmt.Sprintf("%d|%s", chainID, strings.ToLower(strings.TrimSpace(identifier)))
+}
+
+func dealerSweepStatusViews(counts map[string]int64) []DealerSweepStatusView {
+	statuses := []struct {
+		status string
+		label  string
+	}{
+		{models.SweepJobStatusPending, "Pending"},
+		{models.SweepJobStatusProcessing, "Processing"},
+		{models.SweepJobStatusFailed, "Failed"},
+		{models.SweepJobStatusDeadLetter, "Dead letter"},
+		{models.SweepJobStatusSucceeded, "Succeeded"},
+	}
+	out := make([]DealerSweepStatusView, 0, len(statuses))
+	for _, item := range statuses {
+		out = append(out, DealerSweepStatusView{
+			Status: item.status,
+			Label:  item.label,
+			Count:  counts[item.status],
+		})
+	}
+	return out
 }
 
 func deliverAdminTransactionWebhook(ctx context.Context, deps DealerDeps, domain models.Domain, txModel models.Transaction) error {
@@ -4564,6 +4692,180 @@ func dealerAllBalanceViews(registry *asset.Registry, balances []DealerBalanceVie
 	return views
 }
 
+func dealerVaultBalanceViews(rows []repositories.LedgerBalanceRow, registry *asset.Registry) []DealerVaultAssetView {
+	return dealerVaultAssetGroups(dealerVaultNetworkBalanceViews(rows, registry), registry)
+}
+
+func dealerVaultNetworkBalanceViews(rows []repositories.LedgerBalanceRow, registry *asset.Registry) []DealerVaultBalanceView {
+	buckets := make(map[string]*DealerVaultBalanceView)
+	order := make([]string, 0, len(rows))
+	ensureView := func(chainID constants.ChainID, symbol string, token string, decimals uint8) *DealerVaultBalanceView {
+		token = strings.ToLower(strings.TrimSpace(token))
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		key := fmt.Sprintf("%d:%s:%s", chainID, symbol, token)
+		view := buckets[key]
+		if view != nil {
+			return view
+		}
+		order = append(order, key)
+		view = &DealerVaultBalanceView{
+			Chain:        chainLabel(chainID),
+			ChainLogoURL: asset.ChainLogoURL(chainID),
+			Symbol:       symbol,
+			Token:        token,
+			DisplayToken: emptyDash(token),
+			LogoURL:      registryLogoURL(registry, symbol),
+			Decimals:     decimals,
+		}
+		buckets[key] = view
+		return view
+	}
+
+	if registry != nil {
+		seen := make(map[string]struct{})
+		for _, assetInfo := range registry.ListAll() {
+			if assetInfo == nil {
+				continue
+			}
+			token := ""
+			if !assetInfo.IsNative() {
+				token = assetInfo.GetIdentifier()
+			}
+			key := fmt.Sprintf("%d:%s:%s", assetInfo.GetChainID(), strings.ToUpper(strings.TrimSpace(assetInfo.GetSymbol())), strings.ToLower(strings.TrimSpace(token)))
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			ensureView(assetInfo.GetChainID(), assetInfo.GetSymbol(), token, assetInfo.GetDecimals())
+		}
+	}
+
+	for _, row := range rows {
+		if row.Account == models.LedgerAccountPlatformClearing {
+			continue
+		}
+		token := ""
+		if row.Token != nil {
+			token = *row.Token
+		}
+		view := ensureView(constants.ChainID(row.ChainID), row.Symbol, token, row.Decimals)
+		switch row.Account {
+		case models.LedgerAccountMerchantAvailable:
+			view.AvailableRaw = addTokenAmountRaw(view.AvailableRaw, row.BalanceRaw)
+		case models.LedgerAccountMerchantPending:
+			view.PendingRaw = addTokenAmountRaw(view.PendingRaw, row.BalanceRaw)
+		case models.LedgerAccountWithdrawalTransit:
+			view.WithdrawalRaw = addTokenAmountRaw(view.WithdrawalRaw, row.BalanceRaw)
+		case models.LedgerAccountRefundTransit:
+			view.RefundRaw = addTokenAmountRaw(view.RefundRaw, row.BalanceRaw)
+		case models.LedgerAccountSweepTransit:
+			view.SweepRaw = addTokenAmountRaw(view.SweepRaw, row.BalanceRaw)
+		}
+	}
+
+	views := make([]DealerVaultBalanceView, 0, len(order))
+	for _, key := range order {
+		view := *buckets[key]
+		view.AvailableRaw = zeroTokenAmountRaw(view.AvailableRaw)
+		view.PendingRaw = zeroTokenAmountRaw(view.PendingRaw)
+		view.WithdrawalRaw = zeroTokenAmountRaw(view.WithdrawalRaw)
+		view.RefundRaw = zeroTokenAmountRaw(view.RefundRaw)
+		view.SweepRaw = zeroTokenAmountRaw(view.SweepRaw)
+		view.LockedRaw = addTokenAmountRaw(addTokenAmountRaw(view.WithdrawalRaw, view.RefundRaw), view.SweepRaw)
+		view.VaultRaw = addTokenAmountRaw(addTokenAmountRaw(view.AvailableRaw, view.PendingRaw), view.LockedRaw)
+		view.AvailableDisplay = formatTokenAmount(view.AvailableRaw, view.Decimals)
+		view.AvailableSort = tokenAmountSortValue(view.AvailableRaw, view.Decimals)
+		view.PendingDisplay = formatTokenAmount(view.PendingRaw, view.Decimals)
+		view.PendingSort = tokenAmountSortValue(view.PendingRaw, view.Decimals)
+		view.WithdrawalDisplay = formatTokenAmount(view.WithdrawalRaw, view.Decimals)
+		view.WithdrawalSort = tokenAmountSortValue(view.WithdrawalRaw, view.Decimals)
+		view.RefundDisplay = formatTokenAmount(view.RefundRaw, view.Decimals)
+		view.RefundSort = tokenAmountSortValue(view.RefundRaw, view.Decimals)
+		view.SweepDisplay = formatTokenAmount(view.SweepRaw, view.Decimals)
+		view.SweepSort = tokenAmountSortValue(view.SweepRaw, view.Decimals)
+		view.LockedDisplay = formatTokenAmount(view.LockedRaw, view.Decimals)
+		view.LockedSort = tokenAmountSortValue(view.LockedRaw, view.Decimals)
+		view.VaultDisplay = formatTokenAmount(view.VaultRaw, view.Decimals)
+		view.VaultSort = tokenAmountSortValue(view.VaultRaw, view.Decimals)
+		views = append(views, view)
+	}
+	return views
+}
+
+func dealerVaultAssetGroups(details []DealerVaultBalanceView, registry *asset.Registry) []DealerVaultAssetView {
+	buckets := make(map[string]*DealerVaultAssetView)
+	order := make([]string, 0, len(details))
+	for _, detail := range details {
+		symbol := vaultCanonicalSymbol(registry, detail.Symbol)
+		group := buckets[symbol]
+		if group == nil {
+			order = append(order, symbol)
+			group = &DealerVaultAssetView{
+				ID:      vaultGroupID(symbol),
+				Symbol:  symbol,
+				LogoURL: registryLogoURL(registry, symbol),
+			}
+			if group.LogoURL == "" {
+				group.LogoURL = detail.LogoURL
+			}
+			buckets[symbol] = group
+		}
+		if group.LogoURL == "" && detail.LogoURL != "" {
+			group.LogoURL = detail.LogoURL
+		}
+		group.Details = append(group.Details, detail)
+		group.AvailableRaw = addNormalizedTokenAmountRaw(group.AvailableRaw, detail.AvailableRaw, detail.Decimals)
+		group.PendingRaw = addNormalizedTokenAmountRaw(group.PendingRaw, detail.PendingRaw, detail.Decimals)
+		group.WithdrawalRaw = addNormalizedTokenAmountRaw(group.WithdrawalRaw, detail.WithdrawalRaw, detail.Decimals)
+		group.RefundRaw = addNormalizedTokenAmountRaw(group.RefundRaw, detail.RefundRaw, detail.Decimals)
+		group.SweepRaw = addNormalizedTokenAmountRaw(group.SweepRaw, detail.SweepRaw, detail.Decimals)
+	}
+
+	groups := make([]DealerVaultAssetView, 0, len(order))
+	for _, symbol := range order {
+		group := *buckets[symbol]
+		sort.SliceStable(group.Details, func(i, j int) bool {
+			if !strings.EqualFold(group.Details[i].Chain, group.Details[j].Chain) {
+				return strings.ToUpper(group.Details[i].Chain) < strings.ToUpper(group.Details[j].Chain)
+			}
+			if !strings.EqualFold(group.Details[i].Symbol, group.Details[j].Symbol) {
+				return strings.ToUpper(group.Details[i].Symbol) < strings.ToUpper(group.Details[j].Symbol)
+			}
+			return strings.ToLower(group.Details[i].Token) < strings.ToLower(group.Details[j].Token)
+		})
+		group.AvailableRaw = zeroTokenAmountRaw(group.AvailableRaw)
+		group.PendingRaw = zeroTokenAmountRaw(group.PendingRaw)
+		group.WithdrawalRaw = zeroTokenAmountRaw(group.WithdrawalRaw)
+		group.RefundRaw = zeroTokenAmountRaw(group.RefundRaw)
+		group.SweepRaw = zeroTokenAmountRaw(group.SweepRaw)
+		group.LockedRaw = addTokenAmountRaw(addTokenAmountRaw(group.WithdrawalRaw, group.RefundRaw), group.SweepRaw)
+		group.VaultRaw = addTokenAmountRaw(addTokenAmountRaw(group.AvailableRaw, group.PendingRaw), group.LockedRaw)
+		group.AvailableDisplay = formatTokenAmount(group.AvailableRaw, tokenAmountSortScale)
+		group.AvailableSort = group.AvailableRaw
+		group.PendingDisplay = formatTokenAmount(group.PendingRaw, tokenAmountSortScale)
+		group.PendingSort = group.PendingRaw
+		group.WithdrawalDisplay = formatTokenAmount(group.WithdrawalRaw, tokenAmountSortScale)
+		group.WithdrawalSort = group.WithdrawalRaw
+		group.RefundDisplay = formatTokenAmount(group.RefundRaw, tokenAmountSortScale)
+		group.RefundSort = group.RefundRaw
+		group.SweepDisplay = formatTokenAmount(group.SweepRaw, tokenAmountSortScale)
+		group.SweepSort = group.SweepRaw
+		group.LockedDisplay = formatTokenAmount(group.LockedRaw, tokenAmountSortScale)
+		group.LockedSort = group.LockedRaw
+		group.VaultDisplay = formatTokenAmount(group.VaultRaw, tokenAmountSortScale)
+		group.VaultSort = group.VaultRaw
+		group.NetworkCount = vaultNetworkCount(group.Details)
+		group.VariantCount = vaultVariantCount(group.Details)
+		group.SearchText = vaultGroupSearchText(group)
+		groups = append(groups, group)
+	}
+
+	sort.SliceStable(groups, func(i, j int) bool {
+		return strings.ToUpper(groups[i].Symbol) < strings.ToUpper(groups[j].Symbol)
+	})
+	return groups
+}
+
 func filterBalancesBySettings(balances []DealerBalanceView, hideTestnets bool, hiddenChains string) []DealerBalanceView {
 	hidden := parseHiddenChains(hiddenChains)
 	out := balances[:0]
@@ -4913,6 +5215,123 @@ func addTokenAmountRaw(current string, next string) string {
 		return current
 	}
 	return left.Add(left, right).String()
+}
+
+func zeroTokenAmountRaw(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "0"
+	}
+	return strings.TrimSpace(value)
+}
+
+const tokenAmountSortScale = 36
+
+func addNormalizedTokenAmountRaw(current string, next string, decimals uint8) string {
+	return addTokenAmountRaw(current, tokenAmountSortValue(next, decimals))
+}
+
+func vaultCanonicalSymbol(registry *asset.Registry, symbol string) string {
+	symbol = strings.ToUpper(strings.TrimSpace(symbol))
+	if registry == nil {
+		return symbol
+	}
+	return registry.CanonicalSymbol(symbol)
+}
+
+func vaultGroupID(symbol string) string {
+	symbol = strings.ToLower(strings.TrimSpace(symbol))
+	if symbol == "" {
+		return "vault-asset"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, char := range symbol {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			b.WriteRune(char)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	value := strings.Trim(b.String(), "-")
+	if value == "" {
+		return "vault-asset"
+	}
+	return "vault-" + value
+}
+
+func vaultNetworkCount(details []DealerVaultBalanceView) int {
+	seen := make(map[string]struct{}, len(details))
+	for _, detail := range details {
+		key := strings.ToUpper(strings.TrimSpace(detail.Chain))
+		if key == "" {
+			continue
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen)
+}
+
+func vaultVariantCount(details []DealerVaultBalanceView) int {
+	seen := make(map[string]struct{}, len(details))
+	for _, detail := range details {
+		key := strings.ToUpper(strings.TrimSpace(detail.Symbol))
+		if key == "" {
+			continue
+		}
+		seen[key] = struct{}{}
+	}
+	return len(seen)
+}
+
+func vaultGroupSearchText(group DealerVaultAssetView) string {
+	parts := []string{group.Symbol}
+	for _, detail := range group.Details {
+		parts = append(parts, detail.Symbol, detail.Chain, detail.Token)
+	}
+	return strings.Join(parts, " ")
+}
+
+func tokenAmountSortValue(raw string, decimals uint8) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "0"
+	}
+	negative := strings.HasPrefix(value, "-")
+	if negative {
+		value = strings.TrimPrefix(value, "-")
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return "0"
+		}
+	}
+	value = strings.TrimLeft(value, "0")
+	if value == "" {
+		return "0"
+	}
+	precision := int(decimals)
+	if precision <= tokenAmountSortScale {
+		value += strings.Repeat("0", tokenAmountSortScale-precision)
+	} else {
+		cut := precision - tokenAmountSortScale
+		if cut >= len(value) {
+			value = "0"
+		} else {
+			value = value[:len(value)-cut]
+		}
+	}
+	value = strings.TrimLeft(value, "0")
+	if value == "" {
+		return "0"
+	}
+	if negative {
+		return "-" + value
+	}
+	return value
 }
 
 func formatTokenAmount(raw string, decimals uint8) string {

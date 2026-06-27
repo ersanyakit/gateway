@@ -177,6 +177,119 @@ func tronGetTRXBalanceFromRPCs(ctx context.Context, rpcURLs []string, address st
 	return 0, lastErr
 }
 
+type tronAccountResource struct {
+	FreeNetLimit json.Number `json:"freeNetLimit"`
+	FreeNetUsed  json.Number `json:"freeNetUsed"`
+	NetLimit     json.Number `json:"NetLimit"`
+	NetUsed      json.Number `json:"NetUsed"`
+}
+
+func tronJSONNumberInt64(value json.Number) int64 {
+	raw := strings.TrimSpace(value.String())
+	if raw == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
+}
+
+func (r tronAccountResource) availableBandwidth() int64 {
+	free := tronJSONNumberInt64(r.FreeNetLimit) - tronJSONNumberInt64(r.FreeNetUsed)
+	staked := tronJSONNumberInt64(r.NetLimit) - tronJSONNumberInt64(r.NetUsed)
+	if free < 0 {
+		free = 0
+	}
+	if staked < 0 {
+		staked = 0
+	}
+	return free + staked
+}
+
+func tronGetAccountResource(ctx context.Context, rpcURL, address string) (*tronAccountResource, error) {
+	apiBase := strings.TrimRight(strings.TrimSpace(rpcURL), "/")
+	apiBase = strings.TrimSuffix(apiBase, "/jsonrpc")
+	if apiBase == "" {
+		return nil, fmt.Errorf("empty tron HTTP API endpoint")
+	}
+	addressHash, err := tronSDK.GetAddressHash(address)
+	if err != nil {
+		return nil, fmt.Errorf("tron address hash: %w", err)
+	}
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"address": hex.EncodeToString(addressHash),
+	})
+
+	endpoint := apiBase + "/wallet/getaccountresource"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey := strings.TrimSpace(os.Getenv("TRON_PRO_API_KEY")); apiKey != "" {
+		req.Header.Set("TRON-PRO-API-KEY", apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tron getaccountresource: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("tron getaccountresource HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var res tronAccountResource
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func tronGetAccountResourceFromRPCs(ctx context.Context, rpcURLs []string, address string) (*tronAccountResource, error) {
+	var lastErr error
+	for _, rpcURL := range tronHTTPAPIEndpoints(rpcURLs) {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL == "" {
+			continue
+		}
+		resource, err := tronGetAccountResource(ctx, rpcURL, address)
+		if err == nil {
+			return resource, nil
+		}
+		lastErr = fmt.Errorf("%s tron account resource failed: %w", rpcURL, err)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no tron RPC endpoint configured")
+	}
+	return nil, lastErr
+}
+
+func tronEstimateBandwidthFeeSUN(ctx context.Context, rpcURLs []string, ownerAddress string, signedTxHex string) (int64, error) {
+	txHex := strings.TrimPrefix(strings.TrimSpace(signedTxHex), "0x")
+	if txHex == "" || len(txHex)%2 != 0 {
+		return 0, fmt.Errorf("invalid signed tron transaction hex")
+	}
+	resource, err := tronGetAccountResourceFromRPCs(ctx, rpcURLs, ownerAddress)
+	if err != nil {
+		return 0, err
+	}
+	txBytes := int64(len(txHex) / 2)
+	paidBandwidth := txBytes - resource.availableBandwidth()
+	if paidBandwidth <= 0 {
+		return 0, nil
+	}
+	return paidBandwidth * 1000, nil
+}
+
 func tronGetTRC20Balance(ctx context.Context, rpcURL, contractAddr, ownerAddr string) (*big.Int, error) {
 	// Use eth_call with balanceOf(address) ABI encoding
 	// keccak256("balanceOf(address)") = 0x70a08231
@@ -358,13 +471,26 @@ func tronSignBroadcastWithLease(ctx context.Context, apiBase, rawTxHex string, p
 	return txID, nil
 }
 
+func tronBroadcastSignedWithLease(ctx context.Context, apiBase, signedTxHex string, lease *chainresource.SequenceLease) (string, error) {
+	txID, err := tronBroadcast(ctx, apiBase, signedTxHex)
+	if err != nil {
+		_ = lease.Consume("")
+		return "", err
+	}
+	_ = lease.Consume(txID)
+	return txID, nil
+}
+
 func tronGasThresholdSUN() int64 {
 	if raw := strings.TrimSpace(os.Getenv("TRON_GAS_THRESHOLD_SUN")); raw != "" {
 		if v, err := strconv.ParseInt(raw, 10, 64); err == nil && v > 0 {
 			return v
 		}
 	}
-	return 10_000_000 // 10 TRX in SUN
+	if feeLimit, err := chainresource.TronTRC20FeeLimitSUN(); err == nil && feeLimit > 0 {
+		return feeLimit
+	}
+	return 50_000_000 // 50 TRX in SUN
 }
 
 func tronGasPrefundSUN() int64 {
@@ -373,7 +499,7 @@ func tronGasPrefundSUN() int64 {
 			return v
 		}
 	}
-	return 30_000_000 // 30 TRX in SUN
+	return tronGasThresholdSUN()
 }
 
 func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
@@ -522,13 +648,9 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, fmt.Errorf("tron TRX balance: %w", err)
 	}
 
-	feeSUN, err := chainresource.TronNativeSweepFeeSUN()
+	fallbackFeeSUN, err := chainresource.TronNativeSweepFeeSUN()
 	if err != nil {
 		return nil, err
-	}
-	sendAmount := balance - feeSUN
-	if sendAmount <= 0 {
-		return nil, fmt.Errorf("tron sweep balance not enough: balance=%d sun fee=%d sun", balance, feeSUN)
 	}
 
 	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, "sweep.native")
@@ -541,22 +663,48 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 		_ = lease.Release()
 		return nil, err
 	}
-
-	rawTx, err := tronSDK.NewTransfer(wallet.Address, toAddress, sendAmount,
-		blockRef.refBlockBytes, blockRef.refBlockHash,
-		blockRef.expiration, blockRef.timestamp)
-	if err != nil {
-		_ = lease.Release()
-		return nil, fmt.Errorf("tron build transfer tx: %w", err)
-	}
-
 	privKey, err := tronPrivateKey(wallet)
 	if err != nil {
 		_ = lease.Release()
 		return nil, err
 	}
 
-	txID, err := tronSignBroadcastWithLease(ctx, apiBase, rawTx, privKey, lease)
+	feeSUN := int64(0)
+	var signedTx string
+	var sendAmount int64
+	for attempt := 0; attempt < 4; attempt++ {
+		sendAmount = balance - feeSUN
+		if sendAmount <= 0 {
+			_ = lease.Release()
+			return nil, fmt.Errorf("tron sweep balance not enough: balance=%d sun fee=%d sun", balance, feeSUN)
+		}
+		rawTx, err := tronSDK.NewTransfer(wallet.Address, toAddress, sendAmount,
+			blockRef.refBlockBytes, blockRef.refBlockHash,
+			blockRef.expiration, blockRef.timestamp)
+		if err != nil {
+			_ = lease.Release()
+			return nil, fmt.Errorf("tron build transfer tx: %w", err)
+		}
+		signedTx, err = tronSignRawTransaction(rawTx, privKey)
+		if err != nil {
+			_ = lease.Release()
+			return nil, err
+		}
+		estimatedFeeSUN, err := tronEstimateBandwidthFeeSUN(ctx, rpcs, wallet.Address, signedTx)
+		if err != nil {
+			if feeSUN == fallbackFeeSUN {
+				break
+			}
+			feeSUN = fallbackFeeSUN
+			continue
+		}
+		if estimatedFeeSUN == feeSUN {
+			break
+		}
+		feeSUN = estimatedFeeSUN
+	}
+
+	txID, err := tronBroadcastSignedWithLease(ctx, apiBase, signedTx, lease)
 	if err != nil {
 		return nil, err
 	}
@@ -637,9 +785,6 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if !s.ValidateAddress(userAddress) {
 		return false, fmt.Errorf("invalid tron user address: %s", userAddress)
 	}
-	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), reserveWallet, "prefund.native", fmt.Sprintf("%d", tronGasPrefundSUN()), userAddress); err != nil {
-		return false, err
-	}
 	rpcs := s.RPCs()
 	if len(rpcs) == 0 {
 		return false, fmt.Errorf("no tron RPC endpoint configured")
@@ -651,8 +796,19 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 		return false, fmt.Errorf("tron prefund balance check: %w", err)
 	}
 
-	if balance >= tronGasThresholdSUN() {
+	thresholdSUN := tronGasThresholdSUN()
+	if balance >= thresholdSUN {
 		return false, nil
+	}
+	prefundAmountSUN := tronGasPrefundSUN() - balance
+	if prefundAmountSUN <= 0 {
+		prefundAmountSUN = thresholdSUN - balance
+	}
+	if prefundAmountSUN <= 0 {
+		return false, nil
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), reserveWallet, "prefund.native", fmt.Sprintf("%d", prefundAmountSUN), userAddress); err != nil {
+		return false, err
 	}
 	lease, err := chainResourceSequenceLease(ctx, s.Name(), reserveWallet, "prefund.native")
 	if err != nil {
@@ -666,7 +822,7 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	}
 
 	rawTx, err := tronSDK.NewTransfer(
-		reserveWallet.Address, userAddress, tronGasPrefundSUN(),
+		reserveWallet.Address, userAddress, prefundAmountSUN,
 		blockRef.refBlockBytes, blockRef.refBlockHash,
 		blockRef.expiration, blockRef.timestamp)
 	if err != nil {

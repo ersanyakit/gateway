@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"html/template"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"core/asset"
 	"core/constants"
 	"core/models"
+	"core/repositories"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -233,6 +235,31 @@ func TestDealerBalanceViewsUseLedgerOnly(t *testing.T) {
 	}
 }
 
+func TestAdminVaultUsesLedgerPlatformBalances(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	dashboard := extractHandlerFunctionBody(t, source, "HandleAdminDashboard")
+	for _, required := range []string{
+		`case "vault":`,
+		"deps.LedgerRepo.PlatformBalances",
+		"dealerVaultBalanceViews",
+	} {
+		if !strings.Contains(dashboard, required) {
+			t.Fatalf("admin vault path missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"TransactionRepo.AllWalletDeposits",
+		"MerchantDepositSummary",
+		"DomainDepositSummary",
+		"BatchBalances",
+		"GetBalance",
+	} {
+		if strings.Contains(dashboard, forbidden) {
+			t.Fatalf("admin vault must not use non-ledger balance source %q", forbidden)
+		}
+	}
+}
+
 func TestV1BalanceEndpointsUseLedgerOnly(t *testing.T) {
 	sourceBytes, err := os.ReadFile("v1api.go")
 	if err != nil {
@@ -294,25 +321,25 @@ func TestOutboundHandlersRequireLedgerReservationContracts(t *testing.T) {
 	}
 
 	dealerSource := readHandlerSource(t, "dealer.go")
-	adminSweepBody := extractHandlerFunctionBody(t, dealerSource, "HandleAdminSweep")
+	adminSweepBody := extractHandlerFunctionBody(t, dealerSource, "HandleAdminRecoverFunds")
 	for _, required := range []string{
 		"CreateWithHold",
 		"ApproveWithTransfer",
 		"manual sweep requires an explicit amount",
 	} {
 		if !strings.Contains(adminSweepBody, required) {
-			t.Fatalf("admin sweep reservation contract missing %q", required)
+			t.Fatalf("admin recover funds reservation contract missing %q", required)
 		}
 	}
 	if strings.Contains(adminSweepBody, "ExecuteWalletTransfer(deps.WalletRepo, deps.Blockchains, params, isSweep)") {
-		t.Fatal("admin sweep must not direct-broadcast through ExecuteWalletTransfer without a hold")
+		t.Fatal("admin recover funds must not direct-broadcast through ExecuteWalletTransfer without a hold")
 	}
 }
 
 func TestAdminOutboundTransfersCarrySignerAuditContext(t *testing.T) {
 	source := readHandlerSource(t, "dealer.go")
 	for name, body := range map[string]string{
-		"HandleAdminSweep":             extractHandlerFunctionBody(t, source, "HandleAdminSweep"),
+		"HandleAdminRecoverFunds":      extractHandlerFunctionBody(t, source, "HandleAdminRecoverFunds"),
 		"HandleAdminWithdrawalApprove": extractHandlerFunctionBody(t, source, "HandleAdminWithdrawalApprove"),
 		"HandleAdminRefundApprove":     extractHandlerFunctionBody(t, source, "HandleAdminRefundApprove"),
 	} {
@@ -529,6 +556,107 @@ func TestAddTokenAmountRawSumsSignedLedgerValues(t *testing.T) {
 	}
 }
 
+func TestDealerVaultBalanceViewsSeparatesAvailableAndTransit(t *testing.T) {
+	token := "TToken"
+	rows := []repositories.LedgerBalanceRow{
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountMerchantAvailable, BalanceRaw: "100000000"},
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountMerchantPending, BalanceRaw: "2000000"},
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountWithdrawalTransit, BalanceRaw: "3000000"},
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountRefundTransit, BalanceRaw: "1000000"},
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountSweepTransit, BalanceRaw: "500000"},
+		{ChainID: int64(constants.TRON), Token: &token, Symbol: "USDT", Decimals: 6, Account: models.LedgerAccountPlatformClearing, BalanceRaw: "999999999"},
+	}
+
+	views := dealerVaultBalanceViews(rows, nil)
+	if len(views) != 1 {
+		t.Fatalf("views = %d, want 1", len(views))
+	}
+	view := views[0]
+	if view.Symbol != "USDT" || len(view.Details) != 1 {
+		t.Fatalf("vault group = %#v, want one USDT detail", view)
+	}
+	if view.AvailableDisplay != "100" || view.PendingDisplay != "2" || view.WithdrawalDisplay != "3" || view.RefundDisplay != "1" || view.SweepDisplay != "0.5" {
+		t.Fatalf("vault account displays = %#v", view)
+	}
+	if view.LockedDisplay != "4.5" || view.VaultDisplay != "106.5" {
+		t.Fatalf("vault totals = locked %q vault %q, want 4.5 and 106.5", view.LockedDisplay, view.VaultDisplay)
+	}
+	detail := view.Details[0]
+	if detail.AvailableDisplay != "100" || detail.VaultDisplay != "106.5" {
+		t.Fatalf("vault detail = %#v, want same USDT totals", detail)
+	}
+}
+
+func TestDealerVaultBalanceViewsIncludesRegistryAssetsWithoutLedgerRows(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewTRC20(constants.TRON, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT", "Tether USD", 6))
+
+	views := dealerVaultBalanceViews(nil, registry)
+	if len(views) != 1 {
+		t.Fatalf("views = %d, want 1", len(views))
+	}
+	view := views[0]
+	if view.Symbol != "USDT" {
+		t.Fatalf("view asset = %#v, want USDT group", view)
+	}
+	if len(view.Details) != 1 || view.Details[0].Chain != "TRON" || view.Details[0].Symbol != "USDT" {
+		t.Fatalf("view details = %#v, want TRON USDT", view.Details)
+	}
+	for name, got := range map[string]string{
+		"vault":      view.VaultDisplay,
+		"available":  view.AvailableDisplay,
+		"pending":    view.PendingDisplay,
+		"withdrawal": view.WithdrawalDisplay,
+		"refund":     view.RefundDisplay,
+		"sweep":      view.SweepDisplay,
+	} {
+		if got != "0" {
+			t.Fatalf("%s display = %q, want 0", name, got)
+		}
+	}
+}
+
+func TestDealerVaultBalanceViewsGroupsWrappedAssetsByCanonicalSymbol(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.RegisterAlias("WETH", "ETH")
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	registry.Register(asset.NewERC20(constants.Base, "0x4200000000000000000000000000000000000006", "WETH", "Wrapped Ether", 18))
+	wethToken := "0x4200000000000000000000000000000000000006"
+	rows := []repositories.LedgerBalanceRow{
+		{ChainID: int64(constants.Ethereum), Symbol: "ETH", Decimals: 18, Account: models.LedgerAccountMerchantAvailable, BalanceRaw: "1000000000000000000"},
+		{ChainID: int64(constants.Base), Token: &wethToken, Symbol: "WETH", Decimals: 18, Account: models.LedgerAccountMerchantAvailable, BalanceRaw: "2500000000000000000"},
+	}
+
+	views := dealerVaultBalanceViews(rows, registry)
+	if len(views) != 1 {
+		t.Fatalf("views = %d, want one ETH group", len(views))
+	}
+	view := views[0]
+	if view.Symbol != "ETH" {
+		t.Fatalf("group symbol = %q, want ETH", view.Symbol)
+	}
+	if view.VaultDisplay != "3.5" || view.AvailableDisplay != "3.5" {
+		t.Fatalf("group totals = vault %q available %q, want 3.5", view.VaultDisplay, view.AvailableDisplay)
+	}
+	if view.NetworkCount != 2 || view.VariantCount != 2 || len(view.Details) != 2 {
+		t.Fatalf("group counts/details = networks %d variants %d details %#v", view.NetworkCount, view.VariantCount, view.Details)
+	}
+	if !strings.Contains(view.SearchText, "WETH") || !strings.Contains(view.SearchText, "Base") {
+		t.Fatalf("search text = %q, want wrapped asset detail terms", view.SearchText)
+	}
+}
+
+func TestTokenAmountSortValueNormalizesDecimals(t *testing.T) {
+	usdt100 := tokenAmountSortValue("100000000", 6)
+	eth1 := tokenAmountSortValue("1000000000000000000", 18)
+	if compareBigIntStrings(t, usdt100, eth1) <= 0 {
+		t.Fatalf("sort value for 100 USDT = %s, want greater than 1 ETH sort value %s", usdt100, eth1)
+	}
+	if got := tokenAmountSortValue("1", 18); got != "1000000000000000000" {
+		t.Fatalf("sort value for 1 raw wei = %s, want 1000000000000000000", got)
+	}
+}
+
 func TestDealerWebhookDeliveryViewsExposeDeadLetterReplayDiagnostics(t *testing.T) {
 	now := time.Date(2026, 6, 27, 12, 0, 0, 0, time.UTC)
 	originalID := uuid.New()
@@ -617,4 +745,17 @@ func readHandlerSource(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(sourceBytes)
+}
+
+func compareBigIntStrings(t *testing.T, left, right string) int {
+	t.Helper()
+	leftValue, ok := new(big.Int).SetString(left, 10)
+	if !ok {
+		t.Fatalf("invalid integer %q", left)
+	}
+	rightValue, ok := new(big.Int).SetString(right, 10)
+	if !ok {
+		t.Fatalf("invalid integer %q", right)
+	}
+	return leftValue.Cmp(rightValue)
 }

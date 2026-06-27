@@ -44,11 +44,17 @@
         </div>
         <div class="admin-nav-group">
           <p class="admin-nav-group-title">Para Akışı</p>
+          <a class="admin-nav-link" href="{{.AdminVaultURL}}" aria-selected="{{if eq .AdminPanel "vault"}}true{{else}}false{{end}}"><span>Vault</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminDepositsURL}}" aria-selected="{{if eq .AdminPanel "deposits"}}true{{else}}false{{end}}"><span>Deposits</span><span class="admin-nav-dot"></span></a>
-          <a class="admin-nav-link" href="{{.AdminTestDepositURL}}" aria-selected="{{if eq .AdminPanel "test-deposit"}}true{{else}}false{{end}}"><span>Test Deposit</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminWithdrawalsURL}}" aria-selected="{{if eq .AdminPanel "withdrawals"}}true{{else}}false{{end}}"><span>Withdrawals</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminRefundsURL}}" aria-selected="{{if eq .AdminPanel "refunds"}}true{{else}}false{{end}}"><span>Refunds</span><span class="admin-nav-dot"></span></a>
-          <a class="admin-nav-link" href="{{.AdminSweepURL}}" aria-selected="{{if eq .AdminPanel "sweep"}}true{{else}}false{{end}}"><span>Recover Funds</span><span class="admin-nav-dot"></span></a>
+          <a class="admin-nav-link" href="{{.AdminSweepURL}}" aria-selected="{{if eq .AdminPanel "sweep"}}true{{else}}false{{end}}"><span>Sweep</span><span class="admin-nav-dot"></span></a>
+          <a class="admin-nav-link" href="{{.AdminRecoverURL}}" aria-selected="{{if eq .AdminPanel "recover"}}true{{else}}false{{end}}"><span>Recover Funds</span><span class="admin-nav-dot"></span></a>
+        </div>
+        <div class="admin-nav-group">
+          <p class="admin-nav-group-title">Testler</p>
+          <a class="admin-nav-link" href="{{.AdminTestsURL}}" aria-selected="{{if eq .AdminPanel "tests"}}true{{else}}false{{end}}"><span>Test Menüsü</span><span class="admin-nav-dot"></span></a>
+          <a class="admin-nav-link" href="{{.AdminTestDepositURL}}" aria-selected="{{if eq .AdminPanel "test-deposit"}}true{{else}}false{{end}}"><span>Test Deposit</span><span class="admin-nav-dot"></span></a>
         </div>
         <div class="admin-nav-group">
           <p class="admin-nav-group-title">Sistem</p>
@@ -72,8 +78,8 @@
     <div class="rounded-3xl border border-line bg-white p-4"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Çekim talebi</span><strong class="mt-2 block text-[30px] font-black leading-none text-ink">{{.WithdrawalCount}}</strong><a class="mt-2 inline-flex text-[11px] font-bold text-accent hover:underline" href="{{.AdminWithdrawalsURL}}">Tümünü gör →</a></div>
     <div class="rounded-3xl border border-line bg-white p-4"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Wallet</span><strong class="mt-2 block text-[30px] font-black leading-none text-ink">{{.WalletCountAll}}</strong><a class="mt-2 inline-flex text-[11px] font-bold text-accent hover:underline" href="{{.AdminWalletsURL}}">Tümünü gör →</a></div>
     <div class="rounded-3xl border border-line bg-white p-4"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Activity log</span><strong class="mt-2 block text-[30px] font-black leading-none text-ink">{{.ActivityCount}}</strong><a class="mt-2 inline-flex text-[11px] font-bold text-accent hover:underline" href="{{.AdminActivityURL}}">Tümünü gör →</a></div>
-    <div class="rounded-3xl border border-line bg-white p-4 sm:col-span-2"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Test Deposit</span><p class="mt-2 text-[13px] font-semibold text-muted">Admin-only sentetik deposit oluşturup webhook tetikle.</p><a class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-[13px] font-extrabold text-white hover:opacity-80" href="{{.AdminTestDepositURL}}">Test Deposit →</a></div>
-    <div class="rounded-3xl border border-line bg-white p-4 sm:col-span-2"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Recover Funds</span><p class="mt-2 text-[13px] font-semibold text-muted">Seçilen wallet'taki on-chain bakiyeyi başka wallet'a veya adrese taşı.</p><a class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-[13px] font-extrabold text-white hover:opacity-80" href="{{.AdminSweepURL}}">Recover →</a></div>
+    <div class="rounded-3xl border border-line bg-white p-4 sm:col-span-2"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Testler</span><p class="mt-2 text-[13px] font-semibold text-muted">Test deposit ve test withdraw aksiyonları.</p><a class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-[13px] font-extrabold text-white hover:opacity-80" href="{{.AdminTestsURL}}">Test Menüsü →</a></div>
+    <div class="rounded-3xl border border-line bg-white p-4 sm:col-span-2"><span class="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">Recover Funds</span><p class="mt-2 text-[13px] font-semibold text-muted">Seçilen wallet'taki on-chain bakiyeyi başka wallet'a veya adrese taşı.</p><a class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-[13px] font-extrabold text-white hover:opacity-80" href="{{.AdminRecoverURL}}">Recover →</a></div>
   </div>
   {{if .AdminDeposits}}
   <div class="rounded-3xl border border-line bg-white">
@@ -136,6 +142,22 @@
       </label>
       <button class="inline-flex min-h-11 items-center justify-center rounded-full bg-accent px-5 text-sm font-extrabold text-white hover:bg-accentHover" type="submit">Yeniden işle</button>
     </form>
+  </div>
+  {{end}}
+
+  {{/* ══════ TESTS ══════ */}}
+  {{if eq .AdminPanel "tests"}}
+  <div class="grid gap-4 md:grid-cols-2">
+    <a class="group rounded-3xl border border-line bg-white p-5 transition hover:border-accent hover:bg-wash" href="{{.AdminTestDepositURL}}">
+      <span class="text-[10px] font-black uppercase tracking-[0.08em] text-muted">Deposit</span>
+      <strong class="mt-2 block text-lg font-black text-ink">Test Deposit</strong>
+      <span class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-xs font-extrabold text-white group-hover:opacity-80">Aç</span>
+    </a>
+    <a class="group rounded-3xl border border-line bg-white p-5 transition hover:border-accent hover:bg-wash" href="{{.AdminRecoverURL}}">
+      <span class="text-[10px] font-black uppercase tracking-[0.08em] text-muted">Withdraw</span>
+      <strong class="mt-2 block text-lg font-black text-ink">Test Withdraw</strong>
+      <span class="mt-3 inline-flex min-h-9 items-center justify-center rounded-full bg-ink px-4 text-xs font-extrabold text-white group-hover:opacity-80">Aç</span>
+    </a>
   </div>
   {{end}}
 
@@ -271,6 +293,112 @@
       </table>
     </div>
     {{template "pg" .AdminPagination}}
+  </div>
+  {{end}}
+
+  {{/* ══════ VAULT ══════ */}}
+  {{if eq .AdminPanel "vault"}}
+  <div class="rounded-3xl border border-line bg-white">
+    <div class="flex flex-wrap items-end justify-between gap-3 border-b border-line px-5 py-4">
+      <div>
+        <h2 class="m-0 text-lg font-black text-ink">Vault</h2>
+        <p class="m-0 mt-0.5 text-xs font-semibold text-muted">Ledger hesap toplamları</p>
+      </div>
+      <span class="inline-flex rounded-full bg-wash px-3 py-1 text-xs font-black text-muted">{{len .AdminVaults}} asset</span>
+    </div>
+    <div class="admin-data-toolbar">
+      <input class="admin-data-search" type="search" placeholder="Vault ara" aria-label="Vault ara" autocomplete="off" spellcheck="false" data-admin-table-search="admin-vault-table">
+      <span class="admin-data-count" data-admin-table-count="admin-vault-table" data-total="{{len .AdminVaults}}">{{len .AdminVaults}} asset</span>
+    </div>
+    <div class="adm-wrap rounded-none border-0 border-t-0">
+      <table class="adm-table admin-data-table" id="admin-vault-table" data-admin-table>
+        <thead>
+          <tr>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="text">Asset <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Network <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Vault toplam <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Kullanılabilir <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Bekleyen deposit <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Çekim hold <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Refund hold <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            <th><button class="admin-sort-button" type="button" data-admin-sort="number">Recover transit <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .AdminVaults}}
+        <tr data-admin-table-row data-admin-table-key="{{.ID}}" data-search="{{.SearchText}}">
+          <td data-sort-value="{{.Symbol}}">
+            <span class="adm-asset admin-vault-asset">
+              <button class="admin-expand-button" type="button" aria-label="{{.Symbol}} network detayını aç" aria-expanded="false" aria-controls="{{.ID}}-details" data-admin-table-toggle="{{.ID}}">
+                <span aria-hidden="true"></span>
+              </button>
+              {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="adm-coin-icon">{{end}}
+              <strong class="text-ink">{{.Symbol}}</strong>
+            </span>
+            <span class="admin-vault-meta">{{.NetworkCount}} network{{if gt .VariantCount 1}} · {{.VariantCount}} asset{{end}}</span>
+          </td>
+          <td class="text-xs font-semibold whitespace-nowrap" data-sort-value="{{.NetworkCount}}">
+            {{.NetworkCount}}
+          </td>
+          <td class="font-mono whitespace-nowrap" data-sort-value="{{.VaultSort}}"><strong>{{.VaultDisplay}}</strong> <span class="text-xs text-muted">{{.Symbol}}</span></td>
+          <td class="font-mono whitespace-nowrap text-emerald-700" data-sort-value="{{.AvailableSort}}"><strong>{{.AvailableDisplay}}</strong> <span class="text-xs">{{.Symbol}}</span></td>
+          <td class="font-mono whitespace-nowrap" data-sort-value="{{.PendingSort}}">{{.PendingDisplay}} <span class="text-xs text-muted">{{.Symbol}}</span></td>
+          <td class="font-mono whitespace-nowrap text-amber-700" data-sort-value="{{.WithdrawalSort}}">{{.WithdrawalDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+          <td class="font-mono whitespace-nowrap text-amber-700" data-sort-value="{{.RefundSort}}">{{.RefundDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+          <td class="font-mono whitespace-nowrap text-blue-700" data-sort-value="{{.SweepSort}}">{{.SweepDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+        </tr>
+        <tr class="admin-vault-detail-row" id="{{.ID}}-details" data-admin-table-detail-for="{{.ID}}" hidden>
+          <td colspan="8">
+            <div class="admin-vault-detail">
+              <table class="admin-vault-detail-table">
+                <thead>
+                  <tr>
+                    <th>Network</th>
+                    <th>Asset</th>
+                    <th>Vault toplam</th>
+                    <th>Kullanılabilir</th>
+                    <th>Bekleyen deposit</th>
+                    <th>Çekim hold</th>
+                    <th>Refund hold</th>
+                    <th>Recover transit</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{range .Details}}
+                  <tr>
+                    <td class="text-xs font-semibold whitespace-nowrap">
+                      <span class="adm-asset">
+                        {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="adm-chain-icon">{{end}}
+                        {{.Chain}}
+                      </span>
+                    </td>
+                    <td class="whitespace-nowrap">
+                      <span class="adm-asset">
+                        {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="adm-coin-icon">{{end}}
+                        <strong class="text-ink">{{.Symbol}}</strong>
+                      </span>
+                      {{if ne .DisplayToken "-"}}<code class="mt-1 block max-w-[180px] truncate" title="{{.Token}}">{{.DisplayToken}}</code>{{end}}
+                    </td>
+                    <td class="font-mono whitespace-nowrap"><strong>{{.VaultDisplay}}</strong> <span class="text-xs text-muted">{{.Symbol}}</span></td>
+                    <td class="font-mono whitespace-nowrap text-emerald-700"><strong>{{.AvailableDisplay}}</strong> <span class="text-xs">{{.Symbol}}</span></td>
+                    <td class="font-mono whitespace-nowrap">{{.PendingDisplay}} <span class="text-xs text-muted">{{.Symbol}}</span></td>
+                    <td class="font-mono whitespace-nowrap text-amber-700">{{.WithdrawalDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+                    <td class="font-mono whitespace-nowrap text-amber-700">{{.RefundDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+                    <td class="font-mono whitespace-nowrap text-blue-700">{{.SweepDisplay}} <span class="text-xs">{{.Symbol}}</span></td>
+                  </tr>
+                  {{end}}
+                </tbody>
+              </table>
+            </div>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="8" class="py-8 text-center text-sm text-muted">Vault bakiyesi yok.</td></tr>
+        {{end}}
+        <tr data-admin-table-empty hidden><td colspan="8" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
   {{end}}
 
@@ -650,6 +778,36 @@
 
   {{/* ══════ SWEEP ══════ */}}
   {{if eq .AdminPanel "sweep"}}
+  <div class="grid gap-4">
+    <div class="rounded-3xl border border-line bg-white">
+      <div class="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+        <div>
+          <h2 class="m-0 text-lg font-black text-ink">Sweep</h2>
+          <p class="m-0 mt-1 text-sm font-semibold text-muted">Deposit sonrası wallet bakiyelerini merchant reserve wallet'a taşıyan otomatik iş kuyruğu.</p>
+        </div>
+        <a class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-wash px-4 text-xs font-extrabold text-ink hover:bg-white" href="{{.AdminRecoverURL}}">Recover Funds</a>
+      </div>
+      <div class="grid gap-0 sm:grid-cols-5">
+        {{range .AdminSweepStats}}
+        <div class="border-b border-line px-5 py-4 sm:border-r sm:last:border-r-0">
+          <span class="text-[10px] font-black uppercase tracking-[0.08em] text-muted">{{.Label}}</span>
+          <strong class="mt-2 block text-2xl font-black text-ink">{{.Count}}</strong>
+          <code class="text-xs font-semibold text-muted">{{.Status}}</code>
+        </div>
+        {{else}}
+        <div class="px-5 py-8 text-sm font-semibold text-muted">Sweep job altyapısı hazır değil.</div>
+        {{end}}
+      </div>
+      <div class="grid gap-3 px-5 py-4 text-xs font-semibold leading-5 text-muted">
+        <p class="m-0">Sweep, merchant user wallet'larındaki depositleri reserve wallet'a toplar. TRC20 sweep öncesi kaynak wallet'ta TRX yoksa reserve wallet'tan gas prefund yapılır.</p>
+        <p class="m-0">Tek bir wallet'tan farklı bir adrese manuel transfer gerekiyorsa Recover Funds kullanılır.</p>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  {{/* ══════ RECOVER FUNDS ══════ */}}
+  {{if eq .AdminPanel "recover"}}
   <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_430px]">
 
     <div class="rounded-3xl border border-line bg-white shadow-sm">
@@ -661,7 +819,7 @@
         <span class="inline-flex rounded-full bg-wash px-3 py-1 text-xs font-black text-muted">On-chain işlem</span>
       </div>
       <div class="p-5">
-        <form method="post" action="/admin/sweep" class="grid gap-5" id="sweep-form">
+        <form method="post" action="/admin/recover" class="grid gap-5" id="recover-form">
           <div class="grid gap-4">
             <label class="admin-sweep-field">
               <span class="admin-sweep-label">Source wallet <span class="text-red-500">*</span></span>

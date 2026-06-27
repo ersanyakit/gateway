@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestExecuteAutoSweepDepositWithJobUsesReservedAmountTransfers(t *testing.T) {
+func TestExecuteAutoSweepDepositWithJobUsesReservedTokenAndNativeTronSweep(t *testing.T) {
 	sourceBytes, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatal(err)
@@ -14,19 +14,16 @@ func TestExecuteAutoSweepDepositWithJobUsesReservedAmountTransfers(t *testing.T)
 	body := extractMainSweepFunctionBody(t, string(sourceBytes), "executeAutoSweepDepositWithJob")
 	for _, token := range []string{
 		"chain.WithdrawToken(ctx, *userDetails, *txModel.Token, txModel.Amount, reserveAddr)",
+		"txModel.ChainID == constants.TRON",
+		"chain.SweepTo(ctx, *userDetails, reserveAddr)",
 		"chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)",
 	} {
 		if !strings.Contains(body, token) {
-			t.Fatalf("executeAutoSweepDepositWithJob missing reserved amount transfer %q", token)
+			t.Fatalf("executeAutoSweepDepositWithJob missing sweep transfer token %q", token)
 		}
 	}
-	for _, token := range []string{
-		"chain.SweepERC20To(",
-		"chain.SweepTo(",
-	} {
-		if strings.Contains(body, token) {
-			t.Fatalf("executeAutoSweepDepositWithJob must not call full-wallet sweep API %q", token)
-		}
+	if strings.Contains(body, "chain.SweepERC20To(") {
+		t.Fatal("executeAutoSweepDepositWithJob must not use full-token sweep; ledger amount stays txModel.Amount")
 	}
 }
 
