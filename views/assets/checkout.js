@@ -51,10 +51,14 @@ document.addEventListener('DOMContentLoaded', function () {
       if (!button) {
         return;
       }
-      var original = button.innerHTML;
-      button.innerText = 'Copied';
+      var original = button.getAttribute('data-copy-original-html') || button.innerHTML;
+      var copiedLabel = document.documentElement.lang === 'tr' ? 'Kopyalandı' : 'Copied';
+      button.setAttribute('data-copy-original-html', original);
+      button.classList.add('is-copied');
+      button.innerText = copiedLabel;
       window.setTimeout(function () {
         button.innerHTML = original;
+        button.classList.remove('is-copied');
       }, 1500);
     }
 
