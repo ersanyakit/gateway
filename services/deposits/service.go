@@ -208,8 +208,8 @@ func (s *Service) settleFinalizedTransaction(ctx context.Context, txModel *model
 	if err != nil {
 		return summary, err
 	}
-	if matchResult != nil && matchResult.Changed && matchResult.Session != nil {
-		if matchResult.Status == models.PaymentStatusPaid {
+	if matchResult != nil && matchResult.Session != nil {
+		if matchResult.Changed && matchResult.Status == models.PaymentStatusPaid {
 			summary.PaymentsSettled = 1
 		}
 		if matchResult.LedgerEligible {

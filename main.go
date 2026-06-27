@@ -624,7 +624,7 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 		log.Println("Payment match error:", err)
 		return
 	}
-	if matchResult == nil || !matchResult.Changed || matchResult.Session == nil {
+	if matchResult == nil || matchResult.Session == nil {
 		postStaticAddressDepositAvailable(ctx, txModel)
 		return
 	}

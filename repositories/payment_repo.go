@@ -442,6 +442,15 @@ func (r *PaymentRepo) MatchFinalizedTransaction(ctx context.Context, txModel mod
 	if r == nil || r.db == nil {
 		return nil, nil
 	}
+	if strings.TrimSpace(txModel.UniqueHash) != "" {
+		existing, err := r.FindByTxUniqueHash(ctx, txModel.UniqueHash)
+		if err == nil {
+			return paymentMatchResultFromSession(existing, false), nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
 
 	var sessions []models.PaymentSession
 	if err := r.db.WithContext(ctx).
@@ -544,6 +553,20 @@ func (r *PaymentRepo) applyPaymentMatchDecision(ctx context.Context, sessionID u
 		WebhookEvent:   decision.WebhookEvent,
 		LedgerEligible: decision.LedgerEligible,
 	}, nil
+}
+
+func paymentMatchResultFromSession(session *models.PaymentSession, changed bool) *PaymentMatchResult {
+	if session == nil {
+		return nil
+	}
+	return &PaymentMatchResult{
+		Session:        session,
+		Changed:        changed,
+		Status:         session.Status,
+		Outcome:        session.PaymentOutcome,
+		WebhookEvent:   session.WebhookEvent,
+		LedgerEligible: session.TxUniqueHash != nil,
+	}
 }
 
 func paymentMatchDecisionForSession(session models.PaymentSession, txModel models.Transaction, now time.Time) (paymentMatchDecision, bool) {
