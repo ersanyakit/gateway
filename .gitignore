@@ -2,3 +2,4 @@
 node_modules/
 .cache/
 _bmad-output/**/.memlog.md
+.agents/.story-automator-active

@@ -4,7 +4,8 @@ const WebhookEventVersionV1 = "v1"
 
 const (
 	WebhookEventNativeTransfer        = "native_transfer"
-	WebhookEventTransactionReorged    = "transaction_reorged"
+	WebhookEventTransactionReorged    = "transaction.reorged.v1"
+	WebhookEventTransactionReorgedOld = "transaction_reorged"
 	WebhookEventPaymentSucceeded      = "payment_succeeded"
 	WebhookEventPaymentFailed         = "payment_failed"
 	WebhookEventPaymentExpired        = "payment_expired"

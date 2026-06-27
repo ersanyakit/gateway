@@ -87,6 +87,56 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 	}
 }
 
+func TestBlockSchemaIsRegistered(t *testing.T) {
+	if !autoMigrateModelsIncludes(&models.Block{}) {
+		t.Fatal("Block must be registered in AutoMigrate models")
+	}
+
+	required := map[string]bool{
+		"ChainID":          false,
+		"Number":           false,
+		"Hash":             false,
+		"ParentHash":       false,
+		"Processed":        false,
+		"Canonical":        false,
+		"Status":           false,
+		"ReorgedAt":        false,
+		"SupersededByHash": false,
+		"CorrectionReason": false,
+	}
+	for _, column := range requiredSchemaColumns() {
+		if column.table != "blocks" {
+			continue
+		}
+		if _, ok := required[column.field]; ok {
+			required[column.field] = true
+		}
+	}
+	for field, found := range required {
+		if !found {
+			t.Fatalf("VerifySchema does not require blocks.%s", field)
+		}
+	}
+
+	requiredIndexes := map[string]bool{
+		"ux_blocks_chain_hash":        false,
+		"ux_blocks_chain_number_hash": false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if index.table != "blocks" {
+			continue
+		}
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require blocks index %s", name)
+		}
+	}
+}
+
 func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
 	required := map[string]bool{
 		"ledger_entries_entry_type_check": false,
@@ -128,6 +178,43 @@ func TestPaymentOutcomeSchemaColumnsAreRequired(t *testing.T) {
 	for field, found := range required {
 		if !found {
 			t.Fatalf("VerifySchema does not require payment_sessions.%s", field)
+		}
+	}
+}
+
+func TestReorgCorrectionSchemaColumnsAreRequired(t *testing.T) {
+	required := map[string]map[string]bool{
+		"chain_facts": {
+			"Status":              false,
+			"ReorgedAt":           false,
+			"SupersededByEventID": false,
+			"CorrectionReason":    false,
+		},
+		"deposits": {
+			"ReorgedAt":           false,
+			"SupersededByEventID": false,
+			"CorrectionReason":    false,
+		},
+		"transactions": {
+			"OriginalEventID":    false,
+			"OriginalResourceID": false,
+			"CorrectionReason":   false,
+		},
+	}
+	for _, column := range requiredSchemaColumns() {
+		fields, ok := required[column.table]
+		if !ok {
+			continue
+		}
+		if _, ok := fields[column.field]; ok {
+			fields[column.field] = true
+		}
+	}
+	for table, fields := range required {
+		for field, found := range fields {
+			if !found {
+				t.Fatalf("VerifySchema does not require %s.%s", table, field)
+			}
 		}
 	}
 }

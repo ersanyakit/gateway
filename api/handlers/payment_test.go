@@ -445,10 +445,12 @@ func TestCheckoutPayerStateMapsLifecycleStates(t *testing.T) {
 			mode:     "expired",
 		},
 		{
-			name: "failed terminal",
+			name: "reorg failed terminal with tx hash",
 			session: models.PaymentSession{
-				Status:    models.PaymentStatusFailed,
-				ExpiresAt: &future,
+				Status:               models.PaymentStatusFailed,
+				TxHash:               &txHash,
+				PaymentOutcomeReason: "matched transaction was reorged",
+				ExpiresAt:            &future,
 			},
 			status:   checkoutStateFailed,
 			terminal: true,

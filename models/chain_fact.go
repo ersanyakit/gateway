@@ -12,6 +12,10 @@ const (
 	ChainFactDirectionTo      = "to"
 	ChainFactDirectionFrom    = "from"
 	ChainFactDirectionUnknown = "unknown"
+
+	ChainFactStatusObserved   = "observed"
+	ChainFactStatusReorged    = "reorged"
+	ChainFactStatusSuperseded = "superseded"
 )
 
 type ChainFact struct {
@@ -33,11 +37,15 @@ type ChainFact struct {
 	Decimals  uint8   `gorm:"not null" json:"decimals"`
 	AmountRaw string  `gorm:"type:text;not null" json:"amount_raw"`
 
-	Confirmations         uint   `gorm:"not null;default:0" json:"confirmations"`
-	ConfirmationsRequired uint   `gorm:"not null;default:0" json:"confirmations_required"`
-	Finalized             bool   `gorm:"not null;default:false;index" json:"finalized"`
-	SourceEventType       string `gorm:"size:80;not null;index" json:"source_event_type"`
-	RawMetadataJSON       string `gorm:"type:jsonb" json:"raw_metadata_json,omitempty"`
+	Confirmations         uint       `gorm:"not null;default:0" json:"confirmations"`
+	ConfirmationsRequired uint       `gorm:"not null;default:0" json:"confirmations_required"`
+	Finalized             bool       `gorm:"not null;default:false;index" json:"finalized"`
+	Status                string     `gorm:"size:32;not null;default:'observed';index" json:"status"`
+	ReorgedAt             *time.Time `gorm:"index" json:"reorged_at,omitempty"`
+	SupersededByEventID   string     `gorm:"size:256;index" json:"superseded_by_event_id,omitempty"`
+	CorrectionReason      string     `gorm:"size:256" json:"correction_reason,omitempty"`
+	SourceEventType       string     `gorm:"size:80;not null;index" json:"source_event_type"`
+	RawMetadataJSON       string     `gorm:"type:jsonb" json:"raw_metadata_json,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

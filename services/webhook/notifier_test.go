@@ -97,6 +97,68 @@ func TestNotifierDeliverSignsAndPostsTransaction(t *testing.T) {
 	}
 }
 
+func TestNotifierDeliverIncludesTransactionCorrectionRelation(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventTransactionReorged {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	tx := models.Transaction{
+		ID:                 uuid.New(),
+		UniqueHash:         "1-0xreorg-log:1",
+		EventType:          constants.WebhookEventTransactionReorged,
+		MerchantID:         &merchantID,
+		DomainID:           &domainID,
+		ChainID:            constants.Ethereum,
+		Hash:               "0xreorg",
+		BlockNumber:        "123",
+		BlockHash:          "0xblock",
+		Symbol:             "ETH",
+		Decimals:           18,
+		FromAddress:        "0xfrom",
+		ToAddress:          "0xto",
+		Amount:             "100",
+		Status:             models.TransactionStatusReorged,
+		OriginalEventID:    "1-0xreorg-log:1:native_transfer",
+		OriginalResourceID: "1-0xreorg-log:1",
+		CorrectionReason:   "reorg_detected:1:123",
+		CreatedAt:          time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.Deliver(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.OriginalEventID != tx.OriginalEventID || received.OriginalResourceID != tx.OriginalResourceID || received.CorrectionReason != tx.CorrectionReason {
+		t.Fatalf("correction relation fields not populated: %#v", received)
+	}
+}
+
 func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 	notifier := NewNotifier()
 	domain := models.Domain{ID: uuid.New()}
@@ -110,6 +172,66 @@ func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
 		t.Fatal("empty webhook secret should fail")
 	} else if !IsPermanent(err) {
 		t.Fatalf("empty webhook secret error should be permanent: %v", err)
+	}
+}
+
+func TestNotifierDeliverIncludesTransactionCorrectionMetadata(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventTransactionReorged {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	tx := models.Transaction{
+		ID:                 uuid.New(),
+		UniqueHash:         "1-0xabc-log:1",
+		EventType:          constants.WebhookEventTransactionReorged,
+		ChainID:            constants.Ethereum,
+		Hash:               "0xabc",
+		BlockNumber:        "123",
+		BlockHash:          "0xblock",
+		Symbol:             "ETH",
+		Decimals:           18,
+		FromAddress:        "0xfrom",
+		ToAddress:          "0xto",
+		Amount:             "100",
+		Status:             models.TransactionStatusReorged,
+		OriginalEventID:    "1-0xabc-log:1:native_transfer",
+		OriginalResourceID: "1-0xabc-log:1",
+		CorrectionReason:   "reorg_detected:1:123",
+		CreatedAt:          time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	if err := notifier.Deliver(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx); err != nil {
+		t.Fatal(err)
+	}
+	if received.EventType != constants.WebhookEventTransactionReorged || received.Status != models.TransactionStatusReorged {
+		t.Fatalf("received correction identity = %#v", received)
+	}
+	if received.OriginalEventID != tx.OriginalEventID || received.OriginalResourceID != tx.OriginalResourceID || received.CorrectionReason != tx.CorrectionReason {
+		t.Fatalf("received correction metadata = %#v", received)
 	}
 }
 

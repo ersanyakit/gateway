@@ -38,6 +38,9 @@ type Transaction struct {
 	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
 	FinalizedAt           *time.Time `json:"finalized_at,omitempty"`
 	ReorgedAt             *time.Time `json:"reorged_at,omitempty"`
+	OriginalEventID       string     `gorm:"size:256;index" json:"original_event_id,omitempty"`
+	OriginalResourceID    string     `gorm:"size:256;index" json:"original_resource_id,omitempty"`
+	CorrectionReason      string     `gorm:"size:256" json:"correction_reason,omitempty"`
 
 	EventType  string     `gorm:"type:varchar(64);index" json:"event_type,omitempty"`
 	WalletID   *uuid.UUID `gorm:"type:uuid;index" json:"wallet_id,omitempty"`

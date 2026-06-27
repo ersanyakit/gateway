@@ -16,6 +16,7 @@ type TransactionParam struct {
 	Hash       *string           `json:"hash,omitempty"`
 	Block      *string           `json:"block,omitempty"`
 	BlockHash  *string           `json:"block_hash,omitempty"`
+	ParentHash *string           `json:"parent_hash,omitempty"`
 
 	Token    *string `json:"token,omitempty"`
 	Symbol   *string `json:"symbol,omitempty"`

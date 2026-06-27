@@ -442,6 +442,57 @@ func TestLedgerRepoPostingIdempotencyAndNegativeBalanceGuard(t *testing.T) {
 	requireLedgerCount(t, db, 0, "idempotency_key = ?", withdrawalHoldKey(poorWithdrawal.ID))
 }
 
+func TestLedgerRepoPostTransactionReversalSkipsReversalVoidedAndUnrelatedRows(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	txModel := ledgerTestTransaction(merchantID, domainID, walletID, "reorg-skip-"+uuid.NewString(), "11")
+
+	original := testLedgerEntryWithType("reorg-skip:original", merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositAvailable, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusPosted, "11")
+	original.TransactionUniqueHash = txModel.UniqueHash
+	original.TransactionHash = txModel.Hash
+	existingReversal := testLedgerEntryWithType("reorg-skip:existing-reversal", merchantID, &domainID, &walletID, models.LedgerEntryTypeReorgReversal, models.LedgerAccountMerchantAvailable, models.LedgerDirectionDebit, models.LedgerStatusPosted, "3")
+	existingReversal.TransactionUniqueHash = txModel.UniqueHash
+	existingReversal.TransactionHash = txModel.Hash
+	existingReversal.Reference = txModel.UniqueHash
+	voided := testLedgerEntryWithType("reorg-skip:voided", merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositAvailable, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusVoided, "5")
+	voided.TransactionUniqueHash = txModel.UniqueHash
+	voided.TransactionHash = txModel.Hash
+	unrelated := testLedgerEntryWithType("reorg-skip:unrelated", merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositAvailable, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusPosted, "7")
+	unrelated.TransactionUniqueHash = txModel.UniqueHash + ":other"
+	unrelated.TransactionHash = txModel.Hash + ":other"
+	if err := db.WithContext(ctx).Create(&[]models.LedgerEntry{original, existingReversal, voided, unrelated}).Error; err != nil {
+		t.Fatalf("seed ledger rows: %v", err)
+	}
+
+	if err := repo.PostTransactionReversal(ctx, txModel); err != nil {
+		t.Fatalf("post transaction reversal: %v", err)
+	}
+	if err := repo.PostTransactionReversal(ctx, txModel); err != nil {
+		t.Fatalf("duplicate transaction reversal: %v", err)
+	}
+
+	key := "reorg-reversal:" + original.ID.String()
+	requireLedgerCount(t, db, 1, "idempotency_key = ?", key)
+	var reversal models.LedgerEntry
+	if err := db.WithContext(ctx).First(&reversal, "idempotency_key = ?", key).Error; err != nil {
+		t.Fatalf("load reversal row: %v", err)
+	}
+	if reversal.Direction != models.LedgerDirectionDebit || reversal.Account != original.Account || reversal.Reference != txModel.UniqueHash {
+		t.Fatalf("reversal row = %#v", reversal)
+	}
+	for _, skipped := range []models.LedgerEntry{existingReversal, voided, unrelated} {
+		requireLedgerCount(t, db, 0, "idempotency_key = ?", "reorg-reversal:"+skipped.ID.String())
+	}
+	requireLedgerCount(t, db, 2, "transaction_unique_hash = ? AND entry_type = ?", txModel.UniqueHash, models.LedgerEntryTypeReorgReversal)
+}
+
 func TestLedgerRepoFindInvariantIssuesIncludesTenantScope(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {

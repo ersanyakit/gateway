@@ -88,6 +88,9 @@ func (s *Service) ProcessBatch(ctx context.Context, limit int) (ProcessSummary, 
 func (s *Service) ProcessFact(ctx context.Context, fact models.ChainFact) (ProcessSummary, error) {
 	var summary ProcessSummary
 	summary.FactsProcessed = 1
+	if chainFactCorrected(fact) {
+		return summary, nil
+	}
 
 	fact = s.factWithFinality(ctx, fact)
 	wallet, err := s.matchDepositWallet(ctx, fact)
@@ -122,6 +125,9 @@ func (s *Service) ProcessPendingDeposit(ctx context.Context, deposit models.Depo
 	fact, err := s.deps.ChainFactRepo.FindByEventID(ctx, deposit.ChainFactEventID)
 	if err != nil {
 		return summary, err
+	}
+	if chainFactCorrected(*fact) {
+		return summary, nil
 	}
 	wallet, err := s.deps.WalletRepo.FindByID(ctx, *deposit.WalletID)
 	if err != nil {
@@ -278,6 +284,11 @@ func confirmationsForBlock(blockNumber, lastProcessed, lastConfirmed int64) uint
 	return uint(confirmedHead - blockNumber + 1)
 }
 
+func chainFactCorrected(fact models.ChainFact) bool {
+	status := strings.TrimSpace(fact.Status)
+	return status == models.ChainFactStatusReorged || status == models.ChainFactStatusSuperseded
+}
+
 func transactionParamFromChainFact(ctx context.Context, fact models.ChainFact) types.TransactionParam {
 	meta := chainFactMetadata(fact)
 	from := firstNonEmpty(meta["from"], "unknown")
@@ -293,19 +304,20 @@ func transactionParamFromChainFact(ctx context.Context, fact models.ChainFact) t
 		status = models.TransactionStatusConfirmed
 	}
 	return types.TransactionParam{
-		Context:   ctx,
-		ChainID:   fact.ChainID,
-		Hash:      stringPtr(fact.TxHash),
-		Block:     &block,
-		BlockHash: stringPtr(fact.BlockHash),
-		Token:     cloneOptional(fact.Token),
-		Symbol:    stringPtr(fact.Symbol),
-		Decimals:  fact.Decimals,
-		From:      &from,
-		To:        &to,
-		Amount:    stringPtr(fact.AmountRaw),
-		LogIndex:  stringPtr(fact.LogIndex),
-		Status:    &status,
+		Context:    ctx,
+		ChainID:    fact.ChainID,
+		Hash:       stringPtr(fact.TxHash),
+		Block:      &block,
+		BlockHash:  stringPtr(fact.BlockHash),
+		ParentHash: stringPtr(firstNonEmpty(meta["parent_hash"], meta["parentHash"])),
+		Token:      cloneOptional(fact.Token),
+		Symbol:     stringPtr(fact.Symbol),
+		Decimals:   fact.Decimals,
+		From:       &from,
+		To:         &to,
+		Amount:     stringPtr(fact.AmountRaw),
+		LogIndex:   stringPtr(fact.LogIndex),
+		Status:     &status,
 	}
 }
 

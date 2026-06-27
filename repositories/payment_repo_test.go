@@ -423,6 +423,90 @@ func TestPaymentRepoMarkReorgedUpdatesAllMatchedOutcomeStatuses(t *testing.T) {
 	}
 }
 
+func TestPaymentRepoMarkReorgedDoesNotReopenAlreadyCorrectedWebhook(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {
+		t.Fatalf("automigrate payment reorg models: %v", err)
+	}
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	now := time.Now()
+	txUniqueHash := "already-corrected-" + uuid.NewString()
+	txHash := "0x" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	sentAt := now.Add(-time.Minute)
+	session := models.PaymentSession{
+		ID:                   uuid.New(),
+		SessionToken:         "reorg-idempotent-" + uuid.NewString(),
+		MerchantID:           merchantID,
+		DomainID:             domainID,
+		WalletID:             walletID,
+		OrderID:              "order-" + uuid.NewString(),
+		Amount:               "10.00",
+		Currency:             "USD",
+		Status:               models.PaymentStatusFailed,
+		PaymentOutcomeReason: paymentReorgOutcomeReason,
+		TxUniqueHash:         &txUniqueHash,
+		TxHash:               &txHash,
+		WebhookEvent:         constants.WebhookEventPaymentFailed,
+		WebhookSentAt:        &sentAt,
+		WebhookAttempts:      1,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if err := db.WithContext(ctx).Create(&models.Merchant{
+		ID:        merchantID,
+		Name:      "Payment Reorg Idempotency",
+		Email:     "payment-reorg-idempotent-" + uuid.NewString() + "@example.test",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatalf("seed merchant: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.Domain{
+		ID:          domainID,
+		MerchantID:  merchantID,
+		DomainURL:   "payment-reorg-idempotent.example.test",
+		APIKey:      "pk_" + uuid.NewString(),
+		APISecret:   "secret",
+		HDAccountID: 7003,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}).Error; err != nil {
+		t.Fatalf("seed domain: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.Wallet{
+		ID:              walletID,
+		HDAccountID:     7003,
+		HDAddressId:     1,
+		MerchantID:      merchantID,
+		DomainID:        domainID,
+		ProductID:       "checkout:test",
+		UserID:          "user-" + uuid.NewString(),
+		EthereumAddress: "0x" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}).Error; err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&session).Error; err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, txUniqueHash)
+	}); err != nil {
+		t.Fatalf("mark reorged again: %v", err)
+	}
+	var updated models.PaymentSession
+	if err := db.WithContext(ctx).First(&updated, "id = ?", session.ID).Error; err != nil {
+		t.Fatalf("load updated session: %v", err)
+	}
+	if updated.WebhookSentAt == nil || !updated.WebhookSentAt.Equal(sentAt) || updated.WebhookAttempts != 1 {
+		t.Fatalf("already corrected webhook state changed: %#v", updated)
+	}
+}
+
 func TestPaymentRepoMatchFinalizedTransactionPersistsOutcomeAndIsIdempotent(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {

@@ -59,19 +59,22 @@ type Payload struct {
 	UserID     string `json:"user_id"`
 	WalletID   string `json:"wallet_id"`
 
-	ChainID     int64   `json:"chain_id"`
-	Hash        string  `json:"hash"`
-	LogIndex    *string `json:"log_index,omitempty"`
-	BlockNumber string  `json:"block_number"`
-	BlockHash   string  `json:"block_hash"`
-	Token       *string `json:"token,omitempty"`
-	Symbol      string  `json:"symbol"`
-	Decimals    uint8   `json:"decimals"`
-	From        string  `json:"from"`
-	To          string  `json:"to"`
-	AmountRaw   string  `json:"amount_raw"`
-	Status      string  `json:"status"`
-	CreatedAt   string  `json:"created_at"`
+	ChainID            int64   `json:"chain_id"`
+	Hash               string  `json:"hash"`
+	LogIndex           *string `json:"log_index,omitempty"`
+	BlockNumber        string  `json:"block_number"`
+	BlockHash          string  `json:"block_hash"`
+	Token              *string `json:"token,omitempty"`
+	Symbol             string  `json:"symbol"`
+	Decimals           uint8   `json:"decimals"`
+	From               string  `json:"from"`
+	To                 string  `json:"to"`
+	AmountRaw          string  `json:"amount_raw"`
+	Status             string  `json:"status"`
+	OriginalEventID    string  `json:"original_event_id,omitempty"`
+	OriginalResourceID string  `json:"original_resource_id,omitempty"`
+	CorrectionReason   string  `json:"correction_reason,omitempty"`
+	CreatedAt          string  `json:"created_at"`
 }
 
 type PaymentPayload struct {
@@ -127,25 +130,28 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 	}
 
 	payload := Payload{
-		EventID:       TransactionEventID(tx),
-		EventType:     tx.EventType,
-		EventVersion:  "v1",
-		TransactionID: tx.ID.String(),
-		ProductID:     tx.ProductID,
-		UserID:        tx.UserID,
-		ChainID:       int64(tx.ChainID),
-		Hash:          tx.Hash,
-		LogIndex:      tx.LogIndex,
-		BlockNumber:   tx.BlockNumber,
-		BlockHash:     tx.BlockHash,
-		Token:         tx.Token,
-		Symbol:        tx.Symbol,
-		Decimals:      tx.Decimals,
-		From:          tx.FromAddress,
-		To:            tx.ToAddress,
-		AmountRaw:     tx.Amount,
-		Status:        tx.Status,
-		CreatedAt:     tx.CreatedAt.UTC().Format(time.RFC3339Nano),
+		EventID:            TransactionEventID(tx),
+		EventType:          tx.EventType,
+		EventVersion:       "v1",
+		TransactionID:      tx.ID.String(),
+		ProductID:          tx.ProductID,
+		UserID:             tx.UserID,
+		ChainID:            int64(tx.ChainID),
+		Hash:               tx.Hash,
+		LogIndex:           tx.LogIndex,
+		BlockNumber:        tx.BlockNumber,
+		BlockHash:          tx.BlockHash,
+		Token:              tx.Token,
+		Symbol:             tx.Symbol,
+		Decimals:           tx.Decimals,
+		From:               tx.FromAddress,
+		To:                 tx.ToAddress,
+		AmountRaw:          tx.Amount,
+		Status:             tx.Status,
+		OriginalEventID:    tx.OriginalEventID,
+		OriginalResourceID: tx.OriginalResourceID,
+		CorrectionReason:   tx.CorrectionReason,
+		CreatedAt:          tx.CreatedAt.UTC().Format(time.RFC3339Nano),
 	}
 
 	if tx.MerchantID != nil {
