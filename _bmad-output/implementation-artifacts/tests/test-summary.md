@@ -1,0 +1,47 @@
+# Test Automation Summary
+
+## Generated Tests
+
+### API Tests
+- [x] `api/handlers/payment_test.go` - Checkout payer state now explicitly covers a reorg-corrected failed payment that still has a tx hash, preventing stale `paid` or `confirming` UI/API state.
+
+### E2E / Service Workflow Tests
+- [x] `repositories/ledger_repo_test.go` - Ledger reversal workflow now proves reorg correction skips existing reversal rows, voided rows, and unrelated transaction hashes while remaining idempotent.
+- [x] Existing `repositories/transaction_repo_test.go` coverage exercises deterministic same-height fork replacement, parent mismatch block-range correction, duplicate reorg handling, webhook correction metadata, sweep dead-lettering, and reconciliation job creation.
+- [x] Existing `repositories/payment_repo_test.go` coverage exercises payment correction for paid, underpaid, overpaid, partial paid, expired-after-deposit, and already-corrected idempotent paths.
+- [x] `repositories/reconciliation_repo_test.go` - Scoped reconciliation coverage exercises active scope-key dedupe, legacy fallback dedupe, evidence recording, sensitive value redaction, retry scheduling, claim lifecycle, resolved/failed re-open behavior, webhook drift, and stuck lifecycle scopes.
+- [x] `services/reconciliation/reserve_test.go` - Reserve drift coverage now verifies scoped reconciliation job creation, tenant/resource context, affected ids/evidence JSON, and active scope-key dedupe for reserve deficits.
+- [x] Existing `services/webhook/notifier_test.go` and `services/webhook/event_catalog_test.go` coverage exercises `transaction.reorged.v1` payload metadata, reorg-corrected `payment.failed` relation fields, and legacy alias/catalog contract.
+- [x] Existing `services/deposits/service_test.go`, `services/database/database_test.go`, and `docs/integration_contract_test.go` coverage exercises corrected chain fact processing guards, schema contract fields, and integration documentation contract.
+
+## Coverage
+
+- API payment read surfaces: checkout state and status payload behavior covered for reorg-corrected failed state.
+- Ledger reversal critical errors: existing reversal row, voided row, unrelated transaction row, duplicate correction call, and normal reversal path covered.
+- Story 3.5 acceptance coverage: deterministic fork simulation, duplicate reorg event handling, stale checkout/payment state, correction webhook metadata, ledger reversal, sweep blocking, and reconciliation job creation covered by generated plus existing tests.
+- Payment correction webhook coverage now includes relation fields and legacy paid outcome backfill for deriving the prior payment lifecycle event.
+- Story 3.6 acceptance coverage: scoped reconciliation schema, active dedupe, evidence/outcome lifecycle, reorg-created scope preservation, webhook drift, stuck lifecycle scope, reserve/ledger invariant scope, and operator-visible metrics/readiness statuses are covered.
+
+## Validation
+
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./api/handlers ./docs ./services/database ./services/deposits`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database ./api/handlers`
+- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories -run TestReconciliationRepo -v`
+- [x] `OUTBOX_TEST_DATABASE_URL='host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable' GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
+- [x] `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
+- [x] `git diff --check && git diff --cached --check`
+- [x] Review rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/webhook ./docs ./services/database ./services/deposits`
+- [x] Review rerun: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
+- [x] Review rerun: `git diff --check && git diff --cached --check`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/reconciliation`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/reconciliation ./services/database`
+- [x] QA E2E generation rerun: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestOperationalMetricsIncludesBacklogAndChainState|TestV1ReadinessCountTotal|TestV1ReadinessCountDetails'`
+
+## Notes
+
+- Full repository validation passed on 2026-06-27 after running the Story 3.5 targeted packages, Postgres-backed repository/database packages, full test suite, static vet check, and whitespace checks.
+- Postgres validation caught and the implementation fixed a parent-mismatch ordering issue where generic same-height hash conflict handling could mask the more specific `parent_mismatch` correction reason.
+- Story 3.6 validation passed after running targeted packages, Postgres-backed reconciliation/database packages, full test suite, static vet check, and whitespace checks. The earlier sandbox-only listener bind failure was resolved by rerunning the same tests with the required local test-server permission.
+- QA E2E generation for Story 3.6 added reserve drift scoped reconciliation coverage. The new Postgres-backed reserve test skips when `OUTBOX_TEST_DATABASE_URL` is not configured and runs as part of `./services/reconciliation` when a test database DSN is available.

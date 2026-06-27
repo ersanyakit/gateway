@@ -7,14 +7,26 @@ import (
 	"github.com/google/uuid"
 )
 
+const (
+	BlockStatusCanonical = "canonical"
+	BlockStatusReorged   = "reorged"
+)
+
 type Block struct {
 	ID         uuid.UUID         `gorm:"type:uuid;default:uuid_generate_v4();primaryKey"`
-	ChainID    constants.ChainID `gorm:"type:bigint;index;not null"`
-	Number     int64             `gorm:"index;not null"` // block number
-	Hash       string            `gorm:"type:varchar(66);uniqueIndex"`
-	ParentHash string            `gorm:"type:varchar(66)"`
+	ChainID    constants.ChainID `gorm:"type:bigint;index;not null;uniqueIndex:ux_blocks_chain_hash,priority:1;uniqueIndex:ux_blocks_chain_number_hash,priority:1"`
+	Number     int64             `gorm:"index;not null;uniqueIndex:ux_blocks_chain_number_hash,priority:2"` // block number
+	Hash       string            `gorm:"type:varchar(128);not null;index;uniqueIndex:ux_blocks_chain_hash,priority:2;uniqueIndex:ux_blocks_chain_number_hash,priority:3"`
+	ParentHash string            `gorm:"type:varchar(128);index"`
 	Timestamp  time.Time         `gorm:"index"`
 	Processed  bool              `gorm:"index;default:false"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	Canonical  bool              `gorm:"not null;default:true;index"`
+	Status     string            `gorm:"type:varchar(32);not null;default:canonical;index"`
+	ReorgedAt  *time.Time
+
+	SupersededByHash string `gorm:"type:varchar(128);index"`
+	CorrectionReason string `gorm:"size:256"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

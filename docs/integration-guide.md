@@ -23,7 +23,7 @@ webhook:
   signature_payload: "timestamp + raw_body"
   current_events:
     - native_transfer
-    - transaction_reorged
+    - transaction.reorged.v1
     - payment_succeeded
     - payment_failed
     - payment_expired
@@ -602,7 +602,7 @@ Event example: `native_transfer`
 }
 ```
 
-Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction_reorged` correction for the same transaction has a distinct idempotency key.
+Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction.reorged.v1` correction for the same transaction has a distinct idempotency key. Reorg corrections include `original_event_id`, `original_resource_id`, and `correction_reason` so consumers can relate the correction to the prior transaction event without deleting prior history. When the reorg also corrects a payment lifecycle, the resulting `payment.failed.v1` payload includes those relation fields and references the prior payment lifecycle event when it can be derived from the preserved payment outcome.
 
 The existing underscore webhook event names remain compatibility aliases until a versioned event catalog migration explicitly retires them.
 

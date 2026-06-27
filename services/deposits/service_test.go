@@ -56,6 +56,36 @@ func TestDepositSafetyHelpers(t *testing.T) {
 	}
 }
 
+func TestCorrectedChainFactReturnsBeforeDepositProcessing(t *testing.T) {
+	svc := &Service{}
+	fact := serviceTestFact("1:0xreorg:log:1")
+	fact.Status = models.ChainFactStatusReorged
+
+	summary, err := svc.ProcessFact(context.Background(), fact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.FactsProcessed != 1 || summary.Matched != 0 || summary.TransactionsRecorded != 0 {
+		t.Fatalf("summary = %#v, want only fact processed", summary)
+	}
+}
+
+func TestPendingDepositSkipsCorrectedChainFactBeforeSettlement(t *testing.T) {
+	source := readDepositServiceSource(t)
+	body := extractFunctionBody(t, source, "ProcessPendingDeposit")
+	correctedIndex := strings.Index(body, "if chainFactCorrected(*fact)")
+	if correctedIndex == -1 {
+		t.Fatal("ProcessPendingDeposit must skip corrected chain facts")
+	}
+	settlementIndex := strings.Index(body, "ensureDepositTransaction")
+	if settlementIndex == -1 {
+		t.Fatal("ProcessPendingDeposit must call settlement for non-corrected facts")
+	}
+	if correctedIndex > settlementIndex {
+		t.Fatal("corrected chain fact guard must run before settlement")
+	}
+}
+
 func TestUnmatchedFactReturnsBeforeSettlementAdapter(t *testing.T) {
 	source := readDepositServiceSource(t)
 	body := extractFunctionBody(t, source, "ProcessFact")

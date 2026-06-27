@@ -100,12 +100,14 @@ func TestV1ReadinessCountDetails(t *testing.T) {
 
 func TestV1ReadinessCountTotal(t *testing.T) {
 	counts := map[string]int64{
-		"open":       2,
-		"processing": 3,
-		"failed":     5,
+		"open":                  2,
+		"processing":            3,
+		"needs_operator_action": 4,
+		"retry_scheduled":       1,
+		"failed":                5,
 	}
-	if got := v1ReadinessCountTotal(counts, "open", "processing", "failed"); got != 10 {
-		t.Fatalf("total = %d, want 10", got)
+	if got := v1ReadinessCountTotal(counts, "open", "processing", "needs_operator_action", "retry_scheduled", "failed"); got != 15 {
+		t.Fatalf("total = %d, want 15", got)
 	}
 }
 

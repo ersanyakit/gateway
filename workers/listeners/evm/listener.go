@@ -403,6 +403,7 @@ func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCReques
 type Block struct {
 	Number       string  `json:"number"`
 	Hash         string  `json:"hash"`
+	ParentHash   string  `json:"parentHash"`
 	Transactions []RawTx `json:"transactions"`
 }
 
@@ -503,21 +504,22 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		}
 
 		txParam := &types.TransactionParam{
-			Context:   context.Background(),
-			ChainID:   r.chain.ChainID(),
-			Symbol:    helpers.StrPtr(nativeAsset.GetSymbol()),
-			Decimals:  nativeAsset.GetDecimals(),
-			Hash:      helpers.StrPtr(tx.Hash),
-			Block:     helpers.StrPtr(readableBlockNumber),
-			BlockHash: helpers.StrPtr(block.Hash),
-			Token:     nil,
-			From:      helpers.StrPtr(r.normalizeAddress(tx.From)),
-			To:        helpers.StrPtr(r.normalizeAddress(to)),
-			Amount:    helpers.StrPtr(value.String()),
-			LogIndex:  helpers.StrPtr("tx:" + txIndex),
-			Status:    helpers.StrPtr(status),
-			GasUsed:   optionalHexBigString(receipt.GasUsed),
-			GasPrice:  optionalHexBigString(receipt.EffectiveGasPrice),
+			Context:    context.Background(),
+			ChainID:    r.chain.ChainID(),
+			Symbol:     helpers.StrPtr(nativeAsset.GetSymbol()),
+			Decimals:   nativeAsset.GetDecimals(),
+			Hash:       helpers.StrPtr(tx.Hash),
+			Block:      helpers.StrPtr(readableBlockNumber),
+			BlockHash:  helpers.StrPtr(block.Hash),
+			ParentHash: helpers.StrPtr(block.ParentHash),
+			Token:      nil,
+			From:       helpers.StrPtr(r.normalizeAddress(tx.From)),
+			To:         helpers.StrPtr(r.normalizeAddress(to)),
+			Amount:     helpers.StrPtr(value.String()),
+			LogIndex:   helpers.StrPtr("tx:" + txIndex),
+			Status:     helpers.StrPtr(status),
+			GasUsed:    optionalHexBigString(receipt.GasUsed),
+			GasPrice:   optionalHexBigString(receipt.EffectiveGasPrice),
 		}
 		if err := r.dispatch(ctx, eventType, txParam); err != nil {
 			return err
@@ -525,14 +527,14 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 
 		for _, entry := range receipt.Logs {
 			if isTransferLog(entry) {
-				if err := r.handleTransferLog(ctx, entry, status); err != nil {
+				if err := r.handleTransferLog(ctx, entry, status, block.ParentHash); err != nil {
 					return err
 				}
 			}
 		}
 	}
 
-	if err := r.processInternalTransfers(ctx, blockHex, readableBlockNumber, block.Hash, nativeAsset); err != nil {
+	if err := r.processInternalTransfers(ctx, blockHex, readableBlockNumber, block.Hash, block.ParentHash, nativeAsset); err != nil {
 		return err
 	}
 	return nil
@@ -672,7 +674,7 @@ func isTransferLog(l EVMLog) bool {
 	return len(l.Topics) >= 3 && strings.EqualFold(l.Topics[0], TransferEventHash)
 }
 
-func (r *RpcListener) handleTransferLog(ctx context.Context, l EVMLog, status string) error {
+func (r *RpcListener) handleTransferLog(ctx context.Context, l EVMLog, status string, parentHash string) error {
 	token := common.HexToAddress(l.Address)
 	from := common.BytesToAddress(common.HexToHash(l.Topics[1]).Bytes()[12:])
 	to := common.BytesToAddress(common.HexToHash(l.Topics[2]).Bytes()[12:])
@@ -700,19 +702,20 @@ func (r *RpcListener) handleTransferLog(ctx context.Context, l EVMLog, status st
 	}
 
 	txParam := &types.TransactionParam{
-		Context:   context.Background(),
-		ChainID:   r.chain.ChainID(),
-		Symbol:    helpers.StrPtr(symbol),
-		Decimals:  decimals,
-		Hash:      helpers.StrPtr(l.TransactionHash),
-		Block:     helpers.StrPtr(hexToDec(l.BlockNumber)),
-		BlockHash: helpers.StrPtr(l.BlockHash),
-		Token:     helpers.StrPtr(tokenID),
-		From:      helpers.StrPtr(r.normalizeAddress(from.Hex())),
-		To:        helpers.StrPtr(r.normalizeAddress(to.Hex())),
-		Amount:    helpers.StrPtr(value.String()),
-		LogIndex:  helpers.StrPtr("log:" + hexToDec(l.LogIndex)),
-		Status:    helpers.StrPtr(status),
+		Context:    context.Background(),
+		ChainID:    r.chain.ChainID(),
+		Symbol:     helpers.StrPtr(symbol),
+		Decimals:   decimals,
+		Hash:       helpers.StrPtr(l.TransactionHash),
+		Block:      helpers.StrPtr(hexToDec(l.BlockNumber)),
+		BlockHash:  helpers.StrPtr(l.BlockHash),
+		ParentHash: helpers.StrPtr(parentHash),
+		Token:      helpers.StrPtr(tokenID),
+		From:       helpers.StrPtr(r.normalizeAddress(from.Hex())),
+		To:         helpers.StrPtr(r.normalizeAddress(to.Hex())),
+		Amount:     helpers.StrPtr(value.String()),
+		LogIndex:   helpers.StrPtr("log:" + hexToDec(l.LogIndex)),
+		Status:     helpers.StrPtr(status),
 	}
 
 	return r.dispatch(ctx, "token_transfer", txParam)
@@ -731,7 +734,7 @@ type Trace struct {
 	TransactionHash string `json:"transactionHash"`
 }
 
-func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash string, nativeAsset asset.Asset) error {
+func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash, parentHash string, nativeAsset asset.Asset) error {
 	requireTrace := strings.EqualFold(os.Getenv("REQUIRE_EVM_TRACE"), "true")
 	debugTrace := strings.EqualFold(os.Getenv("DEBUG_EVM_TRACE"), "true")
 	if r.traceUnavailable && !requireTrace {
@@ -781,19 +784,20 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 		}
 
 		txParam := &types.TransactionParam{
-			Context:   context.Background(),
-			ChainID:   r.chain.ChainID(),
-			Symbol:    helpers.StrPtr(nativeAsset.GetSymbol()),
-			Decimals:  nativeAsset.GetDecimals(),
-			Hash:      helpers.StrPtr(trace.TransactionHash),
-			Block:     helpers.StrPtr(blockNumber),
-			BlockHash: helpers.StrPtr(blockHash),
-			Token:     nil,
-			From:      helpers.StrPtr(r.normalizeAddress(trace.Action.From)),
-			To:        helpers.StrPtr(r.normalizeAddress(to)),
-			Amount:    helpers.StrPtr(value.String()),
-			LogIndex:  helpers.StrPtr(fmt.Sprintf("internal:%d", idx)),
-			Status:    helpers.StrPtr(status),
+			Context:    context.Background(),
+			ChainID:    r.chain.ChainID(),
+			Symbol:     helpers.StrPtr(nativeAsset.GetSymbol()),
+			Decimals:   nativeAsset.GetDecimals(),
+			Hash:       helpers.StrPtr(trace.TransactionHash),
+			Block:      helpers.StrPtr(blockNumber),
+			BlockHash:  helpers.StrPtr(blockHash),
+			ParentHash: helpers.StrPtr(parentHash),
+			Token:      nil,
+			From:       helpers.StrPtr(r.normalizeAddress(trace.Action.From)),
+			To:         helpers.StrPtr(r.normalizeAddress(to)),
+			Amount:     helpers.StrPtr(value.String()),
+			LogIndex:   helpers.StrPtr(fmt.Sprintf("internal:%d", idx)),
+			Status:     helpers.StrPtr(status),
 		}
 
 		if err := r.dispatch(ctx, "internal_transfer", txParam); err != nil {

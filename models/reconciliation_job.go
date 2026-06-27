@@ -8,10 +8,12 @@ import (
 )
 
 const (
-	ReconciliationStatusOpen       = "open"
-	ReconciliationStatusProcessing = "processing"
-	ReconciliationStatusResolved   = "resolved"
-	ReconciliationStatusFailed     = "failed"
+	ReconciliationStatusOpen                = "open"
+	ReconciliationStatusProcessing          = "processing"
+	ReconciliationStatusResolved            = "resolved"
+	ReconciliationStatusFailed              = "failed"
+	ReconciliationStatusNeedsOperatorAction = "needs_operator_action"
+	ReconciliationStatusRetryScheduled      = "retry_scheduled"
 )
 
 type ReconciliationJob struct {
@@ -25,6 +27,16 @@ type ReconciliationJob struct {
 	Error     string            `gorm:"type:text" json:"error,omitempty"`
 	Attempts  uint              `gorm:"not null;default:0" json:"attempts"`
 
+	MerchantID              *uuid.UUID `gorm:"type:uuid;index" json:"merchant_id,omitempty"`
+	DomainID                *uuid.UUID `gorm:"type:uuid;index" json:"domain_id,omitempty"`
+	ScopeKey                string     `gorm:"size:256;index" json:"scope_key,omitempty"`
+	ResourceType            string     `gorm:"size:64;index" json:"resource_type,omitempty"`
+	ResourceID              string     `gorm:"size:256;index" json:"resource_id,omitempty"`
+	AffectedResourceIDsJSON string     `gorm:"type:jsonb;default:'[]'" json:"affected_resource_ids_json,omitempty"`
+	EvidenceJSON            string     `gorm:"type:jsonb;default:'{}'" json:"evidence_json,omitempty"`
+	Outcome                 string     `gorm:"size:64;index" json:"outcome,omitempty"`
+
+	NextRunAt  *time.Time `gorm:"index" json:"next_run_at,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`

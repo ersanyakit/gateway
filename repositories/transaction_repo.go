@@ -67,7 +67,11 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		status := transactionInitialStatus(params.Status)
 		blockHash := ""
 		if params.BlockHash != nil {
-			blockHash = *params.BlockHash
+			blockHash = normalizeBlockIdentifier(*params.BlockHash)
+		}
+		parentHash := ""
+		if params.ParentHash != nil {
+			parentHash = normalizeBlockIdentifier(*params.ParentHash)
 		}
 		var token interface{}
 		if params.Token != nil {
@@ -84,7 +88,22 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 				if transactionBlockIdentityChanged(existing, *params.Block, blockHash) {
 					fromBlock := parseBlockNumber(existing.BlockNumber)
 					reason := transactionReorgReason("tx_reappeared", params.ChainID, existing.BlockNumber)
-					_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, params.ChainID, fromBlock, fromBlock, reason)
+					_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+						ChainID:             params.ChainID,
+						FromBlock:           fromBlock,
+						ToBlock:             fromBlock,
+						Reason:              reason,
+						ScopeKey:            fmt.Sprintf("tx_reappeared:%s:%s", existing.UniqueHash, reason),
+						ResourceType:        "transaction_reappeared",
+						ResourceID:          existing.UniqueHash,
+						AffectedResourceIDs: []string{existing.UniqueHash},
+						Evidence: map[string]any{
+							"original_block_number": existing.BlockNumber,
+							"original_block_hash":   existing.BlockHash,
+							"new_block_number":      *params.Block,
+							"new_block_hash":        blockHash,
+						},
+					})
 					return err
 				}
 				return nil
@@ -96,11 +115,14 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 			if existing.FinalizedAt != nil && identityChanged {
 				fromBlock := parseBlockNumber(existing.BlockNumber)
 				reason := transactionReorgReason("tx_block_identity_changed", params.ChainID, existing.BlockNumber)
-				return r.markTransactionsReorgedWithDB(ctx, tx, []models.Transaction{existing}, now, params.ChainID, fromBlock, reason)
+				return r.markTransactionsReorgedWithDB(ctx, tx, []models.Transaction{existing}, now, params.ChainID, fromBlock, fromBlock, reason)
 			}
 			if existing.FinalizedAt != nil {
 				return nil
 			}
+		}
+		if err := r.observeCanonicalBlockWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, parentHash, uniqueHash, now); err != nil {
+			return err
 		}
 		if err := r.markBlockHashConflictsWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
 			return err
@@ -216,6 +238,18 @@ func normalizedTransactionLogIndexPtr(logIndex string) *string {
 	return &logIndex
 }
 
+func normalizeBlockIdentifier(value string) string {
+	value = strings.TrimSpace(value)
+	if hasHexPrefix(value) {
+		return strings.ToLower(value)
+	}
+	return value
+}
+
+func hasHexPrefix(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "0x")
+}
+
 func transactionInitialStatus(status *string) string {
 	if status == nil {
 		return models.TransactionStatusPending
@@ -253,6 +287,11 @@ func parseBlockNumber(blockNumber string) int64 {
 
 func transactionReorgReason(prefix string, chainID constants.ChainID, blockNumber string) string {
 	reason := fmt.Sprintf("%s:%d:%s", prefix, chainID, strings.TrimSpace(blockNumber))
+	return boundedCorrectionReason(reason)
+}
+
+func boundedCorrectionReason(reason string) string {
+	reason = strings.TrimSpace(reason)
 	if len(reason) > 120 {
 		reason = reason[:120]
 	}
@@ -275,21 +314,25 @@ func (r *TransactionRepo) findExistingForCreateWithDB(ctx context.Context, tx *g
 
 func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber string, blockHash string, currentUniqueHash string, now time.Time) error {
 	blockNumber = strings.TrimSpace(blockNumber)
-	blockHash = strings.TrimSpace(blockHash)
+	blockHash = normalizeBlockIdentifier(blockHash)
 	if blockNumber == "" || blockHash == "" {
 		return nil
 	}
 
 	var conflicts []models.Transaction
-	if err := tx.WithContext(ctx).
+	query := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("chain_id = ?", chainID).
 		Where("block_number = ?", blockNumber).
 		Where("block_hash <> ''").
-		Where("block_hash <> ?", blockHash).
 		Where("unique_hash <> ?", currentUniqueHash).
-		Where("status <> ?", models.TransactionStatusReorged).
-		Find(&conflicts).Error; err != nil {
+		Where("status <> ?", models.TransactionStatusReorged)
+	if hasHexPrefix(blockHash) {
+		query = query.Where("LOWER(block_hash) <> ?", strings.ToLower(blockHash))
+	} else {
+		query = query.Where("block_hash <> ?", blockHash)
+	}
+	if err := query.Find(&conflicts).Error; err != nil {
 		return err
 	}
 	if len(conflicts) == 0 {
@@ -298,10 +341,177 @@ func (r *TransactionRepo) markBlockHashConflictsWithDB(ctx context.Context, tx *
 
 	fromBlock := parseBlockNumber(blockNumber)
 	reason := transactionReorgReason("reorg_detected", chainID, blockNumber)
-	return r.markTransactionsReorgedWithDB(ctx, tx, conflicts, now, chainID, fromBlock, reason)
+	return r.markTransactionsReorgedWithDB(ctx, tx, conflicts, now, chainID, fromBlock, fromBlock, reason)
 }
 
-func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx *gorm.DB, conflicts []models.Transaction, now time.Time, chainID constants.ChainID, fromBlock int64, reason string) error {
+func (r *TransactionRepo) observeCanonicalBlockWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumberRaw string, blockHash string, parentHash string, currentUniqueHash string, now time.Time) error {
+	blockNumber := parseBlockNumber(blockNumberRaw)
+	blockHash = normalizeBlockIdentifier(blockHash)
+	parentHash = normalizeBlockIdentifier(parentHash)
+	if blockNumber <= 0 || blockHash == "" {
+		return nil
+	}
+
+	if parentHash != "" && blockNumber > 1 {
+		if err := r.markParentHashConflictsWithDB(ctx, tx, chainID, blockNumber, parentHash, currentUniqueHash, now); err != nil {
+			return err
+		}
+	}
+
+	reason := transactionReorgReason("reorg_detected", chainID, strconv.FormatInt(blockNumber, 10))
+	if err := markCanonicalBlockHeightConflictsWithDB(ctx, tx, chainID, blockNumber, blockHash, reason, now); err != nil {
+		return err
+	}
+
+	return upsertCanonicalBlockWithDB(ctx, tx, chainID, blockNumber, blockHash, parentHash, now)
+}
+
+func (r *TransactionRepo) markParentHashConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, parentHash string, currentUniqueHash string, now time.Time) error {
+	var parent models.Block
+	err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("chain_id = ?", chainID).
+		Where("number = ?", blockNumber-1).
+		Where("canonical = ?", true).
+		Where("hash <> ?", parentHash).
+		Order("updated_at DESC").
+		First(&parent).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	reason := transactionReorgReason("parent_mismatch", chainID, strconv.FormatInt(parent.Number, 10))
+	if err := r.markBlockRangeTransactionsReorgedWithDB(ctx, tx, chainID, parent.Number, currentUniqueHash, now, reason); err != nil {
+		return err
+	}
+	return markCanonicalBlockRangeReorgedWithDB(ctx, tx, chainID, parent.Number, parentHash, reason, now)
+}
+
+func (r *TransactionRepo) markBlockRangeTransactionsReorgedWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, fromBlock int64, currentUniqueHash string, now time.Time, reason string) error {
+	if fromBlock <= 0 {
+		return nil
+	}
+
+	var blocks []models.Block
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("chain_id = ?", chainID).
+		Where("number >= ?", fromBlock).
+		Where("canonical = ?", true).
+		Where("status <> ?", models.BlockStatusReorged).
+		Find(&blocks).Error; err != nil {
+		return err
+	}
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	hashes := make([]string, 0, len(blocks))
+	hexHashes := make([]string, 0, len(blocks))
+	toBlock := fromBlock
+	for _, block := range blocks {
+		if hash := normalizeBlockIdentifier(block.Hash); hash != "" {
+			if hasHexPrefix(hash) {
+				hexHashes = append(hexHashes, strings.ToLower(hash))
+			} else {
+				hashes = append(hashes, hash)
+			}
+		}
+		if block.Number > toBlock {
+			toBlock = block.Number
+		}
+	}
+	if len(hashes) == 0 && len(hexHashes) == 0 {
+		return nil
+	}
+
+	var conflicts []models.Transaction
+	query := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("chain_id = ?", chainID).
+		Where("unique_hash <> ?", currentUniqueHash).
+		Where("status <> ?", models.TransactionStatusReorged)
+	switch {
+	case len(hashes) > 0 && len(hexHashes) > 0:
+		query = query.Where("(block_hash IN ? OR LOWER(block_hash) IN ?)", hashes, hexHashes)
+	case len(hashes) > 0:
+		query = query.Where("block_hash IN ?", hashes)
+	default:
+		query = query.Where("LOWER(block_hash) IN ?", hexHashes)
+	}
+	if err := query.Find(&conflicts).Error; err != nil {
+		return err
+	}
+	return r.markTransactionsReorgedWithDB(ctx, tx, conflicts, now, chainID, fromBlock, toBlock, reason)
+}
+
+func markCanonicalBlockHeightConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, blockHash string, reason string, now time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&models.Block{}).
+		Where("chain_id = ?", chainID).
+		Where("number = ?", blockNumber).
+		Where("canonical = ?", true).
+		Where("hash <> ?", blockHash).
+		Updates(reorgedBlockAssignments(blockHash, reason, now)).Error
+}
+
+func markCanonicalBlockRangeReorgedWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, fromBlock int64, supersededByHash string, reason string, now time.Time) error {
+	return tx.WithContext(ctx).
+		Model(&models.Block{}).
+		Where("chain_id = ?", chainID).
+		Where("number >= ?", fromBlock).
+		Where("canonical = ?", true).
+		Updates(reorgedBlockAssignments(supersededByHash, reason, now)).Error
+}
+
+func reorgedBlockAssignments(supersededByHash string, reason string, now time.Time) map[string]any {
+	return map[string]any{
+		"canonical":          false,
+		"status":             models.BlockStatusReorged,
+		"reorged_at":         &now,
+		"superseded_by_hash": normalizeBlockIdentifier(supersededByHash),
+		"correction_reason":  boundedCorrectionReason(reason),
+		"updated_at":         now,
+	}
+}
+
+func upsertCanonicalBlockWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, blockHash string, parentHash string, now time.Time) error {
+	blockHash = normalizeBlockIdentifier(blockHash)
+	parentHash = normalizeBlockIdentifier(parentHash)
+	block := models.Block{
+		ID:         uuid.New(),
+		ChainID:    chainID,
+		Number:     blockNumber,
+		Hash:       blockHash,
+		ParentHash: parentHash,
+		Timestamp:  now,
+		Processed:  true,
+		Canonical:  true,
+		Status:     models.BlockStatusCanonical,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	return tx.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "chain_id"}, {Name: "hash"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"number":             blockNumber,
+			"parent_hash":        parentHash,
+			"timestamp":          now,
+			"processed":          true,
+			"canonical":          true,
+			"status":             models.BlockStatusCanonical,
+			"reorged_at":         nil,
+			"superseded_by_hash": "",
+			"correction_reason":  "",
+			"updated_at":         now,
+		}),
+	}).Create(&block).Error
+}
+
+func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx *gorm.DB, conflicts []models.Transaction, now time.Time, chainID constants.ChainID, fromBlock int64, toBlock int64, reason string) error {
 	if len(conflicts) == 0 {
 		return nil
 	}
@@ -317,25 +527,35 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 		if err := NewPaymentRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, conflict.UniqueHash); err != nil {
 			return err
 		}
+		if err := NewChainFactRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, conflict, reason); err != nil {
+			return err
+		}
+		if err := NewDepositRepo(tx).MarkReorgedByTransactionWithDB(ctx, tx, conflict, reason); err != nil {
+			return err
+		}
+		originalEventID := webhooksvc.TransactionEventID(conflict)
+		if err := tx.WithContext(ctx).
+			Model(&models.Transaction{}).
+			Where("id = ?", conflict.ID).
+			Where("status <> ?", models.TransactionStatusReorged).
+			Updates(map[string]any{
+				"status":               models.TransactionStatusReorged,
+				"event_type":           constants.WebhookEventTransactionReorged,
+				"reorged_at":           &now,
+				"original_event_id":    originalEventID,
+				"original_resource_id": conflict.ID.String(),
+				"correction_reason":    boundedCorrectionReason(reason),
+				"webhook_sent_at":      nil,
+				"webhook_attempts":     0,
+				"webhook_last_error":   "",
+				"webhook_locked_until": nil,
+				"updated_at":           now,
+			}).Error; err != nil {
+			return err
+		}
 	}
 	if len(uniqueHashes) == 0 {
 		return nil
-	}
-
-	if err := tx.WithContext(ctx).
-		Model(&models.Transaction{}).
-		Where("unique_hash IN ?", uniqueHashes).
-		Updates(map[string]any{
-			"status":               models.TransactionStatusReorged,
-			"event_type":           "transaction_reorged",
-			"reorged_at":           &now,
-			"webhook_sent_at":      nil,
-			"webhook_attempts":     0,
-			"webhook_last_error":   "",
-			"webhook_locked_until": nil,
-			"updated_at":           now,
-		}).Error; err != nil {
-		return err
 	}
 
 	if err := tx.WithContext(ctx).
@@ -355,7 +575,26 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 	if strings.TrimSpace(reason) == "" {
 		reason = transactionReorgReason("reorg_detected", chainID, strconv.FormatInt(fromBlock, 10))
 	}
-	_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, chainID, fromBlock, fromBlock, reason)
+	if toBlock < fromBlock {
+		toBlock = fromBlock
+	}
+	_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+		ChainID:             chainID,
+		FromBlock:           fromBlock,
+		ToBlock:             toBlock,
+		Reason:              reason,
+		ScopeKey:            fmt.Sprintf("transaction_reorg:%d:%d:%d:%s", chainID, fromBlock, toBlock, reason),
+		ResourceType:        "transaction_reorg",
+		ResourceID:          reason,
+		AffectedResourceIDs: uniqueHashes,
+		Evidence: map[string]any{
+			"chain_id":          chainID,
+			"from_block":        fromBlock,
+			"to_block":          toBlock,
+			"transaction_count": len(uniqueHashes),
+			"unique_hashes":     uniqueHashes,
+		},
+	})
 	return err
 }
 

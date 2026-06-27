@@ -13,6 +13,8 @@ const (
 	DepositStatusPending    = "pending"
 	DepositStatusConfirming = "confirming"
 	DepositStatusFinalized  = "finalized"
+	DepositStatusReorged    = "reorged"
+	DepositStatusSuperseded = "superseded"
 )
 
 type Deposit struct {
@@ -41,11 +43,14 @@ type Deposit struct {
 	Decimals  uint8   `gorm:"not null" json:"decimals"`
 	AmountRaw string  `gorm:"type:text;not null" json:"amount_raw"`
 
-	Confirmations         uint   `gorm:"not null;default:0" json:"confirmations"`
-	ConfirmationsRequired uint   `gorm:"not null;default:1" json:"confirmations_required"`
-	TransactionUniqueHash string `gorm:"size:256;index" json:"transaction_unique_hash,omitempty"`
-	SourceEventType       string `gorm:"size:80;not null;index" json:"source_event_type"`
-	UnmatchedReason       string `gorm:"type:text" json:"unmatched_reason,omitempty"`
+	Confirmations         uint       `gorm:"not null;default:0" json:"confirmations"`
+	ConfirmationsRequired uint       `gorm:"not null;default:1" json:"confirmations_required"`
+	TransactionUniqueHash string     `gorm:"size:256;index" json:"transaction_unique_hash,omitempty"`
+	SourceEventType       string     `gorm:"size:80;not null;index" json:"source_event_type"`
+	UnmatchedReason       string     `gorm:"type:text" json:"unmatched_reason,omitempty"`
+	ReorgedAt             *time.Time `gorm:"index" json:"reorged_at,omitempty"`
+	SupersededByEventID   string     `gorm:"size:256;index" json:"superseded_by_event_id,omitempty"`
+	CorrectionReason      string     `gorm:"size:256" json:"correction_reason,omitempty"`
 
 	DetectedAt  time.Time  `gorm:"not null;index" json:"detected_at"`
 	FinalizedAt *time.Time `gorm:"index" json:"finalized_at,omitempty"`

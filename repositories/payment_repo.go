@@ -23,6 +23,8 @@ type PaymentRepo struct {
 	db *gorm.DB
 }
 
+const paymentReorgOutcomeReason = models.PaymentOutcomeReasonReorged
+
 type PaymentMatchResult struct {
 	Session        *models.PaymentSession
 	Changed        bool
@@ -391,14 +393,14 @@ func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.Payment
 		}
 
 		session.Status = models.PaymentStatusCanceled
-		session.WebhookEvent = "payment_failed"
+		session.WebhookEvent = constants.WebhookEventPaymentFailed
 		session.UpdatedAt = time.Now()
 		return tx.Save(&session).Error
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	return &session, session.WebhookEvent == "payment_failed" && session.WebhookSentAt == nil, nil
+	return &session, session.WebhookEvent == constants.WebhookEventPaymentFailed && session.WebhookSentAt == nil, nil
 }
 
 func paymentStatusBlocksCancel(status string) bool {
@@ -740,9 +742,11 @@ func (r *PaymentRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *go
 	return tx.WithContext(ctx).
 		Model(&models.PaymentSession{}).
 		Where("tx_unique_hash = ?", uniqueHash).
+		Where("NOT (status = ? AND payment_outcome_reason = ?)", models.PaymentStatusFailed, paymentReorgOutcomeReason).
 		Updates(map[string]any{
 			"status":                 models.PaymentStatusFailed,
-			"payment_outcome_reason": "matched transaction was reorged",
+			"payment_outcome":        paymentReorgOutcomeExpr(),
+			"payment_outcome_reason": paymentReorgOutcomeReason,
 			"paid_at":                nil,
 			"confirmed_at":           nil,
 			"webhook_event":          constants.WebhookEventPaymentFailed,
@@ -752,6 +756,25 @@ func (r *PaymentRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *go
 			"webhook_locked_until":   nil,
 			"updated_at":             now,
 		}).Error
+}
+
+func paymentReorgOutcomeExpr() clause.Expr {
+	return gorm.Expr(
+		`CASE
+			WHEN payment_outcome <> '' THEN payment_outcome
+			WHEN status = ? THEN ?
+			WHEN status = ? THEN ?
+			WHEN status = ? THEN ?
+			WHEN status = ? THEN ?
+			WHEN status = ? THEN ?
+			ELSE payment_outcome
+		END`,
+		models.PaymentStatusPaid, models.PaymentOutcomeExact,
+		models.PaymentStatusUnderpaid, models.PaymentOutcomeUnderpaid,
+		models.PaymentStatusOverpaid, models.PaymentOutcomeOverpaid,
+		models.PaymentStatusPartialPaid, models.PaymentOutcomePartialUnsupported,
+		models.PaymentStatusExpired, models.PaymentOutcomeExpiredAfterDeposit,
+	)
 }
 
 func (r *PaymentRepo) ListPendingWebhooks(ctx context.Context, limit int) ([]models.PaymentSession, error) {

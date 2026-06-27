@@ -46,6 +46,23 @@ func (r *DepositRepo) ListPendingFinality(ctx context.Context, limit int) ([]mod
 	return deposits, err
 }
 
+func (r *DepositRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *gorm.DB, txModel models.Transaction, reason string) error {
+	if r == nil || tx == nil || strings.TrimSpace(txModel.UniqueHash) == "" {
+		return nil
+	}
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.Deposit{}).
+		Where("transaction_unique_hash = ?", txModel.UniqueHash).
+		Where("status NOT IN ?", []string{models.DepositStatusReorged, models.DepositStatusSuperseded}).
+		Updates(map[string]any{
+			"status":            models.DepositStatusReorged,
+			"reorged_at":        &now,
+			"correction_reason": boundedCorrectionReason(reason),
+			"updated_at":        now,
+		}).Error
+}
+
 func (r *DepositRepo) ConsumeChainFact(ctx context.Context, fact models.ChainFact, wallet *models.Wallet) (*models.Deposit, bool, error) {
 	if r == nil || r.db == nil {
 		return nil, false, gorm.ErrInvalidDB

@@ -179,7 +179,7 @@ var moneyEventCatalog = []MoneyEventCatalogItem{
 	catalogItem("transaction.reorged.v1", "correction", "chain_indexer", "transaction", "A previously observed transaction was invalidated or corrected by chain reorg handling.", true, []string{
 		"transaction_id", "tx_unique_hash", "original_event_id", "original_resource_id", "correction_reason",
 	}, []MoneyEventAlias{
-		{Name: constants.WebhookEventTransactionReorged, Relation: EventRelationLegacyAlias, Note: "Current correction webhook name retained for existing integrations."},
+		{Name: constants.WebhookEventTransactionReorgedOld, Relation: EventRelationLegacyAlias, Note: "Legacy correction webhook name retained for existing integrations."},
 	}, &MoneyEventCorrection{
 		OriginalEventIDField:    "original_event_id",
 		OriginalResourceIDField: "original_resource_id",

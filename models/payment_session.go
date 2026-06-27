@@ -29,6 +29,8 @@ const (
 	PaymentOutcomeWrongChain          = "wrong_chain"
 )
 
+const PaymentOutcomeReasonReorged = "matched transaction was reorged"
+
 type PaymentSession struct {
 	ID           uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
 	SessionToken string    `gorm:"size:80;uniqueIndex;not null" json:"session_token"`

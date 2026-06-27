@@ -145,11 +145,34 @@ func (r *ChainFactRepo) ListForDepositProcessing(ctx context.Context, limit int)
 		Table("chain_facts").
 		Select("chain_facts.*").
 		Joins("LEFT JOIN deposits ON deposits.chain_fact_event_id = chain_facts.event_id").
+		Where("(chain_facts.status IS NULL OR chain_facts.status = '' OR chain_facts.status = ?)", models.ChainFactStatusObserved).
 		Where("deposits.id IS NULL OR (deposits.status <> ? AND chain_facts.finalized = ?)", models.DepositStatusFinalized, true).
 		Order("chain_facts.created_at ASC").
 		Limit(limit).
 		Find(&facts).Error
 	return facts, err
+}
+
+func (r *ChainFactRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *gorm.DB, txModel models.Transaction, reason string) error {
+	if r == nil || tx == nil || strings.TrimSpace(txModel.Hash) == "" {
+		return nil
+	}
+	logIndex := ""
+	if txModel.LogIndex != nil {
+		logIndex = *txModel.LogIndex
+	}
+	eventID := ChainFactEventID(txModel.ChainID, txModel.Hash, logIndex)
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.ChainFact{}).
+		Where("event_id = ? OR (chain_id = ? AND tx_hash = ? AND log_index = ?)", eventID, txModel.ChainID, strings.ToLower(strings.TrimSpace(txModel.Hash)), normalizeChainFactLogIndex(logIndex)).
+		Where("status <> ?", models.ChainFactStatusReorged).
+		Updates(map[string]any{
+			"status":            models.ChainFactStatusReorged,
+			"reorged_at":        &now,
+			"correction_reason": boundedCorrectionReason(reason),
+			"updated_at":        now,
+		}).Error
 }
 
 func prepareChainFact(fact *models.ChainFact) (models.ChainFact, error) {
@@ -165,6 +188,7 @@ func prepareChainFact(fact *models.ChainFact) (models.ChainFact, error) {
 	prepared.Direction = strings.TrimSpace(prepared.Direction)
 	prepared.Symbol = strings.TrimSpace(prepared.Symbol)
 	prepared.AmountRaw = strings.TrimSpace(prepared.AmountRaw)
+	prepared.Status = strings.TrimSpace(prepared.Status)
 	prepared.SourceEventType = strings.TrimSpace(prepared.SourceEventType)
 	prepared.RawMetadataJSON = strings.TrimSpace(prepared.RawMetadataJSON)
 	if prepared.ID == uuid.Nil {
@@ -172,6 +196,9 @@ func prepareChainFact(fact *models.ChainFact) (models.ChainFact, error) {
 	}
 	if prepared.Direction == "" {
 		prepared.Direction = models.ChainFactDirectionUnknown
+	}
+	if prepared.Status == "" {
+		prepared.Status = models.ChainFactStatusObserved
 	}
 	if prepared.RawMetadataJSON == "" {
 		prepared.RawMetadataJSON = "{}"
@@ -218,6 +245,7 @@ func chainFactRawMetadataJSON(tx types.TransactionParam) (string, error) {
 		"gas_used":    strings.TrimSpace(ptrString(tx.GasUsed)),
 		"gas_price":   strings.TrimSpace(ptrString(tx.GasPrice)),
 		"external_id": strings.TrimSpace(ptrString(tx.ExternalID)),
+		"parent_hash": strings.TrimSpace(ptrString(tx.ParentHash)),
 	})
 	if err != nil {
 		return "", err

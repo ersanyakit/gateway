@@ -99,6 +99,8 @@ func buildOperationalMetrics(ctx context.Context, deps OperationalMetricsDeps, n
 	appendStatusMetrics(ctx, &b, "gateway_reconciliation_jobs", "Reconciliation jobs by unresolved status.", deps.ReconciliationRepo, []string{
 		models.ReconciliationStatusOpen,
 		models.ReconciliationStatusProcessing,
+		models.ReconciliationStatusNeedsOperatorAction,
+		models.ReconciliationStatusRetryScheduled,
 		models.ReconciliationStatusFailed,
 	})
 	appendChainMetrics(ctx, &b, deps, now)
