@@ -161,9 +161,11 @@ Codex
 - 2026-06-27: Delegated V1 signer readiness and metrics signer gauge to the shared signer policy; updated production signing docs and product readiness audit.
 - 2026-06-27: Removed a duplicate `sameOptionalToken` helper from the dirty ledger worktree state to restore repository compilation; no behavior change intended.
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer ./blockchain ./blockchain/chains ./api/handlers`.
-- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+- 2026-06-27: Validation passed after metrics/signer test additions: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer ./api/handlers`.
+- 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...` (outside sandbox for local listener binding).
 - 2026-06-27: Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Validation passed: `git diff --check && git diff --cached --check`.
+- 2026-06-27: QA automation added signer metrics and unsupported-mode audit coverage; isolated validation passed for `./services/signer`, targeted `./api/handlers`, and targeted `./blockchain/chains`.
 
 ### Completion Notes List
 
@@ -173,8 +175,10 @@ Codex
 - EVM, Bitcoin, Solana, and TRON local signing paths now call signer policy before private-key signing, Trust Wallet Core signing input creation, transaction construction, raw signing, or broadcast.
 - V1 readiness and `gateway_production_signer_ready` now share the signer policy result, and docs no longer imply a production software signing allowance.
 - Signer audit output includes mode, key reference, chain, intent, destination, decision, outcome, and correlation fields while filtering secret-like metadata values.
+- QA automation added metrics exposure coverage for the production software signer gate and unsupported signer mode audit/readiness tests.
 - A duplicate ledger helper in the dirty worktree was removed so full regression can compile.
 - Existing branch follow-ups retained and validated: 4.1 sweep/ledger review patches, tx-rescan deposit processing, TRON native log index normalization, and admin live-balance UI support.
+- Full `go test ./...` passed outside the sandbox; local sandbox execution can still block tests that need localhost listener binding.
 
 ### File List
 
@@ -182,9 +186,11 @@ Codex
 - `_bmad-output/implementation-artifacts/4-1-reserve-ledger-holds-before-outbound-money-movement.md`
 - `_bmad-output/implementation-artifacts/4-2-enforce-external-signer-boundary-and-production-software-signer-guard.md`
 - `_bmad-output/implementation-artifacts/deferred-work.md`
+- `_bmad-output/implementation-artifacts/tests/test-summary.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `api/handlers/dealer.go`
 - `api/handlers/dealer_test.go`
+- `api/handlers/metrics_test.go`
 - `api/handlers/v1_readiness.go`
 - `api/handlers/v1_readiness_test.go`
 - `api/routes/routes.go`

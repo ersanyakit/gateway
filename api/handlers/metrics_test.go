@@ -79,6 +79,38 @@ func TestOperationalMetricsIncludesBacklogAndChainState(t *testing.T) {
 	)
 }
 
+func TestOperationalMetricsReportsProductionSignerGate(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("SIGNER_MODE", "software")
+	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "true")
+	t.Setenv("METRICS_BEARER_TOKEN", "metrics-token")
+	t.Setenv("MNEMONIC_PHRASE", "legacy-secret")
+
+	app := fiber.New()
+	app.Get("/metrics", HandleOperationalMetrics(OperationalMetricsDeps{}))
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer metrics-token")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read metrics body: %v", err)
+	}
+	body := string(bodyBytes)
+	requireMetricsContains(t, body, "gateway_production_signer_ready 0")
+	if strings.Contains(body, "legacy-secret") || strings.Contains(body, "MNEMONIC_PHRASE") {
+		t.Fatalf("metrics body leaked secret-like content: %s", body)
+	}
+}
+
 func TestOperationalMetricsRequiresTokenInProduction(t *testing.T) {
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("METRICS_BEARER_TOKEN", "")
