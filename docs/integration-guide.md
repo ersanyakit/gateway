@@ -93,7 +93,7 @@ signature = hex(HMAC_SHA256(api_secret, message))
 header = "sha256=" + signature
 ```
 
-For `POST /api/v1/payment/create`, the canonical prefix is `POST\n/api/v1/payment/create\n<timestamp>\n<body>`. Query strings are included exactly as sent, for example `GET\n/api/v1/payment/info?order_id=ORDER-1001\n<timestamp>\n`.
+For `POST /api/v1/payment/create`, the canonical prefix is `POST\n/api/v1/payment/create\n<timestamp>\n<body>`. If a signed endpoint includes query parameters, include them exactly as sent in `path_and_query`.
 
 The gateway accepts `X-Gateway-Signature` as either `sha256=<hex>` or `<hex>`.
 
@@ -300,11 +300,9 @@ GET /api/v1/payment/info?order_id=ORDER-1001
 GET /api/v1/payment/info?track_id=<session_token>
 ```
 
-Statuses:
+Payment info/history statuses:
 
-- `active`
 - `pending`
-- `confirming`
 - `awaiting_payment`
 - `paid`
 - `expired`
@@ -335,6 +333,15 @@ Example checkout status response:
 ```
 
 Documented checkout status values:
+
+- `active`
+- `pending`
+- `confirming`
+- `paid`
+- `expired`
+- `canceled`
+- `failed`
+- `underpaid`
 
 ```json
 ["active", "pending", "confirming", "paid", "expired", "canceled", "failed", "underpaid"]

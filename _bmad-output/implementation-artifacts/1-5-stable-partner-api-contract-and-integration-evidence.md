@@ -2,7 +2,7 @@
 story_id: "1.5"
 story_key: "1-5-stable-partner-api-contract-and-integration-evidence"
 epic: "Epic 1: Partner Integration & Payment Intake Hardening"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 93b2f5f7f66701be6a0d9ba697ca3c4416adefe6
@@ -10,7 +10,7 @@ baseline_commit: 93b2f5f7f66701be6a0d9ba697ca3c4416adefe6
 
 # Story 1.5: Stable Partner API Contract and Integration Evidence
 
-Status: review
+Status: done
 
 ## Story
 
@@ -212,3 +212,24 @@ Codex
 
 - 2026-06-27: Story created with PRD, UX, architecture, project-context, previous-story, and current-code contract drift context.
 - 2026-06-27: Implemented Epic 1 partner contract docs, evidence, contract tests, Swagger idempotency documentation, and status-table `is_final` contract support.
+- 2026-06-27: Review follow-ups fixed for status wording, signing guidance, and contract test naming.
+
+## Senior Developer Review (AI)
+
+### Outcome
+
+Approved after automatic follow-up fixes. No critical issues remain.
+
+### Findings and Resolutions
+
+- [x] Medium: `docs/integration-guide.md` mixed V1 payment info/history statuses with payer-facing checkout states, which could confuse integrators about which endpoint returns `active` or `confirming`. Resolved by separating payment API statuses from checkout polling status values.
+- [x] Low: `docs/integration-guide.md` used a read-only payment info path in the signing query-string explanation, which could imply read endpoints require HMAC signing. Resolved by changing the wording to a generic signed-endpoint rule.
+- [x] Low: `api/handlers/partner_contract_test.go` had a status-table test name that implied direct handler coverage after the implementation moved the assertion to the typed contract helper. Resolved by renaming the test to match the reviewed surface.
+
+### Verification
+
+- `go test -count=1 ./api/handlers ./types`
+- `go test -count=1 ./docs`
+- `go test -count=1 ./...`
+- `go vet ./...`
+- `git diff --check`

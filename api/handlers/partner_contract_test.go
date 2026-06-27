@@ -71,7 +71,7 @@ func TestIntegrationGuideContractEvidenceCoversEpic1PartnerFlow(t *testing.T) {
 	}
 }
 
-func TestHandleV1PaymentStatusTableUsesDocumentedContractShape(t *testing.T) {
+func TestV1PaymentStatusTableUsesDocumentedContractShape(t *testing.T) {
 	statuses := v1PaymentStatusTable()
 	expectedFinal := map[string]bool{
 		"pending":          false,
