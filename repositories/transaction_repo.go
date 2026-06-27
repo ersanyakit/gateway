@@ -88,7 +88,22 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 				if transactionBlockIdentityChanged(existing, *params.Block, blockHash) {
 					fromBlock := parseBlockNumber(existing.BlockNumber)
 					reason := transactionReorgReason("tx_reappeared", params.ChainID, existing.BlockNumber)
-					_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, params.ChainID, fromBlock, fromBlock, reason)
+					_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+						ChainID:             params.ChainID,
+						FromBlock:           fromBlock,
+						ToBlock:             fromBlock,
+						Reason:              reason,
+						ScopeKey:            fmt.Sprintf("tx_reappeared:%s:%s", existing.UniqueHash, reason),
+						ResourceType:        "transaction_reappeared",
+						ResourceID:          existing.UniqueHash,
+						AffectedResourceIDs: []string{existing.UniqueHash},
+						Evidence: map[string]any{
+							"original_block_number": existing.BlockNumber,
+							"original_block_hash":   existing.BlockHash,
+							"new_block_number":      *params.Block,
+							"new_block_hash":        blockHash,
+						},
+					})
 					return err
 				}
 				return nil
@@ -563,7 +578,23 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 	if toBlock < fromBlock {
 		toBlock = fromBlock
 	}
-	_, _, err := NewReconciliationRepo(tx).CreateOpenIfMissing(ctx, chainID, fromBlock, toBlock, reason)
+	_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+		ChainID:             chainID,
+		FromBlock:           fromBlock,
+		ToBlock:             toBlock,
+		Reason:              reason,
+		ScopeKey:            fmt.Sprintf("transaction_reorg:%d:%d:%d:%s", chainID, fromBlock, toBlock, reason),
+		ResourceType:        "transaction_reorg",
+		ResourceID:          reason,
+		AffectedResourceIDs: uniqueHashes,
+		Evidence: map[string]any{
+			"chain_id":          chainID,
+			"from_block":        fromBlock,
+			"to_block":          toBlock,
+			"transaction_count": len(uniqueHashes),
+			"unique_hashes":     uniqueHashes,
+		},
+	})
 	return err
 }
 

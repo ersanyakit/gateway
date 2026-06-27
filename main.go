@@ -1088,7 +1088,24 @@ func runLedgerInvariantReconciliation(ctx context.Context) {
 		domainID := ledgerInvariantDomainID(issue.DomainID)
 		correlationID := ledgerInvariantCorrelationID(issue)
 		reason := ledgerInvariantReason(issue)
-		if _, created, err := router.ReconciliationRepo.CreateOpenIfMissing(ctx, constants.ChainID(issue.ChainID), 0, 0, reason); err != nil {
+		if _, created, err := router.ReconciliationRepo.CreateScopedOpenIfMissing(ctx, repositories.ReconciliationScope{
+			ChainID:             constants.ChainID(issue.ChainID),
+			Reason:              reason,
+			MerchantID:          &issue.MerchantID,
+			DomainID:            issue.DomainID,
+			ScopeKey:            correlationID,
+			ResourceType:        "ledger_invariant",
+			ResourceID:          issue.IdempotencyKey,
+			AffectedResourceIDs: []string{issue.IdempotencyKey},
+			Evidence: map[string]any{
+				"merchant_id": issue.MerchantID.String(),
+				"domain_id":   domainID,
+				"chain_id":    issue.ChainID,
+				"token":       ptrValue(issue.Token),
+				"symbol":      issue.Symbol,
+				"net_raw":     issue.NetRaw,
+			},
+		}); err != nil {
 			log.Printf("Reconciliation job create error correlation_id=%s merchant=%s domain=%s chain=%d token=%s symbol=%s net=%s: %v\n", correlationID, issue.MerchantID, domainID, issue.ChainID, ptrValue(issue.Token), issue.Symbol, issue.NetRaw, err)
 		} else if created {
 			log.Printf("Reconciliation job opened correlation_id=%s merchant=%s domain=%s chain=%d token=%s symbol=%s net=%s\n", correlationID, issue.MerchantID, domainID, issue.ChainID, ptrValue(issue.Token), issue.Symbol, issue.NetRaw)

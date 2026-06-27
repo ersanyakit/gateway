@@ -50,9 +50,11 @@ func TestOperationalMetricsIncludesBacklogAndChainState(t *testing.T) {
 			models.SweepJobStatusDeadLetter: 0,
 		},
 		ReconciliationRepo: fakeMetricsCounter{
-			models.ReconciliationStatusOpen:       1,
-			models.ReconciliationStatusProcessing: 0,
-			models.ReconciliationStatusFailed:     0,
+			models.ReconciliationStatusOpen:                1,
+			models.ReconciliationStatusProcessing:          0,
+			models.ReconciliationStatusNeedsOperatorAction: 2,
+			models.ReconciliationStatusRetryScheduled:      1,
+			models.ReconciliationStatusFailed:              0,
 		},
 		ChainStateRepo: fakeMetricsChainStates{{
 			ChainID:            constants.Ethereum,
@@ -69,6 +71,8 @@ func TestOperationalMetricsIncludesBacklogAndChainState(t *testing.T) {
 		`gateway_webhook_delivery_backlog{status="failed"} 1`,
 		`gateway_sweep_job_backlog{status="pending"} 3`,
 		`gateway_reconciliation_jobs{status="open"} 1`,
+		`gateway_reconciliation_jobs{status="needs_operator_action"} 2`,
+		`gateway_reconciliation_jobs{status="retry_scheduled"} 1`,
 		`gateway_chain_last_processed_block{chain="ethereum",chain_id="1"} 100`,
 		`gateway_chain_last_confirmed_block{chain="ethereum",chain_id="1"} 88`,
 		`gateway_chain_state_age_seconds{chain="ethereum",chain_id="1"} 90`,

@@ -199,6 +199,8 @@ func v1AppendOperationalReadinessChecks(ctx context.Context, checks *[]types.V1R
 	reconciliationStatuses := []string{
 		models.ReconciliationStatusOpen,
 		models.ReconciliationStatusProcessing,
+		models.ReconciliationStatusNeedsOperatorAction,
+		models.ReconciliationStatusRetryScheduled,
 		models.ReconciliationStatusFailed,
 	}
 	if deps.ReconciliationRepo == nil {

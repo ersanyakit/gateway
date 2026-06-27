@@ -352,7 +352,22 @@ func isNativeExpected(expected reserveExpectedBalance) bool {
 
 func (s *ReserveService) openJob(ctx context.Context, chainID constants.ChainID, kind string, merchantID uuid.UUID, symbol string) (bool, error) {
 	reason := reserveReason(kind, chainID, merchantID, symbol)
-	_, created, err := s.ReconciliationRepo.CreateOpenIfMissing(ctx, chainID, 0, 0, reason)
+	scopeKey := fmt.Sprintf("reserve:%s:%d:%s:%s", kind, chainID, merchantID.String(), strings.ToUpper(strings.TrimSpace(symbol)))
+	_, created, err := s.ReconciliationRepo.CreateScopedOpenIfMissing(ctx, repositories.ReconciliationScope{
+		ChainID:             chainID,
+		Reason:              reason,
+		MerchantID:          &merchantID,
+		ScopeKey:            scopeKey,
+		ResourceType:        "reserve_balance",
+		ResourceID:          strings.ToUpper(strings.TrimSpace(symbol)),
+		AffectedResourceIDs: []string{merchantID.String(), strings.ToUpper(strings.TrimSpace(symbol))},
+		Evidence: map[string]any{
+			"kind":        kind,
+			"merchant_id": merchantID.String(),
+			"chain_id":    chainID,
+			"symbol":      strings.ToUpper(strings.TrimSpace(symbol)),
+		},
+	})
 	if err != nil {
 		return false, fmt.Errorf("reserve reconciliation job %q: %w", reason, err)
 	}

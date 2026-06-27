@@ -219,6 +219,55 @@ func TestReorgCorrectionSchemaColumnsAreRequired(t *testing.T) {
 	}
 }
 
+func TestScopedReconciliationSchemaColumnsAreRequired(t *testing.T) {
+	required := map[string]bool{
+		"MerchantID":              false,
+		"DomainID":                false,
+		"ScopeKey":                false,
+		"ResourceType":            false,
+		"ResourceID":              false,
+		"AffectedResourceIDsJSON": false,
+		"EvidenceJSON":            false,
+		"Outcome":                 false,
+		"NextRunAt":               false,
+	}
+	for _, column := range requiredSchemaColumns() {
+		if column.table != "reconciliation_jobs" {
+			continue
+		}
+		if _, ok := required[column.field]; ok {
+			required[column.field] = true
+		}
+	}
+	for field, found := range required {
+		if !found {
+			t.Fatalf("VerifySchema does not require reconciliation_jobs.%s", field)
+		}
+	}
+	requiredIndexes := map[string]bool{
+		"idx_reconciliation_jobs_merchant_id":   false,
+		"idx_reconciliation_jobs_domain_id":     false,
+		"idx_reconciliation_jobs_scope_key":     false,
+		"idx_reconciliation_jobs_resource_type": false,
+		"idx_reconciliation_jobs_resource_id":   false,
+		"idx_reconciliation_jobs_outcome":       false,
+		"idx_reconciliation_jobs_next_run_at":   false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if index.table != "reconciliation_jobs" {
+			continue
+		}
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require reconciliation_jobs index %s", name)
+		}
+	}
+}
+
 func TestApplyGORMMigrationsEntrypointExists(t *testing.T) {
 	if reflect.ValueOf(ApplyGORMMigrations).IsNil() {
 		t.Fatal("ApplyGORMMigrations must be available for GORM-managed migration jobs")

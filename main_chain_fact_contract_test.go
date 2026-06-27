@@ -221,7 +221,10 @@ func TestLedgerInvariantReconciliationUsesScopedContext(t *testing.T) {
 		"domainID",
 		"ledgerInvariantReason(issue)",
 		"ledgerInvariantCorrelationID(issue)",
-		"CreateOpenIfMissing",
+		"CreateScopedOpenIfMissing",
+		"ReconciliationScope",
+		"AffectedResourceIDs",
+		"Evidence",
 		"Reconciliation job opened correlation_id=%s merchant=%s domain=%s",
 	} {
 		if !strings.Contains(body, token) {
