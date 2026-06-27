@@ -55,12 +55,12 @@ development_status:
   1-4-hosted-checkout-payment-state-experience: done
   1-5-stable-partner-api-contract-and-integration-evidence: done
   epic-1-retrospective: optional
-  epic-2: in-progress
+  epic-2: done
   2-1-define-versioned-money-event-catalog: done
   2-2-persist-money-events-through-postgres-outbox: done
   2-3-deliver-webhooks-from-the-webhook-boundary: done
-  2-4-support-replay-dead-letter-and-duplicate-delivery-safety: review
-  2-5-verify-event-contract-compatibility: in-progress
+  2-4-support-replay-dead-letter-and-duplicate-delivery-safety: done
+  2-5-verify-event-contract-compatibility: done
   epic-2-retrospective: optional
   epic-3: backlog
   3-1-emit-chain-facts-without-mutating-business-state: backlog

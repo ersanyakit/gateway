@@ -2,7 +2,7 @@
 story_id: "2.4"
 story_key: "2-4-support-replay-dead-letter-and-duplicate-delivery-safety"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
@@ -10,7 +10,7 @@ baseline_commit: 92e6df6b5e0a1e1f079f1c6d6c773a934432c6ed
 
 # Story 2.4: Support Replay, Dead-Letter, and Duplicate Delivery Safety
 
-Status: review
+Status: done
 
 ## Story
 
@@ -66,6 +66,12 @@ boylece partner notification'lari duplicate fulfillment veya sessiz veri kaybi o
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status.
 
+### Review Findings
+
+- [x] [Review][Patch] Schema verification missed replay actor metadata columns [services/database/database.go:190] — Added `ReplayRequestedBy` and `ReplayRequestedAt` to required schema verification and contract tests.
+- [x] [Review][Patch] Admin webhook diagnostics displayed stored `last_error` without view-boundary sanitization [api/handlers/dealer.go:3513] — Sanitized delivery errors when building the admin webhook view and added redaction coverage.
+- [x] [Review][Patch] Replay enqueue could lock a replay row before the original root row [repositories/webhook_delivery_repo.go:278] — Reordered replay enqueue locking to derive the root id first, then lock the root row consistently before active replay lookup/creation.
+
 ## Dev Notes
 
 ### Current Implementation Snapshot
@@ -91,9 +97,8 @@ Codex
 
 ### Debug Log References
 
-- `go test -count=1 ./services/webhook ./repositories ./api/handlers`
-- `go test -count=1 ./docs ./constants ./services/database`
-- `go test -count=1 ./api/handlers ./workers/...`
+- `go test -count=1 ./api/handlers ./repositories ./docs ./constants ./services/webhook ./services/database`
+- `go test -count=1 ./api/handlers ./repositories ./services/database`
 - `go test -count=1 ./...`
 - `go vet ./...`
 - `git diff --check && git diff --cached --check`
@@ -105,6 +110,7 @@ Codex
 - Hardened dead-letter/retry operator visibility in the admin webhooks panel with bounded diagnostics.
 - Routed admin replay through the replay repository helper and webhook boundary, with generic denial messaging and audit logging.
 - Documented at-least-once delivery, replay behavior, and consumer dedupe keys in partner integration docs.
+- Code review fixes added view-boundary diagnostic redaction, complete replay metadata schema checks, and consistent root-row locking for replay creation.
 
 ### File List
 
@@ -126,3 +132,4 @@ Codex
 
 - 2026-06-27: Story created from Epic 2.4 with replay/dead-letter/duplicate-safety scope and Story 2.3 continuity notes.
 - 2026-06-27: Implemented duplicate-safe replay, dead-letter diagnostics, admin replay audit path, docs, and validation coverage; moved to review.
+- 2026-06-27: Code review findings fixed and full validation passed; story completed.
