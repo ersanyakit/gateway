@@ -187,6 +187,8 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "FailureCategory"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "OriginalDeliveryID"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ReplayCount"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ReplayRequestedBy"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ReplayRequestedAt"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "OperatorAction"},
 		{table: "sweep_jobs", model: &models.SweepJob{}, field: "ID"},
 		{table: "withdrawal_requests", model: &models.WithdrawalRequest{}, field: "ID"},

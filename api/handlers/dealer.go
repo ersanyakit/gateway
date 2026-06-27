@@ -3510,7 +3510,7 @@ func dealerWebhookDeliveryViews(rows []models.WebhookDelivery) []DealerWebhookDe
 			TargetURL:          row.TargetURL,
 			Status:             row.Status,
 			Attempts:           row.Attempts,
-			LastError:          row.LastError,
+			LastError:          webhooksvc.SanitizeDeliveryText(row.LastError),
 			FailureCategory:    row.FailureCategory,
 			NextRetryAt:        nextRetryAt,
 			NextAction:         webhookDeliveryNextAction(row),

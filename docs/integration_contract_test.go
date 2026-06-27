@@ -88,6 +88,31 @@ func TestEpic1IntegrationEvidenceDocumentsCoveredContract(t *testing.T) {
 	}
 }
 
+func TestEpic2IntegrationEvidenceDocumentsEventDeliveryContract(t *testing.T) {
+	evidenceBytes, err := os.ReadFile("epic-2-integration-evidence.md")
+	if err != nil {
+		t.Fatalf("read Epic 2 integration evidence: %v", err)
+	}
+	evidence := string(evidenceBytes)
+	for _, token := range []string{
+		"docs/money-event-catalog.md",
+		"docs/outbox-migration-plan.md",
+		"webhook_deliveries",
+		"Replay and dead-letter",
+		"stable consumer idempotency metadata",
+		"native_transfer",
+		"payment_succeeded",
+		"payout.*.v1",
+		"at-least-once delivery",
+		"compatibility snapshot tests",
+		"go test -count=1 ./services/webhook ./docs",
+		"go vet ./...",
+		"does not claim full production custody readiness",
+	} {
+		requireContains(t, evidence, token)
+	}
+}
+
 func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
 	catalogBytes, err := os.ReadFile("money-event-catalog.md")
 	if err != nil {

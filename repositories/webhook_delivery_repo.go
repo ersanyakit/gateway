@@ -275,17 +275,18 @@ func (r *WebhookDeliveryRepo) EnqueueReplay(ctx context.Context, params WebhookR
 	created := false
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var selected models.WebhookDelivery
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			First(&selected, "id = ?", params.DeliveryID).Error; err != nil {
+		if err := tx.First(&selected, "id = ?", params.DeliveryID).Error; err != nil {
 			return err
 		}
 
-		root := selected
+		rootID := selected.ID
 		if selected.OriginalDeliveryID != nil {
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				First(&root, "id = ?", *selected.OriginalDeliveryID).Error; err != nil {
-				return err
-			}
+			rootID = *selected.OriginalDeliveryID
+		}
+		var root models.WebhookDelivery
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&root, "id = ?", rootID).Error; err != nil {
+			return err
 		}
 		if params.MerchantID != nil && root.MerchantID != *params.MerchantID {
 			return ErrWebhookReplayScopeDenied

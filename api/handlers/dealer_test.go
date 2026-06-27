@@ -128,7 +128,7 @@ func TestDealerWebhookDeliveryViewsExposeDeadLetterReplayDiagnostics(t *testing.
 		TargetURL:          "https://merchant.example/webhook",
 		Status:             models.WebhookDeliveryStatusDeadLetter,
 		Attempts:           8,
-		LastError:          "timeout",
+		LastError:          "webhook_secret=should-not-render",
 		FailureCategory:    "timeout",
 		OriginalDeliveryID: &originalID,
 		ReplayCount:        2,
@@ -145,6 +145,9 @@ func TestDealerWebhookDeliveryViewsExposeDeadLetterReplayDiagnostics(t *testing.
 	view := views[0]
 	if view.FailureCategory != "timeout" || view.NextAction != "replay_or_investigate" || view.OriginalDeliveryID != originalID.String() {
 		t.Fatalf("view diagnostics = %#v", view)
+	}
+	if view.LastError != "redacted sensitive delivery error" {
+		t.Fatalf("last error = %q, want redacted sensitive delivery error", view.LastError)
 	}
 	if view.ReplayCount != 2 || view.ReplayRequestedBy != "admin@example.com" || view.ReplayRequestedAt == "" {
 		t.Fatalf("view replay metadata = %#v", view)

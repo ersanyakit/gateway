@@ -23,6 +23,8 @@ func TestDatabaseMigrationRegistersMoneyEventOutbox(t *testing.T) {
 		"FailureCategory",
 		"OriginalDeliveryID",
 		"ReplayCount",
+		"ReplayRequestedBy",
+		"ReplayRequestedAt",
 		"OperatorAction",
 	} {
 		if !strings.Contains(source, token) {
