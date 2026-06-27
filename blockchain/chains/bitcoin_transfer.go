@@ -117,6 +117,9 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 	if sendSat <= 0 {
 		return nil, fmt.Errorf("bitcoin amount must be greater than zero")
 	}
+	if err := authorizeWalletSigning(ctx, b.Name(), b.ChainID(), wallet, "transfer.native", fmt.Sprintf("%d", sendSat), toAddress); err != nil {
+		return nil, err
+	}
 
 	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
 	if err != nil {
@@ -185,6 +188,10 @@ func (b *BitcoinChain) sendTo(ctx context.Context, wallet blockchain.WalletDetai
 }
 
 func (b *BitcoinChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	if err := authorizeWalletSigning(ctx, b.Name(), b.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
+	}
+
 	privKeyBytes, err := hex.DecodeString(strings.TrimSpace(wallet.PrivateKey))
 	if err != nil {
 		return nil, fmt.Errorf("invalid bitcoin private key: %w", err)

@@ -64,7 +64,7 @@ The project is not empty or fake. It has a real payment-gateway skeleton:
 ### P0 - Do Not Run Large Real Money Volume Before These
 
 1. Key custody is still software-signing oriented.
-   `SIGNER_MODE=kms/hsm/mpc` returns an integration-required error. Production software signer is blocked unless explicitly allowed, which is good, but there is no actual KMS/HSM/MPC implementation. A wallet provider cannot safely custody exchange or merchant funds with only env mnemonic + process memory signing.
+   `SIGNER_MODE=kms/hsm/mpc/vault` returns an integration-required error. Production software signer now hard-fails even if legacy override flags are set, which is good, but there is no actual KMS/HSM/MPC/Vault implementation. A wallet provider cannot safely custody exchange or merchant funds with only env mnemonic + process memory signing.
 
 2. Listener first start skips history.
    EVM, Bitcoin, and TRON listeners start from `safeLatest` when `LastProcessedBlock <= 1`; Solana starts at latest. This prevents old backlog scanning on first boot and can miss deposits that happened before the service came online.

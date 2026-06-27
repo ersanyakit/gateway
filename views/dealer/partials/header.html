@@ -1,21 +1,21 @@
-<header class="sticky top-0 z-40 border-b border-line bg-white/90 backdrop-blur-xl">
-  <div class="mx-auto flex min-h-[72px] w-full max-w-[1180px] flex-wrap items-center justify-between gap-3 px-4 py-3">
-    <a class="flex min-w-0 items-center gap-3" href="{{if .HasSession}}{{.DashboardURL}}{{else}}/{{end}}" aria-label="Gateway Üye İşyeri Portalı">
-      <span class="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[rgba(239,45,181,0.18)] bg-[#fff3fc] text-sm font-black text-accentHover shadow-glow">G</span>
-      <span class="grid min-w-0 gap-0.5">
-        <span class="truncate text-[15px] font-extrabold leading-tight text-ink">Gateway Üye İşyeri Portalı</span>
-        <span class="truncate text-xs font-semibold leading-tight text-muted">Crypto checkout operations</span>
+<header class="sticky top-0 z-40 border-b border-[rgba(19,19,19,0.07)] bg-white/94 backdrop-blur-xl">
+  <div class="mx-auto flex h-[52px] w-full max-w-[1180px] items-center justify-between gap-2 px-4">
+    <a class="flex min-w-0 items-center gap-2.5" href="{{if .HasSession}}{{.DashboardURL}}{{else}}/{{end}}" aria-label="Gateway Üye İşyeri Portalı">
+      <span class="grid h-7 w-7 shrink-0 place-items-center rounded-xl border border-[rgba(239,45,181,0.16)] bg-white text-[12px] font-black text-accentHover shadow-[0_8px_18px_rgba(239,45,181,0.11)]">G</span>
+      <span class="grid min-w-0 gap-0">
+        <span class="truncate text-[13px] font-extrabold leading-tight text-ink">Gateway Üye İşyeri Portalı</span>
+        <span class="hidden truncate text-[10px] font-semibold leading-tight text-muted md:block">Crypto checkout operations</span>
       </span>
     </a>
 
-    <nav class="flex flex-wrap items-center justify-end gap-2" aria-label="Üye işyeri menüsü">
+    <nav class="flex flex-wrap items-center justify-end gap-1.5" aria-label="Üye işyeri menüsü">
       {{if .HasSession}}
-        <a class="inline-flex min-h-10 items-center rounded-full border border-transparent px-4 text-sm font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "dashboard"}}border-line bg-white text-ink shadow-sm{{end}}" href="{{.DashboardURL}}">Panel</a>
-        <a class="inline-flex min-h-10 items-center rounded-full border border-transparent px-4 text-sm font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink" href="{{.LogoutURL}}">Çıkış</a>
+        <a class="inline-flex min-h-7 items-center rounded-full border border-transparent px-2.5 text-[13px] font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "dashboard"}}border-line bg-white text-ink shadow-sm{{end}}" href="{{.DashboardURL}}">Panel</a>
+        <a class="inline-flex min-h-7 items-center rounded-full border border-transparent px-2.5 text-[13px] font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink" href="{{.LogoutURL}}">Çıkış</a>
       {{else}}
-        <a class="inline-flex min-h-10 items-center rounded-full border border-transparent px-4 text-sm font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "home"}}border-line bg-white text-ink shadow-sm{{end}}" href="/">Ürün</a>
-        <a class="inline-flex min-h-10 items-center rounded-full border border-transparent px-4 text-sm font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "login"}}border-line bg-white text-ink shadow-sm{{end}}" href="{{.LoginURL}}">Giriş</a>
-        <a class="inline-flex min-h-10 items-center rounded-full bg-accent px-4 text-sm font-extrabold text-white shadow-glow transition hover:bg-accentHover" href="{{.RegisterURL}}">Kayıt</a>
+        <a class="inline-flex min-h-7 items-center rounded-full border border-transparent px-2.5 text-[13px] font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "home"}}border-line bg-white text-ink shadow-sm{{end}}" href="/">Ürün</a>
+        <a class="inline-flex min-h-7 items-center rounded-full border border-transparent px-2.5 text-[13px] font-bold text-muted transition hover:border-line hover:bg-white hover:text-ink {{if eq .Active "login"}}border-line bg-white text-ink shadow-sm{{end}}" href="{{.LoginURL}}">Giriş</a>
+        <a class="inline-flex min-h-7 items-center rounded-full bg-accent px-2.5 text-[13px] font-extrabold text-white shadow-glow transition hover:bg-accentHover" href="{{.RegisterURL}}">Kayıt</a>
       {{end}}
     </nav>
   </div>

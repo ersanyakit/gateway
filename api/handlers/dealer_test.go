@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"core/asset"
+	"core/constants"
 	"core/models"
 
 	"github.com/gofiber/fiber/v3"
@@ -26,6 +28,33 @@ func TestPaginationURLPreservesExistingQuery(t *testing.T) {
 func TestAdminDashboardTemplateParses(t *testing.T) {
 	if _, err := template.ParseFiles("../../views/dealer/admin_dashboard.html"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdminLiveBalanceRawParsesTronHexNative(t *testing.T) {
+	raw, err := adminLiveBalanceRaw("0xf4240", asset.NewTRX(constants.TRON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != "1000000" {
+		t.Fatalf("raw = %q, want 1000000", raw)
+	}
+}
+
+func TestAdminLiveBalanceRawParsesNativeComponentDecimal(t *testing.T) {
+	raw, err := adminLiveBalanceRaw("ETH:1.500000000000000000 | WETH:0", asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != "1500000000000000000" {
+		t.Fatalf("raw = %q, want 1500000000000000000", raw)
+	}
+}
+
+func TestAdminLiveBalanceRawRejectsMissingSelectedToken(t *testing.T) {
+	_, err := adminLiveBalanceRaw("TRX:0xf4240", asset.NewTRC20(constants.TRON, "TToken", "USDT", "Tether", 6))
+	if err == nil {
+		t.Fatal("expected missing token balance to fail")
 	}
 }
 
@@ -325,7 +354,7 @@ func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
 			function: "HandleAdminWithdrawalReject",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, &updated.MerchantID, "admin", adminEmail, "withdrawal.reject", "success"`,
 			},
 		},
 		{
@@ -367,6 +396,50 @@ func TestAdminTestDepositPaymentMatchUsesExplicitOutcomeBoundary(t *testing.T) {
 	}
 	if strings.Contains(body, "MarkPaidByTransaction") {
 		t.Fatal("admin test deposit payment match helper must not use paid-only wrapper")
+	}
+}
+
+func TestAdminSweepLiveBalanceSourceContract(t *testing.T) {
+	routes := readHandlerSource(t, "../routes/routes.go")
+	if !strings.Contains(routes, `r.fiber.Get("/admin/sweep/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))`) {
+		t.Fatal("admin sweep live balance route must be registered")
+	}
+
+	source := readHandlerSource(t, "dealer.go")
+	body := extractHandlerFunctionBody(t, source, "HandleAdminSweepLiveBalance")
+	for _, token := range []string{
+		"requireAdmin(c)",
+		`parseAdminAssetSelection(deps.AssetRegistry, c.Query("asset"))`,
+		"repositories.WalletAddressForChainID(*wallet, chainID)",
+		"deps.Blockchains.GetChainByID(chainID)",
+		"chain.BatchBalances(ctx, []string{address}, 1)",
+		"adminLiveBalanceRaw(result.Balance, selectedAsset)",
+		`"result":      "success"`,
+		`"balance_raw": raw`,
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("live balance contract missing %q", token)
+		}
+	}
+}
+
+func TestAdminLiveBalanceRawSelectsNativeAndTokenComponents(t *testing.T) {
+	nativeETH := asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18)
+	if got, err := adminLiveBalanceRaw("ETH:1.25 | WETH:0.5", nativeETH); err != nil || got != "1250000000000000000" {
+		t.Fatalf("native raw = %q err=%v, want 1250000000000000000", got, err)
+	}
+
+	weth := asset.NewERC20(constants.Ethereum, "0x0000000000000000000000000000000000000001", "WETH", "Wrapped Ether", 18)
+	if got, err := adminLiveBalanceRaw("ETH:1.25 | WETH:0.5", weth); err != nil || got != "500000000000000000" {
+		t.Fatalf("token raw = %q err=%v, want 500000000000000000", got, err)
+	}
+
+	usdc := asset.NewERC20(constants.Base, "0x0000000000000000000000000000000000000002", "USDC", "USD Coin", 6)
+	if got, err := adminLiveBalanceRaw("ETH:0.1 | USDC:12.345678", usdc); err != nil || got != "12345678" {
+		t.Fatalf("decimal token raw = %q err=%v, want 12345678", got, err)
+	}
+	if _, err := adminLiveBalanceRaw("USDC:0.0000001", usdc); err == nil {
+		t.Fatal("expected over-precision token balance to be rejected")
 	}
 }
 

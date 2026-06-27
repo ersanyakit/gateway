@@ -12,9 +12,9 @@ This project handles payment and wallet-provider flows. Treat production access 
 ## Production Signing
 
 - `SIGNER_MODE=software` uses process-local mnemonic/private-key derivation and is not production custody ready.
-- `APP_ENV=production` blocks software signer use unless `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=true` is explicitly set.
-- `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=true` is a controlled-pilot risk override, not a production-readiness signal. `/api/v1/common/readiness` reports it as not launch-ready.
-- `SIGNER_MODE=kms`, `hsm`, or `mpc` currently declares intent only; production readiness requires a real provider adapter, policy metadata, audit logging, and chain-specific integration tests.
+- `APP_ENV=production` blocks software signer use before transaction construction or broadcast, even when legacy override flags are set.
+- `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=true` is a legacy risk marker only; it does not allow production signing and `/api/v1/common/readiness` reports it as not launch-ready.
+- `SIGNER_MODE=kms`, `hsm`, `mpc`, `vault`, or another external custody mode currently declares intent only; production signing fails with an explicit integration-required error until a real provider adapter is active.
 
 ## Database Migrations
 

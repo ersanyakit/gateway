@@ -68,6 +68,17 @@ boylece outbound para hareketleri bakiyeyi asamaz, ayni fon iki kez harcanamaz v
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
 
+### Review Findings
+
+- [x] [Review][Patch] Auto-sweep reservation can cover less than the transaction being signed [main.go:536]
+- [x] [Review][Patch] Sweep job asset validation allows chain/token mismatch [repositories/ledger_repo.go:1056]
+- [x] [Review][Patch] Sweep release can post without durable broadcast evidence or success ordering [main.go:1052]
+- [x] [Review][Patch] Sweep dead-letter failures that are not classified leave reserved funds without investigation [main.go:1074]
+- [x] [Review][Patch] Hold assertions do not verify reservation amount and asset against the outbound request [repositories/ledger_repo.go:552]
+- [x] [Review][Patch] Recover funds approval errors after broadcast are surfaced as ordinary transfer failures [api/handlers/dealer.go:2158]
+- [x] [Review][Patch] Withdrawal rejection lifecycle emits the stale pre-rejection request state [api/handlers/dealer.go:2495]
+- [x] [Review][Defer] Withdrawal/refund post-broadcast ledger failures do not open scoped reconciliation [repositories/withdrawal_request_repo.go:369] - deferred, pre-existing
+
 ## Dev Notes
 
 ### Current Implementation Snapshot
@@ -171,7 +182,10 @@ Codex
 - 2026-06-27: Review validation passed: focused handler tests for outbound reservation contracts, V1 error mapping, and operator audit logs.
 - 2026-06-27: Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - 2026-06-27: Review validation passed: `git diff --check && git diff --cached --check`.
-- 2026-06-27: Review full regression attempted with `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`; sandbox blocked tests that use `httptest.NewServer` with `listen tcp6 [::1]:0: bind: operation not permitted`.
+- 2026-06-27: Follow-up code review found and fixed 7 issues: exact-amount sweep broadcast, strict sweep asset validation, sweep success/release ordering, missing tx hash guard, dead-letter reconciliation, strict hold assertions, recover-funds post-broadcast feedback, and stale withdrawal rejection lifecycle state.
+- 2026-06-27: Follow-up validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./api/handlers .`.
+- 2026-06-27: Follow-up validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+- 2026-06-27: Follow-up validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./... && git diff --check`.
 
 ### Completion Notes List
 
@@ -183,6 +197,9 @@ Codex
 - V1 payout insufficient-balance errors now return validation-style bad request status while preserving the V1 error envelope.
 - Ledger schema verification and migration plan now cover sweep hold/release/debit fields, entry types, and account.
 - Senior review added explicit `sweep_job_id` index verification, guarded sweep release against mismatched job/transaction pairs, and expanded refund approve/reject audit coverage.
+- Follow-up review now broadcasts auto-sweeps with the exact ledger-reserved amount instead of full-wallet sweep helpers, rejects mismatched sweep job assets, requires non-empty sweep tx hashes, marks jobs succeeded before ledger release, and opens reconciliation for uncertain dead-letter failures.
+- Hold assertions now verify amount, merchant/domain/wallet, chain, token, and expected directions when request/refund/sweep context is available.
+- Recover-funds approval now distinguishes post-broadcast ledger/status failures from ordinary pre-broadcast transfer failures, and withdrawal rejection lifecycle webhooks use the updated rejected request state.
 
 ### Senior Developer Review (AI)
 
@@ -192,6 +209,13 @@ Outcome: Approved after auto-fixes. No critical issues remain.
 
 Findings fixed:
 
+- HIGH: Auto-sweep held only the finalized deposit amount but called full-wallet sweep APIs. Fixed by using exact-amount `Withdraw`/`WithdrawToken` calls and adding source-level regression coverage.
+- HIGH: Sweep release could be posted before durable job success or with an empty tx hash. Fixed by requiring a non-empty tx hash, marking the sweep job succeeded first, and reconciling mark-success failures.
+- HIGH: Sweep job asset validation allowed chain/token mismatch and release amount mismatch. Fixed by strict job/transaction validation and strict sweep hold matching.
+- MEDIUM: Unclassified sweep dead-letter failures could leave funds reserved without investigation. Fixed by opening scoped reconciliation for uncertain dead-letter failures.
+- MEDIUM: Hold assertions only checked row existence. Fixed by validating amount, tenant/domain/wallet, chain, token, and expected hold directions when context is available.
+- MEDIUM: Recover-funds post-broadcast finalize failures were surfaced as ordinary transfer failures. Fixed by preserving broadcast lifecycle semantics and messaging.
+- MEDIUM: Withdrawal rejection lifecycle emitted stale pre-rejection state. Fixed by reloading the request after rejection before enqueueing lifecycle webhook.
 - HIGH: `LedgerRepo.PostSweepRelease` could post release entries without revalidating that the sweep job still matched the transaction being released. Fixed by sharing the sweep job/transaction validation used by hold creation and adding mismatch coverage.
 - MEDIUM: `services/database.VerifySchema` required the new `ledger_entries.sweep_job_id` column but not the promised index. Fixed by requiring `idx_ledger_entries_sweep_job_id` and adding schema test coverage.
 - MEDIUM: Admin refund approval/rejection paths did not audit all operator-facing failure outcomes, including hold/reservation failure and reject failure. Fixed by logging refund approve and reject failures and extending audit source-contract tests.
@@ -204,18 +228,21 @@ Checklist:
 - Acceptance criteria and checked tasks cross-checked against implementation.
 - File list reviewed against story-owned implementation and review fix files.
 - Tests reviewed and expanded for schema index verification, sweep release mismatch, and refund audit evidence.
+- Follow-up tests reviewed and expanded for strict hold matching, sweep asset mismatch, empty sweep tx hash rejection, exact-amount sweep transfer source guard, success-before-release ordering, and uncertain dead-letter reconciliation.
 - Security and money-safety review completed for changed files.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/4-1-reserve-ledger-holds-before-outbound-money-movement.md`
 - `_bmad-output/implementation-artifacts/4-1-migration-plan.md`
+- `_bmad-output/implementation-artifacts/deferred-work.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `api/handlers/dealer.go`
 - `api/handlers/dealer_test.go`
 - `api/handlers/transfer.go`
 - `api/handlers/v1api.go`
 - `main.go`
+- `main_sweep_reservation_test.go`
 - `models/ledger_entry.go`
 - `repositories/ledger_repo.go`
 - `repositories/ledger_repo_test.go`
@@ -233,3 +260,4 @@ Checklist:
 - 2026-06-27: Created story with outbound ledger hold/reservation scope, current implementation snapshot, bypass risks, tests, and validation plan.
 - 2026-06-27: Implemented outbound ledger reservation gates, sweep hold/release lifecycle, schema verification, migration plan, tests, and moved story to review.
 - 2026-06-27: Senior review auto-fixed sweep release validation, sweep hold schema index verification, refund operator audit gaps, and moved story to done.
+- 2026-06-27: Follow-up review auto-fixed exact-amount sweep broadcast, strict hold/asset assertions, sweep success/release ordering, missing tx hash guard, uncertain dead-letter reconciliation, recover-funds post-broadcast feedback, and stale withdrawal rejection lifecycle state.

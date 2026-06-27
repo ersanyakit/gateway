@@ -95,12 +95,12 @@ func (s *EthereumChain) Create(ctx context.Context) (*blockchain.WalletDetails, 
 }
 
 func (s *EthereumChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
-	mnemonic, err := s.BaseChain.GetMnemonic()
+	hdPath := s.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
+	mnemonic, err := s.BaseChain.GetMnemonicForPath(ctx, hdPath)
 	if err != nil {
 		return nil, err
 	}
 
-	hdPath := s.BaseChain.GetDerivedPath(44, 60, hdAccountId, 0, hdWalletId)
 	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, hdPath)
 	if err != nil {
 		return nil, err

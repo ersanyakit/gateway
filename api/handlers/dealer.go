@@ -1964,6 +1964,73 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 	}
 }
 
+func HandleAdminSweepLiveBalance(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		if _, ok := requireAdmin(c); !ok {
+			return adminLiveBalanceError(c, fiber.StatusUnauthorized, "Admin girişi gerekli.")
+		}
+		if deps.WalletRepo == nil || deps.Blockchains == nil || deps.AssetRegistry == nil {
+			return adminLiveBalanceError(c, fiber.StatusServiceUnavailable, "Canlı bakiye altyapısı hazır değil.")
+		}
+
+		walletID, err := uuid.Parse(strings.TrimSpace(c.Query("wallet_id")))
+		if err != nil {
+			return adminLiveBalanceError(c, fiber.StatusBadRequest, "Geçerli wallet seçmelisin.")
+		}
+		selectedAsset, err := parseAdminAssetSelection(deps.AssetRegistry, c.Query("asset"))
+		if err != nil {
+			return adminLiveBalanceError(c, fiber.StatusBadRequest, err.Error())
+		}
+
+		wallet, err := deps.WalletRepo.FindByID(c.Context(), walletID)
+		if err != nil {
+			return adminLiveBalanceError(c, fiber.StatusNotFound, "Wallet bulunamadı.")
+		}
+		chainID := selectedAsset.GetChainID()
+		address := strings.TrimSpace(repositories.WalletAddressForChainID(*wallet, chainID))
+		if address == "" {
+			return adminLiveBalanceError(c, fiber.StatusBadRequest, "Seçili wallet için "+constants.ChainName(chainID)+" adresi yok.")
+		}
+
+		chain, err := deps.Blockchains.GetChainByID(chainID)
+		if err != nil {
+			return adminLiveBalanceError(c, fiber.StatusBadRequest, "Chain hazır değil: "+err.Error())
+		}
+		if !chain.ValidateAddress(address) {
+			return adminLiveBalanceError(c, fiber.StatusBadRequest, "Wallet adresi seçili chain için geçersiz.")
+		}
+
+		ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
+		defer cancel()
+
+		results := chain.BatchBalances(ctx, []string{address}, 1)
+		result, ok := adminBalanceResultForAddress(results, address)
+		if !ok {
+			return adminLiveBalanceError(c, fiber.StatusBadGateway, "Chain bakiye sonucu dönmedi.")
+		}
+		if result.Error != nil {
+			return adminLiveBalanceError(c, fiber.StatusBadGateway, "Chain bakiye sorgusu başarısız: "+result.Error.Error())
+		}
+
+		raw, err := adminLiveBalanceRaw(result.Balance, selectedAsset)
+		if err != nil {
+			return adminLiveBalanceError(c, fiber.StatusBadGateway, err.Error())
+		}
+
+		return c.JSON(fiber.Map{
+			"result":      "success",
+			"wallet_id":   walletID.String(),
+			"address":     address,
+			"chain":       constants.ChainName(chainID),
+			"chain_id":    int64(chainID),
+			"symbol":      selectedAsset.GetSymbol(),
+			"decimals":    selectedAsset.GetDecimals(),
+			"balance":     formatTokenAmount(raw, selectedAsset.GetDecimals()),
+			"balance_raw": raw,
+		})
+	}
+}
+
 func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		adminEmail, ok := requireAdmin(c)
@@ -2086,11 +2153,21 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 			if err != nil {
 				return "", err
 			}
+			if result == nil || strings.TrimSpace(result.TxHash) == "" {
+				return "", errors.New("transfer broadcast missing transaction hash")
+			}
 			return result.TxHash, nil
 		})
 		if err != nil {
 			if deps.ActivityLogRepo != nil {
 				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "withdrawal", request.ID.String(), err.Error())
+			}
+			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
+				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
+				return redirectWithError(c, "/admin/sweep", "Transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
+			}
+			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusFailed {
+				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFailedV1)
 			}
 			return redirectWithError(c, "/admin/sweep", "Transfer başarısız: "+err.Error())
 		}
@@ -2107,6 +2184,146 @@ func HandleAdminSweep(deps DealerDeps) fiber.Handler {
 		}
 		return redirectWithSuccess(c, "/admin/sweep", "Recover funds transferi gönderildi ("+assetLabel+"). Tx: "+txHash)
 	}
+}
+
+func adminLiveBalanceError(c fiber.Ctx, status int, message string) error {
+	return c.Status(status).JSON(fiber.Map{
+		"result":  "error",
+		"message": message,
+	})
+}
+
+func adminBalanceResultForAddress(results []models.BalanceResult, address string) (models.BalanceResult, bool) {
+	for _, result := range results {
+		if strings.EqualFold(strings.TrimSpace(result.Address), strings.TrimSpace(address)) {
+			return result, true
+		}
+	}
+	if len(results) == 1 {
+		return results[0], true
+	}
+	return models.BalanceResult{}, false
+}
+
+func adminLiveBalanceRaw(balance string, selected asset.Asset) (string, error) {
+	if selected == nil {
+		return "", errors.New("asset seçimi geçersiz")
+	}
+	components := adminParseBalanceComponents(balance)
+	value := ""
+	if selected.IsNative() {
+		for _, symbol := range adminNativeBalanceSymbols(selected) {
+			if candidate, ok := components[symbol]; ok {
+				value = candidate
+				break
+			}
+		}
+		if value == "" {
+			value = components[""]
+		}
+	} else if candidate, ok := components[strings.ToUpper(strings.TrimSpace(selected.GetSymbol()))]; ok {
+		value = candidate
+	}
+	if value == "" {
+		return "", fmt.Errorf("seçili asset için canlı bakiye dönmedi: %s", selected.GetSymbol())
+	}
+	raw, ok := adminBalanceValueToRaw(value, selected.GetDecimals())
+	if !ok {
+		return "", fmt.Errorf("chain bakiye değeri okunamadı: %s", value)
+	}
+	return raw, nil
+}
+
+func adminParseBalanceComponents(raw string) map[string]string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]string{}
+	}
+	components := make(map[string]string)
+	parts := strings.Split(raw, "|")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(part, ":")
+		if !ok {
+			if len(parts) == 1 {
+				components[""] = part
+			}
+			continue
+		}
+		key = strings.ToUpper(strings.TrimSpace(key))
+		value = strings.TrimSpace(value)
+		if key != "" && value != "" {
+			components[key] = value
+		}
+	}
+	return components
+}
+
+func adminNativeBalanceSymbols(selected asset.Asset) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, 3)
+	add := func(symbol string) {
+		symbol = strings.ToUpper(strings.TrimSpace(symbol))
+		if symbol == "" {
+			return
+		}
+		if _, ok := seen[symbol]; ok {
+			return
+		}
+		seen[symbol] = struct{}{}
+		out = append(out, symbol)
+	}
+	add(selected.GetSymbol())
+	switch selected.GetChainID() {
+	case constants.Bitcoin:
+		add("BTC")
+		add("BITCOIN")
+	case constants.Ethereum:
+		add("ETH")
+		add("ETHEREUM")
+	case constants.TRON:
+		add("TRX")
+		add("TRON")
+	case constants.Solana:
+		add("SOL")
+		add("SOLANA")
+	}
+	return out
+}
+
+func adminBalanceValueToRaw(value string, decimals uint8) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") {
+		return "", false
+	}
+	if strings.HasPrefix(value, "0x") || strings.HasPrefix(value, "0X") {
+		amount, ok := new(big.Int).SetString(value[2:], 16)
+		if !ok || amount.Sign() < 0 {
+			return "", false
+		}
+		return amount.String(), true
+	}
+	if !strings.Contains(value, ".") {
+		amount, ok := new(big.Int).SetString(value, 10)
+		if !ok || amount.Sign() < 0 {
+			return "", false
+		}
+		return amount.String(), true
+	}
+
+	decimal, ok := new(big.Rat).SetString(value)
+	if !ok || decimal.Sign() < 0 {
+		return "", false
+	}
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	decimal.Mul(decimal, new(big.Rat).SetInt(scale))
+	if decimal.Denom().Cmp(big.NewInt(1)) != 0 {
+		return "", false
+	}
+	return new(big.Int).Set(decimal.Num()).String(), true
 }
 
 func HandleAdminTestDeposit(deps DealerDeps) fiber.Handler {
@@ -2285,8 +2502,10 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", id.String(), err.Error())
 			return redirectWithError(c, "/admin/withdrawals", "Talep reddedilemedi: "+err.Error())
 		}
-		if findErr == nil && request != nil {
-			enqueueDealerPayoutLifecycle(c.Context(), deps, *request, constants.WebhookEventPayoutRejectedV1)
+		if updated, err := deps.WithdrawalRepo.Find(c.Context(), id); err == nil && updated != nil {
+			enqueueDealerPayoutLifecycle(c.Context(), deps, *updated, constants.WebhookEventPayoutRejectedV1)
+			logDealerActivity(c, deps.ActivityLogRepo, &updated.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason)
+		} else if findErr == nil && request != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason)
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi reddedildi.")

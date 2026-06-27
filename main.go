@@ -9,6 +9,7 @@ import (
 	depositsvc "core/services/deposits"
 	"core/services/realtime"
 	reconsvc "core/services/reconciliation"
+	"core/services/signer"
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
 	"core/types"
@@ -523,6 +524,10 @@ func executeAutoSweepDeposit(ctx context.Context, txModel *models.Transaction) (
 }
 
 func executeSweepJob(ctx context.Context, job models.SweepJob, txModel *models.Transaction) (*blockchain.TransactionResult, error) {
+	ctx = signer.WithAuditContext(ctx, signer.AuditContext{
+		JobID:         job.ID.String(),
+		CorrelationID: "sweep_job:" + job.ID.String(),
+	})
 	return executeAutoSweepDepositWithJob(ctx, txModel, &job)
 }
 
@@ -581,16 +586,16 @@ func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transac
 				time.Sleep(5 * time.Second)
 			}
 		}
-		result, err := chain.SweepERC20To(ctx, *userDetails, *txModel.Token, reserveAddr)
+		result, err := chain.WithdrawToken(ctx, *userDetails, *txModel.Token, txModel.Amount, reserveAddr)
 		if err != nil {
-			return nil, fmt.Errorf("sweep token [chain=%d token=%s]: %w", txModel.ChainID, *txModel.Token, err)
+			return nil, fmt.Errorf("sweep token transfer [chain=%d token=%s amount=%s]: %w", txModel.ChainID, *txModel.Token, txModel.Amount, err)
 		}
 		return result, nil
 	}
 
-	result, err := chain.SweepTo(ctx, *userDetails, reserveAddr)
+	result, err := chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)
 	if err != nil {
-		return nil, fmt.Errorf("sweep native [chain=%d]: %w", txModel.ChainID, err)
+		return nil, fmt.Errorf("sweep native transfer [chain=%d amount=%s]: %w", txModel.ChainID, txModel.Amount, err)
 	}
 	return result, nil
 }
@@ -1051,17 +1056,32 @@ func processSweepJobs(ctx context.Context) {
 		}
 		txHash := ""
 		if result != nil {
-			txHash = result.TxHash
+			txHash = strings.TrimSpace(result.TxHash)
+		}
+		if txHash == "" {
+			err := errors.New("sweep broadcast missing transaction hash")
+			log.Printf("Sweep job missing tx hash job=%s tx=%s\n", job.ID, job.TransactionUniqueHash)
+			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
+			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
+				releaseSweepHoldOnPreBroadcastDeadLetter(ctx, *updated, txModel, err)
+				eventType := constants.WebhookEventSweepFailedV1
+				if updated.Status == models.SweepJobStatusDeadLetter {
+					eventType = constants.WebhookEventSweepDeadLetteredV1
+				}
+				enqueueSweepLifecycleWebhook(ctx, *updated, txModel, eventType, err.Error())
+			}
+			continue
+		}
+		if err := router.SweepJobRepo.MarkSucceeded(ctx, job.ID, txHash); err != nil {
+			log.Printf("Sweep job mark succeeded error job=%s: %v\n", job.ID, err)
+			openSweepLedgerReconciliation(ctx, job, txModel, "sweep_mark_succeeded_failed", err)
+			continue
 		}
 		if router.LedgerRepo != nil {
 			if err := router.LedgerRepo.PostSweepRelease(ctx, job, *txModel, txHash); err != nil {
 				log.Printf("Sweep job ledger release error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
 				openSweepLedgerReconciliation(ctx, job, txModel, "sweep_ledger_release_failed", err)
 			}
-		}
-		if err := router.SweepJobRepo.MarkSucceeded(ctx, job.ID, txHash); err != nil {
-			log.Printf("Sweep job mark succeeded error job=%s: %v\n", job.ID, err)
-			continue
 		}
 		job.Status = models.SweepJobStatusSucceeded
 		job.SweepTxHash = txHash
@@ -1076,6 +1096,7 @@ func releaseSweepHoldOnPreBroadcastDeadLetter(ctx context.Context, job models.Sw
 		return
 	}
 	if !sweepFailureLikelyBeforeBroadcast(err) {
+		openSweepLedgerReconciliation(ctx, job, txModel, "sweep_dead_letter_broadcast_uncertain", err)
 		return
 	}
 	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.LedgerRepo == nil {
@@ -1436,6 +1457,12 @@ func main() {
 		coreApplication.CORE.Router.TransactionRepo,
 		coreApplication.CORE.Router.WalletRepo,
 	)
+	coreApplication.CORE.Router.TxRescanService.ChainFactRepo = coreApplication.CORE.Router.ChainFactRepo
+	coreApplication.CORE.Router.TxRescanService.ChainStateRepo = coreApplication.CORE.Router.ChainStateRepo
+	coreApplication.CORE.Router.TxRescanService.DepositRepo = coreApplication.CORE.Router.DepositRepo
+	coreApplication.CORE.Router.TxRescanService.PaymentRepo = coreApplication.CORE.Router.PaymentRepo
+	coreApplication.CORE.Router.TxRescanService.LedgerRepo = coreApplication.CORE.Router.LedgerRepo
+	coreApplication.CORE.Router.TxRescanService.Confirmations = chainConfirmationRequirement
 	webhookNotifier := webhooksvc.NewNotifier()
 	go startWebhookRetryWorker(mainCtx, webhookNotifier)
 	go startSessionExpiryWorker(mainCtx)

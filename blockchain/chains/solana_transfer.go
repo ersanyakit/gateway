@@ -38,6 +38,10 @@ func solanaGasPrefundLamports() uint64 {
 }
 
 func (s *SolanaChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails, toAddress string) (*blockchain.TransactionResult, error) {
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
+	}
+
 	rpcClient, err := s.solanaRPCClient()
 	if err != nil {
 		return nil, err
@@ -63,6 +67,10 @@ func (s *SolanaChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetai
 // SweepERC20To sweeps all SPL tokens (mint = contractAddr) from wallet to toAddress.
 // toAddress is the base Solana wallet address of the destination (not the ATA).
 func (s *SolanaChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDetails, contractAddr, toAddress string) (*blockchain.TransactionResult, error) {
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.token", "max", toAddress); err != nil {
+		return nil, err
+	}
+
 	rpcClient, err := s.solanaRPCClient()
 	if err != nil {
 		return nil, err
@@ -170,6 +178,9 @@ func (s *SolanaChain) sendSPL(ctx context.Context, wallet blockchain.WalletDetai
 	if err != nil {
 		return nil, err
 	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "transfer.token", amount.String(), toAddress); err != nil {
+		return nil, err
+	}
 
 	rpcClient, err := s.solanaRPCClient()
 	if err != nil {
@@ -262,6 +273,11 @@ func solanaTokenAmountUint64(amount *big.Int) (uint64, error) {
 }
 
 func (s *SolanaChain) PrefundGas(ctx context.Context, reserveWallet blockchain.WalletDetails, userAddress string) (bool, error) {
+	amount := fmt.Sprintf("%d", solanaGasPrefundLamports())
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), reserveWallet, "prefund.native", amount, userAddress); err != nil {
+		return false, err
+	}
+
 	rpcClient, err := s.solanaRPCClient()
 	if err != nil {
 		return false, err
@@ -281,7 +297,6 @@ func (s *SolanaChain) PrefundGas(ctx context.Context, reserveWallet blockchain.W
 		return false, nil
 	}
 
-	amount := fmt.Sprintf("%d", solanaGasPrefundLamports())
 	if _, err := s.Deposit(ctx, reserveWallet, amount, userAddress); err != nil {
 		return false, fmt.Errorf("solana gas prefund failed: %w", err)
 	}

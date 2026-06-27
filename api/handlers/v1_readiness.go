@@ -16,6 +16,7 @@ import (
 	"core/blockchain"
 	"core/constants"
 	"core/models"
+	"core/services/signer"
 	"core/types"
 
 	"github.com/gofiber/fiber/v3"
@@ -238,26 +239,7 @@ func v1ReadinessEnvBool(key string) bool {
 }
 
 func v1ProductionSignerReadiness() (bool, string, error) {
-	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
-		return true, "non-production signer policy", nil
-	}
-
-	signerMode := strings.ToLower(strings.TrimSpace(os.Getenv("SIGNER_MODE")))
-	if signerMode == "" {
-		signerMode = "software"
-	}
-
-	switch signerMode {
-	case "software":
-		if v1ReadinessEnvBool("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION") {
-			return false, "software signer override is enabled in production", errors.New("production software signer is not launch-ready")
-		}
-		return false, "software signer is blocked in production", errors.New("external KMS/HSM/MPC signer integration is required before production custody")
-	case "kms", "hsm", "mpc":
-		return false, fmt.Sprintf("SIGNER_MODE=%s is configured", signerMode), errors.New("external signer mode is declared but not implemented")
-	default:
-		return false, fmt.Sprintf("SIGNER_MODE=%s", signerMode), errors.New("unsupported signer mode")
-	}
+	return signer.ProductionReadiness()
 }
 
 func v1MetricsAccessReadiness() (bool, string, error) {

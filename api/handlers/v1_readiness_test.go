@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"core/services/signer"
 	"core/types"
 )
 
@@ -143,21 +145,27 @@ func TestV1ProductionSignerReadiness(t *testing.T) {
 
 	t.Setenv("APP_ENV", "production")
 	ok, _, err = v1ProductionSignerReadiness()
-	if ok || err == nil {
-		t.Fatalf("production default software signer ok=%v err=%v, want failure", ok, err)
+	if ok || !errors.Is(err, signer.ErrProductionSoftwareSignerDisabled) {
+		t.Fatalf("production default software signer ok=%v err=%v, want software signer failure", ok, err)
 	}
 
 	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "true")
 	ok, _, err = v1ProductionSignerReadiness()
-	if ok || err == nil {
-		t.Fatalf("production software signer override ok=%v err=%v, want failure", ok, err)
+	if ok || !errors.Is(err, signer.ErrProductionSoftwareSignerDisabled) {
+		t.Fatalf("production software signer override ok=%v err=%v, want software signer failure", ok, err)
 	}
 
 	t.Setenv("ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION", "")
 	t.Setenv("SIGNER_MODE", "kms")
 	ok, _, err = v1ProductionSignerReadiness()
-	if ok || err == nil {
-		t.Fatalf("unimplemented external signer ok=%v err=%v, want failure", ok, err)
+	if ok || !errors.Is(err, signer.ErrExternalSignerIntegrationRequired) {
+		t.Fatalf("unimplemented external signer ok=%v err=%v, want external integration failure", ok, err)
+	}
+
+	t.Setenv("SIGNER_MODE", "vault")
+	ok, details, err := v1ProductionSignerReadiness()
+	if ok || !errors.Is(err, signer.ErrExternalSignerIntegrationRequired) || !strings.Contains(details, "vault") {
+		t.Fatalf("vault signer readiness ok=%v details=%q err=%v, want external integration failure", ok, details, err)
 	}
 }
 

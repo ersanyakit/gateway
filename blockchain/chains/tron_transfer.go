@@ -355,6 +355,9 @@ func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, fmt.Errorf("tron amount_raw exceeds int64 SUN")
 	}
 	sendAmount := amount.Int64()
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "transfer.native", amount.String(), toAddress); err != nil {
+		return nil, err
+	}
 
 	rpcs := s.RPCs()
 	if len(rpcs) == 0 {
@@ -395,6 +398,9 @@ func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetai
 	}
 	amount, err := nativeAmountRaw(amountRaw)
 	if err != nil {
+		return nil, err
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "transfer.token", amount.String(), toAddress); err != nil {
 		return nil, err
 	}
 
@@ -444,6 +450,9 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 	}
 	if !s.ValidateAddress(toAddress) {
 		return nil, fmt.Errorf("invalid tron address: %s", toAddress)
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
 	}
 
 	rpcs := s.RPCs()
@@ -497,6 +506,9 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 	if !s.ValidateAddress(toAddress) {
 		return nil, fmt.Errorf("invalid tron destination address: %s", toAddress)
 	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.token", "max", toAddress); err != nil {
+		return nil, err
+	}
 
 	rpcs := s.RPCs()
 	if len(rpcs) == 0 {
@@ -546,6 +558,9 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if !s.ValidateAddress(userAddress) {
 		return false, fmt.Errorf("invalid tron user address: %s", userAddress)
 	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), reserveWallet, "prefund.native", fmt.Sprintf("%d", tronGasPrefundSUN()), userAddress); err != nil {
+		return false, err
+	}
 	rpcs := s.RPCs()
 	if len(rpcs) == 0 {
 		return false, fmt.Errorf("no tron RPC endpoint configured")
@@ -560,7 +575,6 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if balance >= tronGasThresholdSUN() {
 		return false, nil
 	}
-
 	blockRef, err := tronGetBlockRef(ctx, apiBase)
 	if err != nil {
 		return false, err
