@@ -70,7 +70,7 @@ func TestMoneyEventCatalogV1FieldSnapshot(t *testing.T) {
 		"deposit.detected.v1":               {"chain_id", "tx_hash", "tx_unique_hash", "log_index", "amount_raw", "symbol", "token", "from_address", "to_address", "confirmations"},
 		"deposit.finalized.v1":              {"chain_id", "tx_hash", "tx_unique_hash", "amount_raw", "symbol", "token", "wallet_id"},
 		"payment.succeeded.v1":              {"payment_id", "order_id", "amount", "currency", "tx_hash", "tx_unique_hash"},
-		"payment.failed.v1":                 {"payment_id", "order_id", "amount", "currency", "failure_reason"},
+		"payment.failed.v1":                 {"payment_id", "order_id", "amount", "currency", "failure_reason", "original_event_id", "original_resource_id", "correction_reason"},
 		"payment.expired.v1":                {"payment_id", "order_id", "amount", "currency", "expires_at"},
 		"payment.underpaid.v1":              {"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "shortfall_amount_raw", "payment_outcome"},
 		"payment.overpaid.v1":               {"payment_id", "order_id", "amount", "currency", "expected_amount_raw", "matched_amount_raw", "excess_amount_raw", "payment_outcome"},

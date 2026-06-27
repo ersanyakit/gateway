@@ -104,7 +104,7 @@ var moneyEventCatalog = []MoneyEventCatalogItem{
 		{Name: constants.WebhookEventPaymentSucceeded, Relation: EventRelationLegacyAlias, Note: "Current payment webhook name retained for existing integrations."},
 	}, nil),
 	catalogItem("payment.failed.v1", "payment", "payment", "payment", "Payment reached a failed terminal state or was corrected after settlement uncertainty.", true, []string{
-		"payment_id", "order_id", "amount", "currency", "failure_reason",
+		"payment_id", "order_id", "amount", "currency", "failure_reason", "original_event_id", "original_resource_id", "correction_reason",
 	}, []MoneyEventAlias{
 		{Name: constants.WebhookEventPaymentFailed, Relation: EventRelationLegacyAlias, Note: "Current payment webhook name retained for existing integrations."},
 	}, nil),
