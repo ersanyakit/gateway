@@ -72,6 +72,50 @@ func TestEpic1IntegrationEvidenceDocumentsCoveredContract(t *testing.T) {
 	}
 }
 
+func TestMoneyEventCatalogDocumentsVersionedEvents(t *testing.T) {
+	catalogBytes, err := os.ReadFile("money-event-catalog.md")
+	if err != nil {
+		t.Fatalf("read money event catalog: %v", err)
+	}
+	catalog := string(catalogBytes)
+	for _, token := range []string{
+		"deposit.detected.v1",
+		"deposit.finalized.v1",
+		"payment.succeeded.v1",
+		"payment.failed.v1",
+		"payment.expired.v1",
+		"withdrawal.requested.v1",
+		"withdrawal.broadcast.v1",
+		"withdrawal.finalized.v1",
+		"withdrawal.failed.v1",
+		"refund.succeeded.v1",
+		"sweep.succeeded.v1",
+		"transaction.reorged.v1",
+		"native_transfer",
+		"payment_succeeded",
+		"payout.requested.v1",
+		"event_id",
+		"event_type",
+		"event_version",
+		"occurred_at",
+		"idempotency_key",
+		"correlation_id",
+		"non-destructive",
+		"timestamp + raw_body",
+	} {
+		requireContains(t, catalog, token)
+	}
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "raw_signature", "stack_trace"} {
+		requireNotContains(t, catalog, forbidden)
+	}
+
+	guideBytes, err := os.ReadFile("integration-guide.md")
+	if err != nil {
+		t.Fatalf("read integration guide: %v", err)
+	}
+	requireContains(t, string(guideBytes), "docs/money-event-catalog.md")
+}
+
 func TestSwaggerContainsEpic1PartnerContract(t *testing.T) {
 	swaggerBytes, err := os.ReadFile("swagger.json")
 	if err != nil {

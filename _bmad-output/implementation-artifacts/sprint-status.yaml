@@ -56,7 +56,7 @@ development_status:
   1-5-stable-partner-api-contract-and-integration-evidence: done
   epic-1-retrospective: optional
   epic-2: in-progress
-  2-1-define-versioned-money-event-catalog: ready-for-dev
+  2-1-define-versioned-money-event-catalog: review
   2-2-persist-money-events-through-postgres-outbox: backlog
   2-3-deliver-webhooks-from-the-webhook-boundary: backlog
   2-4-support-replay-dead-letter-and-duplicate-delivery-safety: backlog

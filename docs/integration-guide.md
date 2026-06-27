@@ -501,6 +501,8 @@ The gateway re-fetches the transaction and replays wallet matching, payment matc
 
 The gateway uses one callback URL per domain. The merchant integration should route by `event_type` in the JSON body or by `X-Gateway-Event` header.
 
+The versioned money event catalog is maintained in `docs/money-event-catalog.md`. It maps current emitted names, legacy underscore aliases, and canonical dotted event names without replacing the examples below.
+
 Headers:
 
 ```text
@@ -568,6 +570,8 @@ Event example: `native_transfer`
 Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction_reorged` correction for the same transaction has a distinct idempotency key.
 
 The existing underscore webhook event names remain compatibility aliases until a versioned event catalog migration explicitly retires them.
+
+The full versioned money lifecycle catalog is documented in `docs/money-event-catalog.md`.
 
 ### Payment Webhook Payload
 

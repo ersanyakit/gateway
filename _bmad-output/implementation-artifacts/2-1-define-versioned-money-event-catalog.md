@@ -2,14 +2,15 @@
 story_id: "2.1"
 story_key: "2-1-define-versioned-money-event-catalog"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: ready-for-dev
+status: review
 created: 2026-06-27
 updated: 2026-06-27
+baseline_commit: 8449389195a3d4b185bb6b30c730ddb524a8b1f5
 ---
 
 # Story 2.1: Define Versioned Money Event Catalog
 
-Status: ready-for-dev
+Status: review
 
 ## Story
 
@@ -37,42 +38,42 @@ boylece merchant ve exchange consumer'lari payment, deposit, withdrawal, refund,
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Inventory current event surface and compatibility aliases (AC: 1, 2, 3, 6)
-  - [ ] Inventory constants in `constants/webhook_events.go`, raw event literals in repositories/handlers/workers, and payload builders in `services/webhook/*`.
-  - [ ] Identify current legacy underscore events: `native_transfer`, `transaction_reorged`, `payment_succeeded`, `payment_failed`, `payment_expired`.
-  - [ ] Identify current dotted events already emitted: `payout.*.v1`, `refund.*.v1`, `sweep.*.v1`.
-  - [ ] Decide catalog treatment for `payout.*.v1`: map it to canonical `withdrawal.*.v1` as a current compatibility alias, or explicitly document it as current implementation name with migration path to withdrawal naming. Do not remove or silently rename emitted `payout.*.v1` events in this story.
-  - [ ] Record event producer boundary and consumer type for each family: chain indexer/deposit, payment, withdrawal/payout, refund, sweep, webhook delivery, correction/reorg.
+- [x] Task 1: Inventory current event surface and compatibility aliases (AC: 1, 2, 3, 6)
+  - [x] Inventory constants in `constants/webhook_events.go`, raw event literals in repositories/handlers/workers, and payload builders in `services/webhook/*`.
+  - [x] Identify current legacy underscore events: `native_transfer`, `transaction_reorged`, `payment_succeeded`, `payment_failed`, `payment_expired`.
+  - [x] Identify current dotted events already emitted: `payout.*.v1`, `refund.*.v1`, `sweep.*.v1`.
+  - [x] Decide catalog treatment for `payout.*.v1`: map it to canonical `withdrawal.*.v1` as a current compatibility alias, or explicitly document it as current implementation name with migration path to withdrawal naming. Do not remove or silently rename emitted `payout.*.v1` events in this story.
+  - [x] Record event producer boundary and consumer type for each family: chain indexer/deposit, payment, withdrawal/payout, refund, sweep, webhook delivery, correction/reorg.
 
-- [ ] Task 2: Add a structured money event catalog source (AC: 1, 2, 3, 4, 5, 6)
-  - [ ] Add a structured catalog in a reusable package, preferably `services/webhook/event_catalog.go` or another local pattern near webhook contract code.
-  - [ ] Include event name, version, family, producer, consumer, terminal/non-terminal flag, resource type, lifecycle meaning, required common fields, family-specific fields, legacy aliases, and deprecation/migration notes.
-  - [ ] Include all canonical target names required by the epic: `deposit.detected.v1`, `deposit.finalized.v1`, `payment.succeeded.v1`, `payment.failed.v1`, `payment.expired.v1`, `withdrawal.requested.v1`, `withdrawal.broadcast.v1`, `withdrawal.finalized.v1`, `withdrawal.failed.v1`, `refund.succeeded.v1`, `sweep.succeeded.v1`, `transaction.reorged.v1`.
-  - [ ] Include currently emitted extra events if present, such as `refund.requested.v1`, `refund.broadcast.v1`, `refund.rejected.v1`, `refund.failed.v1`, `sweep.requested.v1`, `sweep.failed.v1`, `sweep.dead_lettered.v1`, and `payout.*.v1`, without claiming all are canonical target names.
-  - [ ] Define correction/reorg relation fields, including original event/resource reference and non-destructive correction semantics.
+- [x] Task 2: Add a structured money event catalog source (AC: 1, 2, 3, 4, 5, 6)
+  - [x] Add a structured catalog in a reusable package, preferably `services/webhook/event_catalog.go` or another local pattern near webhook contract code.
+  - [x] Include event name, version, family, producer, consumer, terminal/non-terminal flag, resource type, lifecycle meaning, required common fields, family-specific fields, legacy aliases, and deprecation/migration notes.
+  - [x] Include all canonical target names required by the epic: `deposit.detected.v1`, `deposit.finalized.v1`, `payment.succeeded.v1`, `payment.failed.v1`, `payment.expired.v1`, `withdrawal.requested.v1`, `withdrawal.broadcast.v1`, `withdrawal.finalized.v1`, `withdrawal.failed.v1`, `refund.succeeded.v1`, `sweep.succeeded.v1`, `transaction.reorged.v1`.
+  - [x] Include currently emitted extra events if present, such as `refund.requested.v1`, `refund.broadcast.v1`, `refund.rejected.v1`, `refund.failed.v1`, `sweep.requested.v1`, `sweep.failed.v1`, `sweep.dead_lettered.v1`, and `payout.*.v1`, without claiming all are canonical target names.
+  - [x] Define correction/reorg relation fields, including original event/resource reference and non-destructive correction semantics.
 
-- [ ] Task 3: Publish developer-facing catalog documentation (AC: 1, 2, 3, 4, 5)
-  - [ ] Add or update a docs artifact such as `docs/money-event-catalog.md`.
-  - [ ] Link the catalog from `docs/integration-guide.md` without replacing the current integration guide examples.
-  - [ ] Document common payload envelope fields: `event_id`, `event_type`, `event_version`, `occurred_at`, `merchant_id`, `domain_id`, `resource_type`, `resource_id`, `resource_status`, `idempotency_key`, and `correlation_id`.
-  - [ ] Document sensitive-field exclusions: API secrets, webhook secrets, raw signatures, private keys, mnemonics, full internal diagnostics, and unredacted stack traces.
-  - [ ] Document legacy alias compatibility and deprecation rules for underscore names and current `payout.*.v1` names.
-  - [ ] Document that webhook HMAC signing remains `timestamp + raw_body`; do not merge it with V1 request signing.
+- [x] Task 3: Publish developer-facing catalog documentation (AC: 1, 2, 3, 4, 5)
+  - [x] Add or update a docs artifact such as `docs/money-event-catalog.md`.
+  - [x] Link the catalog from `docs/integration-guide.md` without replacing the current integration guide examples.
+  - [x] Document common payload envelope fields: `event_id`, `event_type`, `event_version`, `occurred_at`, `merchant_id`, `domain_id`, `resource_type`, `resource_id`, `resource_status`, `idempotency_key`, and `correlation_id`.
+  - [x] Document sensitive-field exclusions: API secrets, webhook secrets, raw signatures, private keys, mnemonics, full internal diagnostics, and unredacted stack traces.
+  - [x] Document legacy alias compatibility and deprecation rules for underscore names and current `payout.*.v1` names.
+  - [x] Document that webhook HMAC signing remains `timestamp + raw_body`; do not merge it with V1 request signing.
 
-- [ ] Task 4: Add catalog contract tests (AC: 2, 3, 4, 5, 6)
-  - [ ] Add tests that every constant in `constants/webhook_events.go` is represented in the catalog either as canonical or alias.
-  - [ ] Add tests that raw emitted event literals still present in payment/transaction/rescan paths are represented in the catalog.
-  - [ ] Add tests that required canonical event names exist with version `v1`, producer, consumer, lifecycle semantics, resource type, and terminal flag.
-  - [ ] Add tests that catalog examples validate against the declared required fields and exclude sensitive fields.
-  - [ ] Add tests that correction/reorg events include original-resource/event relation metadata and state that prior event history is not destructively edited.
+- [x] Task 4: Add catalog contract tests (AC: 2, 3, 4, 5, 6)
+  - [x] Add tests that every constant in `constants/webhook_events.go` is represented in the catalog either as canonical or alias.
+  - [x] Add tests that raw emitted event literals still present in payment/transaction/rescan paths are represented in the catalog.
+  - [x] Add tests that required canonical event names exist with version `v1`, producer, consumer, lifecycle semantics, resource type, and terminal flag.
+  - [x] Add tests that catalog examples validate against the declared required fields and exclude sensitive fields.
+  - [x] Add tests that correction/reorg events include original-resource/event relation metadata and state that prior event history is not destructively edited.
 
-- [ ] Task 5: Validate and update story record (AC: 1, 2, 3, 4, 5, 6)
-  - [ ] Targeted validation: `go test -count=1 ./services/webhook ./constants`.
-  - [ ] Docs/catalog validation: run any new docs test package added by this story.
-  - [ ] Full validation: `go test -count=1 ./...`.
-  - [ ] Static validation: `go vet ./...`.
-  - [ ] Whitespace validation: `git diff --check`.
-  - [ ] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status according to `bmad-dev-story`.
+- [x] Task 5: Validate and update story record (AC: 1, 2, 3, 4, 5, 6)
+  - [x] Targeted validation: `go test -count=1 ./services/webhook ./constants`.
+  - [x] Docs/catalog validation: run any new docs test package added by this story.
+  - [x] Full validation: `go test -count=1 ./...`.
+  - [x] Static validation: `go vet ./...`.
+  - [x] Whitespace validation: `git diff --check`.
+  - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status according to `bmad-dev-story`.
 
 ## Dev Notes
 
@@ -163,17 +164,42 @@ Codex
 
 ### Debug Log References
 
-- Not started.
+- Baseline commit: `8449389195a3d4b185bb6b30c730ddb524a8b1f5`
+- RED: `go test -count=1 ./services/webhook -run 'TestMoneyEventCatalog'` failed before the catalog API existed.
+- RED: `go test -count=1 ./docs -run 'TestMoneyEventCatalogDocumentsVersionedEvents'` failed before `docs/money-event-catalog.md` existed.
+- GREEN: `go test -count=1 ./services/webhook -run 'TestMoneyEventCatalog'` passed.
+- GREEN: `go test -count=1 ./docs -run 'TestMoneyEventCatalogDocumentsVersionedEvents'` passed.
+- Validation: `go test -count=1 ./services/webhook ./constants` passed.
+- Validation: `go test -count=1 ./docs` passed.
+- Validation: `go test -count=1 ./...` passed.
+- Validation: `go vet ./...` passed.
+- Validation: `git diff --check` passed.
+
+### Implementation Plan
+
+- Keep Story 2.1 as a contract/catalog change: add reusable metadata, docs, and tests without changing live event emission, event ids, webhook HMAC behavior, retry behavior, or outbox persistence.
+- Treat current `payout.*.v1` events as compatibility aliases for canonical `withdrawal.*.v1` names, and keep legacy underscore events mapped until an explicit catalog migration retires them.
+- Validate catalog drift with Go contract tests over constants, known raw literals, required canonical entries, example payload fields, alias migration notes, and correction semantics.
 
 ### Completion Notes List
 
-- Not started.
+- Added a structured money event catalog under `services/webhook` with canonical dotted `v1` event names, common fields, family fields, producer/consumer metadata, terminal flags, alias relations, deprecation notes, and correction semantics.
+- Mapped current legacy underscore webhook events to canonical names and mapped current `payout.*.v1` events as compatibility aliases for canonical withdrawal events without changing emitted event names.
+- Added developer-facing `docs/money-event-catalog.md` and linked it from `docs/integration-guide.md` while preserving existing webhook examples and signing semantics.
+- Added catalog contract tests for required canonical events, current webhook constants, raw emitted event literals, required example fields, sensitive field exclusion, alias migration notes, and non-destructive correction semantics.
+- Verified targeted catalog/docs tests, full repo tests, vet, and whitespace checks.
 
 ### File List
 
 - `_bmad-output/implementation-artifacts/2-1-define-versioned-money-event-catalog.md`
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
+- `docs/integration-guide.md`
+- `docs/integration_contract_test.go`
+- `docs/money-event-catalog.md`
+- `services/webhook/event_catalog.go`
+- `services/webhook/event_catalog_test.go`
 
 ### Change Log
 
 - 2026-06-27: Story created with Epic 2.1 acceptance criteria, event-surface inventory, architecture guardrails, Story 1.5 learnings, and catalog/testing guidance.
+- 2026-06-27: Implemented versioned money event catalog metadata, developer documentation, compatibility alias mapping, and catalog contract tests.
