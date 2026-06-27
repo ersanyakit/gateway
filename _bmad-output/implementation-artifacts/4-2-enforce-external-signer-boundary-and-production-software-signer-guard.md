@@ -60,7 +60,7 @@ boylece private key ve mnemonic approved custody layer disina cikmaz.
   - [x] Bitcoin/Solana/TRON path'leri icin dogrudan policy helper unit testleri veya representative signing-guard tests ekle; her chain ailesinde raw private key signing'e gitmeden fail ettigini kanitla.
   - [x] Readiness/metrics testlerini policy output degisikligine gore guncelle.
   - [x] Targeted validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer ./blockchain ./blockchain/chains ./api/handlers`.
-  - [x] Full validation: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+  - [x] Full validation attempted: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...` hit the known local `httptest.NewServer` TCP listen sandbox failure; issue logged for follow-up.
   - [x] Static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Whitespace validation: `git diff --check && git diff --cached --check`.
 

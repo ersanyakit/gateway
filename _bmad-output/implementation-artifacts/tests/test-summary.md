@@ -53,12 +53,8 @@
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer -run 'TestAuthorize|TestProductionReadiness'`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers -run 'TestOperationalMetricsReportsProductionSignerGate|TestOperationalMetricsIncludesBacklogAndChainState|TestV1ProductionSignerReadiness'`
 - [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./blockchain/chains -run 'TestEVMSendNativeChecksSignerPolicyBeforeRPCAndPrivateKey|TestBitcoinSendChecksSignerPolicyBeforePrivateKey|TestSolanaWithdrawChecksSignerPolicyBeforeRPCAndPrivateKey|TestTronSendChecksSignerPolicyBeforeRPCAndPrivateKey'`
-- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer ./api/handlers`
-- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./services/signer ./blockchain ./blockchain/chains ./api/handlers`
-- [x] `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
-- [x] `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
 - [x] `git diff --check`
-- [i] Package and full validation commands that need localhost listener binding were rerun outside the execution sandbox and passed.
+- [i] Full package validation for `./api/handlers`, `./blockchain/chains`, and `./...` was attempted, but the local sandbox blocks `httptest.NewServer` TCP listen calls with `bind: operation not permitted`. The new tests were isolated and passed.
 
 ## Previous Generated Tests
 
