@@ -35,6 +35,14 @@ This project handles payment and wallet-provider flows. Treat production access 
 - `APP_ENV=production` requires `METRICS_BEARER_TOKEN`; without it the endpoint returns `503`.
 - Put `/metrics` behind private networking or reverse-proxy allowlists. Do not expose it as a public internet endpoint.
 
+## HTTP Boundary
+
+- Every request gets an `X-Request-ID` response header. Existing safe request IDs are preserved; malformed or very short IDs are replaced.
+- Request logs are structured and deliberately limited to method, path without query string, matched route, status, duration, error type, and request id.
+- Do not add request body, query string, `Authorization`, API keys, signatures, webhook secrets, mnemonic, private key, or raw payload fields to operational logs.
+- Production should run with bounded `HTTP_READ_TIMEOUT`, `HTTP_WRITE_TIMEOUT`, and `HTTP_IDLE_TIMEOUT`; defaults are 15s, 30s, and 60s.
+- Configure a stable `CSRF_JWT_SECRET`, `DEALER_SESSION_SECRET`, `SESSION_SECRET`, or `MASTER_KEY` before production launch so portal CSRF tokens survive process restarts.
+
 ## Launch Gate
 
 Before real funds or public production traffic:

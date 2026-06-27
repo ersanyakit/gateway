@@ -117,11 +117,18 @@ Minimum `.env` örneği:
 DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
 PORT=:4001
 APP_ENV=development
+GATEWAY_LOG_FORMAT=text
+GATEWAY_LOG_LEVEL=info
+HTTP_READ_TIMEOUT=15s
+HTTP_WRITE_TIMEOUT=30s
+HTTP_IDLE_TIMEOUT=60s
+CORS_ALLOWED_ORIGINS=http://localhost:4001
 ALLOW_PRIVATE_WEBHOOK_URLS=true
 ALLOW_AUTOMIGRATE_IN_PRODUCTION=false
 SIGNER_MODE=software
 ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=false
 METRICS_BEARER_TOKEN=
+CSRF_JWT_SECRET=32-byte-or-longer-csrf-secret
 MASTER_KEY=32-byte-or-longer-secret
 MNEMONIC_PHRASE="your bip39 mnemonic phrase"
 ADMIN_EMAIL=admin@example.com
@@ -163,6 +170,7 @@ Zorunlu veya kritik değişkenler:
 | `SIGNER_MODE` | `software`, `kms`, `hsm` veya `mpc`. Mevcut üretim-ready custody için gerçek external signer entegrasyonu gerekir; placeholder external modlar readiness'ı bilerek geçirmez. |
 | `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Varsayılan `false`. `production` ortamında process içi mnemonic/private key signing kullanımını engeller; `true` değeri sadece kontrollü pilot risk kabulü içindir ve production readiness'ı geçirmez. |
 | `METRICS_BEARER_TOKEN` | `/metrics` Prometheus endpoint'i için bearer token. `APP_ENV=production` iken zorunludur; boş bırakılırsa endpoint 503 döner. |
+| `CSRF_JWT_SECRET` | Merchant/admin portal CSRF token imzalama secret'ı. Production'da stabil bir secret veya `MASTER_KEY`/session secret fallback'i gerekir. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
 | `MNEMONIC_PHRASE` | Trust Wallet Core ile HD wallet üretimi için BIP39 mnemonic. |
 | `ADMIN_EMAIL` | Bootstrap admin hesabı için e-posta. |
@@ -173,6 +181,11 @@ Opsiyonel servis değişkenleri:
 
 | Değişken | Varsayılan / Açıklama |
 | --- | --- |
+| `GATEWAY_LOG_FORMAT` | `json` veya `text`. Boş bırakılırsa production'da `json`, diğer ortamlarda `text` kullanılır. |
+| `GATEWAY_LOG_LEVEL` | `debug`, `info`, `warn` veya `error`. Varsayılan: `info`. |
+| `HTTP_READ_TIMEOUT` | HTTP request okuma timeout'u. Varsayılan: `15s`. |
+| `HTTP_WRITE_TIMEOUT` | HTTP response yazma timeout'u. Varsayılan: `30s`. |
+| `HTTP_IDLE_TIMEOUT` | Keep-alive idle timeout'u. Varsayılan: `60s`. |
 | `CORS_ALLOWED_ORIGINS` | Virgülle ayrılmış izinli origin listesi. Boş origin isteklerine izin verilir. |
 | `API_KEY_RATE_LIMIT_PER_MINUTE` | `/api/v1` için dakika başına limit. Varsayılan: `120`. |
 | `WEBHOOK_RETRY_INTERVAL` | Webhook retry worker aralığı. Varsayılan: `30s`. |
@@ -417,6 +430,8 @@ Listener'lar transaction event'lerini dispatcher üzerinden publish eder. Dispat
 Canlı ortamda gateway ve wallet provider hazırlığını doğrulamak için `GET /api/v1/common/readiness` kullanılmalıdır. Endpoint DB erişimini, production migration politikasını, signer üretim kapısını, backlog/drift durumunu, tüm chain kayıtlarını, listener worker kayıtlarını, Trust Wallet Core HD wallet türetmesini ve canlı RPC/gRPC son blok erişimini kontrol eder; eksik veya bozuk bağımlılık varsa `503` döner.
 
 Prometheus uyumlu operasyon metrikleri için `GET /metrics` kullanılabilir. Endpoint webhook delivery backlog, sweep job backlog, reconciliation drift, chain worker count, chain state block/slot ve migration/signer readiness gauge'larını döndürür. `APP_ENV=production` altında `Authorization: Bearer <METRICS_BEARER_TOKEN>` zorunludur.
+
+HTTP sınırında her response `X-Request-ID` taşır. Request logları method, path, route, status, duration, error type ve request id ile sınırlıdır; query string, request body, `Authorization`, API key, signature veya secret değerleri loglanmaz. Panic durumunda response sanitize edilmiş `500` ve `request_id` içerir.
 
 ## Güvenlik Notları
 

@@ -23,7 +23,9 @@ CREATE TABLE IF NOT EXISTS money_event_outboxes (
     locked_until timestamptz NULL,
     last_error text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
-    updated_at timestamptz NOT NULL DEFAULT now()
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT money_event_outboxes_payload_object_check
+        CHECK (jsonb_typeof(payload_json) = 'object')
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_money_event_outboxes_event_id

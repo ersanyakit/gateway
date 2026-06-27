@@ -107,6 +107,12 @@ func v1RunReadinessChecks(ctx context.Context, deps V1APIDeps) []types.V1Readine
 	signerOK, signerDetails, signerErr := v1ProductionSignerReadiness()
 	add("signer.production", signerOK, signerDetails, signerErr)
 
+	metricsOK, metricsDetails, metricsErr := v1MetricsAccessReadiness()
+	add("metrics.access", metricsOK, metricsDetails, metricsErr)
+
+	csrfOK, csrfDetails, csrfErr := v1PortalCSRFReadiness()
+	add("portal.csrf_secret", csrfOK, csrfDetails, csrfErr)
+
 	v1AppendOperationalReadinessChecks(ctx, &checks, deps)
 
 	if deps.Blockchains == nil {
@@ -250,6 +256,28 @@ func v1ProductionSignerReadiness() (bool, string, error) {
 	default:
 		return false, fmt.Sprintf("SIGNER_MODE=%s", signerMode), errors.New("unsupported signer mode")
 	}
+}
+
+func v1MetricsAccessReadiness() (bool, string, error) {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
+		return true, "non-production metrics access policy", nil
+	}
+	if strings.TrimSpace(os.Getenv("METRICS_BEARER_TOKEN")) == "" {
+		return false, "METRICS_BEARER_TOKEN is empty in production", errors.New("production metrics endpoint must be protected")
+	}
+	return true, "production metrics bearer token is configured", nil
+}
+
+func v1PortalCSRFReadiness() (bool, string, error) {
+	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
+		return true, "non-production CSRF secret policy", nil
+	}
+	for _, key := range []string{"CSRF_JWT_SECRET", "DEALER_SESSION_SECRET", "SESSION_SECRET", "MASTER_KEY"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true, key + " is configured", nil
+		}
+	}
+	return false, "no stable CSRF/session secret is configured", errors.New("production portal CSRF signing requires a stable secret")
 }
 
 func v1ReadinessCountDetails(counts map[string]int64, statuses ...string) string {

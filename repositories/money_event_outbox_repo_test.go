@@ -96,6 +96,18 @@ func TestValidateMoneyEventOutboxValidationAndDefaults(t *testing.T) {
 	if err := validateMoneyEventOutbox(&invalid); err == nil {
 		t.Fatalf("invalid payload err = %v", err)
 	}
+
+	invalid = base
+	invalid.PayloadJSON = `"not-an-event-object"`
+	if err := validateMoneyEventOutbox(&invalid); !errors.Is(err, ErrMoneyEventOutboxInvalid) {
+		t.Fatalf("primitive payload err = %v", err)
+	}
+
+	invalid = base
+	invalid.PayloadJSON = `["not", "an", "event"]`
+	if err := validateMoneyEventOutbox(&invalid); !errors.Is(err, ErrMoneyEventOutboxInvalid) {
+		t.Fatalf("array payload err = %v", err)
+	}
 }
 
 func TestMoneyEventOutboxCompatibility(t *testing.T) {

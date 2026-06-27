@@ -25,6 +25,12 @@ type requiredSchemaColumn struct {
 	field string
 }
 
+type requiredSchemaIndex struct {
+	table string
+	model any
+	name  string
+}
+
 func normalizedAppEnv() string {
 	return strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
 }
@@ -190,6 +196,13 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 	}
 }
 
+func requiredSchemaIndexes() []requiredSchemaIndex {
+	return []requiredSchemaIndex{
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_event_id"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_idempotency_scope"},
+	}
+}
+
 func VerifySchema(ctx context.Context, db *gorm.DB) error {
 	requiredColumns := requiredSchemaColumns()
 
@@ -197,6 +210,11 @@ func VerifySchema(ctx context.Context, db *gorm.DB) error {
 	for _, column := range requiredColumns {
 		if !migrator.HasColumn(column.model, column.field) {
 			return fmt.Errorf("schema check failed: %s.%s is missing", column.table, column.field)
+		}
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if !migrator.HasIndex(index.model, index.name) {
+			return fmt.Errorf("schema check failed: %s index %s is missing", index.table, index.name)
 		}
 	}
 	return nil

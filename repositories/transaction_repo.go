@@ -7,6 +7,7 @@ import (
 	"core/types"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -29,15 +30,11 @@ func NewTransactionRepo(db *gorm.DB) *TransactionRepo {
 }
 
 func (r *TransactionRepo) UniqueHash(params types.TransactionParam) (string, error) {
-	if params.Hash == nil {
+	hash := normalizeTransactionHash(params.Hash)
+	if hash == "" {
 		return "", errors.New("hash is required")
 	}
-	logIndexStr := ""
-	if params.LogIndex != nil {
-		logIndexStr = *params.LogIndex
-	}
-
-	return fmt.Sprintf("%d-%s-%s", params.ChainID, *params.Hash, logIndexStr), nil
+	return fmt.Sprintf("%d-%s-%s", params.ChainID, hash, normalizeTransactionLogIndex(params.LogIndex)), nil
 }
 
 func (r *TransactionRepo) Create(params types.TransactionParam) error {
@@ -61,6 +58,9 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 	if params.Amount == nil {
 		return errors.New("amount is required")
 	}
+	hash := normalizeTransactionHash(params.Hash)
+	logIndex := normalizeTransactionLogIndex(params.LogIndex)
+	logIndexPtr := normalizedTransactionLogIndexPtr(logIndex)
 
 	return r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		status := transactionInitialStatus(params.Status)
@@ -106,6 +106,8 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}
 		identityChanged := found && transactionBlockIdentityChanged(existing, *params.Block, blockHash)
 		assignments := map[string]interface{}{
+			"hash":          hash,
+			"log_index":     logIndexPtr,
 			"block_number":  *params.Block,
 			"block_hash":    blockHash,
 			"token":         token,
@@ -134,8 +136,8 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		txModel := &models.Transaction{
 			ID:          uuid.New(),
 			ChainID:     params.ChainID,
-			Hash:        *params.Hash,
-			LogIndex:    params.LogIndex,
+			Hash:        hash,
+			LogIndex:    logIndexPtr,
 			BlockNumber: *params.Block,
 			Symbol:      *params.Symbol,
 			Decimals:    params.Decimals,
@@ -159,6 +161,58 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 
 		return nil
 	})
+}
+
+func normalizeTransactionHash(hash *string) string {
+	if hash == nil {
+		return ""
+	}
+	value := strings.TrimSpace(*hash)
+	if value == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(value), "0x") {
+		return strings.ToLower(value)
+	}
+	return value
+}
+
+func normalizeTransactionLogIndex(logIndex *string) string {
+	if logIndex == nil {
+		return ""
+	}
+	value := strings.TrimSpace(*logIndex)
+	if value == "" {
+		return ""
+	}
+	prefix, suffix, ok := strings.Cut(value, ":")
+	if !ok {
+		return normalizeTransactionLogIndexNumber(value)
+	}
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	suffix = normalizeTransactionLogIndexNumber(suffix)
+	if prefix == "" || suffix == "" {
+		return strings.TrimSpace(value)
+	}
+	return prefix + ":" + suffix
+}
+
+func normalizeTransactionLogIndexNumber(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(value), "0x") {
+		parsed, ok := new(big.Int).SetString(value[2:], 16)
+		if ok {
+			return parsed.String()
+		}
+	}
+	return value
+}
+
+func normalizedTransactionLogIndexPtr(logIndex string) *string {
+	if logIndex == "" {
+		return nil
+	}
+	return &logIndex
 }
 
 func transactionInitialStatus(status *string) string {

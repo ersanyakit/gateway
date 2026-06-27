@@ -267,13 +267,16 @@ func canonicalMoneyEventOutboxJSON(raw string) (string, error) {
 	} else if !errors.Is(err, io.EOF) {
 		return "", invalidMoneyEventOutbox("payload JSON is invalid: %v", err)
 	}
+	if _, ok := payload.(map[string]any); !ok {
+		return "", invalidMoneyEventOutbox("payload JSON must be an object")
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
 	bodyString := strings.TrimSpace(string(body))
 	if bodyString == "" || bodyString == "null" {
-		return "", invalidMoneyEventOutbox("payload JSON must be an object or array")
+		return "", invalidMoneyEventOutbox("payload JSON must be an object")
 	}
 	return bodyString, nil
 }

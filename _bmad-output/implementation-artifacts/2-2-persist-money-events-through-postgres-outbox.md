@@ -2,7 +2,7 @@
 story_id: "2.2"
 story_key: "2-2-persist-money-events-through-postgres-outbox"
 epic: "Epic 2: Reliable Money Event Delivery"
-status: review
+status: done
 created: 2026-06-27
 updated: 2026-06-27
 baseline_commit: 3db844050e180146b55e4074815fd8e4b1dffc99
@@ -10,7 +10,7 @@ baseline_commit: 3db844050e180146b55e4074815fd8e4b1dffc99
 
 # Story 2.2: Persist Money Events Through Postgres Outbox
 
-Status: review
+Status: done
 
 ## Story
 
@@ -72,6 +72,11 @@ boylece process crash olsa bile event delivery kaybolmaz, replay edilebilir ve d
   - [x] Static validation: `go vet ./...`.
   - [x] Whitespace validation: `git diff --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and story status according to `bmad-dev-story`.
+
+### Review Findings
+
+- [x] [Review][Patch] Require object payloads for outbox JSON validation [repositories/money_event_outbox_repo.go:253] — fixed by rejecting primitive JSON payloads and adding regression coverage.
+- [x] [Review][Patch] Verify outbox unique indexes during production schema checks [services/database/database.go:193] — fixed by adding required index verification and schema tests.
 
 ## Dev Notes
 
@@ -169,7 +174,15 @@ Codex
 - Validation: `go test -count=1 ./...` passed.
 - Validation: `go vet ./...` passed.
 - Validation: `git diff --check` passed.
-- Note: Postgres transaction semantics test is present and runs when `OUTBOX_TEST_DATABASE_URL`, `MONEY_OUTBOX_TEST_DATABASE_URL`, or `TEST_DATABASE_URL` is set. Local validation environment did not provide a test DSN, so the integration test was skipped by Go's normal test skip path.
+- Code review patch: tightened `canonicalMoneyEventOutboxJSON` to require JSON object payloads.
+- Code review patch: added production `VerifySchema` checks for `ux_money_event_outboxes_event_id` and `ux_money_event_outboxes_idempotency_scope`.
+- Post-review validation: `go test -count=1 ./repositories ./models ./services/database` passed.
+- Post-review validation: `go test -count=1 ./services/webhook ./constants` passed.
+- Post-review validation: `go test -count=1 ./docs` passed.
+- Post-review validation: `OUTBOX_TEST_DATABASE_URL=... go test -count=1 ./repositories -run TestMoneyEventOutboxRepoPostgresTransactionSemantics -v` passed against local Postgres.
+- Post-review validation: `go test -count=1 ./...` passed.
+- Post-review validation: `go vet ./...` passed.
+- Post-review validation: `git diff --check` passed.
 
 ### Implementation Plan
 
@@ -184,6 +197,8 @@ Codex
 - Added outbox repository helpers that build records from Story 2.1 catalog event names, validate/canonicalize payload JSON, insert through caller-owned transactions, no-op compatible duplicates, and reject incompatible duplicate idempotency records.
 - Added schema registration/verification evidence and `docs/outbox-migration-plan.md` production migration guidance so startup `AutoMigrate` is not the only production schema mechanism.
 - Added unit/docs/schema tests plus optional Postgres integration coverage for commit, rollback, duplicate, and conflict semantics when a test DSN is available.
+- Resolved code review finding by requiring outbox payload JSON to be an object instead of allowing primitive JSON values.
+- Resolved code review finding by making production schema verification fail if the outbox unique indexes are missing.
 
 ### File List
 
@@ -202,3 +217,5 @@ Codex
 
 - 2026-06-27: Story created with Epic 2.2 acceptance criteria, outbox architecture guardrails, Story 2.1 learnings, and migration/test guidance.
 - 2026-06-27: Implemented durable money event outbox schema, repository boundary, migration plan, schema/docs tests, and validation evidence.
+- 2026-06-27: Addressed code review finding for primitive payload JSON validation and marked story done.
+- 2026-06-27: Addressed code review finding for production outbox unique index verification.

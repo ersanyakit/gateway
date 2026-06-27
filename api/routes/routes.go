@@ -87,10 +87,18 @@ func NewRouter(db *gorm.DB) *Router {
 			StrictRouting:   true,
 			Immutable:       true,
 			BodyLimit:       4 * 1024 * 1024, // 10MB
+			ReadTimeout:     middleware.HTTPReadTimeout(),
+			WriteTimeout:    middleware.HTTPWriteTimeout(),
+			IdleTimeout:     middleware.HTTPIdleTimeout(),
 		}),
 		assetRegistry: configurations.NewAssetRegistry(),
 		blockchains:   configurations.NewChainFactory(),
 	}
+
+	opsLogger := middleware.NewOperationalLogger()
+	r.fiber.Use(middleware.RequestID())
+	r.fiber.Use(middleware.RequestLogger(opsLogger))
+	r.fiber.Use(middleware.RecoverPanic(opsLogger))
 
 	r.fiber.Use(paginate.New(
 		paginate.Config{
