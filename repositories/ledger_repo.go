@@ -1349,6 +1349,8 @@ func ledgerChainIDFromName(name string) (constants.ChainID, bool) {
 		return constants.Solana, true
 	case "tron", "trx":
 		return constants.TRON, true
+	case "tron-testnet", "trx-testnet", "tron-shasta", "shasta":
+		return constants.TRONTestnet, true
 	default:
 		return 0, false
 	}

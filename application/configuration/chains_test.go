@@ -28,6 +28,9 @@ func TestNewChainFactoryAliases(t *testing.T) {
 		"binance":      constants.Binance,
 		"bsc":          constants.Binance,
 		"spicy":        constants.ChilizSpicy,
+		"shasta":       constants.TRONTestnet,
+		"trx-testnet":  constants.TRONTestnet,
+		"tron-shasta":  constants.TRONTestnet,
 		"arb":          constants.Arbitrum,
 		"arbitrum-one": constants.Arbitrum,
 	}

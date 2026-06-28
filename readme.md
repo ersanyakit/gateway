@@ -174,6 +174,9 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=change-this-password
 ADMIN_NAME=Gateway Admin
 TRON_GRPC_ENDPOINTS=grpc.trongrid.io:50051
+TRON_TESTNET_JSONRPC_URLS=https://api.shasta.trongrid.io/jsonrpc
+TRON_TESTNET_HTTP_ENDPOINTS=https://api.shasta.trongrid.io
+TRON_TESTNET_GRPC_ENDPOINTS=grpc.shasta.trongrid.io:50051
 ```
 
 Veritabanını migrate edin:
@@ -298,6 +301,9 @@ RPC değişkenleri:
 | `TRON_JSONRPC_URLS` | TRON JSON-RPC endpoint listesi. |
 | `TRON_HTTP_ENDPOINT` / `TRON_HTTP_ENDPOINTS` | TRON HTTP API endpoint ayarları. |
 | `TRON_GRPC_ENDPOINT` / `TRON_GRPC_ENDPOINTS` | TRON listener gRPC endpoint ayarları. |
+| `TRON_TESTNET_JSONRPC_URLS` | TRON Shasta testnet JSON-RPC endpoint listesi. |
+| `TRON_TESTNET_HTTP_ENDPOINT` / `TRON_TESTNET_HTTP_ENDPOINTS` | TRON Shasta testnet HTTP API endpoint ayarları. |
+| `TRON_TESTNET_GRPC_ENDPOINT` / `TRON_TESTNET_GRPC_ENDPOINTS` | TRON Shasta testnet listener gRPC endpoint ayarları. |
 | `TRON_PRO_API_KEY` | TRON API erişimi için opsiyonel anahtar. |
 | `REQUIRE_EVM_TRACE` | `true` ise EVM listener trace bağımlılığını zorunlu kılar. |
 | `DEBUG_EVM_TRACE` | `true` ise EVM trace debug loglarını açar. |

@@ -64,7 +64,7 @@ func TestTronPostAnnotatesEndpoint(t *testing.T) {
 	t.Setenv("TRON_HTTP_ENDPOINTS", server.URL)
 
 	svc := &Service{client: server.Client()}
-	_, err := svc.tronPost(context.Background(), "/wallet/gettransactionbyid", map[string]string{"value": "abc"})
+	_, err := svc.tronPost(context.Background(), chainpkg.NewTronChain(), "/wallet/gettransactionbyid", map[string]string{"value": "abc"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -109,8 +109,9 @@ func TestScanTronProducesNativeTRXTransfer(t *testing.T) {
 	registry := asset.NewRegistry()
 	registry.Register(asset.NewTRX(constants.TRON))
 	svc := &Service{Registry: registry, client: server.Client()}
+	chain := chainpkg.NewTronChain()
 
-	events, err := svc.scanTron(context.Background(), txHash)
+	events, err := svc.scanTron(context.Background(), chain, txHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +127,9 @@ func TestScanTronProducesNativeTRXTransfer(t *testing.T) {
 	}
 	if got := *event.Tx.Symbol; got != "TRX" {
 		t.Fatalf("symbol = %q, want TRX", got)
+	}
+	if event.Tx.ChainID != constants.TRON {
+		t.Fatalf("chainID = %d, want TRON", event.Tx.ChainID)
 	}
 	if got := *event.Tx.Amount; got != "1000000" {
 		t.Fatalf("amount = %q, want 1000000", got)
@@ -174,6 +178,7 @@ func TestScanTronProducesNativeTRXTransferFromFullNodeResponse(t *testing.T) {
 
 	registry := asset.NewRegistry()
 	registry.Register(asset.NewTRX(constants.TRON))
+	chain := chainpkg.NewTronChain()
 	svc := &Service{
 		Registry: registry,
 		client:   server.Client(),
@@ -185,7 +190,7 @@ func TestScanTronProducesNativeTRXTransferFromFullNodeResponse(t *testing.T) {
 		},
 	}
 
-	events, err := svc.scanTron(context.Background(), txHash)
+	events, err := svc.scanTron(context.Background(), chain, txHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,5 +215,63 @@ func TestScanTronProducesNativeTRXTransferFromFullNodeResponse(t *testing.T) {
 	}
 	if got := *event.Tx.Status; got != "confirmed" {
 		t.Fatalf("status = %q, want confirmed", got)
+	}
+}
+
+func TestScanTronTestnetUsesTestnetChainIDAndEndpoints(t *testing.T) {
+	const txHash = "abc123"
+	ownerHex := "410000000000000000000000000000000000000001"
+	toHex := "410000000000000000000000000000000000000002"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/wallet/gettransactionbyid":
+			_, _ = fmt.Fprintf(w, `{
+				"txID": %q,
+				"raw_data": {
+					"contract": [{
+						"type": "TransferContract",
+						"parameter": {
+							"value": {
+								"amount": 2500000,
+								"owner_address": %q,
+								"to_address": %q
+							}
+						}
+					}]
+				}
+			}`, txHash, ownerHex, toHex)
+		case "/wallet/gettransactioninfobyid":
+			_, _ = w.Write([]byte(`{"blockNumber": 123456, "receipt": {"result": "SUCCESS"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINTS", server.URL)
+	t.Setenv("TRON_HTTP_ENDPOINTS", "http://mainnet.invalid")
+
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewTRX(constants.TRONTestnet))
+	svc := &Service{Registry: registry, client: server.Client()}
+	chain := chainpkg.NewTronTestnetChain()
+
+	events, err := svc.scanTron(context.Background(), chain, txHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	event := events[0]
+	if event.Tx == nil {
+		t.Fatal("event tx is nil")
+	}
+	if event.Tx.ChainID != constants.TRONTestnet {
+		t.Fatalf("chainID = %d, want TRONTestnet", event.Tx.ChainID)
+	}
+	if got := *event.Tx.Amount; got != "2500000" {
+		t.Fatalf("amount = %q, want 2500000", got)
 	}
 }

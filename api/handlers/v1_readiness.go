@@ -290,8 +290,8 @@ func v1AppendChainReadinessChecks(ctx context.Context, checks *[]types.V1Readine
 	}
 
 	prefix := "chain." + chain.Name()
-	if chain.ChainID() == constants.TRON {
-		add(prefix+".rpc_config", len(v1TronGRPCEndpoints()) > 0, "TRON gRPC endpoint configured", nil)
+	if constants.IsTRONChain(chain.ChainID()) {
+		add(prefix+".rpc_config", len(v1TronGRPCEndpointsForChain(chain.Name())) > 0, "TRON gRPC endpoint configured", nil)
 	} else {
 		rpcCount := len(chain.RPCs())
 		if rpcCount == 0 {
@@ -346,8 +346,8 @@ func v1ProbeChainRPC(ctx context.Context, chain blockchain.Chain) (string, error
 		return v1ProbeBitcoinREST(ctx, chain.RPCs())
 	case constants.Solana:
 		return v1ProbeSolanaRPC(ctx, chain.RPCs())
-	case constants.TRON:
-		return v1ProbeTronGRPC(ctx)
+	case constants.TRON, constants.TRONTestnet:
+		return v1ProbeTronGRPC(ctx, chain.Name())
 	default:
 		return v1ProbeEVMRPC(ctx, chain.RPCs())
 	}
@@ -424,10 +424,10 @@ func v1ProbeBitcoinREST(ctx context.Context, rpcs []string) (string, error) {
 	return "", lastErr
 }
 
-func v1ProbeTronGRPC(ctx context.Context) (string, error) {
+func v1ProbeTronGRPC(ctx context.Context, chainName string) (string, error) {
 	apiKey := strings.TrimSpace(os.Getenv("TRON_PRO_API_KEY"))
 	var lastErr error
-	for _, endpoint := range v1TronGRPCEndpoints() {
+	for _, endpoint := range v1TronGRPCEndpointsForChain(chainName) {
 		conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			lastErr = err
@@ -535,6 +535,21 @@ func v1ParseHexBlockNumber(raw string) (int64, error) {
 }
 
 func v1TronGRPCEndpoints() []string {
+	return v1TronGRPCEndpointsForChain("tron")
+}
+
+func v1TronGRPCEndpointsForChain(chainName string) []string {
+	if strings.EqualFold(strings.TrimSpace(chainName), "tron-testnet") {
+		raw := strings.TrimSpace(os.Getenv("TRON_TESTNET_GRPC_ENDPOINTS"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("TRON_TESTNET_GRPC_ENDPOINT"))
+		}
+		if raw == "" {
+			return []string{"grpc.shasta.trongrid.io:50051"}
+		}
+		return splitV1TronGRPCEndpoints(raw)
+	}
+
 	raw := strings.TrimSpace(os.Getenv("TRON_GRPC_ENDPOINTS"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("TRON_GRPC_ENDPOINT"))
@@ -543,6 +558,10 @@ func v1TronGRPCEndpoints() []string {
 		return []string{"grpc.trongrid.io:50051"}
 	}
 
+	return splitV1TronGRPCEndpoints(raw)
+}
+
+func splitV1TronGRPCEndpoints(raw string) []string {
 	parts := strings.Split(raw, ",")
 	endpoints := make([]string, 0, len(parts))
 	for _, part := range parts {

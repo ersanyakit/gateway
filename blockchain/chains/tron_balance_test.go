@@ -83,3 +83,17 @@ func TestTronBatchBalancesUsesFullNodeGetAccount(t *testing.T) {
 		t.Fatalf("balance = %q, want TRX:18500000", results[0].Balance)
 	}
 }
+
+func TestTronTestnetHTTPAPIEndpointsPreferTestnetEnv(t *testing.T) {
+	t.Setenv("TRON_HTTP_ENDPOINTS", "https://mainnet.invalid")
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINTS", "https://shasta.example")
+
+	chain := NewTronTestnetChain()
+	got := chain.httpAPIEndpoints()
+	if len(got) == 0 {
+		t.Fatal("expected testnet endpoints")
+	}
+	if got[0] != "https://shasta.example" {
+		t.Fatalf("first endpoint = %q, want testnet endpoint", got[0])
+	}
+}

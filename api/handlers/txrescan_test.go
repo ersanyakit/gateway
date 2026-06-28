@@ -19,9 +19,12 @@ func TestParseTxRescanChainAcceptsIDsAndSlugs(t *testing.T) {
 		"bitcoin":      constants.Bitcoin,
 		"solana":       constants.Solana,
 		"tron":         constants.TRON,
+		"tron-testnet": constants.TRONTestnet,
+		"shasta":       constants.TRONTestnet,
 		"chiliz-spicy": constants.ChilizSpicy,
 		"arbitrum-one": constants.Arbitrum,
 		"99999998":     constants.TRON,
+		"99999997":     constants.TRONTestnet,
 		"99999999":     constants.Solana,
 	}
 	for input, expected := range tests {

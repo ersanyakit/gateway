@@ -49,6 +49,7 @@ func TestDerivePrivateKeyFormats(t *testing.T) {
 	}{
 		{name: "evm", chainID: constants.Ethereum, path: "m/44'/60'/0'/0/0", sizes: []int{32}},
 		{name: "tron", chainID: constants.TRON, path: "m/44'/195'/0'/0/0", sizes: []int{32}},
+		{name: "tron-testnet", chainID: constants.TRONTestnet, path: "m/44'/195'/0'/0/0", sizes: []int{32}},
 		{name: "bitcoin", chainID: constants.Bitcoin, path: "m/86'/0'/0'/0/0", sizes: []int{32}},
 		{name: "solana", chainID: constants.Solana, path: "m/44'/501'/0'/0'", sizes: []int{32, 64}},
 	}
@@ -79,6 +80,7 @@ func TestDeriveWalletAddresses(t *testing.T) {
 	}{
 		{name: "evm", chainID: constants.Ethereum, path: "m/44'/60'/0'/0/0", addressPrefix: "0x"},
 		{name: "tron", chainID: constants.TRON, path: "m/44'/195'/0'/0/0", addressPrefix: "T"},
+		{name: "tron-testnet", chainID: constants.TRONTestnet, path: "m/44'/195'/0'/0/0", addressPrefix: "T"},
 		{name: "bitcoin", chainID: constants.Bitcoin, path: "m/86'/0'/0'/0/0", addressPrefix: "bc1p"},
 		{name: "solana", chainID: constants.Solana, path: "m/44'/501'/0'/0'", addressPrefix: ""},
 	}

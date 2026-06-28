@@ -82,6 +82,7 @@ func (a *AddressIndex) Load() error {
 		a.addUnsafe(constants.Arbitrum, w.ArbitrumAddress, info)
 		a.addUnsafe(constants.Unichain, w.UnichainAddress, info)
 		a.addUnsafe(constants.TRON, w.TronAddress, info)
+		a.addUnsafe(constants.TRONTestnet, w.TronAddress, info)
 		a.addUnsafe(constants.Solana, w.SolanaAddress, info)
 		a.addUnsafe(constants.Chiliz, w.ChilizAddress, info)
 		a.addUnsafe(constants.ChilizSpicy, w.ChilizSpicyAddress, info)

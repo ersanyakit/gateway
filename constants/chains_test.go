@@ -40,11 +40,36 @@ func TestKnownChainNames(t *testing.T) {
 		ChilizSpicy: "chiliz-spicy",
 		Solana:      "solana",
 		TRON:        "tron",
+		TRONTestnet: "tron-testnet",
 	}
 	for chainID, expected := range tests {
 		if got := ChainName(chainID); got != expected {
 			t.Fatalf("ChainName(%d) = %q, want %q", chainID, got, expected)
 		}
+	}
+}
+
+func TestKnownTestnetChains(t *testing.T) {
+	for _, chainID := range []ChainID{ChilizSpicy, TRONTestnet} {
+		if !IsTestnet(chainID) {
+			t.Fatalf("chain id %d (%s) should be marked testnet", chainID, ChainName(chainID))
+		}
+	}
+	for _, chainID := range []ChainID{Bitcoin, Ethereum, TRON} {
+		if IsTestnet(chainID) {
+			t.Fatalf("chain id %d (%s) should not be marked testnet", chainID, ChainName(chainID))
+		}
+	}
+}
+
+func TestTRONFamilyDetection(t *testing.T) {
+	for _, chainID := range []ChainID{TRON, TRONTestnet} {
+		if !IsTRONChain(chainID) {
+			t.Fatalf("chain id %d (%s) should be in TRON family", chainID, ChainName(chainID))
+		}
+	}
+	if IsTRONChain(Ethereum) {
+		t.Fatalf("ethereum must not be in TRON family")
 	}
 }
 

@@ -34,6 +34,10 @@ func tronAPIBase(rpcURLs []string) string {
 	return "https://api.trongrid.io"
 }
 
+func (s *TronChain) httpAPIEndpoints() []string {
+	return tronHTTPAPIEndpointsForChain(s.Name(), s.RPCs())
+}
+
 type tronBlockRef struct {
 	refBlockBytes string
 	refBlockHash  string
@@ -521,7 +525,7 @@ func (s *TronChain) sendTRX(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, err
 	}
 
-	rpcs := s.RPCs()
+	rpcs := s.httpAPIEndpoints()
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
@@ -574,7 +578,7 @@ func (s *TronChain) sendTRC20(ctx context.Context, wallet blockchain.WalletDetai
 		return nil, err
 	}
 
-	rpcs := s.RPCs()
+	rpcs := s.httpAPIEndpoints()
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
@@ -637,7 +641,7 @@ func (s *TronChain) SweepTo(ctx context.Context, wallet blockchain.WalletDetails
 		return nil, err
 	}
 
-	rpcs := s.RPCs()
+	rpcs := s.httpAPIEndpoints()
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
@@ -725,7 +729,7 @@ func (s *TronChain) SweepERC20To(ctx context.Context, wallet blockchain.WalletDe
 		return nil, err
 	}
 
-	rpcs := s.RPCs()
+	rpcs := s.httpAPIEndpoints()
 	if len(rpcs) == 0 {
 		return nil, fmt.Errorf("no tron RPC endpoint configured")
 	}
@@ -785,7 +789,7 @@ func (s *TronChain) PrefundGas(ctx context.Context, reserveWallet blockchain.Wal
 	if !s.ValidateAddress(userAddress) {
 		return false, fmt.Errorf("invalid tron user address: %s", userAddress)
 	}
-	rpcs := s.RPCs()
+	rpcs := s.httpAPIEndpoints()
 	if len(rpcs) == 0 {
 		return false, fmt.Errorf("no tron RPC endpoint configured")
 	}

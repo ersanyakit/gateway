@@ -339,7 +339,7 @@ func nativeSymbols(chainID constants.ChainID) []string {
 		return []string{"CHZ", "CHILIZ"}
 	case constants.Solana:
 		return []string{"SOL", "SOLANA"}
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return []string{"TRX", "TRON"}
 	default:
 		return nil

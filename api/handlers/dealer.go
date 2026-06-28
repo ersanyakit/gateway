@@ -2879,7 +2879,7 @@ func adminNativeBalanceSymbols(selected asset.Asset) []string {
 	case constants.Ethereum:
 		add("ETH")
 		add("ETHEREUM")
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		add("TRX")
 		add("TRON")
 	case constants.Solana:
@@ -2948,7 +2948,7 @@ func adminRecoverNativeFeeRaw(ctx context.Context, chain blockchain.Chain, selec
 		return big.NewInt(0), nil
 	}
 	switch selected.GetChainID() {
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		fee, err := chainresource.TronNativeSweepFeeSUN()
 		if err != nil {
 			return nil, err
@@ -5179,12 +5179,13 @@ func walletChainDefs(wallet models.Wallet) []walletChainDef {
 		{"CHZ", "chiliz", wallet.ChilizAddress},
 		{"CHZ-Spicy", "chiliz-spicy", wallet.ChilizSpicyAddress},
 		{"TRX", "tron", wallet.TronAddress},
+		{"TRX-Testnet", "tron-testnet", wallet.TronAddress},
 		{"SOL", "solana", wallet.SolanaAddress},
 	}
 }
 
 func walletAddressViews(wallet models.Wallet) []DealerAddressView {
-	filtered := make([]DealerAddressView, 0, 10)
+	filtered := make([]DealerAddressView, 0, 11)
 	for _, def := range walletChainDefs(wallet) {
 		if strings.TrimSpace(def.address) != "" {
 			filtered = append(filtered, DealerAddressView{Chain: def.label, Address: def.address})
@@ -5576,6 +5577,7 @@ func chainSlugToID(slug string) constants.ChainID {
 		constants.ChilizSpicy: {"chiliz-spicy", "chiliz spicy", "spicy"},
 		constants.Solana:      {"solana", "sol"},
 		constants.TRON:        {"tron", "trx"},
+		constants.TRONTestnet: {"tron-testnet", "tron testnet", "trx-testnet", "tron-shasta", "shasta"},
 	}
 	for id, values := range aliases {
 		for _, value := range values {
@@ -5918,6 +5920,8 @@ func chainLabel(chainID constants.ChainID) string {
 		return "Solana"
 	case constants.TRON:
 		return "TRON"
+	case constants.TRONTestnet:
+		return "TRON Testnet"
 	case constants.ChilizSpicy:
 		return "Chiliz Spicy"
 	default:

@@ -1397,7 +1397,7 @@ func paymentDepositAddressForChain(wallet models.Wallet, chainID constants.Chain
 		if strings.HasPrefix(strings.ToLower(address), "0x") {
 			return ""
 		}
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		if strings.HasPrefix(strings.ToLower(address), "0x") {
 			return ""
 		}
@@ -1524,7 +1524,7 @@ func paymentURI(session models.PaymentSession) string {
 			return "bitcoin:" + session.DepositAddress
 		case constants.Solana:
 			return "solana:" + session.DepositAddress
-		case constants.TRON:
+		case constants.TRON, constants.TRONTestnet:
 			return session.DepositAddress
 		default:
 			return fmt.Sprintf("ethereum:%s@%d", session.DepositAddress, *session.SelectedChainID)
@@ -1535,7 +1535,7 @@ func paymentURI(session models.PaymentSession) string {
 		return "bitcoin:" + session.DepositAddress + "?amount=" + url.QueryEscape(formatRawDecimal(session.ExpectedAmountRaw, session.SelectedDecimals))
 	case constants.Solana:
 		return "solana:" + session.DepositAddress + "?amount=" + url.QueryEscape(formatRawDecimal(session.ExpectedAmountRaw, session.SelectedDecimals))
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return session.DepositAddress
 	default:
 		return fmt.Sprintf("ethereum:%s@%d?value=%s", session.DepositAddress, *session.SelectedChainID, session.ExpectedAmountRaw)

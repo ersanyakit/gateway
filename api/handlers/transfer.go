@@ -217,7 +217,7 @@ func walletAddressForChain(wallet models.Wallet, chainID constants.ChainID) stri
 		return wallet.ArbitrumAddress
 	case constants.Unichain:
 		return wallet.UnichainAddress
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return wallet.TronAddress
 	case constants.Solana:
 		return wallet.SolanaAddress

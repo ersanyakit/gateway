@@ -501,7 +501,7 @@ func (r *WalletRepo) FindByChainAddress(ctx context.Context, chainID constants.C
 		err = db.First(&wallet, "LOWER(arbitrum_address) = LOWER(?)", address).Error
 	case constants.Unichain:
 		err = db.First(&wallet, "LOWER(unichain_address) = LOWER(?)", address).Error
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		err = db.First(&wallet, "tron_address = ?", address).Error
 	case constants.Solana:
 		err = db.First(&wallet, "solana_address = ?", address).Error
@@ -540,7 +540,7 @@ func chainToFieldName(chainName string) (string, error) {
 		return "chiliz_address", nil
 	case "chiliz-spicy", "spicy":
 		return "chiliz_spicy_address", nil
-	case "tron":
+	case "tron", "tron-testnet", "trx-testnet", "shasta", "tron-shasta":
 		return "tron_address", nil
 	case "solana":
 		return "solana_address", nil
@@ -570,7 +570,7 @@ func WalletAddressForChainID(wallet models.Wallet, chainID constants.ChainID) st
 		return wallet.ChilizAddress
 	case constants.ChilizSpicy:
 		return wallet.ChilizSpicyAddress
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return wallet.TronAddress
 	case constants.Solana:
 		return wallet.SolanaAddress
@@ -598,7 +598,7 @@ func walletAddressForChain(wallet models.Wallet, chainName string) string {
 		return wallet.ChilizAddress
 	case "chiliz-spicy", "spicy":
 		return wallet.ChilizSpicyAddress
-	case "tron":
+	case "tron", "tron-testnet", "trx-testnet", "shasta", "tron-shasta":
 		return wallet.TronAddress
 	case "solana":
 		return wallet.SolanaAddress
