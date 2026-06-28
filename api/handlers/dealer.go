@@ -1973,7 +1973,7 @@ func HandleAdminOutboundPolicyUpdate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "failed", "outbound_policy", "global", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2007,7 +2007,7 @@ func HandleAdminOutboundWhitelistCreate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "failed", "outbound_whitelist", "", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2043,7 +2043,7 @@ func HandleAdminOutboundWhitelistToggle(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "failed", "outbound_whitelist", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -4112,6 +4112,21 @@ func requirePrivilegedAdmin(c fiber.Ctx, adminRepo *repositories.AdminRepo) erro
 		return errors.New("Bu işlem için yetkiniz yok.")
 	}
 	if !adminRoleCanMutateHighRisk(admin.Role) {
+		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
+	}
+	return nil
+}
+
+func requireAdminPrivilege(c fiber.Ctx, deps DealerDeps, adminEmail string, roles ...string) error {
+	adminEmail = strings.ToLower(strings.TrimSpace(adminEmail))
+	if adminEmail == "" || deps.AdminRepo == nil {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+	if err != nil || admin == nil || !admin.IsActive {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	if !models.AdminRoleAllowed(admin.Role, roles...) {
 		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
 	}
 	return nil
