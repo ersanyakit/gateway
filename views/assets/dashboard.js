@@ -4,6 +4,8 @@ document.addEventListener('DOMContentLoaded', function () {
   document.addEventListener('click', handleCopyClick);
   document.addEventListener('click', handleGenerateSecretClick);
   initPaymentLinkTypeToggle();
+  initDashboardModals();
+  initMerchantProductsTabs();
   initAdminRichSelects();
   initAdminDataTables();
   initRecoverFundsBalance();
@@ -100,29 +102,163 @@ function handleGenerateSecretClick(event) {
 }
 
 function initPaymentLinkTypeToggle() {
-  var select = document.querySelector('[data-payment-link-type]');
-  if (!select) return;
+  document.querySelectorAll('[data-payment-link-type]').forEach(function (select) {
+    var form = select.closest('form') || document;
+    var fixedFields = form.querySelector('[data-payment-fixed-fields]');
+    var requiredInputs = Array.prototype.slice.call(form.querySelectorAll('[data-required-when-fixed]'));
 
-  var fixedFields = document.querySelector('[data-payment-fixed-fields]');
-  var requiredInputs = Array.prototype.slice.call(document.querySelectorAll('[data-required-when-fixed]'));
-
-  function update() {
-    var donation = select.value === 'donation';
-    if (fixedFields) {
-      fixedFields.classList.toggle('hidden', donation);
+    function update() {
+      var donation = select.value === 'donation';
+      if (fixedFields) {
+        fixedFields.classList.toggle('hidden', donation);
+      }
+      requiredInputs.forEach(function (input) {
+        input.required = !donation;
+        input.disabled = donation;
+      });
+      var currency = form.querySelector('#product_currency') || form.querySelector('[name="currency"]');
+      if (currency) {
+        currency.disabled = donation;
+      }
     }
-    requiredInputs.forEach(function (input) {
-      input.required = !donation;
-      input.disabled = donation;
-    });
-    var currency = document.getElementById('product_currency');
-    if (currency) {
-      currency.disabled = donation;
+
+    select.addEventListener('change', update);
+    update();
+  });
+}
+
+function initDashboardModals() {
+  var lastOpenButton = null;
+
+  function getModalByName(name) {
+    var modals = Array.prototype.slice.call(document.querySelectorAll('[data-dashboard-modal]'));
+    for (var i = 0; i < modals.length; i += 1) {
+      if (modals[i].getAttribute('data-dashboard-modal') === name) {
+        return modals[i];
+      }
+    }
+    return null;
+  }
+
+  function anyOpenModal() {
+    return document.querySelector('.merchant-modal[data-open="true"]');
+  }
+
+  function closeModal(modal, restoreFocus) {
+    if (!modal) return;
+    modal.hidden = true;
+    modal.removeAttribute('data-open');
+    if (!anyOpenModal()) {
+      document.body.classList.remove('merchant-modal-open');
+    }
+    if (restoreFocus && lastOpenButton && document.body.contains(lastOpenButton)) {
+      lastOpenButton.focus();
     }
   }
 
-  select.addEventListener('change', update);
-  update();
+  function openModal(name, opener) {
+    var modal = getModalByName(name);
+    if (!modal) return;
+
+    Array.prototype.slice.call(document.querySelectorAll('.merchant-modal[data-open="true"]')).forEach(function (open) {
+      closeModal(open, false);
+    });
+
+    lastOpenButton = opener || null;
+    modal.hidden = false;
+    modal.setAttribute('data-open', 'true');
+    document.body.classList.add('merchant-modal-open');
+
+    window.setTimeout(function () {
+      var target = modal.querySelector('input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)');
+      if (target) {
+        target.focus();
+      }
+    }, 20);
+  }
+
+  document.querySelectorAll('[data-open-dashboard-modal]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      if (button.disabled) return;
+      openModal(button.getAttribute('data-open-dashboard-modal'), button);
+    });
+  });
+
+  document.addEventListener('click', function (event) {
+    var closeButton = event.target.closest('[data-close-dashboard-modal]');
+    if (!closeButton) return;
+    closeModal(closeButton.closest('[data-dashboard-modal]'), true);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Escape') return;
+    var modal = anyOpenModal();
+    if (modal) {
+      closeModal(modal, true);
+    }
+  });
+}
+
+function initMerchantProductsTabs() {
+  document.querySelectorAll('[data-products-workspace]').forEach(function (workspace, workspaceIndex) {
+    var tabs = Array.prototype.slice.call(workspace.querySelectorAll('[data-products-tab]'));
+    var panels = Array.prototype.slice.call(workspace.querySelectorAll('[data-products-panel]'));
+    if (!tabs.length || !panels.length) return;
+
+    tabs.forEach(function (tab, index) {
+      var name = tab.getAttribute('data-products-tab');
+      var panel = null;
+      for (var i = 0; i < panels.length; i += 1) {
+        if (panels[i].getAttribute('data-products-panel') === name) {
+          panel = panels[i];
+          break;
+        }
+      }
+      if (!panel) return;
+
+      var tabID = tab.id || 'merchant-products-tab-' + workspaceIndex + '-' + index;
+      var panelID = panel.id || 'merchant-products-panel-' + workspaceIndex + '-' + index;
+      tab.id = tabID;
+      panel.id = panelID;
+      tab.setAttribute('aria-controls', panelID);
+      panel.setAttribute('role', 'tabpanel');
+      panel.setAttribute('aria-labelledby', tabID);
+      tab.setAttribute('tabindex', tab.getAttribute('aria-selected') === 'true' ? '0' : '-1');
+    });
+
+    function activate(name, focusTab) {
+      tabs.forEach(function (tab) {
+        var selected = tab.getAttribute('data-products-tab') === name;
+        tab.setAttribute('aria-selected', selected ? 'true' : 'false');
+        tab.setAttribute('tabindex', selected ? '0' : '-1');
+        if (selected && focusTab) {
+          tab.focus();
+        }
+      });
+      panels.forEach(function (panel) {
+        panel.hidden = panel.getAttribute('data-products-panel') !== name;
+      });
+    }
+
+    tabs.forEach(function (tab, index) {
+      tab.addEventListener('click', function () {
+        activate(tab.getAttribute('data-products-tab'), false);
+      });
+      tab.addEventListener('keydown', function (event) {
+        var nextIndex = index;
+        if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+        if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = tabs.length - 1;
+        if (nextIndex === index) return;
+        event.preventDefault();
+        activate(tabs[nextIndex].getAttribute('data-products-tab'), true);
+      });
+    });
+
+    var selectedTab = workspace.querySelector('[data-products-tab][aria-selected="true"]') || tabs[0];
+    activate(selectedTab.getAttribute('data-products-tab'), false);
+  });
 }
 
 function initDashboardActiveTabScroll() {
