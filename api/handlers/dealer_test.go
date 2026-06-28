@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"html/template"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,41 @@ func TestPaginationURLPreservesExistingQuery(t *testing.T) {
 	want := "/admin/deposits?from=0xabc&hash=0xdef&page=2&limit=50"
 	if got != want {
 		t.Fatalf("paginationURL() = %q, want %q", got, want)
+	}
+}
+
+func TestActivityDashboardTabUsesPathAndQueryFallback(t *testing.T) {
+	app := fiber.New()
+	app.Get("/merchant/dashboard/activity", func(c fiber.Ctx) error {
+		return c.SendString(activityDashboardTab(c))
+	})
+	app.Get("/merchant/dashboard/activity/:subsection", func(c fiber.Ctx) error {
+		return c.SendString(activityDashboardTab(c))
+	})
+
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"/merchant/dashboard/activity", "audit"},
+		{"/merchant/dashboard/activity/payments", "payments"},
+		{"/merchant/dashboard/activity/deposits", "deposits"},
+		{"/merchant/dashboard/activity?tab=payments", "payments"},
+		{"/merchant/dashboard/activity?status=paid", "payments"},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("%s request failed: %v", tc.path, err)
+		}
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("%s body read failed: %v", tc.path, err)
+		}
+		body := string(bodyBytes)
+		if body != tc.want {
+			t.Fatalf("%s tab = %q, want %q", tc.path, body, tc.want)
+		}
 	}
 }
 

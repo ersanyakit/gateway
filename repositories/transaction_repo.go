@@ -842,6 +842,25 @@ func (r *TransactionRepo) ListByMerchant(ctx context.Context, merchantID uuid.UU
 	return transactions, err
 }
 
+func (r *TransactionRepo) ListByMerchantPage(ctx context.Context, merchantID uuid.UUID, page, limit int) ([]models.Transaction, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 20
+	}
+	q := r.DB().WithContext(ctx).Model(&models.Transaction{}).Where("merchant_id = ?", merchantID)
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var transactions []models.Transaction
+	err := q.Order("created_at DESC").
+		Limit(limit).Offset((page - 1) * limit).
+		Find(&transactions).Error
+	return transactions, total, err
+}
+
 func (r *TransactionRepo) List(ctx context.Context, limit int) ([]models.Transaction, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200

@@ -2157,6 +2157,111 @@
   height: 3.05rem;
 }
 
+.merchant-activity-wrap {
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.merchant-activity-table {
+  min-width: 920px;
+  table-layout: fixed;
+}
+
+.merchant-audit-table {
+  min-width: 980px;
+}
+
+.merchant-activity-deposits-table {
+  min-width: 1000px;
+}
+
+.merchant-activity-table th,
+.merchant-activity-table td {
+  vertical-align: top;
+}
+
+.merchant-activity-table td {
+  height: 3.35rem;
+}
+
+.merchant-activity-table strong,
+.merchant-activity-table small,
+.merchant-activity-table code,
+.merchant-activity-table time {
+  max-width: 100%;
+}
+
+.merchant-activity-table code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-audit-table th:nth-child(1),
+.merchant-audit-table td:nth-child(1) {
+  width: 30%;
+}
+
+.merchant-audit-table th:nth-child(2),
+.merchant-audit-table td:nth-child(2) {
+  width: 16%;
+}
+
+.merchant-audit-table th:nth-child(3),
+.merchant-audit-table td:nth-child(3),
+.merchant-audit-table th:nth-child(4),
+.merchant-audit-table td:nth-child(4) {
+  width: 20%;
+}
+
+.merchant-audit-table th:nth-child(5),
+.merchant-audit-table td:nth-child(5) {
+  width: 14%;
+}
+
+.merchant-activity-payments-table th:nth-child(1),
+.merchant-activity-payments-table td:nth-child(1) {
+  width: 32%;
+}
+
+.merchant-activity-payments-table th:nth-child(2),
+.merchant-activity-payments-table td:nth-child(2),
+.merchant-activity-payments-table th:nth-child(4),
+.merchant-activity-payments-table td:nth-child(4) {
+  width: 18%;
+}
+
+.merchant-activity-payments-table th:nth-child(3),
+.merchant-activity-payments-table td:nth-child(3) {
+  width: 14%;
+}
+
+.merchant-activity-payments-table th:nth-child(5),
+.merchant-activity-payments-table td:nth-child(5) {
+  width: 18%;
+}
+
+.merchant-activity-deposits-table th:nth-child(1),
+.merchant-activity-deposits-table td:nth-child(1) {
+  width: 34%;
+}
+
+.merchant-activity-deposits-table th:nth-child(2),
+.merchant-activity-deposits-table td:nth-child(2),
+.merchant-activity-deposits-table th:nth-child(5),
+.merchant-activity-deposits-table td:nth-child(5) {
+  width: 17%;
+}
+
+.merchant-activity-deposits-table th:nth-child(3),
+.merchant-activity-deposits-table td:nth-child(3),
+.merchant-activity-deposits-table th:nth-child(4),
+.merchant-activity-deposits-table td:nth-child(4) {
+  width: 16%;
+}
+
 .merchant-wallet-table tbody tr[data-admin-row-expanded="true"],
 .merchant-products-table tbody tr[data-admin-row-expanded="true"],
 .merchant-links-table tbody tr[data-admin-row-expanded="true"] {

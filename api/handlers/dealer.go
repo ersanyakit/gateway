@@ -133,6 +133,9 @@ type DealerPageData struct {
 	ActivePanel         string
 	TreasuryURL         string
 	ActivityURL         string
+	ActivityAuditURL    string
+	ActivityPaymentsURL string
+	ActivityDepositsURL string
 	TransactionsURL     string
 	UsersURL            string
 	WithdrawalsURL      string
@@ -151,6 +154,7 @@ type DealerPageData struct {
 	PaymentPage         DealerPaginationView
 	AuditPage           DealerPaginationView
 	ActivityPaymentPage DealerPaginationView
+	ActivityDepositPage DealerPaginationView
 	Withdrawals         []DealerWithdrawalView
 	Products            []DealerProductView
 	Payments            []DealerPaymentView
@@ -165,6 +169,7 @@ type DealerPageData struct {
 	AssetCount          int
 	NetworkCount        int
 	ActivityCount       int
+	DepositCount        int
 	ProductCount        int
 	PaymentCount        int
 	WalletCountAll      int
@@ -200,7 +205,6 @@ type DealerPageData struct {
 	AdminRescanURL      string
 	AdminTestsURL       string
 	AdminTestDepositURL string
-	DepositCount        int
 	WithdrawalCount     int
 
 	WalletSearch        string
@@ -831,7 +835,28 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			data.Error = "Çekim talepleri okunamadı: " + err.Error()
 			return c.Status(fiber.StatusInternalServerError).Render("dealer/dashboard", data, "dealer/layout")
 		}
-		transactions, err := deps.TransactionRepo.ListByMerchant(c.Context(), merchant.ID, 100)
+		depositPage := 1
+		depositLimit := 100
+		if activePanel == "activity" {
+			depositLimit = merchantDashboardPageLimit(c)
+			if activityTab == "deposits" {
+				depositPage = max(1, parseQueryInt(c.Query("page"), 1))
+			}
+		}
+		var transactions []models.Transaction
+		var depositTotal int64
+		if activePanel == "activity" {
+			transactions, depositTotal, err = deps.TransactionRepo.ListByMerchantPage(c.Context(), merchant.ID, depositPage, depositLimit)
+			if err == nil {
+				if lastPage := totalPagesFor(depositTotal, depositLimit); lastPage > 0 && depositPage > lastPage {
+					depositPage = lastPage
+					transactions, depositTotal, err = deps.TransactionRepo.ListByMerchantPage(c.Context(), merchant.ID, depositPage, depositLimit)
+				}
+			}
+		} else {
+			transactions, err = deps.TransactionRepo.ListByMerchant(c.Context(), merchant.ID, 100)
+			depositTotal = int64(len(transactions))
+		}
 		if err != nil {
 			data := dealerPageData("Üye işyeri paneli", "dashboard")
 			fillDealerMerchant(&data, merchant)
@@ -853,20 +878,14 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		paymentLimit := 100
 		paymentPaginationBase := merchantDashboardLinksURL
 		if activePanel == "activity" {
-			paymentLimit = parseQueryInt(c.Query("limit"), 20)
-			if paymentLimit < 1 || paymentLimit > 100 {
-				paymentLimit = 20
-			}
+			paymentLimit = merchantDashboardPageLimit(c)
 			if activityTab == "payments" {
 				paymentPage = max(1, parseQueryInt(c.Query("page"), 1))
 			}
 			paymentPaginationBase = activityPaymentPaginationBase(paymentStatusFilter)
 		} else if activePanel == "products" && productsTab == "links" {
 			paymentPage = max(1, parseQueryInt(c.Query("page"), 1))
-			paymentLimit = parseQueryInt(c.Query("limit"), 20)
-			if paymentLimit < 1 || paymentLimit > 100 {
-				paymentLimit = 20
-			}
+			paymentLimit = merchantDashboardPageLimit(c)
 			paymentPaginationBase = merchantDashboardLinksURL
 		}
 		var payments []models.PaymentSession
@@ -905,10 +924,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		auditLimit := 100
 		var auditTotal int64
 		if activePanel == "activity" {
-			auditLimit = parseQueryInt(c.Query("limit"), 20)
-			if auditLimit < 1 || auditLimit > 100 {
-				auditLimit = 20
-			}
+			auditLimit = merchantDashboardPageLimit(c)
 			if activityTab == "audit" {
 				auditPage = max(1, parseQueryInt(c.Query("page"), 1))
 			}
@@ -990,8 +1006,9 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		}
 		data.WalletPage = dealerPaginationView(walletPage, walletPageSize, walletTotal, usersBaseURL)
 		data.PaymentPage = dealerPaginationView(paymentPage, paymentLimit, paymentTotal, paymentPaginationBase)
-		data.AuditPage = dealerPaginationView(auditPage, auditLimit, auditTotal, "/merchant/dashboard/activity?tab=audit")
+		data.AuditPage = dealerPaginationView(auditPage, auditLimit, auditTotal, merchantDashboardActivityAuditURL)
 		data.ActivityPaymentPage = dealerPaginationView(paymentPage, paymentLimit, paymentTotal, activityPaymentPaginationBase(paymentStatusFilter))
+		data.ActivityDepositPage = dealerPaginationView(depositPage, depositLimit, depositTotal, merchantDashboardActivityDepositsURL)
 		data.WalletSearch = walletSearch
 		data.WalletCount = int(walletTotal)
 		data.DomainCount = len(domains)
@@ -1001,6 +1018,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.PaymentStatusFilter = paymentStatusFilter
 		data.ProductsTab = productsTab
 		data.ActivityTab = activityTab
+		data.DepositCount = int(depositTotal)
 		if deps.PaymentRepo != nil {
 			data.PaymentStats, _ = deps.PaymentRepo.StatsByMerchant(c.Context(), merchant.ID)
 		}
@@ -1014,16 +1032,19 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 		data.TreasuryGroups = dealerTreasuryBalanceGroups(data.Balances, deps.AssetRegistry)
 		data.AssetCount = len(data.Balances)
 		data.NetworkCount = len(data.ChainVaults)
-		data.ActivityCount = int(auditTotal) + len(transactions)
+		data.ActivityCount = int(auditTotal + depositTotal + paymentTotal)
 		return c.Render("dealer/dashboard", data, "dealer/layout")
 	}
 }
 
 const (
-	merchantDashboardProductsURL     = "/merchant/dashboard/products/index"
-	merchantDashboardLinksURL        = "/merchant/dashboard/products/links"
-	merchantDashboardIntegrationsURL = merchantDashboardProductsURL
-	merchantDashboardDomainsURL      = "/merchant/dashboard/domains"
+	merchantDashboardActivityAuditURL    = "/merchant/dashboard/activity/audit"
+	merchantDashboardActivityPaymentsURL = "/merchant/dashboard/activity/payments"
+	merchantDashboardActivityDepositsURL = "/merchant/dashboard/activity/deposits"
+	merchantDashboardProductsURL         = "/merchant/dashboard/products/index"
+	merchantDashboardLinksURL            = "/merchant/dashboard/products/links"
+	merchantDashboardDomainsURL          = "/merchant/dashboard/domains"
+	merchantDashboardIntegrationsURL     = merchantDashboardDomainsURL
 )
 
 // HandleDealerDomainCreate creates a domain from the authenticated merchant portal.
@@ -4463,30 +4484,33 @@ func dealerPageData(title string, active string) DealerPageData {
 	}
 
 	return DealerPageData{
-		Title:            title,
-		Active:           active,
-		OIDCLoginURL:     oidcURL,
-		OIDCProvider:     provider,
-		RegisterURL:      "/merchant/register",
-		LoginURL:         "/merchant/login",
-		OnboardingURL:    "/merchant/onboarding",
-		DashboardURL:     "/merchant/dashboard",
-		TreasuryURL:      "/merchant/dashboard/treasury",
-		ActivityURL:      "/merchant/dashboard/activity",
-		TransactionsURL:  "/merchant/dashboard/transactions",
-		UsersURL:         "/merchant/dashboard/users",
-		WithdrawalsURL:   "/merchant/dashboard/withdrawals",
-		RescanURL:        "/merchant/dashboard/rescan",
-		IntegrationsURL:  merchantDashboardIntegrationsURL,
-		DomainsPanelURL:  merchantDashboardDomainsURL,
-		ProductsURL:      "/merchant/products",
-		InvoicesURL:      "/merchant/invoices",
-		ProductsPanelURL: merchantDashboardProductsURL,
-		ProductsLinksURL: merchantDashboardLinksURL,
-		SettingsPanelURL: "/merchant/dashboard/settings",
-		DomainsURL:       "/merchant/domains",
-		LogoutURL:        "/merchant/logout",
-		ActivePanel:      "treasury",
+		Title:               title,
+		Active:              active,
+		OIDCLoginURL:        oidcURL,
+		OIDCProvider:        provider,
+		RegisterURL:         "/merchant/register",
+		LoginURL:            "/merchant/login",
+		OnboardingURL:       "/merchant/onboarding",
+		DashboardURL:        "/merchant/dashboard",
+		TreasuryURL:         "/merchant/dashboard/treasury",
+		ActivityURL:         "/merchant/dashboard/activity",
+		ActivityAuditURL:    merchantDashboardActivityAuditURL,
+		ActivityPaymentsURL: merchantDashboardActivityPaymentsURL,
+		ActivityDepositsURL: merchantDashboardActivityDepositsURL,
+		TransactionsURL:     "/merchant/dashboard/transactions",
+		UsersURL:            "/merchant/dashboard/users",
+		WithdrawalsURL:      "/merchant/dashboard/withdrawals",
+		RescanURL:           "/merchant/dashboard/rescan",
+		IntegrationsURL:     merchantDashboardIntegrationsURL,
+		DomainsPanelURL:     merchantDashboardDomainsURL,
+		ProductsURL:         "/merchant/products",
+		InvoicesURL:         "/merchant/invoices",
+		ProductsPanelURL:    merchantDashboardProductsURL,
+		ProductsLinksURL:    merchantDashboardLinksURL,
+		SettingsPanelURL:    "/merchant/dashboard/settings",
+		DomainsURL:          "/merchant/domains",
+		LogoutURL:           "/merchant/logout",
+		ActivePanel:         "treasury",
 	}
 }
 
@@ -4573,7 +4597,10 @@ func integrationsDashboardTab(c fiber.Ctx) string {
 }
 
 func activityDashboardTab(c fiber.Ctx) string {
-	tab := strings.ToLower(strings.TrimSpace(c.Query("tab")))
+	tab := strings.ToLower(strings.TrimSpace(c.Params("subsection")))
+	if tab == "" {
+		tab = strings.ToLower(strings.TrimSpace(c.Query("tab")))
+	}
 	if tab == "" && strings.TrimSpace(c.Query("status")) != "" {
 		tab = "payments"
 	}
@@ -4587,10 +4614,18 @@ func activityDashboardTab(c fiber.Ctx) string {
 	}
 }
 
+func merchantDashboardPageLimit(c fiber.Ctx) int {
+	limit := parseQueryInt(c.Query("limit"), 20)
+	if limit < 1 || limit > 100 {
+		return 20
+	}
+	return limit
+}
+
 func activityPaymentPaginationBase(status string) string {
-	base := "/merchant/dashboard/activity?tab=payments"
+	base := merchantDashboardActivityPaymentsURL
 	if status = strings.TrimSpace(status); status != "" {
-		base += "&status=" + url.QueryEscape(status)
+		base += "?status=" + url.QueryEscape(status)
 	}
 	return base
 }

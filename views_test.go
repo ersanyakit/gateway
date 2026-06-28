@@ -18,22 +18,30 @@ func TestDealerViewsRender(t *testing.T) {
 	engine := html.New("./views", ".html")
 
 	data := handlers.DealerPageData{
-		Title:           "Üye işyeri girişi",
-		Active:          "login",
-		OIDCLoginURL:    "/auth/oidc/login",
-		OIDCProvider:    "Kurumsal hesap",
-		RegisterURL:     "/merchant/register",
-		LoginURL:        "/merchant/login",
-		OnboardingURL:   "/merchant/onboarding",
-		RescanURL:       "/merchant/dashboard/rescan",
-		MerchantID:      "merchant-id",
-		MerchantName:    "Demo Merchant",
-		MerchantEmail:   "demo@example.com",
-		AdminPanel:      "rescan",
-		AdminRescanURL:  "/admin/rescan",
-		AdminRefundsURL: "/admin/refunds",
-		AssetCount:      1,
-		NetworkCount:    3,
+		Title:               "Üye işyeri girişi",
+		Active:              "login",
+		OIDCLoginURL:        "/auth/oidc/login",
+		OIDCProvider:        "Kurumsal hesap",
+		RegisterURL:         "/merchant/register",
+		LoginURL:            "/merchant/login",
+		OnboardingURL:       "/merchant/onboarding",
+		ActivityURL:         "/merchant/dashboard/activity",
+		ActivityAuditURL:    "/merchant/dashboard/activity/audit",
+		ActivityPaymentsURL: "/merchant/dashboard/activity/payments",
+		ActivityDepositsURL: "/merchant/dashboard/activity/deposits",
+		IntegrationsURL:     "/merchant/dashboard/domains",
+		DomainsPanelURL:     "/merchant/dashboard/domains",
+		ProductsPanelURL:    "/merchant/dashboard/products/index",
+		ProductsLinksURL:    "/merchant/dashboard/products/links",
+		RescanURL:           "/merchant/dashboard/rescan",
+		MerchantID:          "merchant-id",
+		MerchantName:        "Demo Merchant",
+		MerchantEmail:       "demo@example.com",
+		AdminPanel:          "rescan",
+		AdminRescanURL:      "/admin/rescan",
+		AdminRefundsURL:     "/admin/refunds",
+		AssetCount:          1,
+		NetworkCount:        3,
 		Balances: []handlers.DealerBalanceView{
 			{
 				Chain:         "Solana",
@@ -103,7 +111,7 @@ func TestDealerViewsRender(t *testing.T) {
 		}
 		if view == "dealer/dashboard" {
 			output := buf.String()
-			for _, expected := range []string{"Bitcoin", "TRON", "Coin bazında konsolide treasury", "Solana", "SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan", `aria-label="Activity views"`, `data-products-tab="audit"`, `data-products-tab="payments"`, `data-products-tab="deposits"`, `merchant-audit-table`, `merchant-activity-payments-table`, `merchant-activity-deposits-table`} {
+			for _, expected := range []string{"Bitcoin", "TRON", "Coin bazında konsolide treasury", "Solana", "SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan", `aria-label="Activity views"`, `href="/merchant/dashboard/activity/audit"`, `href="/merchant/dashboard/activity/payments"`, `href="/merchant/dashboard/activity/deposits"`, `aria-label="Integrations views"`, `href="/merchant/dashboard/domains"`, `href="/merchant/dashboard/products/index"`, `data-products-tab="domains"`, `data-products-tab="audit"`, `data-products-tab="payments"`, `data-products-tab="deposits"`, `merchant-audit-table`, `merchant-activity-payments-table`, `merchant-activity-deposits-table`} {
 				if !strings.Contains(output, expected) {
 					t.Fatalf("%s output missing %q", view, expected)
 				}

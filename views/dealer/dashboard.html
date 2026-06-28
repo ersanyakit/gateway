@@ -56,10 +56,9 @@
       <a class="dash-tab" href="{{.ActivityURL}}" aria-selected="{{if eq .ActivePanel "activity"}}true{{else}}false{{end}}">Activity</a>
       <a class="dash-tab" href="{{.TransactionsURL}}" aria-selected="{{if eq .ActivePanel "transactions"}}true{{else}}false{{end}}">Transactions</a>
       <a class="dash-tab" href="{{.UsersURL}}" aria-selected="{{if eq .ActivePanel "users"}}true{{else}}false{{end}}">Users</a>
-      <a class="dash-tab" href="{{.ProductsPanelURL}}" aria-selected="{{if eq .ActivePanel "products"}}true{{else}}false{{end}}">Products</a>
+      <a class="dash-tab" href="{{.IntegrationsURL}}" aria-selected="{{if or (eq .ActivePanel "products") (eq .ActivePanel "domains")}}true{{else}}false{{end}}">Integrations</a>
       <a class="dash-tab" href="{{.WithdrawalsURL}}" aria-selected="{{if eq .ActivePanel "withdrawals"}}true{{else}}false{{end}}">Withdrawals{{if gt .WithdrawalCount 0}} <span class="ml-1 rounded-full bg-accent/10 px-1.5 py-0.5 text-[10px] font-extrabold text-accent">{{.WithdrawalCount}}</span>{{end}}</a>
       <a class="dash-tab" href="{{.RescanURL}}" aria-selected="{{if eq .ActivePanel "rescan"}}true{{else}}false{{end}}">Rescan</a>
-      <a class="dash-tab" href="{{.DomainsPanelURL}}" aria-selected="{{if eq .ActivePanel "domains"}}true{{else}}false{{end}}">Domains</a>
       <a class="dash-tab" href="{{.SettingsPanelURL}}" aria-selected="{{if eq .ActivePanel "settings"}}true{{else}}false{{end}}">Settings</a>
     </div>
   </div>
@@ -325,9 +324,9 @@
       </div>
 
       <div class="merchant-products-tabs" role="tablist" aria-label="Activity views">
-        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if or (eq .ActivityTab "") (eq .ActivityTab "audit")}}true{{else}}false{{end}}" data-products-tab="audit">Audit logger <span>{{len .AuditLogs}}</span></button>
-        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if eq .ActivityTab "payments"}}true{{else}}false{{end}}" data-products-tab="payments">Ödeme aktiviteleri <span>{{.PaymentCount}}</span></button>
-        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if eq .ActivityTab "deposits"}}true{{else}}false{{end}}" data-products-tab="deposits">Blockchain deposits <span>{{len .Activities}}</span></button>
+        <a class="merchant-products-tab" href="{{.ActivityAuditURL}}" role="tab" aria-selected="{{if or (eq .ActivityTab "") (eq .ActivityTab "audit")}}true{{else}}false{{end}}" data-products-tab="audit">Audit logger <span>{{.AuditPage.Total}}</span></a>
+        <a class="merchant-products-tab" href="{{.ActivityPaymentsURL}}" role="tab" aria-selected="{{if eq .ActivityTab "payments"}}true{{else}}false{{end}}" data-products-tab="payments">Ödeme aktiviteleri <span>{{.PaymentCount}}</span></a>
+        <a class="merchant-products-tab" href="{{.ActivityDepositsURL}}" role="tab" aria-selected="{{if eq .ActivityTab "deposits"}}true{{else}}false{{end}}" data-products-tab="deposits">Blockchain deposits <span>{{.DepositCount}}</span></a>
       </div>
 
       <div class="merchant-products-view" data-products-panel="audit" {{if and .ActivityTab (ne .ActivityTab "audit")}}hidden{{end}}>
@@ -335,8 +334,8 @@
           <input class="admin-data-search" type="search" placeholder="Event, actor, IP veya path ara" aria-label="Audit logger ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-audit-table">
           <span class="admin-data-count" data-admin-table-count="merchant-audit-table" data-total="{{len .AuditLogs}}" data-label="audit">{{len .AuditLogs}} audit</span>
         </div>
-        <div class="adm-wrap rounded-none border-0">
-          <table class="adm-table admin-data-table" id="merchant-audit-table" data-admin-table>
+        <div class="adm-wrap rounded-none border-0 merchant-activity-wrap">
+          <table class="adm-table admin-data-table merchant-activity-table merchant-audit-table" id="merchant-audit-table" data-admin-table>
             <thead>
               <tr>
                 <th><button class="admin-sort-button" type="button" data-admin-sort="text">Event <span class="admin-sort-indicator"></span></button></th>
@@ -385,19 +384,19 @@
       <div class="merchant-products-view" data-products-panel="payments" {{if ne .ActivityTab "payments"}}hidden{{end}}>
         {{if .PaymentStats}}
           <div class="grid grid-cols-2 gap-3 border-b border-line bg-white p-3 sm:grid-cols-4">
-            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "paid"}}border-emerald-500 bg-emerald-50{{else}}border-emerald-100 bg-emerald-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=paid"><strong class="block text-lg font-black text-emerald-700">{{index .PaymentStats "paid"}}</strong><span class="text-xs font-bold text-emerald-600">Ödendi</span></a>
-            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "pending"}}border-amber-500 bg-amber-50{{else}}border-amber-100 bg-amber-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=pending"><strong class="block text-lg font-black text-amber-700">{{index .PaymentStats "pending"}}</strong><span class="text-xs font-bold text-amber-600">Bekliyor</span></a>
-            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "awaiting_payment"}}border-blue-500 bg-blue-50{{else}}border-blue-100 bg-blue-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=awaiting_payment"><strong class="block text-lg font-black text-blue-700">{{index .PaymentStats "awaiting_payment"}}</strong><span class="text-xs font-bold text-blue-600">Bekleniyor</span></a>
-            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "expired"}}border-red-500 bg-red-50{{else}}border-red-100 bg-red-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=expired"><strong class="block text-lg font-black text-red-700">{{index .PaymentStats "expired"}}</strong><span class="text-xs font-bold text-red-600">Süresi doldu</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "paid"}}border-emerald-500 bg-emerald-50{{else}}border-emerald-100 bg-emerald-50/70{{end}}" href="{{.ActivityPaymentsURL}}?status=paid"><strong class="block text-lg font-black text-emerald-700">{{index .PaymentStats "paid"}}</strong><span class="text-xs font-bold text-emerald-600">Ödendi</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "pending"}}border-amber-500 bg-amber-50{{else}}border-amber-100 bg-amber-50/70{{end}}" href="{{.ActivityPaymentsURL}}?status=pending"><strong class="block text-lg font-black text-amber-700">{{index .PaymentStats "pending"}}</strong><span class="text-xs font-bold text-amber-600">Bekliyor</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "awaiting_payment"}}border-blue-500 bg-blue-50{{else}}border-blue-100 bg-blue-50/70{{end}}" href="{{.ActivityPaymentsURL}}?status=awaiting_payment"><strong class="block text-lg font-black text-blue-700">{{index .PaymentStats "awaiting_payment"}}</strong><span class="text-xs font-bold text-blue-600">Bekleniyor</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "expired"}}border-red-500 bg-red-50{{else}}border-red-100 bg-red-50/70{{end}}" href="{{.ActivityPaymentsURL}}?status=expired"><strong class="block text-lg font-black text-red-700">{{index .PaymentStats "expired"}}</strong><span class="text-xs font-bold text-red-600">Süresi doldu</span></a>
           </div>
         {{end}}
         <div class="admin-data-toolbar">
           <div class="flex flex-wrap gap-2">
-            <a class="merchant-row-button {{if eq .PaymentStatusFilter ""}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments">Tümü</a>
-            <a class="merchant-row-button {{if eq .PaymentStatusFilter "paid"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=paid">Ödendi</a>
-            <a class="merchant-row-button {{if eq .PaymentStatusFilter "pending"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=pending">Bekliyor</a>
-            <a class="merchant-row-button {{if eq .PaymentStatusFilter "awaiting_payment"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=awaiting_payment">Bekleniyor</a>
-            <a class="merchant-row-button {{if eq .PaymentStatusFilter "expired"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=expired">Süresi doldu</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter ""}}is-active{{end}}" href="{{.ActivityPaymentsURL}}">Tümü</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "paid"}}is-active{{end}}" href="{{.ActivityPaymentsURL}}?status=paid">Ödendi</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "pending"}}is-active{{end}}" href="{{.ActivityPaymentsURL}}?status=pending">Bekliyor</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "awaiting_payment"}}is-active{{end}}" href="{{.ActivityPaymentsURL}}?status=awaiting_payment">Bekleniyor</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "expired"}}is-active{{end}}" href="{{.ActivityPaymentsURL}}?status=expired">Süresi doldu</a>
           </div>
           <span class="admin-data-count">{{.PaymentCount}} session</span>
         </div>
@@ -405,8 +404,8 @@
           <input class="admin-data-search" type="search" placeholder="Order, user, asset veya durum ara" aria-label="Ödeme aktivitesi ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-activity-payments-table">
           <span class="admin-data-count" data-admin-table-count="merchant-activity-payments-table" data-total="{{len .Payments}}" data-label="session">{{len .Payments}} session</span>
         </div>
-        <div class="adm-wrap rounded-none border-0">
-          <table class="adm-table admin-data-table" id="merchant-activity-payments-table" data-admin-table>
+        <div class="adm-wrap rounded-none border-0 merchant-activity-wrap">
+          <table class="adm-table admin-data-table merchant-activity-table merchant-activity-payments-table" id="merchant-activity-payments-table" data-admin-table>
             <thead>
               <tr>
                 <th><button class="admin-sort-button" type="button" data-admin-sort="text">Order <span class="admin-sort-indicator"></span></button></th>
@@ -449,8 +448,8 @@
           <input class="admin-data-search" type="search" placeholder="Tx, customer, chain veya webhook ara" aria-label="Blockchain deposit ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-activity-deposits-table">
           <span class="admin-data-count" data-admin-table-count="merchant-activity-deposits-table" data-total="{{len .Activities}}" data-label="deposit">{{len .Activities}} deposit</span>
         </div>
-        <div class="adm-wrap rounded-none border-0">
-          <table class="adm-table admin-data-table" id="merchant-activity-deposits-table" data-admin-table>
+        <div class="adm-wrap rounded-none border-0 merchant-activity-wrap">
+          <table class="adm-table admin-data-table merchant-activity-table merchant-activity-deposits-table" id="merchant-activity-deposits-table" data-admin-table>
             <thead>
               <tr>
                 <th><button class="admin-sort-button" type="button" data-admin-sort="text">Transaction <span class="admin-sort-indicator"></span></button></th>
@@ -486,6 +485,16 @@
             </tbody>
           </table>
         </div>
+        {{if gt .ActivityDepositPage.TotalPages 1}}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3 text-xs font-semibold text-muted">
+          <span>{{.ActivityDepositPage.From}}–{{.ActivityDepositPage.To}} / {{.ActivityDepositPage.Total}} kayıt · sayfa {{.ActivityDepositPage.Page}}/{{.ActivityDepositPage.TotalPages}}</span>
+          <div class="pg">
+            {{if .ActivityDepositPage.HasPrev}}<a href="{{.ActivityDepositPage.PrevURL}}">‹ Önceki</a>{{else}}<span class="pg-disabled">‹ Önceki</span>{{end}}
+            {{range .ActivityDepositPage.PageURLs}}{{if .Active}}<span class="pg-active">{{.Page}}</span>{{else}}<a href="{{.URL}}">{{.Page}}</a>{{end}}{{end}}
+            {{if .ActivityDepositPage.HasNext}}<a href="{{.ActivityDepositPage.NextURL}}">Sonraki ›</a>{{else}}<span class="pg-disabled">Sonraki ›</span>{{end}}
+          </div>
+        </div>
+        {{end}}
       </div>
     </section>
   </section>
@@ -497,7 +506,7 @@
           <h2 class="m-0 text-xl font-black text-ink">Transactions</h2>
           <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri wallet'larına gelen tüm on-chain transaction kayıtları, webhook ve ödeme eşleşme durumları.</p>
         </div>
-        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ActivityCount}} kayıt</span>
+        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.DepositCount}} kayıt</span>
       </div>
       {{if .Activities}}
         <div class="overflow-hidden rounded-3xl border border-line">
@@ -538,8 +547,8 @@
     <section class="merchant-products-panel" data-products-workspace>
       <div class="merchant-products-toolbar">
         <div class="min-w-0">
-          <h2>Ürünler ve linkler</h2>
-          <p>Payment link ve invoice akışlarını tek, sade çalışma yüzeyinden yönet.</p>
+          <h2>Integrations</h2>
+          <p>Domain, payment link ve invoice akışlarını tek çalışma yüzeyinden yönet.</p>
         </div>
         <div class="merchant-products-actions">
           <button class="merchant-action-button" type="button" data-open-dashboard-modal="invoice" {{if not .Domains}}disabled{{end}}>Invoice oluştur</button>
@@ -551,12 +560,13 @@
         <div class="mt-4 rounded-3xl border border-dashed border-line bg-wash px-5 py-6 text-center text-sm font-semibold text-muted">Link oluşturmak için önce domain eklemelisin.</div>
       {{end}}
 
-      <div class="merchant-products-tabs" role="tablist" aria-label="Products views">
+      <div class="merchant-products-tabs" role="tablist" aria-label="Integrations views">
+        <a class="merchant-products-tab" href="{{.DomainsPanelURL}}" role="tab" aria-selected="{{if eq .ProductsTab "domains"}}true{{else}}false{{end}}" data-products-tab="domains">Domainler <span>{{.DomainCount}}</span></a>
         <a class="merchant-products-tab" href="{{.ProductsPanelURL}}" role="tab" aria-selected="{{if or (eq .ProductsTab "") (eq .ProductsTab "products")}}true{{else}}false{{end}}" data-products-tab="products">Ürünler <span>{{.ProductCount}}</span></a>
         <a class="merchant-products-tab" href="{{.ProductsLinksURL}}" role="tab" aria-selected="{{if eq .ProductsTab "links"}}true{{else}}false{{end}}" data-products-tab="links">Linkler <span>{{.PaymentCount}}</span></a>
       </div>
 
-      <div class="merchant-products-view" data-products-panel="products" {{if eq .ProductsTab "links"}}hidden{{end}}>
+      <div class="merchant-products-view" data-products-panel="products" {{if and .ProductsTab (ne .ProductsTab "products")}}hidden{{end}}>
         {{if .Products}}
           <div class="admin-data-toolbar merchant-products-data-toolbar">
             <input class="admin-data-search" type="search" placeholder="Ürün, domain veya tutar ara" aria-label="Payment links ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-products-table">
@@ -1088,13 +1098,18 @@
     <section id="domain-create" class="merchant-products-panel">
       <div class="merchant-products-toolbar">
         <div class="min-w-0">
-          <h2>Domainler</h2>
-          <p>API key, webhook ve checkout domainlerini tek kompakt yüzeyden yönet.</p>
+          <h2>Integrations</h2>
+          <p>API key, webhook, payment link ve invoice akışlarını tek çalışma yüzeyinden yönet.</p>
         </div>
         <div class="merchant-products-actions">
           <span class="merchant-toolbar-badge">{{.DomainCount}} domain</span>
           <button class="merchant-action-button is-primary" type="button" data-open-dashboard-modal="domain-create">Domain ekle</button>
         </div>
+      </div>
+      <div class="merchant-products-tabs" role="tablist" aria-label="Integrations views">
+        <a class="merchant-products-tab" href="{{.DomainsPanelURL}}" role="tab" aria-selected="{{if eq .ProductsTab "domains"}}true{{else}}false{{end}}" data-products-tab="domains">Domainler <span>{{.DomainCount}}</span></a>
+        <a class="merchant-products-tab" href="{{.ProductsPanelURL}}" role="tab" aria-selected="{{if or (eq .ProductsTab "") (eq .ProductsTab "products")}}true{{else}}false{{end}}" data-products-tab="products">Ürünler <span>{{.ProductCount}}</span></a>
+        <a class="merchant-products-tab" href="{{.ProductsLinksURL}}" role="tab" aria-selected="{{if eq .ProductsTab "links"}}true{{else}}false{{end}}" data-products-tab="links">Linkler <span>{{.PaymentCount}}</span></a>
       </div>
       {{if .Domains}}
         <div class="merchant-table-shell">

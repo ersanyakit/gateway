@@ -190,6 +190,62 @@ func TestTransactionInitialStatusKeepsTerminalStatuses(t *testing.T) {
 	}
 }
 
+func TestTransactionRepoListByMerchantPageFiltersAndPaginates(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}); err != nil {
+		t.Fatalf("automigrate transactions: %v", err)
+	}
+	ctx := context.Background()
+	merchantID := uuid.New()
+	otherMerchantID := uuid.New()
+	now := time.Now()
+	rows := []models.Transaction{
+		transactionRepoMerchantPageRow(merchantID, "1-0xold-", "0xold", now.Add(-3*time.Minute)),
+		transactionRepoMerchantPageRow(merchantID, "1-0xmiddle-", "0xmiddle", now.Add(-2*time.Minute)),
+		transactionRepoMerchantPageRow(merchantID, "1-0xnew-", "0xnew", now.Add(-1*time.Minute)),
+		transactionRepoMerchantPageRow(otherMerchantID, "1-0xother-", "0xother", now),
+	}
+	if err := db.WithContext(ctx).Create(&rows).Error; err != nil {
+		t.Fatalf("seed transactions: %v", err)
+	}
+
+	page, total, err := NewTransactionRepo(db).ListByMerchantPage(ctx, merchantID, 2, 2)
+	if err != nil {
+		t.Fatalf("list merchant page: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	if len(page) != 1 {
+		t.Fatalf("page len = %d, want 1", len(page))
+	}
+	if page[0].Hash != "0xold" {
+		t.Fatalf("page hash = %s, want descending second page old transaction", page[0].Hash)
+	}
+}
+
+func transactionRepoMerchantPageRow(merchantID uuid.UUID, uniqueHash string, hash string, createdAt time.Time) models.Transaction {
+	return models.Transaction{
+		ID:                    uuid.New(),
+		ChainID:               constants.Ethereum,
+		UniqueHash:            uniqueHash,
+		Hash:                  hash,
+		BlockNumber:           "100",
+		BlockHash:             "0xblock",
+		Symbol:                "ETH",
+		Decimals:              18,
+		FromAddress:           "0xfrom",
+		ToAddress:             "0xto",
+		Amount:                "1000000000000000000",
+		Status:                models.TransactionStatusConfirmed,
+		Confirmations:         12,
+		ConfirmationsRequired: 12,
+		MerchantID:            &merchantID,
+		CreatedAt:             createdAt,
+		UpdatedAt:             createdAt,
+	}
+}
+
 func TestTransactionBlockIdentityChanged(t *testing.T) {
 	tx := models.Transaction{BlockNumber: "100", BlockHash: "0xABC"}
 	if transactionBlockIdentityChanged(tx, "100", "0xabc") {

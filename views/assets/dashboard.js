@@ -207,6 +207,11 @@ function initMerchantProductsTabs() {
     var panels = Array.prototype.slice.call(workspace.querySelectorAll('[data-products-panel]'));
     if (!tabs.length || !panels.length) return;
 
+    function navigates(tab) {
+      var href = tab.getAttribute('href') || '';
+      return href && href !== '#';
+    }
+
     tabs.forEach(function (tab, index) {
       var name = tab.getAttribute('data-products-tab');
       var panel = null;
@@ -244,6 +249,7 @@ function initMerchantProductsTabs() {
 
     tabs.forEach(function (tab, index) {
       tab.addEventListener('click', function () {
+        if (navigates(tab)) return;
         activate(tab.getAttribute('data-products-tab'), false);
       });
       tab.addEventListener('keydown', function (event) {
@@ -254,7 +260,12 @@ function initMerchantProductsTabs() {
         if (event.key === 'End') nextIndex = tabs.length - 1;
         if (nextIndex === index) return;
         event.preventDefault();
-        activate(tabs[nextIndex].getAttribute('data-products-tab'), true);
+        var nextTab = tabs[nextIndex];
+        if (navigates(nextTab)) {
+          nextTab.focus();
+          return;
+        }
+        activate(nextTab.getAttribute('data-products-tab'), true);
       });
     });
 
