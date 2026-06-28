@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -95,5 +96,40 @@ func TestTronTestnetHTTPAPIEndpointsPreferTestnetEnv(t *testing.T) {
 	}
 	if got[0] != "https://shasta.example" {
 		t.Fatalf("first endpoint = %q, want testnet endpoint", got[0])
+	}
+}
+
+func TestTronTestnetTRXBalanceDoesNotUseMainnetHTTPEnv(t *testing.T) {
+	var mainnetHits int32
+	mainnet := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&mainnetHits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer mainnet.Close()
+
+	shasta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wallet/getaccount" {
+			t.Fatalf("path = %q, want /wallet/getaccount", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"balance":42}`))
+	}))
+	defer shasta.Close()
+
+	t.Setenv("TRON_HTTP_ENDPOINTS", mainnet.URL)
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINTS", "")
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINT", "")
+
+	chain := NewTronTestnetChain()
+	chain.RPCHttp = []string{shasta.URL + "/jsonrpc"}
+	got, err := tronGetTRXBalanceFromRPCs(context.Background(), chain.httpAPIEndpoints(), tronTestAddress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 42 {
+		t.Fatalf("balance = %d, want 42", got)
+	}
+	if hits := atomic.LoadInt32(&mainnetHits); hits != 0 {
+		t.Fatalf("mainnet endpoint was called %d times", hits)
 	}
 }

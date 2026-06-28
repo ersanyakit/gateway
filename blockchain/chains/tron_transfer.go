@@ -24,14 +24,28 @@ import (
 
 // tronAPIBase derives the TRON full-node HTTP API base URL from the JSON-RPC URL list.
 func tronAPIBase(rpcURLs []string) string {
-	for _, u := range rpcURLs {
-		u = strings.TrimSuffix(strings.TrimSpace(u), "/")
-		u = strings.TrimSuffix(u, "/jsonrpc")
-		if u != "" {
-			return u
-		}
+	for _, u := range normalizeTronHTTPAPIEndpoints(rpcURLs) {
+		return u
 	}
 	return "https://api.trongrid.io"
+}
+
+func normalizeTronHTTPAPIEndpoints(rawEndpoints []string) []string {
+	out := make([]string, 0, len(rawEndpoints))
+	seen := make(map[string]struct{}, len(rawEndpoints))
+	for _, endpoint := range rawEndpoints {
+		endpoint = strings.TrimSuffix(strings.TrimSpace(endpoint), "/")
+		endpoint = strings.TrimSuffix(endpoint, "/jsonrpc")
+		if endpoint == "" {
+			continue
+		}
+		if _, ok := seen[endpoint]; ok {
+			continue
+		}
+		seen[endpoint] = struct{}{}
+		out = append(out, endpoint)
+	}
+	return out
 }
 
 func (s *TronChain) httpAPIEndpoints() []string {
@@ -163,7 +177,7 @@ func tronGetTRXBalance(ctx context.Context, rpcURL, address string) (int64, erro
 
 func tronGetTRXBalanceFromRPCs(ctx context.Context, rpcURLs []string, address string) (int64, error) {
 	var lastErr error
-	for _, rpcURL := range tronHTTPAPIEndpoints(rpcURLs) {
+	for _, rpcURL := range normalizeTronHTTPAPIEndpoints(rpcURLs) {
 		rpcURL = strings.TrimSpace(rpcURL)
 		if rpcURL == "" {
 			continue
@@ -260,7 +274,7 @@ func tronGetAccountResource(ctx context.Context, rpcURL, address string) (*tronA
 
 func tronGetAccountResourceFromRPCs(ctx context.Context, rpcURLs []string, address string) (*tronAccountResource, error) {
 	var lastErr error
-	for _, rpcURL := range tronHTTPAPIEndpoints(rpcURLs) {
+	for _, rpcURL := range normalizeTronHTTPAPIEndpoints(rpcURLs) {
 		rpcURL = strings.TrimSpace(rpcURL)
 		if rpcURL == "" {
 			continue
