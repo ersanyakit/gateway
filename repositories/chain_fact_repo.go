@@ -226,6 +226,7 @@ func (r *ChainFactRepo) ListForDepositProcessing(ctx context.Context, limit int)
 					   OR (chain_facts.chain_id = ? AND wallets.chiliz_spicy_address = chain_facts.observed_address)
 					   OR (chain_facts.chain_id = ? AND wallets.solana_address = chain_facts.observed_address)
 					   OR (chain_facts.chain_id = ? AND wallets.tron_address = chain_facts.observed_address)
+					   OR (chain_facts.chain_id = ? AND wallets.tron_address = chain_facts.observed_address)
 				)
 			)`,
 			[]string{models.DepositStatusPending, models.DepositStatusConfirming},

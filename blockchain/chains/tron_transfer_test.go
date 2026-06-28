@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -116,6 +117,36 @@ func TestTronEstimateBandwidthFeeSUNReturnsZeroWhenBandwidthCoversTx(t *testing.
 	}
 }
 
+func TestTronEstimateBandwidthFeeSUNDoesNotUseMainnetHTTPEnv(t *testing.T) {
+	var mainnetHits int32
+	mainnet := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&mainnetHits, 1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer mainnet.Close()
+
+	shasta := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wallet/getaccountresource" {
+			t.Fatalf("path = %q, want /wallet/getaccountresource", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"freeNetLimit":80,"freeNetUsed":30}`))
+	}))
+	defer shasta.Close()
+
+	t.Setenv("TRON_HTTP_ENDPOINTS", mainnet.URL)
+	fee, err := tronEstimateBandwidthFeeSUN(context.Background(), []string{shasta.URL + "/jsonrpc"}, tronTestAddress, strings.Repeat("ab", 180))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fee != 130_000 {
+		t.Fatalf("fee = %d, want 130000", fee)
+	}
+	if hits := atomic.LoadInt32(&mainnetHits); hits != 0 {
+		t.Fatalf("mainnet endpoint was called %d times", hits)
+	}
+}
+
 func TestTronGasPrefundDefaultsToTRC20FeeLimit(t *testing.T) {
 	t.Setenv("TRON_TRC20_FEE_LIMIT_SUN", "42000000")
 	t.Setenv("TRON_GAS_THRESHOLD_SUN", "")
@@ -126,6 +157,19 @@ func TestTronGasPrefundDefaultsToTRC20FeeLimit(t *testing.T) {
 	}
 	if got := tronGasPrefundSUN(); got != 42_000_000 {
 		t.Fatalf("prefund = %d, want 42000000", got)
+	}
+}
+
+func TestTronTestnetSweepAddressEnvKeysPreferTestnet(t *testing.T) {
+	got := tronSweepAddressEnvKeys("tron-testnet")
+	wantPrefix := []string{"TRON_TESTNET_SWEEP_ADDRESS", "TRX_TESTNET_SWEEP_ADDRESS", "SHASTA_SWEEP_ADDRESS"}
+	if len(got) < len(wantPrefix) {
+		t.Fatalf("keys = %#v, want testnet prefix", got)
+	}
+	for i, want := range wantPrefix {
+		if got[i] != want {
+			t.Fatalf("key[%d] = %q, want %q in %#v", i, got[i], want, got)
+		}
 	}
 }
 

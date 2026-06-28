@@ -862,10 +862,18 @@ func tronHTTPEndpointsForChain(chainName string, rpcs []string) []string {
 func splitTronHTTPEndpoints(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
 	for _, part := range parts {
-		if value := strings.TrimSpace(part); value != "" {
-			out = append(out, value)
+		value := strings.TrimSuffix(strings.TrimSpace(part), "/")
+		value = strings.TrimSuffix(value, "/jsonrpc")
+		if value == "" {
+			continue
 		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }

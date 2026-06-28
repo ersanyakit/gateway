@@ -135,12 +135,19 @@ func (s *TronChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletD
 }
 
 func (s *TronChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
-	for _, key := range []string{"TRON_SWEEP_ADDRESS", "TRX_SWEEP_ADDRESS", "SWEEP_ADDRESS"} {
+	for _, key := range tronSweepAddressEnvKeys(s.Name()) {
 		if addr := strings.TrimSpace(os.Getenv(key)); addr != "" {
 			return s.SweepTo(ctx, wallet, addr)
 		}
 	}
-	return nil, fmt.Errorf("sweep destination required: set TRON_SWEEP_ADDRESS or SWEEP_ADDRESS")
+	return nil, fmt.Errorf("sweep destination required: set one of %s", strings.Join(tronSweepAddressEnvKeys(s.Name()), ", "))
+}
+
+func tronSweepAddressEnvKeys(chainName string) []string {
+	if strings.EqualFold(strings.TrimSpace(chainName), "tron-testnet") {
+		return []string{"TRON_TESTNET_SWEEP_ADDRESS", "TRX_TESTNET_SWEEP_ADDRESS", "SHASTA_SWEEP_ADDRESS", "TRON_SWEEP_ADDRESS", "TRX_SWEEP_ADDRESS", "SWEEP_ADDRESS"}
+	}
+	return []string{"TRON_SWEEP_ADDRESS", "TRX_SWEEP_ADDRESS", "SWEEP_ADDRESS"}
 }
 
 func (e *TronChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {

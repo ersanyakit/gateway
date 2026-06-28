@@ -73,6 +73,19 @@ func TestTronPostAnnotatesEndpoint(t *testing.T) {
 	}
 }
 
+func TestTronHTTPEndpointsForChainNormalizesJSONRPCFallback(t *testing.T) {
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINTS", "")
+	t.Setenv("TRON_TESTNET_HTTP_ENDPOINT", "")
+
+	got := tronHTTPEndpointsForChain("tron-testnet", []string{"https://shasta.example/jsonrpc", "https://shasta.example/jsonrpc"})
+	if len(got) != 1 {
+		t.Fatalf("endpoints = %#v, want one normalized endpoint", got)
+	}
+	if got[0] != "https://shasta.example" {
+		t.Fatalf("endpoint = %q, want normalized full node base", got[0])
+	}
+}
+
 func TestScanTronProducesNativeTRXTransfer(t *testing.T) {
 	const txHash = "abc123"
 	ownerHex := "410000000000000000000000000000000000000001"

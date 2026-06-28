@@ -177,6 +177,7 @@ TRON_GRPC_ENDPOINTS=grpc.trongrid.io:50051
 TRON_TESTNET_JSONRPC_URLS=https://api.shasta.trongrid.io/jsonrpc
 TRON_TESTNET_HTTP_ENDPOINTS=https://api.shasta.trongrid.io
 TRON_TESTNET_GRPC_ENDPOINTS=grpc.shasta.trongrid.io:50051
+TRON_TESTNET_SWEEP_ADDRESS=
 ```
 
 Veritabanını migrate edin:
@@ -327,6 +328,7 @@ Gas, fee, sweep ve prefund ayarları:
 | `TRON_TRC20_FEE_LIMIT_SUN` | TRC-20 transfer fee limit'i. Varsayılan: `50000000`. |
 | `TRON_NATIVE_SWEEP_FEE_SUN` | TRON native sweep fee rezervi. Varsayılan: `1100000`. |
 | `TRON_SWEEP_ADDRESS` / `TRX_SWEEP_ADDRESS` | TRON sweep hedef adresi. |
+| `TRON_TESTNET_SWEEP_ADDRESS` / `TRX_TESTNET_SWEEP_ADDRESS` / `SHASTA_SWEEP_ADDRESS` | TRON Shasta testnet sweep hedef adresi. |
 | `SOLANA_GAS_THRESHOLD_LAMPORTS` | Solana gas eşiği. |
 | `SOLANA_GAS_PREFUND_LAMPORTS` | Solana prefund miktarı. |
 | `SOLANA_TRANSFER_FEE_LAMPORTS` | Solana transfer fee değeri. Varsayılan: `5000`. |
