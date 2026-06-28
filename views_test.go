@@ -120,6 +120,35 @@ func TestDealerViewsRender(t *testing.T) {
 	}
 }
 
+func TestDealerHomeKeepsPublicStylesWithSession(t *testing.T) {
+	engine := html.New("./views", ".html")
+	data := handlers.DealerPageData{
+		Title:        "Crypto payment gateway",
+		Active:       "home",
+		HasSession:   true,
+		DashboardURL: "/merchant/dashboard",
+		LogoutURL:    "/merchant/logout",
+		RegisterURL:  "/merchant/register",
+		LoginURL:     "/merchant/login",
+	}
+
+	var buf bytes.Buffer
+	if err := engine.Render(&buf, "dealer/home", data, "dealer/layout"); err != nil {
+		t.Fatalf("dealer/home render failed: %v", err)
+	}
+	output := buf.String()
+	for _, expected := range []string{`href="/assets/home.css"`, "home-public-body", "Dashboard'a git"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("home output missing %q", expected)
+		}
+	}
+	for _, unexpected := range []string{`href="/assets/admin.css"`, "admin-vscode-root", "merchant-titlebar"} {
+		if strings.Contains(output, unexpected) {
+			t.Fatalf("home output unexpectedly contains %q", unexpected)
+		}
+	}
+}
+
 func TestGatewayViewsRenderCriticalStates(t *testing.T) {
 	engine := html.New("./views", ".html")
 	session := &models.PaymentSession{

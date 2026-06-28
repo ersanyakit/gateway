@@ -210,21 +210,31 @@ PORT=:3001 go run .
 
 ## Ortam Değişkenleri
 
+Parametre formatları:
+
+| Format | Açıklama |
+| --- | --- |
+| Duration | Go duration formatı kullanılır. Örnek: `30s`, `5m`, `1h`. |
+| RPC listesi | Virgülle ayrılmış URL listesi kullanılır. Örnek: `https://rpc-1,https://rpc-2`. |
+| Amount/raw unit | Gas, fee, prefund ve transfer policy değerleri chain'in en küçük birimindedir. Örnek: wei, sun, lamports, sat/vbyte. |
+| Chain name | Env isimlerinde chain adı uppercase ve tire yerine `_` ile yazılır. Örnek: `CHILIZ_SPICY_RPC_URLS`. |
+
 Zorunlu veya kritik değişkenler:
 
 | Değişken | Açıklama |
 | --- | --- |
-| `DATABASE_URL` | PostgreSQL bağlantı adresi. Uygulama bu değer olmadan başlamaz. |
-| `PORT` | Fiber listen adresi. Örnek: `:4001`. |
+| `DATABASE_URL` | PostgreSQL bağlantı adresi. URL veya `key=value` DSN formatı kullanılabilir. Uygulama bu değer olmadan başlamaz. |
+| `PORT` | Fiber listen adresi. Örnek: `:3001`. |
 | `APP_ENV` | Çalışma ortamı. `production` değerinde bazı güvenlik kontrolleri sıkılaşır. Lokal geliştirme için `development` kullanılabilir. |
 | `ALLOW_PRIVATE_WEBHOOK_URLS` | Lokal geliştirmede `localhost`, `127.0.0.1` veya özel ağ IP'lerine webhook göndermeye izin verir. `APP_ENV=production` iken dikkate alınmaz. |
 | `ALLOW_AUTOMIGRATE_IN_PRODUCTION` | Varsayılan `false`. `APP_ENV=production` iken startup `AutoMigrate` çalışmaz; schema harici/versioned migration süreciyle yönetilmelidir. Sadece kontrollü bakım penceresinde geçici `true` yapılmalıdır. |
 | `SIGNER_MODE` | `software`, `kms`, `hsm`, `mpc`, `vault` veya external custody modu. `software` sadece development içindir; production signing gerçek external signer adapter'ı olmadan hard-fail eder. |
 | `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Legacy risk marker. `true` olsa bile `APP_ENV=production` altında software signing'e izin vermez ve production readiness'ı geçirmez. |
 | `METRICS_BEARER_TOKEN` | `/metrics` Prometheus endpoint'i için bearer token. `APP_ENV=production` iken zorunludur; boş bırakılırsa endpoint 503 döner. |
-| `PORTAL_JWT_SECRET` | Merchant/admin portal mutasyon JWT imzalama secret'ı. Production'da stabil bir secret veya `MASTER_KEY`/session secret fallback'i gerekir. |
+| `PORTAL_JWT_SECRET` | Merchant/admin portal mutasyon JWT imzalama secret'ı. Production'da stabil olmalıdır. Yoksa `DEALER_SESSION_SECRET`, `SESSION_SECRET` veya `MASTER_KEY` fallback kullanılır. |
+| `DEALER_SESSION_SECRET` / `SESSION_SECRET` | Merchant/admin session imzalama fallback secret'ları. Production'da rastgele runtime secret'a düşülmemelidir. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
-| `MNEMONIC_PHRASE` | Trust Wallet Core ile HD wallet üretimi için BIP39 mnemonic. |
+| `MNEMONIC_PHRASE` | Trust Wallet Core ile BIP39 doğrulama, HD wallet üretimi ve development signing için kullanılan mnemonic. Production custody için secret manager/KMS sınırında tutulmalıdır. |
 | `ADMIN_EMAIL` | Bootstrap admin hesabı için e-posta. |
 | `ADMIN_PASSWORD` | Bootstrap admin hesabı için parola. |
 | `ADMIN_NAME` | Bootstrap admin görünen adı. |
@@ -242,14 +252,35 @@ Opsiyonel servis değişkenleri:
 | `API_KEY_RATE_LIMIT_PER_MINUTE` | `/api/v1` için dakika başına limit. Varsayılan: `120`. |
 | `WEBHOOK_RETRY_INTERVAL` | Webhook retry worker aralığı. Varsayılan: `30s`. |
 | `WEBHOOK_MAX_ATTEMPTS` | Webhook delivery maksimum deneme sayısı. |
+| `WEBHOOK_RETRY_BACKOFF_BASE` | Webhook retry exponential backoff başlangıç süresi. |
+| `WEBHOOK_RETRY_BACKOFF_MAX` | Webhook retry exponential backoff üst sınırı. |
+| `WEBHOOK_DELIVERY_CLAIM_TIMEOUT` | Claimed webhook delivery kilit timeout'u. |
 | `TRANSACTION_FINALITY_INTERVAL` | Pending transaction finality worker aralığı. Varsayılan: `20s`. |
+| `DEPOSIT_FACT_INTERVAL` | Deposit fact processing worker aralığı. Varsayılan: `10s`. |
+| `SWEEP_JOB_INTERVAL` | Sweep worker aralığı. Varsayılan: `15s`. |
+| `SWEEP_JOB_LOCK_TIMEOUT` | Sweep job lock timeout'u. Minimum execution timeout altında verilirse güvenli minimuma çekilir. |
+| `SWEEP_PREFUND_RETRY_AFTER` | Sweep prefund başarısızlığı sonrası retry bekleme süresi. Varsayılan: `10m`. |
+| `RECONCILIATION_INTERVAL` | Ledger/reserve reconciliation worker aralığı. Varsayılan: `5m`. |
+| `RESERVE_RECONCILIATION_LIMIT` | Reserve reconciliation batch limiti. Varsayılan: `200`, üst sınır: `1000`. |
+| `GATEWAY_SHUTDOWN_TIMEOUT` | Graceful shutdown timeout'u. Varsayılan: `5s`. |
+| `GATEWAY_VERBOSE_TX` | Transaction log detayını açar. `true`, `1`, `yes`, `on` veya `verbose` kabul edilir. |
+| `GATEWAY_VERBOSE_EVENTS` | Chain event log detayını açar. `true`, `1`, `yes`, `on` veya `verbose` kabul edilir. |
 | `FINALITY_CONFIRMATIONS_DEFAULT` | Genel confirmation fallback değeri. |
 | `CHAIN_<id>_CONFIRMATIONS` | Chain ID bazlı confirmation override. |
 | `<CHAIN_NAME>_CONFIRMATIONS` | Chain slug bazlı confirmation override. Örnek: `ETHEREUM_CONFIRMATIONS`. |
+| `CHAIN_<id>_START_BLOCK` | Listener başlangıç block/slot override'u. |
+| `<CHAIN_NAME>_START_BLOCK` | Chain slug bazlı listener başlangıç override'u. Örnek: `ETHEREUM_START_BLOCK`. |
+| `START_BLOCK_<CHAIN_NAME>` | Alternatif listener başlangıç override'u. |
+| `CHAIN_START_BLOCK_DEFAULT` | Tüm chain'ler için default başlangıç block/slot değeri. |
 | `COINGECKO_BASE_URL` | CoinGecko API adresi. Varsayılan: `https://api.coingecko.com/api/v3`. |
 | `COINGECKO_CACHE_TTL` | Fiyat cache süresi. |
+| `COINGECKO_RATE_LIMIT_COOLDOWN` | CoinGecko rate limit sonrası bekleme süresi. |
 | `COINGECKO_API_KEY` | CoinGecko API anahtarı. |
 | `PRICE_<SYMBOL>_<CURRENCY>` | CoinGecko'da olmayan özel token fiyatı. Örnek: `PRICE_PEPPER_USD=0.0001`. |
+| `OIDC_AUTHORITY` / `OIDC_ISSUER_URL` | OIDC discovery authority/issuer adresi. |
+| `OIDC_AUTH_URL` | OIDC authorization endpoint override'u. |
+| `OIDC_TOKEN_URL` | OIDC token endpoint override'u. |
+| `OIDC_USERINFO_URL` | OIDC userinfo endpoint override'u. |
 | `OIDC_CLIENT_ID` | Merchant portal OIDC login için client ID. |
 | `OIDC_CLIENT_SECRET` | Merchant portal OIDC login için client secret. |
 | `OIDC_REDIRECT_URI` | OIDC callback adresi. |
@@ -265,19 +296,35 @@ RPC değişkenleri:
 | `CHAIN_<id>_RPC_URLS` | Chain ID bazlı RPC listesi. Örnek: `CHAIN_1_RPC_URLS`. |
 | `BSC_RPC_URLS`, `BINANCE_RPC_URLS` | BNB Chain alias RPC değişkenleri. |
 | `TRON_JSONRPC_URLS` | TRON JSON-RPC endpoint listesi. |
+| `TRON_HTTP_ENDPOINT` / `TRON_HTTP_ENDPOINTS` | TRON HTTP API endpoint ayarları. |
 | `TRON_GRPC_ENDPOINT` / `TRON_GRPC_ENDPOINTS` | TRON listener gRPC endpoint ayarları. |
 | `TRON_PRO_API_KEY` | TRON API erişimi için opsiyonel anahtar. |
+| `REQUIRE_EVM_TRACE` | `true` ise EVM listener trace bağımlılığını zorunlu kılar. |
+| `DEBUG_EVM_TRACE` | `true` ise EVM trace debug loglarını açar. |
 
-Gas/prefund ayarları:
+Gas, fee, sweep ve prefund ayarları:
 
 | Değişken | Açıklama |
 | --- | --- |
 | `EVM_GAS_THRESHOLD_WEI` | EVM cüzdan gas eşiği. |
 | `EVM_GAS_PREFUND_WEI` | EVM prefund miktarı. |
+| `EVM_MAX_GAS_PRICE_WEI` | EVM gas price policy üst sınırı. |
+| `<CHAIN_NAME>_SWEEP_ADDRESS` | Chain bazlı sweep hedef adresi. Örnek: `ETHEREUM_SWEEP_ADDRESS`. |
+| `EVM_SWEEP_ADDRESS` | Tüm EVM chain'ler için fallback sweep adresi. |
+| `SWEEP_ADDRESS` | Bitcoin, EVM, Solana ve TRON için genel sweep fallback adresi. |
+| `BITCOIN_SWEEP_ADDRESS` / `BTC_SWEEP_ADDRESS` | Bitcoin sweep hedef adresi. |
+| `BITCOIN_MIN_FEE_RATE_SAT_PER_VBYTE` | Bitcoin fee rate alt sınırı. Varsayılan: `1`. |
+| `BITCOIN_MAX_FEE_RATE_SAT_PER_VBYTE` | Bitcoin fee rate üst sınırı. Varsayılan: `10000`. |
+| `BITCOIN_FEE_RATE_SAT_PER_VBYTE` | Bitcoin transaction fee rate değeri. Varsayılan: `10`. |
 | `TRON_GAS_THRESHOLD_SUN` | TRON gas eşiği. |
 | `TRON_GAS_PREFUND_SUN` | TRON prefund miktarı. |
+| `TRON_TRC20_FEE_LIMIT_SUN` | TRC-20 transfer fee limit'i. Varsayılan: `50000000`. |
+| `TRON_NATIVE_SWEEP_FEE_SUN` | TRON native sweep fee rezervi. Varsayılan: `1100000`. |
+| `TRON_SWEEP_ADDRESS` / `TRX_SWEEP_ADDRESS` | TRON sweep hedef adresi. |
 | `SOLANA_GAS_THRESHOLD_LAMPORTS` | Solana gas eşiği. |
 | `SOLANA_GAS_PREFUND_LAMPORTS` | Solana prefund miktarı. |
+| `SOLANA_TRANSFER_FEE_LAMPORTS` | Solana transfer fee değeri. Varsayılan: `5000`. |
+| `SOLANA_SWEEP_ADDRESS` | Solana sweep hedef adresi. |
 
 ## HTTP Arayüzleri
 
@@ -380,7 +427,7 @@ Refund endpoint'leri:
 Örnek ödeme oluşturma isteği:
 
 ```bash
-curl -X POST http://localhost:4001/api/v1/payment/create \
+curl -X POST http://localhost:3001/api/v1/payment/create \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <api-key>" \
   -H "X-API-Secret: <api-secret>" \
@@ -401,7 +448,7 @@ curl -X POST http://localhost:4001/api/v1/payment/create \
 Örnek statik adres oluşturma isteği:
 
 ```bash
-curl -X POST http://localhost:4001/api/v1/payment/static-address \
+curl -X POST http://localhost:3001/api/v1/payment/static-address \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <api-key>" \
   -H "X-API-Secret: <api-secret>" \
@@ -418,7 +465,7 @@ curl -X POST http://localhost:4001/api/v1/payment/static-address \
 Örnek wallet provider cüzdanı oluşturma isteği:
 
 ```bash
-curl -X POST http://localhost:4001/api/v1/wallet/create \
+curl -X POST http://localhost:3001/api/v1/wallet/create \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <api-key>" \
   -H "X-API-Secret: <api-secret>" \
@@ -537,13 +584,13 @@ swag init -g main.go -o docs
 Migration:
 
 ```bash
-go run main.go -migrate
+go run . -migrate
 ```
 
 Uygulama:
 
 ```bash
-go run main.go
+go run .
 ```
 
 ## Yeni Chain veya Token Kaydı

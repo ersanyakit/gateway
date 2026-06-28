@@ -15,12 +15,12 @@ git submodule update --init --recursive third_party/trustwallet/wallet-core
 ./scripts/build_wallet_core.sh
 
 # Run
-go run main.go
+go run .
 
 # Run with DB migration + seed
-go run main.go -migrate
-go run main.go -seed
-go run main.go -install   # migrate + seed
+go run . -migrate
+go run . -seed
+go run . -install   # migrate + seed
 
 # Tests
 go test ./...
