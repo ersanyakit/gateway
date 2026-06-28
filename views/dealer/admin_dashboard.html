@@ -1031,12 +1031,13 @@
       </div>
       <div class="adm-wrap rounded-none border-0 border-t-0">
         <table class="adm-table">
-          <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>2FA</th><th>Durum</th><th>Oluşturulma</th><th>İşlemler</th></tr></thead>
+          <thead><tr><th>Ad Soyad</th><th>E-posta</th><th>Rol</th><th>2FA</th><th>Durum</th><th>Oluşturulma</th><th>İşlemler</th></tr></thead>
           <tbody>
           {{range .AdminMerchants}}
           <tr>
             <td><strong class="font-black text-ink">{{.Name}}</strong></td>
             <td class="text-xs text-muted">{{.Email}}</td>
+            <td><span class="badge badge-gray">{{.Role}}</span></td>
             <td><span class="badge badge-gray">TOTP</span></td>
             <td>{{if .IsActive}}<span class="badge badge-green">Aktif</span>{{else}}<span class="badge badge-red">Pasif</span>{{end}}</td>
             <td class="text-xs text-muted whitespace-nowrap">{{.CreatedAt}}</td>
@@ -1066,7 +1067,7 @@
         </div>
         <span class="inline-flex rounded-full bg-[#fff3fc] px-3 py-1 text-xs font-extrabold uppercase tracking-[0.06em] text-accentHover">Yeni</span>
       </div>
-      <form class="grid gap-4 sm:grid-cols-[1fr_1fr_1fr_auto]" method="post" action="/admin/admins">
+      <form class="grid gap-4 sm:grid-cols-[1fr_1fr_1fr_160px_auto]" method="post" action="/admin/admins">
         <label class="grid gap-1.5">
           <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Ad Soyad</span>
           <input class="min-h-10 rounded-2xl border border-line bg-wash px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-50" name="name" type="text" placeholder="John Doe">
@@ -1078,6 +1079,15 @@
         <label class="grid gap-1.5">
           <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Şifre <span class="text-red-500">*</span></span>
           <input class="min-h-10 rounded-2xl border border-line bg-wash px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-50" name="password" type="password" required minlength="8" placeholder="En az 8 karakter">
+        </label>
+        <label class="grid gap-1.5">
+          <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Rol</span>
+          <select class="min-h-10 rounded-2xl border border-line bg-wash px-3 text-sm font-semibold text-ink outline-none focus:border-accent focus:ring-4 focus:ring-pink-50" name="role">
+            <option value="operator">operator</option>
+            <option value="security">security</option>
+            <option value="viewer">viewer</option>
+            <option value="owner">owner</option>
+          </select>
         </label>
         <div class="flex items-end">
           <button class="inline-flex min-h-10 w-full items-center justify-center rounded-2xl bg-ink px-5 text-sm font-extrabold text-white hover:opacity-80 sm:w-auto" type="submit">Oluştur</button>
@@ -1136,9 +1146,100 @@
           <dt class="text-xs font-black uppercase tracking-[0.06em] text-muted">2FA</dt>
           <dd>{{if .AdminTOTPEnabled}}<span class="badge badge-green">Etkin</span>{{else}}<span class="badge badge-amber">Devre Dışı</span>{{end}}</dd>
         </div>
+        <div class="flex items-center justify-between rounded-xl border border-line bg-wash px-4 py-2.5">
+          <dt class="text-xs font-black uppercase tracking-[0.06em] text-muted">Rol</dt>
+          <dd><span class="badge badge-gray">{{.AdminRole}}</span></dd>
+        </div>
       </dl>
       <div class="mt-5 border-t border-line pt-4">
         <a class="inline-flex min-h-9 w-full items-center justify-center rounded-full border border-line bg-wash text-sm font-extrabold text-ink hover:bg-white" href="/admin/logout">Oturumu Kapat</a>
+      </div>
+    </div>
+
+    <div class="rounded-3xl border border-line bg-white p-6 lg:col-span-2">
+      <div class="flex flex-col justify-between gap-3 border-b border-line pb-4 md:flex-row md:items-start">
+        <div>
+          <h2 class="m-0 text-base font-black text-ink">Outbound policy</h2>
+          <p class="m-0 mt-1 text-xs font-semibold text-muted">{{.AdminOutboundPolicy.ConfigurationSummary}}</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {{if .AdminOutboundPolicy.EmergencyFrozen}}<span class="badge badge-red">Freeze aktif</span>{{else}}<span class="badge badge-green">Transfer açık</span>{{end}}
+          {{if .AdminOutboundPolicy.WhitelistRequired}}<span class="badge badge-amber">Whitelist zorunlu</span>{{else}}<span class="badge badge-gray">Whitelist opsiyonel</span>{{end}}
+        </div>
+      </div>
+
+      <form class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-[180px_180px_1fr_1fr_140px_auto]" method="post" action="/admin/security/outbound-policy">
+        <label class="flex min-h-11 items-center gap-2 rounded-2xl border border-line bg-wash px-3 text-sm font-extrabold text-ink">
+          <input class="h-4 w-4" type="checkbox" name="emergency_frozen" {{if .AdminOutboundPolicy.EmergencyFrozen}}checked{{end}}>
+          Freeze
+        </label>
+        <label class="flex min-h-11 items-center gap-2 rounded-2xl border border-line bg-wash px-3 text-sm font-extrabold text-ink">
+          <input class="h-4 w-4" type="checkbox" name="whitelist_required" {{if .AdminOutboundPolicy.WhitelistRequired}}checked{{end}}>
+          Whitelist
+        </label>
+        <label class="grid gap-1.5">
+          <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Max raw</span>
+          <input class="min-h-11 rounded-2xl border border-line bg-wash px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent" name="max_amount_raw" inputmode="numeric" value="{{.AdminOutboundPolicy.MaxAmountRaw}}">
+        </label>
+        <label class="grid gap-1.5">
+          <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Velocity raw</span>
+          <input class="min-h-11 rounded-2xl border border-line bg-wash px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent" name="velocity_limit_raw" inputmode="numeric" value="{{.AdminOutboundPolicy.VelocityLimitRaw}}">
+        </label>
+        <label class="grid gap-1.5">
+          <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Saat</span>
+          <input class="min-h-11 rounded-2xl border border-line bg-wash px-3 text-sm font-semibold text-ink outline-none focus:border-accent" name="velocity_window_hours" type="number" min="1" value="{{.AdminOutboundPolicy.VelocityWindowHours}}">
+        </label>
+        <div class="flex items-end">
+          <button class="inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-ink px-5 text-sm font-extrabold text-white hover:opacity-80" type="submit">Kaydet</button>
+        </div>
+      </form>
+
+      <div class="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div class="adm-wrap rounded-2xl">
+          <table class="adm-table">
+            <thead><tr><th>Scope</th><th>Chain</th><th>Token</th><th>Adres</th><th>Durum</th><th></th></tr></thead>
+            <tbody>
+              {{range .AdminOutboundWhitelist}}
+              <tr>
+                <td class="text-xs text-muted">{{.Scope}}</td>
+                <td class="text-xs font-semibold text-ink">{{.Chain}}</td>
+                <td class="text-xs text-muted">{{.Token}}</td>
+                <td><code class="block max-w-[320px] truncate" title="{{.Address}}">{{.Address}}</code>{{if .Label}}<span class="block text-xs text-muted">{{.Label}}</span>{{end}}</td>
+                <td>{{if .IsActive}}<span class="badge badge-green">Aktif</span>{{else}}<span class="badge badge-gray">Pasif</span>{{end}}</td>
+                <td>
+                  <form method="post" action="/admin/security/outbound-whitelist/{{.ID}}/toggle">
+                    <input type="hidden" name="active" value="{{if .IsActive}}false{{else}}true{{end}}">
+                    <button class="inline-flex min-h-7 items-center rounded-full border border-line bg-wash px-3 text-xs font-extrabold text-ink hover:bg-white" type="submit">{{if .IsActive}}Pasif et{{else}}Aktif et{{end}}</button>
+                  </form>
+                </td>
+              </tr>
+              {{else}}
+              <tr><td colspan="6" class="py-6 text-center text-sm text-muted">Whitelist kaydı yok.</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+
+        <form class="grid gap-3 rounded-2xl border border-line bg-wash p-4" method="post" action="/admin/security/outbound-whitelist">
+          <h3 class="m-0 text-sm font-black text-ink">Whitelist adresi</h3>
+          <label class="grid gap-1.5">
+            <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Chain</span>
+            <input class="min-h-10 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent" name="chain" placeholder="ethereum">
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Token</span>
+            <input class="min-h-10 rounded-2xl border border-line bg-white px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent" name="token" placeholder="native">
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Adres <span class="text-red-500">*</span></span>
+            <input class="min-h-10 rounded-2xl border border-line bg-white px-3 font-mono text-sm font-semibold text-ink outline-none focus:border-accent" name="address" required placeholder="0x...">
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-xs font-black uppercase tracking-[0.06em] text-muted">Etiket</span>
+            <input class="min-h-10 rounded-2xl border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-accent" name="label">
+          </label>
+          <button class="inline-flex min-h-10 items-center justify-center rounded-2xl bg-accent px-5 text-sm font-extrabold text-white hover:bg-accentHover" type="submit">Ekle</button>
+        </form>
       </div>
     </div>
 

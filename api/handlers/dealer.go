@@ -1818,7 +1818,7 @@ func HandleAdminManageAdmins(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.manage", "failed", "admin", "", err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -1837,7 +1837,7 @@ func HandleAdminCreateAdmin(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.create", "failed", "admin", "", err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -1861,7 +1861,7 @@ func HandleAdminToggleAdmin(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.toggle", "failed", "admin", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -1884,7 +1884,7 @@ func HandleAdminResetTOTP(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.reset_totp", "failed", "admin", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -1964,6 +1964,103 @@ func HandleAdminTOTPDisableSubmit(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/security", "2FA devre dışı bırakılamadı: "+err.Error())
 		}
 		return redirectWithSuccess(c, "/admin/security", "2FA başarıyla devre dışı bırakıldı.")
+	}
+}
+
+func HandleAdminOutboundPolicyUpdate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "failed", "outbound_policy", "global", err.Error())
+			return redirectWithError(c, "/admin/security", err.Error())
+		}
+		if deps.OutboundPolicyRepo == nil {
+			return redirectWithError(c, "/admin/security", "Outbound policy deposu hazır değil.")
+		}
+		windowHours, err := strconv.ParseInt(strings.TrimSpace(c.FormValue("velocity_window_hours")), 10, 64)
+		if err != nil || windowHours <= 0 {
+			windowHours = 24
+		}
+		setting, err := deps.OutboundPolicyRepo.Upsert(c.Context(), repositories.OutboundPolicyUpdate{
+			WhitelistRequired:  c.FormValue("whitelist_required") != "",
+			EmergencyFrozen:    c.FormValue("emergency_frozen") != "",
+			MaxAmountRaw:       strings.TrimSpace(c.FormValue("max_amount_raw")),
+			VelocityLimitRaw:   strings.TrimSpace(c.FormValue("velocity_limit_raw")),
+			VelocityWindowSecs: windowHours * 3600,
+			ActorEmail:         adminEmail,
+		})
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "failed", "outbound_policy", "global", err.Error())
+			return redirectWithError(c, "/admin/security", "Policy güncellenemedi: "+err.Error())
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "success", "outbound_policy", setting.ID.String(), "Global outbound policy güncellendi.")
+		return redirectWithSuccess(c, "/admin/security", "Outbound policy güncellendi.")
+	}
+}
+
+func HandleAdminOutboundWhitelistCreate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "failed", "outbound_whitelist", "", err.Error())
+			return redirectWithError(c, "/admin/security", err.Error())
+		}
+		if deps.OutboundPolicyRepo == nil {
+			return redirectWithError(c, "/admin/security", "Outbound policy deposu hazır değil.")
+		}
+		token := strings.TrimSpace(c.FormValue("token"))
+		var tokenPtr *string
+		if token != "" {
+			tokenPtr = &token
+		}
+		entry, err := deps.OutboundPolicyRepo.AddWhitelist(c.Context(), repositories.OutboundWhitelistCreate{
+			Scope: repositories.OutboundPolicyScope{
+				Chain: strings.TrimSpace(c.FormValue("chain")),
+				Token: tokenPtr,
+			},
+			Address:    strings.TrimSpace(c.FormValue("address")),
+			Label:      strings.TrimSpace(c.FormValue("label")),
+			ActorEmail: adminEmail,
+		})
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "failed", "outbound_whitelist", "", err.Error())
+			return redirectWithError(c, "/admin/security", "Whitelist kaydı eklenemedi: "+err.Error())
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "success", "outbound_whitelist", entry.ID.String(), "Whitelist adresi eklendi.")
+		return redirectWithSuccess(c, "/admin/security", "Whitelist adresi eklendi.")
+	}
+}
+
+func HandleAdminOutboundWhitelistToggle(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "failed", "outbound_whitelist", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin/security", err.Error())
+		}
+		if deps.OutboundPolicyRepo == nil {
+			return redirectWithError(c, "/admin/security", "Outbound policy deposu hazır değil.")
+		}
+		id, err := uuid.Parse(strings.TrimSpace(c.Params("id")))
+		if err != nil {
+			return redirectWithError(c, "/admin/security", "Geçersiz whitelist kaydı.")
+		}
+		active := c.FormValue("active") == "true"
+		if err := deps.OutboundPolicyRepo.SetWhitelistActive(c.Context(), id, active, adminEmail); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "failed", "outbound_whitelist", id.String(), err.Error())
+			return redirectWithError(c, "/admin/security", "Whitelist güncellenemedi.")
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "success", "outbound_whitelist", id.String(), "Whitelist durumu güncellendi.")
+		return redirectWithSuccess(c, "/admin/security", "Whitelist durumu güncellendi.")
 	}
 }
 
@@ -2447,7 +2544,7 @@ func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", "", err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -3007,7 +3104,7 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -3084,7 +3181,7 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -3130,7 +3227,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -3270,7 +3367,7 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.reject", "failed", "refund", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
@@ -3994,6 +4091,45 @@ func requireAdmin(c fiber.Ctx) (string, bool) {
 		return "", false
 	}
 	return email, true
+}
+
+func adminRoleCanMutateHighRisk(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "", "admin", models.AdminRoleOwner, models.AdminRoleSecurity:
+		return true
+	default:
+		return false
+	}
+}
+
+func requirePrivilegedAdmin(c fiber.Ctx, adminRepo *repositories.AdminRepo) error {
+	adminEmail, ok := requireAdmin(c)
+	if !ok || adminRepo == nil {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	admin, err := adminRepo.FindByEmail(c.Context(), adminEmail)
+	if err != nil || admin == nil || !admin.IsActive {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	if !adminRoleCanMutateHighRisk(admin.Role) {
+		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
+	}
+	return nil
+}
+
+func requireAdminPrivilege(c fiber.Ctx, deps DealerDeps, adminEmail string, roles ...string) error {
+	adminEmail = strings.ToLower(strings.TrimSpace(adminEmail))
+	if adminEmail == "" || deps.AdminRepo == nil {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+	if err != nil || admin == nil || !admin.IsActive {
+		return errors.New("Bu işlem için yetkiniz yok.")
+	}
+	if !models.AdminRoleAllowed(admin.Role, roles...) {
+		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
+	}
+	return nil
 }
 
 func adminRememberRequested(c fiber.Ctx) bool {
