@@ -17,7 +17,7 @@ func TestExecuteAutoSweepDepositWithJobUsesReservedTokenAndNativeTronSweep(t *te
 	body := extractMainSweepFunctionBody(t, string(sourceBytes), "executeAutoSweepDepositWithJob")
 	for _, token := range []string{
 		"chain.WithdrawToken(ctx, *userDetails, *txModel.Token, txModel.Amount, reserveAddr)",
-		"txModel.ChainID == constants.TRON",
+		"constants.IsTRONChain(txModel.ChainID)",
 		"chain.SweepTo(ctx, *userDetails, reserveAddr)",
 		"chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)",
 	} {

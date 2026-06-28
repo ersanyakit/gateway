@@ -8,6 +8,7 @@ import (
 	"core/asset"
 	chainpkg "core/blockchain/chains"
 	"core/constants"
+	"core/types"
 	"core/workers/dispatcher"
 
 	goproto "github.com/golang/protobuf/proto"
@@ -80,6 +81,30 @@ func TestProcessBlockScansNativeTRXWhenTransactionInfoUnavailable(t *testing.T) 
 	}
 	if got := *event.Transaction.To; got != tronAddress(to) {
 		t.Fatalf("to = %q, want %q", got, tronAddress(to))
+	}
+}
+
+func TestDispatchUsesConfiguredTronChainID(t *testing.T) {
+	listener := &RpcListener{
+		chain:  chainpkg.NewTronTestnetChain(),
+		events: make(chan interface{}, 1),
+	}
+
+	tx := &types.TransactionParam{Context: context.Background(), ChainID: constants.TRONTestnet}
+	if err := listener.dispatch(context.Background(), "native_transfer", tx); err != nil {
+		t.Fatal(err)
+	}
+
+	raw := <-listener.events
+	event, ok := raw.(dispatcher.Event)
+	if !ok {
+		t.Fatalf("event type = %T, want dispatcher.Event", raw)
+	}
+	if event.Chain != constants.TRONTestnet {
+		t.Fatalf("event chain = %d, want TRONTestnet", event.Chain)
+	}
+	if event.Transaction == nil || event.Transaction.ChainID != constants.TRONTestnet {
+		t.Fatalf("event transaction = %#v, want TRONTestnet", event.Transaction)
 	}
 }
 

@@ -16,7 +16,6 @@ import (
 
 	"core/asset"
 	"core/blockchain"
-	"core/constants"
 	"core/helpers"
 	"core/models"
 	"core/types"
@@ -191,7 +190,7 @@ func (r *RpcListener) Events() <-chan interface{} {
 
 func (r *RpcListener) connect() error {
 	var lastErr error
-	for _, endpoint := range tronGRPCEndpoints() {
+	for _, endpoint := range tronGRPCEndpointsForChain(r.chain.Name()) {
 		conn, err := grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			lastErr = err
@@ -256,6 +255,21 @@ func (r *RpcListener) grpcContext(parent context.Context, timeout time.Duration)
 }
 
 func tronGRPCEndpoints() []string {
+	return tronGRPCEndpointsForChain("tron")
+}
+
+func tronGRPCEndpointsForChain(chainName string) []string {
+	if strings.EqualFold(strings.TrimSpace(chainName), "tron-testnet") {
+		raw := strings.TrimSpace(os.Getenv("TRON_TESTNET_GRPC_ENDPOINTS"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("TRON_TESTNET_GRPC_ENDPOINT"))
+		}
+		if raw == "" {
+			return []string{"grpc.shasta.trongrid.io:50051"}
+		}
+		return splitTronGRPCEndpoints(raw)
+	}
+
 	raw := strings.TrimSpace(os.Getenv("TRON_GRPC_ENDPOINTS"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("TRON_GRPC_ENDPOINT"))
@@ -264,6 +278,10 @@ func tronGRPCEndpoints() []string {
 		return []string{"grpc.trongrid.io:50051"}
 	}
 
+	return splitTronGRPCEndpoints(raw)
+}
+
+func splitTronGRPCEndpoints(raw string) []string {
 	parts := strings.Split(raw, ",")
 	endpoints := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -517,7 +535,7 @@ func (r *RpcListener) handleTRC20Logs(ctx context.Context, info *pb.TransactionI
 
 func (r *RpcListener) dispatch(ctx context.Context, eventType string, txParam *types.TransactionParam) error {
 	event := dispatcher.Event{
-		Chain:       constants.TRON,
+		Chain:       r.chain.ChainID(),
 		Type:        eventType,
 		Transaction: txParam,
 	}

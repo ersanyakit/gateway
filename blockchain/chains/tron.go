@@ -27,12 +27,30 @@ type TronChain struct {
 }
 
 func NewTronChain() *TronChain {
+	return newTronChain(
+		constants.TRON,
+		"tron",
+		"https://tronscan.org/",
+		[]string{"https://api.trongrid.io/jsonrpc", "https://tron-rpc.publicnode.com/jsonrpc", "https://tron.drpc.org"},
+	)
+}
+
+func NewTronTestnetChain() *TronChain {
+	return newTronChain(
+		constants.TRONTestnet,
+		"tron-testnet",
+		"https://shasta.tronscan.org/",
+		[]string{"https://api.shasta.trongrid.io/jsonrpc"},
+	)
+}
+
+func newTronChain(id constants.ChainID, name string, explorerURL string, rpcHTTP []string) *TronChain {
 	return &TronChain{
 		blockchain.BaseChain{
-			ID:          constants.TRON,
-			ChainName:   "tron",
-			ExplorerURL: "https://tronscan.org/",
-			RPCHttp:     []string{"https://api.trongrid.io/jsonrpc", "https://tron-rpc.publicnode.com/jsonrpc", "https://tron.drpc.org"},
+			ID:          id,
+			ChainName:   name,
+			ExplorerURL: explorerURL,
+			RPCHttp:     rpcHTTP,
 		},
 	}
 }
@@ -186,7 +204,7 @@ func (e *TronChain) getBalance(ctx context.Context, client *http.Client, address
 	data, _ := json.Marshal(reqBody)
 
 	var lastErr error
-	for _, apiBase := range tronHTTPAPIEndpoints(e.RPCs()) {
+	for _, apiBase := range tronHTTPAPIEndpointsForChain(e.Name(), e.RPCs()) {
 		apiBase = strings.TrimRight(strings.TrimSpace(apiBase), "/")
 		if apiBase == "" {
 			continue
@@ -246,6 +264,10 @@ func (e *TronChain) getBalance(ctx context.Context, client *http.Client, address
 }
 
 func tronHTTPAPIEndpoints(rpcURLs []string) []string {
+	return tronHTTPAPIEndpointsForChain("tron", rpcURLs)
+}
+
+func tronHTTPAPIEndpointsForChain(chainName string, rpcURLs []string) []string {
 	out := make([]string, 0, len(rpcURLs)+2)
 	seen := map[string]struct{}{}
 	add := func(raw string) {
@@ -261,6 +283,18 @@ func tronHTTPAPIEndpoints(rpcURLs []string) []string {
 			seen[value] = struct{}{}
 			out = append(out, value)
 		}
+	}
+
+	if strings.EqualFold(strings.TrimSpace(chainName), "tron-testnet") {
+		add(os.Getenv("TRON_TESTNET_HTTP_ENDPOINTS"))
+		add(os.Getenv("TRON_TESTNET_HTTP_ENDPOINT"))
+		for _, rpcURL := range rpcURLs {
+			add(rpcURL)
+		}
+		if len(out) == 0 {
+			add("https://api.shasta.trongrid.io")
+		}
+		return out
 	}
 
 	add(os.Getenv("TRON_HTTP_ENDPOINTS"))

@@ -242,6 +242,7 @@ func (r *ChainFactRepo) ListForDepositProcessing(ctx context.Context, limit int)
 			constants.ChilizSpicy,
 			constants.Solana,
 			constants.TRON,
+			constants.TRONTestnet,
 		).
 		Order("chain_facts.created_at DESC").
 		Limit(limit).

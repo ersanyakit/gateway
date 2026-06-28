@@ -14,6 +14,7 @@ const (
 	ChilizSpicy ChainID = 88882
 	Solana      ChainID = 99999999
 	TRON        ChainID = 99999998
+	TRONTestnet ChainID = 99999997
 )
 
 var chainNames = map[ChainID]string{
@@ -28,6 +29,7 @@ var chainNames = map[ChainID]string{
 	ChilizSpicy: "chiliz-spicy",
 	Solana:      "solana",
 	TRON:        "tron",
+	TRONTestnet: "tron-testnet",
 }
 
 var chainLogoSlugs = map[ChainID]string{
@@ -42,6 +44,7 @@ var chainLogoSlugs = map[ChainID]string{
 	ChilizSpicy: "chilizchain",
 	Solana:      "solanachain",
 	TRON:        "tronchain",
+	TRONTestnet: "tronchain",
 }
 
 func AllChainIDs() []ChainID {
@@ -52,6 +55,7 @@ func AllChainIDs() []ChainID {
 		ChilizSpicy,
 		Solana,
 		TRON,
+		TRONTestnet,
 		Base,
 		Arbitrum,
 		Unichain,
@@ -62,10 +66,15 @@ func AllChainIDs() []ChainID {
 
 var testnetChains = map[ChainID]bool{
 	ChilizSpicy: true,
+	TRONTestnet: true,
 }
 
 func IsTestnet(chainID ChainID) bool {
 	return testnetChains[chainID]
+}
+
+func IsTRONChain(chainID ChainID) bool {
+	return chainID == TRON || chainID == TRONTestnet
 }
 
 func IsSupportedChainID(chainID ChainID) bool {
