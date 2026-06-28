@@ -815,24 +815,28 @@ func TestPayTemplateRendersDonationWithoutExactAmount(t *testing.T) {
 	state := checkoutPayerState(session, time.Now())
 	var rendered bytes.Buffer
 	err = tmpl.Execute(&rendered, fiber.Map{
-		"Session":       &session,
-		"Lang":          "en",
-		"IsEnglish":     true,
-		"IsDonation":    true,
-		"QRCodeURL":     "/checkout/donation-token/qr.png",
-		"PaymentURI":    paymentURI(session),
-		"ChainName":     constants.ChainName(chainID),
-		"AmountDisplay": "ETH",
-		"CheckoutState": state,
-		"StatusMode":    state.Mode,
-		"StatusTitle":   state.TitleEN,
-		"StatusBody":    state.BodyEN,
+		"Session":        &session,
+		"Lang":           "en",
+		"IsEnglish":      true,
+		"IsDonation":     true,
+		"QRCodeURL":      "/checkout/donation-token/qr.png",
+		"PaymentURI":     paymentURI(session),
+		"ChainName":      constants.ChainName(chainID),
+		"AmountDisplay":  "ETH",
+		"CheckoutState":  state,
+		"StatusMode":     state.Mode,
+		"StatusTitle":    state.TitleEN,
+		"StatusBody":     state.BodyEN,
+		"ChangeAssetURL": "/checkout/donation-token/change?lang=en",
+		"CancelURL":      "/checkout/donation-token/cancel?lang=en",
+		"LangTRURL":      "/checkout/donation-token/pay?lang=tr",
+		"LangENURL":      "/checkout/donation-token/pay?lang=en",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	html := rendered.String()
-	for _, want := range []string{"Any amount ETH", "Enter the amount you want to send", "ethereum:0x2222222222222222222222222222222222222222@1"} {
+	for _, want := range []string{"Chosen amount ETH", "Enter the amount you want to send", "crypto-lang-switch", "/checkout/donation-token/pay?lang=tr", "ethereum:0x2222222222222222222222222222222222222222@1"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("donation template missing %q in:\n%s", want, html)
 		}
@@ -841,6 +845,15 @@ func TestPayTemplateRendersDonationWithoutExactAmount(t *testing.T) {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("donation template contains fixed amount copy %q in:\n%s", forbidden, html)
 		}
+	}
+}
+
+func TestCheckoutLocalizedURLPreservesLanguageAndSelectedAsset(t *testing.T) {
+	if got := checkoutLocalizedURL("token-1", "", "en", "eth"); got != "/checkout/token-1?asset=ETH&lang=en" {
+		t.Fatalf("localized checkout url = %q", got)
+	}
+	if got := checkoutLocalizedURL("token-1", "/pay", "tr", "eth"); got != "/checkout/token-1/pay?lang=tr" {
+		t.Fatalf("localized pay url = %q", got)
 	}
 }
 

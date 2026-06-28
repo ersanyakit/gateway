@@ -204,6 +204,19 @@ Uygulamayı başlatın:
 go run .
 ```
 
+Geliştirme sırasında Go ve HTML değişikliklerini otomatik almak için Air kullanın:
+
+```bash
+go install github.com/air-verse/air@latest
+npm run dev
+```
+
+Air uygulamayı `.env` içindeki `PORT=:3001` üzerinde çalıştırır; tarayıcı auto-refresh için sayfayı Air proxy'den açın: `http://localhost:3000`. `APP_ENV=development` altında Fiber HTML şablonlarını her render'da yeniden yükler ve statik asset cache'i kapatır. `PORT` değerini değiştirirseniz `.air.toml` içindeki `proxy.app_port` değerini de aynı porta çekin. Tailwind kaynak CSS'i değiştiriyorsanız ikinci terminalde watcher çalıştırın:
+
+```bash
+npm run dev:css
+```
+
 Geçici port override örneği:
 
 ```bash

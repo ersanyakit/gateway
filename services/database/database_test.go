@@ -1,7 +1,9 @@
 package database
 
 import (
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"core/models"
@@ -156,6 +158,51 @@ func TestLedgerEntrySchemaConstraintsAreRequired(t *testing.T) {
 		if !found {
 			t.Fatalf("VerifySchema does not require ledger_entries constraint %s", name)
 		}
+	}
+}
+
+func TestLedgerEntryCheckConstraintSpecsIncludeSweepValues(t *testing.T) {
+	entryTypeSpec := ledgerCheckConstraintSpecByName(t, "ledger_entries_entry_type_check")
+	for _, value := range []string{
+		models.LedgerEntryTypeSweepHold,
+		models.LedgerEntryTypeSweepRelease,
+		models.LedgerEntryTypeSweepDebit,
+	} {
+		requireConstraintSpecValue(t, entryTypeSpec, value)
+	}
+
+	accountSpec := ledgerCheckConstraintSpecByName(t, "ledger_entries_account_check")
+	requireConstraintSpecValue(t, accountSpec, models.LedgerAccountSweepTransit)
+}
+
+func TestLedgerEntryCheckConstraintMatchingRejectsStaleSweepDefinitions(t *testing.T) {
+	entryTypeSpec := ledgerCheckConstraintSpecByName(t, "ledger_entries_entry_type_check")
+	staleEntryTypeDefinition := "CHECK (((entry_type)::text = ANY ((ARRAY['deposit_pending'::character varying, 'deposit_available'::character varying, 'withdrawal_hold'::character varying, 'withdrawal_release'::character varying, 'withdrawal_debit'::character varying, 'refund_hold'::character varying, 'refund_debit'::character varying, 'reorg_reversal'::character varying, 'adjustment'::character varying])::text[])))"
+	if checkConstraintValuesMatch(staleEntryTypeDefinition, entryTypeSpec.values) {
+		t.Fatal("stale entry_type constraint without sweep values must not verify")
+	}
+	if !checkConstraintValuesMatch("CHECK ("+checkConstraintExpression(entryTypeSpec)+")", entryTypeSpec.values) {
+		t.Fatal("current entry_type constraint expression should verify")
+	}
+
+	accountSpec := ledgerCheckConstraintSpecByName(t, "ledger_entries_account_check")
+	staleAccountDefinition := "CHECK (((account)::text = ANY ((ARRAY['merchant_pending'::character varying, 'merchant_available'::character varying, 'platform_clearing'::character varying, 'withdrawal_transit'::character varying, 'refund_transit'::character varying])::text[])))"
+	if checkConstraintValuesMatch(staleAccountDefinition, accountSpec.values) {
+		t.Fatal("stale account constraint without sweep_transit must not verify")
+	}
+	if !checkConstraintValuesMatch("CHECK ("+checkConstraintExpression(accountSpec)+")", accountSpec.values) {
+		t.Fatal("current account constraint expression should verify")
+	}
+}
+
+func TestApplyGORMMigrationsReconcilesLedgerCheckConstraints(t *testing.T) {
+	sourceBytes, err := os.ReadFile("database.go")
+	if err != nil {
+		t.Fatalf("read database.go: %v", err)
+	}
+	source := string(sourceBytes)
+	if !strings.Contains(source, "ReconcileLedgerEntryCheckConstraints(ctx, db)") {
+		t.Fatal("ApplyGORMMigrations must reconcile ledger check constraints after AutoMigrate")
 	}
 }
 
@@ -549,4 +596,25 @@ func autoMigrateModelsIncludes(want any) bool {
 		}
 	}
 	return false
+}
+
+func ledgerCheckConstraintSpecByName(t *testing.T, name string) checkConstraintSpec {
+	t.Helper()
+	for _, spec := range ledgerEntryCheckConstraintSpecs() {
+		if spec.name == name {
+			return spec
+		}
+	}
+	t.Fatalf("ledger check constraint spec %s not found", name)
+	return checkConstraintSpec{}
+}
+
+func requireConstraintSpecValue(t *testing.T, spec checkConstraintSpec, value string) {
+	t.Helper()
+	for _, candidate := range spec.values {
+		if candidate == value {
+			return
+		}
+	}
+	t.Fatalf("constraint %s does not allow %q", spec.name, value)
 }

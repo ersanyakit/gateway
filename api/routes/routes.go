@@ -15,6 +15,7 @@ import (
 	services "core/services/system"
 	"core/services/txrescan"
 	webhooksvc "core/services/webhook"
+	"os"
 	"strings"
 	"time"
 
@@ -72,9 +73,10 @@ func NewRouter(db *gorm.DB) *Router {
 	var sonicAPI = sonic.Config{
 		EscapeHTML: false,
 	}.Froze()
+	devMode := isDevelopmentEnv()
 	engine := html.New("./views", ".html")
-	engine.Reload(false)
-	engine.Debug(false)
+	engine.Reload(devMode)
+	engine.Debug(devMode)
 
 	r := &Router{
 		action: router.NewActionRouter(db),
@@ -171,6 +173,15 @@ func NewRouter(db *gorm.DB) *Router {
 		CacheDuration: 30 * time.Second,
 		MaxAge:        300,
 		Compress:      true,
+	}
+	if devMode {
+		staticAssetConfig.CacheDuration = -1
+		staticAssetConfig.MaxAge = 0
+		staticAssetConfig.Compress = false
+		staticAssetConfig.ModifyResponse = func(c fiber.Ctx) error {
+			c.Set(fiber.HeaderCacheControl, "no-store")
+			return nil
+		}
 	}
 	r.fiber.Use("/assets", staticmw.New("./views/assets", staticAssetConfig))
 	r.fiber.Use("/static", staticmw.New("./static", staticAssetConfig))
@@ -316,6 +327,7 @@ func NewRouter(db *gorm.DB) *Router {
 		DomainRepo:          r.DomainRepo,
 		WalletRepo:          r.WalletRepo,
 		PaymentRepo:         r.PaymentRepo,
+		ProductRepo:         r.ProductRepo,
 		WithdrawalRepo:      r.WithdrawalRepo,
 		RefundRepo:          r.RefundRepo,
 		LedgerRepo:          r.LedgerRepo,
@@ -363,6 +375,7 @@ func NewRouter(db *gorm.DB) *Router {
 	// ── Payment API ──────────────────────────────────────────────────────────
 	r.fiber.Post("/api/v1/payment/create", handlers.HandleV1PaymentCreate(v1Deps))
 	r.fiber.Post("/api/v1/payment/white-label", handlers.HandleV1PaymentWhiteLabel(v1Deps))
+	r.fiber.Post("/api/v1/payment/link/create", handlers.HandleV1PaymentLinkCreate(v1Deps))
 	r.fiber.Post("/api/v1/payment/static-address", handlers.HandleV1PaymentStaticAddressCreate(v1Deps))
 	r.fiber.Get("/api/v1/payment/static-addresses", handlers.HandleV1PaymentStaticAddressList(v1Deps))
 	r.fiber.Get("/api/v1/payment/info", handlers.HandleV1PaymentInfo(v1Deps))
@@ -398,6 +411,15 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/docs/*", swaggo.New(swaggerCfg))
 	GenerateFakeActionRoutesSwagger(r.fiber, r.action) // Fake routes
 	return r
+}
+
+func isDevelopmentEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) {
+	case "", "development", "dev", "local":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Router) handlePacket(c fiber.Ctx) error {

@@ -70,16 +70,16 @@ development_status:
   3-5-correct-reorgs-with-compensating-events-and-ledger-reversals: done
   3-6-open-scoped-reconciliation-jobs-for-drift-and-uncertainty: done
   epic-3-retrospective: done
-  epic-4: in-progress
+  epic-4: done
   4-1-reserve-ledger-holds-before-outbound-money-movement: done
   4-2-enforce-external-signer-boundary-and-production-software-signer-guard: done
   4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: done
   4-4-run-auto-sweeps-as-durable-recoverable-jobs: done
   4-5-complete-withdrawal-payout-and-refund-lifecycle-events: done
-  4-6-harden-admin-security-limits-whitelists-and-audit-trails: review
-  epic-4-retrospective: optional
-  epic-5: backlog
-  5-1-track-provider-health-and-rpc-failover-signals: backlog
+  4-6-harden-admin-security-limits-whitelists-and-audit-trails: done
+  epic-4-retrospective: done
+  epic-5: in-progress
+  5-1-track-provider-health-and-rpc-failover-signals: ready-for-dev
   5-2-prepare-address-lookup-for-large-wallet-sets: backlog
   5-3-replace-production-automigrate-dependence-with-versioned-migration-discipline: backlog
   5-4-provide-money-path-observability-slos-alerts-and-runbooks: backlog
@@ -90,20 +90,40 @@ action_items:
   - epic: 3
     action: "Epic 4.1 outbound bypass kapatma: withdrawal, refund, payout, admin sweep ve worker path'leri ledger hold olmadan signing/broadcast cagirmaz; nil-ledger bypass testleri kapsanir."
     owner: "Amelia (Developer)"
-    status: open
+    status: done
   - epic: 3
     action: "Money schema degisiklikleri icin migration evidence standardi: GORM schema verification yaninda production migration plan veya explicit gate notu bulunur."
     owner: "Winston (Architect)"
-    status: open
+    status: in-progress
   - epic: 3
     action: "Event/API docs synchronization gate: yeni veya degisen money event'leri docs, OpenAPI/docs tests ve story File List icinde dogrulanir."
     owner: "Paige (Technical Writer)"
-    status: open
+    status: in-progress
   - epic: 3
     action: "Outbound reconciliation reuse: hold, broadcast, signer veya sweep uncertainty durumlari scoped reconciliation job, evidence redaction ve active dedupe ile testlenir."
     owner: "Murat (Test Architect)"
-    status: open
+    status: in-progress
   - epic: 3
     action: "Validation record discipline: her money-path story targeted tests, full regression, static validation, whitespace validation ve varsa sandbox kisitini listeler."
     owner: "Amelia (Developer)"
+    status: done
+  - epic: 4
+    action: "Provider health signal contract: Story 5.1 baslamadan chain/provider state, lag, stale/inconsistent head, timeout, failover decision ve metric/log tag kontrati netlesir."
+    owner: "Winston (Architect) / Amelia (Developer)"
+    status: open
+  - epic: 4
+    action: "Migration discipline hard gate: Story 5.3, story-level migration notlarini versioned, reviewable, rollback-aware migration artifact/gate ile degistirir."
+    owner: "Winston (Architect)"
+    status: open
+  - epic: 4
+    action: "Outbound controls observability/runbook evidence: Epic 4 controls'u Story 5.4 ve 5.5 icinde dashboard, alert, runbook ve launch checklist evidence'i olarak gorunur."
+    owner: "Murat (Test Architect) / Paige (Technical Writer)"
+    status: open
+  - epic: 4
+    action: "Post-broadcast ledger reconciliation gap takibi: Post-broadcast ledger failure davranisi Epic 5 kapsaminda explicit story task'i veya deferred work item olarak izlenir; sessiz risk olarak kalmaz."
+    owner: "Amelia (Developer) / Murat (Test Architect)"
+    status: open
+  - epic: 4
+    action: "Launch-scope wording gate: Docs ve readiness kayitlari controlled beta, wallet-provider custody ve exchange-grade readiness claim'lerini Epic 5.5 gecmeden birbirine karistirmaz."
+    owner: "Alice (Product Owner) / Paige (Technical Writer)"
     status: open

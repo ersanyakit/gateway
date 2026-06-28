@@ -5,9 +5,11 @@ import (
 	"core/application"
 	"core/constants"
 	"core/models"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,6 +38,15 @@ type requiredSchemaConstraint struct {
 	model any
 	name  string
 }
+
+type checkConstraintSpec struct {
+	table  string
+	name   string
+	column string
+	values []string
+}
+
+var postgresStringLiteralPattern = regexp.MustCompile(`'((?:''|[^'])*)'`)
 
 func normalizedAppEnv() string {
 	return strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
@@ -150,6 +161,9 @@ func Migrate(app *application.App) error {
 
 func ApplyGORMMigrations(ctx context.Context, db *gorm.DB) error {
 	if err := db.WithContext(ctx).AutoMigrate(autoMigrateModels()...); err != nil {
+		return err
+	}
+	if err := ReconcileLedgerEntryCheckConstraints(ctx, db); err != nil {
 		return err
 	}
 	return VerifySchema(ctx, db)
@@ -431,6 +445,92 @@ func requiredSchemaConstraints() []requiredSchemaConstraint {
 	}
 }
 
+func ledgerEntryCheckConstraintSpecs() []checkConstraintSpec {
+	return []checkConstraintSpec{
+		{
+			table:  "ledger_entries",
+			name:   "ledger_entries_entry_type_check",
+			column: "entry_type",
+			values: []string{
+				models.LedgerEntryTypeDepositPending,
+				models.LedgerEntryTypeDepositAvailable,
+				models.LedgerEntryTypeWithdrawalHold,
+				models.LedgerEntryTypeWithdrawalRelease,
+				models.LedgerEntryTypeWithdrawalDebit,
+				models.LedgerEntryTypeRefundHold,
+				models.LedgerEntryTypeRefundDebit,
+				models.LedgerEntryTypeSweepHold,
+				models.LedgerEntryTypeSweepRelease,
+				models.LedgerEntryTypeSweepDebit,
+				models.LedgerEntryTypeReorgReversal,
+				models.LedgerEntryTypeAdjustment,
+			},
+		},
+		{
+			table:  "ledger_entries",
+			name:   "ledger_entries_account_check",
+			column: "account",
+			values: []string{
+				models.LedgerAccountMerchantPending,
+				models.LedgerAccountMerchantAvailable,
+				models.LedgerAccountPlatformClearing,
+				models.LedgerAccountWithdrawalTransit,
+				models.LedgerAccountRefundTransit,
+				models.LedgerAccountSweepTransit,
+			},
+		},
+		{
+			table:  "ledger_entries",
+			name:   "ledger_entries_direction_check",
+			column: "direction",
+			values: []string{
+				models.LedgerDirectionCredit,
+				models.LedgerDirectionDebit,
+			},
+		},
+		{
+			table:  "ledger_entries",
+			name:   "ledger_entries_status_check",
+			column: "status",
+			values: []string{
+				models.LedgerStatusPending,
+				models.LedgerStatusPosted,
+				models.LedgerStatusVoided,
+			},
+		},
+	}
+}
+
+func ReconcileLedgerEntryCheckConstraints(ctx context.Context, db *gorm.DB) error {
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, spec := range ledgerEntryCheckConstraintSpecs() {
+			definition, found, err := postgresConstraintDefinition(ctx, tx, spec.table, spec.name)
+			if err != nil {
+				return err
+			}
+			if found && checkConstraintValuesMatch(definition, spec.values) {
+				continue
+			}
+			if err := tx.Exec(fmt.Sprintf(
+				`ALTER TABLE %s DROP CONSTRAINT IF EXISTS %s`,
+				quotePostgresIdentifier(spec.table),
+				quotePostgresIdentifier(spec.name),
+			)).Error; err != nil {
+				return err
+			}
+			if err := tx.Exec(fmt.Sprintf(
+				`ALTER TABLE %s ADD CONSTRAINT %s CHECK (%s)`,
+				quotePostgresIdentifier(spec.table),
+				quotePostgresIdentifier(spec.name),
+				checkConstraintExpression(spec),
+			)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func VerifySchema(ctx context.Context, db *gorm.DB) error {
 	requiredColumns := requiredSchemaColumns()
 
@@ -450,7 +550,80 @@ func VerifySchema(ctx context.Context, db *gorm.DB) error {
 			return fmt.Errorf("schema check failed: %s constraint %s is missing", constraint.table, constraint.name)
 		}
 	}
+	for _, spec := range ledgerEntryCheckConstraintSpecs() {
+		definition, found, err := postgresConstraintDefinition(ctx, db, spec.table, spec.name)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("schema check failed: %s constraint %s is missing", spec.table, spec.name)
+		}
+		if !checkConstraintValuesMatch(definition, spec.values) {
+			return fmt.Errorf("schema check failed: %s constraint %s allowed values are stale", spec.table, spec.name)
+		}
+	}
 	return nil
+}
+
+func postgresConstraintDefinition(ctx context.Context, db *gorm.DB, tableName, constraintName string) (string, bool, error) {
+	var definition string
+	err := db.WithContext(ctx).Raw(`
+		SELECT pg_get_constraintdef(c.oid)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		WHERE n.nspname = current_schema()
+		  AND t.relname = ?
+		  AND c.conname = ?
+	`, tableName, constraintName).Row().Scan(&definition)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return definition, true, nil
+}
+
+func checkConstraintExpression(spec checkConstraintSpec) string {
+	quotedValues := make([]string, 0, len(spec.values))
+	for _, value := range spec.values {
+		quotedValues = append(quotedValues, quotePostgresLiteral(value))
+	}
+	return fmt.Sprintf("%s IN (%s)", quotePostgresIdentifier(spec.column), strings.Join(quotedValues, ","))
+}
+
+func checkConstraintValuesMatch(definition string, expectedValues []string) bool {
+	actual := postgresConstraintStringLiterals(definition)
+	if len(actual) != len(expectedValues) {
+		return false
+	}
+	for _, value := range expectedValues {
+		if _, ok := actual[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func postgresConstraintStringLiterals(definition string) map[string]struct{} {
+	matches := postgresStringLiteralPattern.FindAllStringSubmatch(definition, -1)
+	values := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		values[strings.ReplaceAll(match[1], "''", "'")] = struct{}{}
+	}
+	return values
+}
+
+func quotePostgresIdentifier(identifier string) string {
+	return `"` + strings.ReplaceAll(identifier, `"`, `""`) + `"`
+}
+
+func quotePostgresLiteral(value string) string {
+	return `'` + strings.ReplaceAll(value, `'`, `''`) + `'`
 }
 
 func ReconcileChainStates(ctx context.Context, db *gorm.DB) error {

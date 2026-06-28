@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ type V1APIDeps struct {
 	DomainRepo          *repositories.DomainRepo
 	WalletRepo          *repositories.WalletRepo
 	PaymentRepo         *repositories.PaymentRepo
+	ProductRepo         *repositories.ProductRepo
 	WithdrawalRepo      *repositories.WithdrawalRequestRepo
 	RefundRepo          *repositories.RefundRepo
 	LedgerRepo          *repositories.LedgerRepo
@@ -722,6 +724,50 @@ func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/payment/white-label [post]
 func HandleV1PaymentWhiteLabel(deps V1APIDeps) fiber.Handler {
 	return HandleV1PaymentCreate(deps)
+}
+
+// HandleV1PaymentLinkCreate godoc
+// @Summary Create payment or donation link
+// @Description Creates a hosted payment link under the authenticated API domain. Set link_type=donation to create a donation link where the payer chooses the crypto amount at checkout; amount and currency are ignored for donation links.
+// @Tags Payment
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Param X-API-Secret header string true "API secret returned when the domain was created or rotated"
+// @Param X-Gateway-Timestamp header string true "Unix timestamp used in HMAC signature"
+// @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
+// @Param payload body types.V1PaymentLinkCreateRequest true "Payment or donation link parameters"
+// @Success 201 {object} types.V1PaymentLinkCreateResponse
+// @Failure 400 {object} types.V1ErrorResponse
+// @Failure 401 {object} types.V1ErrorResponse
+// @Router /api/v1/payment/link/create [post]
+func HandleV1PaymentLinkCreate(deps V1APIDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		domain, err := v1ResolveSignedDomain(c, deps.DomainRepo)
+		if err != nil {
+			return v1Err(c, fiber.StatusUnauthorized, err.Error())
+		}
+		if deps.ProductRepo == nil {
+			return v1Err(c, fiber.StatusInternalServerError, "product repository is not ready")
+		}
+
+		var body types.V1PaymentLinkCreateRequest
+		if err := c.Bind().Body(&body); err != nil {
+			return v1Err(c, fiber.StatusBadRequest, "invalid request body")
+		}
+		product, err := v1PaymentLinkProductFromRequest(domain, body)
+		if err != nil {
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
+			return v1Err(c, fiber.StatusInternalServerError, "payment link creation failed: "+err.Error())
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+			"result": "ok",
+			"data":   v1PaymentLinkResponse(c, *product),
+		})
+	}
 }
 
 // HandleV1PaymentStaticAddressCreate godoc
@@ -2108,6 +2154,116 @@ func formatV1Amount(raw string, decimals uint8) string {
 		return whole
 	}
 	return whole + "." + frac
+}
+
+func v1PaymentLinkProductFromRequest(domain *models.Domain, body types.V1PaymentLinkCreateRequest) (*models.Product, error) {
+	if domain == nil {
+		return nil, fmt.Errorf("domain is required")
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if len(name) > 180 {
+		return nil, fmt.Errorf("name must be at most 180 characters")
+	}
+
+	linkType, err := v1PaymentLinkType(body.LinkType)
+	if err != nil {
+		return nil, err
+	}
+
+	description := strings.TrimSpace(body.Description)
+	if len(description) > 500 {
+		return nil, fmt.Errorf("description must be at most 500 characters")
+	}
+	successURL, err := v1OptionalURL(body.SuccessURL, "success_url")
+	if err != nil {
+		return nil, err
+	}
+	cancelURL, err := v1OptionalURL(body.CancelURL, "cancel_url")
+	if err != nil {
+		return nil, err
+	}
+	logoURL := strings.TrimSpace(body.LogoURL)
+	if len(logoURL) > 500 {
+		return nil, fmt.Errorf("logo_url must be at most 500 characters")
+	}
+
+	amount := strings.TrimSpace(body.Amount)
+	currency := strings.ToUpper(strings.TrimSpace(body.Currency))
+	if models.IsDonationLinkType(linkType) {
+		amount = "0"
+		currency = ""
+	} else {
+		if err := types.ValidatePositiveDecimal(amount); err != nil {
+			return nil, fmt.Errorf("amount must be a positive decimal")
+		}
+		if currency == "" {
+			currency = "USD"
+		}
+	}
+
+	return &models.Product{
+		MerchantID:  domain.MerchantID,
+		DomainID:    domain.ID,
+		Name:        name,
+		Description: description,
+		LinkType:    linkType,
+		Amount:      amount,
+		Currency:    currency,
+		Language:    normalizeLanguage(body.Language),
+		SuccessURL:  successURL,
+		CancelURL:   cancelURL,
+		LogoURL:     logoURL,
+		IsActive:    true,
+	}, nil
+}
+
+func v1PaymentLinkType(value string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	switch normalized {
+	case "", models.PaymentLinkTypeFixed:
+		return models.PaymentLinkTypeFixed, nil
+	case models.PaymentLinkTypeDonation:
+		return models.PaymentLinkTypeDonation, nil
+	default:
+		return "", fmt.Errorf("link_type must be fixed or donation")
+	}
+}
+
+func v1OptionalURL(value string, field string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	if len(trimmed) > 500 {
+		return "", fmt.Errorf("%s must be at most 500 characters", field)
+	}
+	if _, err := url.ParseRequestURI(trimmed); err != nil {
+		return "", fmt.Errorf("invalid %s", field)
+	}
+	return trimmed, nil
+}
+
+func v1PaymentLinkResponse(c fiber.Ctx, product models.Product) fiber.Map {
+	return fiber.Map{
+		"payment_link_id": product.ID.String(),
+		"domain_id":       product.DomainID.String(),
+		"link_token":      product.LinkToken,
+		"payment_url":     baseURL(c) + "/payment-links/" + product.LinkToken,
+		"link_type":       models.NormalizePaymentLinkType(product.LinkType),
+		"name":            product.Name,
+		"description":     product.Description,
+		"amount":          product.Amount,
+		"currency":        product.Currency,
+		"language":        normalizeLanguage(product.Language),
+		"success_url":     product.SuccessURL,
+		"cancel_url":      product.CancelURL,
+		"logo_url":        product.LogoURL,
+		"is_active":       product.IsActive,
+		"created_at":      product.CreatedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 func v1PaymentResponse(s models.PaymentSession) fiber.Map {

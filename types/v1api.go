@@ -26,6 +26,19 @@ type V1StaticAddressRequest struct {
 	Label     string `json:"label,omitempty"      example:"Main wallet"  swaggertype:"string"`
 }
 
+// V1PaymentLinkCreateRequest is the request body for POST /api/v1/payment/link/create.
+type V1PaymentLinkCreateRequest struct {
+	Name        string `json:"name"                  example:"Support us"                         swaggertype:"string"`
+	Description string `json:"description,omitempty" example:"Donation campaign"                  swaggertype:"string"`
+	LinkType    string `json:"link_type,omitempty"   example:"donation" enums:"fixed,donation"    swaggertype:"string"`
+	Amount      string `json:"amount,omitempty"      example:"25.00"                              swaggertype:"string"`
+	Currency    string `json:"currency,omitempty"    example:"USD"                                swaggertype:"string"`
+	Language    string `json:"language,omitempty"    example:"tr" enums:"tr,en"                  swaggertype:"string"`
+	SuccessURL  string `json:"success_url,omitempty" example:"https://example.com/success"        swaggertype:"string"`
+	CancelURL   string `json:"cancel_url,omitempty"  example:"https://example.com/cancel"         swaggertype:"string"`
+	LogoURL     string `json:"logo_url,omitempty"    example:"https://example.com/logo.png"       swaggertype:"string"`
+}
+
 // V1WalletCreateRequest is the request body for POST /api/v1/wallet/create.
 type V1WalletCreateRequest struct {
 	UserID    string `json:"user_id"              example:"customer_42"   swaggertype:"string"`
@@ -215,6 +228,30 @@ type V1PaymentCreatedData struct {
 	Decimals          uint8  `json:"decimals,omitempty" example:"6"`
 	ExpectedAmountRaw string `json:"expected_amount_raw,omitempty" example:"25000000"`
 	DepositAddress    string `json:"deposit_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+}
+
+// V1PaymentLinkCreateResponse is returned by POST /api/v1/payment/link/create.
+type V1PaymentLinkCreateResponse struct {
+	Result string              `json:"result" example:"ok"`
+	Data   V1PaymentLinkDetail `json:"data"`
+}
+
+type V1PaymentLinkDetail struct {
+	PaymentLinkID string `json:"payment_link_id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	DomainID      string `json:"domain_id"       example:"550e8400-e29b-41d4-a716-446655440000"`
+	LinkToken     string `json:"link_token"      example:"b7d9f4b1c6a8e0d2f3a5b6c7d8e9f0a1b2c3"`
+	PaymentURL    string `json:"payment_url"     example:"https://pay.example.com/payment-links/b7d9f4b1c6a8e0d2f3a5b6c7d8e9f0a1b2c3"`
+	LinkType      string `json:"link_type"       example:"donation"`
+	Name          string `json:"name"            example:"Support us"`
+	Description   string `json:"description"     example:"Donation campaign"`
+	Amount        string `json:"amount"          example:"0"`
+	Currency      string `json:"currency"        example:""`
+	Language      string `json:"language"        example:"tr"`
+	SuccessURL    string `json:"success_url"     example:"https://example.com/success"`
+	CancelURL     string `json:"cancel_url"      example:"https://example.com/cancel"`
+	LogoURL       string `json:"logo_url"        example:"https://example.com/logo.png"`
+	IsActive      bool   `json:"is_active"       example:"true"`
+	CreatedAt     string `json:"created_at"      example:"2026-06-28T12:00:00Z"`
 }
 
 // V1PaymentInfoResponse is returned by GET /api/v1/payment/info.

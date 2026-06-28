@@ -15,6 +15,18 @@ func TestPartnerAPIOpenAPIContractDocumentsEpic1Fields(t *testing.T) {
 		requireSwaggerHeader(t, createPayment, header)
 	}
 
+	createPaymentLink := swaggerOperation(t, swagger, "/api/v1/payment/link/create", "post")
+	for _, header := range []string{"X-API-Secret", "X-Gateway-Timestamp", "X-Gateway-Signature"} {
+		requireSwaggerHeader(t, createPaymentLink, header)
+	}
+	if description, _ := createPaymentLink["description"].(string); !strings.Contains(strings.ToLower(description), "donation") {
+		t.Fatalf("payment link create description = %q, want donation guidance", description)
+	}
+	linkRequestProps := swaggerDefinitionProperties(t, swagger, "types.V1PaymentLinkCreateRequest")
+	requireSwaggerProperties(t, linkRequestProps, "name", "link_type", "amount", "currency", "language", "success_url", "cancel_url")
+	linkDetailProps := swaggerDefinitionProperties(t, swagger, "types.V1PaymentLinkDetail")
+	requireSwaggerProperties(t, linkDetailProps, "payment_link_id", "link_token", "payment_url", "link_type", "amount", "currency", "created_at")
+
 	errorProps := swaggerDefinitionProperties(t, swagger, "types.V1ErrorResponse")
 	requireSwaggerProperties(t, errorProps, "result", "message")
 	if _, ok := errorProps["error"]; ok {

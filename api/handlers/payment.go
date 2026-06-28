@@ -718,6 +718,10 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 			"ProductName":        productName,
 			"ProductDescription": productDesc,
 			"ProductLogoURL":     productLogo,
+			"CheckoutURL":        checkoutLocalizedURL(session.SessionToken, "", lang, ""),
+			"SelectURL":          checkoutLocalizedURL(session.SessionToken, "/select", lang, ""),
+			"LangTRURL":          checkoutLocalizedURL(session.SessionToken, "", "tr", selectedSymbol),
+			"LangENURL":          checkoutLocalizedURL(session.SessionToken, "", "en", selectedSymbol),
 		})
 	}
 }
@@ -828,7 +832,8 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			return renderCheckoutWithError(c, deps, session, "Could not select this asset.")
 		}
 
-		return c.Redirect().To("/checkout/" + updatedSession.SessionToken + "/pay")
+		lang := checkoutLanguage(c)
+		return c.Redirect().To(checkoutLocalizedURL(updatedSession.SessionToken, "/pay", lang, ""))
 	}
 }
 
@@ -862,7 +867,8 @@ func HandleCheckoutChangeAsset(deps PaymentHandlerDeps) fiber.Handler {
 		if err != nil {
 			return renderPaymentError(c, fiber.StatusInternalServerError, "Could not change this checkout asset.")
 		}
-		return c.Redirect().To("/checkout/" + updatedSession.SessionToken)
+		lang := checkoutLanguage(c)
+		return c.Redirect().To(checkoutLocalizedURL(updatedSession.SessionToken, "", lang, ""))
 	}
 }
 
@@ -940,6 +946,10 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			"StatusMode":           checkoutState.Mode,
 			"StatusTitle":          statusTitle,
 			"StatusBody":           statusBody,
+			"ChangeAssetURL":       checkoutLocalizedURL(session.SessionToken, "/change", lang, ""),
+			"CancelURL":            checkoutLocalizedURL(session.SessionToken, "/cancel", lang, ""),
+			"LangTRURL":            checkoutLocalizedURL(session.SessionToken, "/pay", "tr", ""),
+			"LangENURL":            checkoutLocalizedURL(session.SessionToken, "/pay", "en", ""),
 		})
 	}
 }
@@ -1411,20 +1421,25 @@ func paymentDepositAddressForChain(wallet models.Wallet, chainID constants.Chain
 
 func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, message string) error {
 	lang := checkoutLanguage(c)
+	selectedSymbol := strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))
 	productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 	return c.Status(fiber.StatusBadRequest).Render("gateway/checkout", fiber.Map{
 		"Session":            session,
 		"Lang":               lang,
 		"IsEnglish":          lang == "en",
 		"AssetGroups":        checkoutAssetGroups(c.Context(), deps, *session),
-		"SelectedSymbol":     strings.ToUpper(strings.TrimSpace(c.FormValue("symbol"))),
-		"Assets":             checkoutAssetOptions(c.Context(), deps, *session, strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))),
+		"SelectedSymbol":     selectedSymbol,
+		"Assets":             checkoutAssetOptions(c.Context(), deps, *session, selectedSymbol),
 		"IsDonation":         models.IsDonationLinkType(session.LinkType),
 		"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
 		"Error":              message,
 		"ProductName":        productName,
 		"ProductDescription": productDesc,
 		"ProductLogoURL":     productLogo,
+		"CheckoutURL":        checkoutLocalizedURL(session.SessionToken, "", lang, ""),
+		"SelectURL":          checkoutLocalizedURL(session.SessionToken, "/select", lang, ""),
+		"LangTRURL":          checkoutLocalizedURL(session.SessionToken, "", "tr", selectedSymbol),
+		"LangENURL":          checkoutLocalizedURL(session.SessionToken, "", "en", selectedSymbol),
 	})
 }
 
@@ -1476,6 +1491,22 @@ func checkoutLanguage(c fiber.Ctx) string {
 		MaxAge:   60 * 60 * 24 * 365,
 	})
 	return lang
+}
+
+func checkoutLocalizedURL(sessionToken string, suffix string, lang string, selectedSymbol string) string {
+	path := "/checkout/" + strings.TrimSpace(sessionToken) + suffix
+	values := url.Values{}
+	if selectedSymbol = strings.ToUpper(strings.TrimSpace(selectedSymbol)); selectedSymbol != "" && suffix == "" {
+		values.Set("asset", selectedSymbol)
+	}
+	if lang = normalizeLanguage(lang); lang != "" {
+		values.Set("lang", lang)
+	}
+	encoded := values.Encode()
+	if encoded == "" {
+		return path
+	}
+	return path + "?" + encoded
 }
 
 func markPaymentCanceledOrExpired(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession, status string) error {

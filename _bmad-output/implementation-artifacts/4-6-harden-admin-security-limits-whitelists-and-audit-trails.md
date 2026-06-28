@@ -2,7 +2,7 @@
 story_id: "4.6"
 story_key: "4-6-harden-admin-security-limits-whitelists-and-audit-trails"
 epic: "Epic 4: Safe Outbound Funds & Custody Controls"
-status: review
+status: done
 created: 2026-06-28
 updated: 2026-06-28
 baseline_commit: 9a18d577c78e1dc0e7739cc1648ad8532cb15a29
@@ -10,7 +10,7 @@ baseline_commit: 9a18d577c78e1dc0e7739cc1648ad8532cb15a29
 
 # Story 4.6: Harden Admin Security, Limits, Whitelists, and Audit Trails
 
-Status: review
+Status: done
 
 ## Story
 
@@ -74,6 +74,10 @@ so that high-risk actions can be reviewed, limited, and stopped before funds lea
   - [x] Run static validation: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
   - [x] Run whitespace validation: `git diff --check && git diff --cached --check`.
   - [x] Update Dev Agent Record, Completion Notes, File List, Change Log, and move the story only to `review` after validation passes.
+
+### Review Findings
+
+- [x] [Review][Patch] Audit logs stored actor type instead of concrete admin role [api/handlers/dealer.go:6238] — fixed by carrying the verified admin role through request locals and writing `ActorRole` as `owner/security/operator/viewer` while preserving `ActorType`.
 
 ## Dev Notes
 
@@ -177,6 +181,7 @@ Codex
 
 - 2026-06-28: Story created from Epic 4.6 after Story 4.5 reached done. Existing portal JWT middleware, admin session/TOTP model, activity log model/repo, admin routes, outbound approval/recover/refund handlers, database schema verification, UX audit guidance, and previous Epic 4 story records inspected.
 - 2026-06-28: Implemented and validated Story 4.6 hardening. User corrected the portal mutation protection direction from legacy form-token terminology to portal mutation JWT; active story text and runtime references were updated to `PortalMutationJWT`, `_portal_jwt`, `X-Portal-JWT`, and `PORTAL_JWT_SECRET`.
+- 2026-06-28: Code review found that `ActivityLog.ActorRole` stored the actor type rather than the concrete admin role. Patched `RequireAdmin`, privileged admin checks, and audit helpers to persist the effective admin role.
 
 ### Completion Notes List
 
@@ -186,6 +191,11 @@ Codex
 - Validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
 - Validation passed: `git diff --check && git diff --cached --check`.
 - Cleanup validation passed: no legacy form-token references remain in app docs, views, handlers, routes, or this story artifact.
+- Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./api/handlers ./api/routes ./api/middleware ./repositories ./services/database`.
+- Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`.
+- Review validation passed: `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`.
+- Review validation passed: `git diff --check && git diff --cached --check`.
+- Review validation passed: compressed `views/assets/*.fiber.br` files match their source assets.
 
 ### File List
 
@@ -195,6 +205,8 @@ Codex
 - `_bmad-output/implementation-artifacts/sprint-status.yaml`
 - `api/handlers/dealer.go`
 - `api/handlers/dealer_test.go`
+- `api/handlers/v1api.go`
+- `api/routes/routes.go`
 - `blockchain/basechain_test.go`
 - `blockchain/chains/bitcoin_transfer_test.go`
 - `blockchain/chains/evm_transfer_test.go`
@@ -216,3 +228,4 @@ Codex
 
 - 2026-06-28: Created ready-for-dev Story 4.6 with admin portal JWT/session hardening, role/permission guardrails, outbound policy/whitelist/limit/freeze scope, append-only audit requirements, UI/docs/schema guidance, and validation plan.
 - 2026-06-28: Completed implementation and moved to review after targeted tests, full regression, vet, and whitespace validation passed.
+- 2026-06-28: Code review patch completed, validation re-run, and story moved to done.

@@ -59,6 +59,38 @@ func TestV1PaymentResponseIncludesDonationLinkType(t *testing.T) {
 	}
 }
 
+func TestV1PaymentLinkProductFromRequestBuildsDonationLink(t *testing.T) {
+	domain := &models.Domain{ID: uuid.New(), MerchantID: uuid.New()}
+	product, err := v1PaymentLinkProductFromRequest(domain, types.V1PaymentLinkCreateRequest{
+		Name:        " Support ",
+		Description: " On-chain donations ",
+		LinkType:    models.PaymentLinkTypeDonation,
+		Amount:      "999.99",
+		Currency:    "usd",
+		Language:    "en-US",
+		SuccessURL:  " https://example.com/success ",
+		CancelURL:   "https://example.com/cancel",
+	})
+	if err != nil {
+		t.Fatalf("v1PaymentLinkProductFromRequest returned error: %v", err)
+	}
+	if product.MerchantID != domain.MerchantID || product.DomainID != domain.ID {
+		t.Fatalf("product owner = merchant %s domain %s, want merchant %s domain %s", product.MerchantID, product.DomainID, domain.MerchantID, domain.ID)
+	}
+	if product.Name != "Support" || product.Description != "On-chain donations" {
+		t.Fatalf("product text was not trimmed: %#v", product)
+	}
+	if product.LinkType != models.PaymentLinkTypeDonation || product.Amount != "0" || product.Currency != "" {
+		t.Fatalf("donation fields = link_type %q amount %q currency %q", product.LinkType, product.Amount, product.Currency)
+	}
+	if product.Language != "en" || product.SuccessURL != "https://example.com/success" || product.CancelURL != "https://example.com/cancel" {
+		t.Fatalf("optional fields not normalized: %#v", product)
+	}
+	if !product.IsActive {
+		t.Fatal("payment link product should be active")
+	}
+}
+
 func TestV1RefundLimitUsesDonationMatchedAmountWhenExpectedIsZero(t *testing.T) {
 	session := &models.PaymentSession{
 		LinkType:          models.PaymentLinkTypeDonation,

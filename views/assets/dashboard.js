@@ -327,6 +327,14 @@ function initMerchantWithdrawalBalance() {
       if (tokenInput) tokenInput.value = assetOption ? compactText(assetOption.getAttribute('data-token-address') || '') : '';
 
       var balance = walletID && assetKey ? balances[walletID + '::' + assetKey] : null;
+      if (!balance && assetOption && assetOption.value) {
+        balance = {
+          availableRaw: compactText(assetOption.getAttribute('data-available-raw') || ''),
+          availableInput: compactText(assetOption.getAttribute('data-available-input') || ''),
+          availableDisplay: compactText(assetOption.getAttribute('data-available-display') || ''),
+          symbol: compactText(assetOption.getAttribute('data-symbol') || ''),
+        };
+      }
       maxButton.disabled = true;
       maxButton.removeAttribute('data-max-amount');
       maxButton.removeAttribute('data-max-raw');
@@ -335,8 +343,8 @@ function initMerchantWithdrawalBalance() {
         availableDisplay.textContent = 'Reserve cüzdan ve asset seçin';
         return;
       }
-      if (!balance) {
-        availableDisplay.textContent = 'Bu reserve cüzdanda seçili asset için kullanılabilir bakiye yok';
+      if (!balance || !isPositiveIntegerString(balance.availableRaw)) {
+        availableDisplay.textContent = 'Seçili asset için kullanılabilir bakiye yok';
         return;
       }
 

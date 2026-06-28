@@ -32,6 +32,15 @@
   font-size: 12px;
 }
 
+.home-public-body header nav {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.home-public-body header nav::-webkit-scrollbar {
+  display: none;
+}
+
 .home-hero,
 .home-section,
 .home-api-band {

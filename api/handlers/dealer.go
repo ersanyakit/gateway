@@ -49,7 +49,10 @@ import (
 
 const dealerSessionCookie = "dealer_session"
 const adminSessionCookie = "admin_session"
-const adminSessionEmailLocal = "admin_session_email"
+const (
+	adminSessionEmailLocal = "admin_session_email"
+	adminSessionRoleLocal  = "admin_session_role"
+)
 const adminPendingTOTPCookie = "admin_totp_pending" // temp: holds admin ID awaiting 2FA
 const adminSetupTOTPCookie = "admin_totp_setup"     // temp: holds admin ID during TOTP setup
 const oidcStateCookie = "oidc_state"
@@ -4279,11 +4282,12 @@ func RequireAdmin(adminRepo *repositories.AdminRepo) fiber.Handler {
 		if isPublicAdminPath(c.Path()) {
 			return c.Next()
 		}
-		email, ok := verifyActiveAdminSession(c, adminRepo)
+		email, role, ok := verifyActiveAdminSession(c, adminRepo)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
 		c.Locals(adminSessionEmailLocal, email)
+		c.Locals(adminSessionRoleLocal, role)
 		return c.Next()
 	}
 }
@@ -4298,27 +4302,27 @@ func isPublicAdminPath(rawPath string) bool {
 	}
 }
 
-func verifyActiveAdminSession(c fiber.Ctx, adminRepo *repositories.AdminRepo) (string, bool) {
+func verifyActiveAdminSession(c fiber.Ctx, adminRepo *repositories.AdminRepo) (string, string, bool) {
 	payload, err := verifyDealerSessionValue(c.Cookies(adminSessionCookie))
 	if err != nil || strings.TrimSpace(payload) == "" {
 		clearAdminSessionCookie(c)
-		return "", false
+		return "", "", false
 	}
 	email, err := parseAdminSessionPayload(payload, time.Now())
 	if err != nil || strings.TrimSpace(email) == "" {
 		clearAdminSessionCookie(c)
-		return "", false
+		return "", "", false
 	}
 	if adminRepo == nil {
 		clearAdminSessionCookie(c)
-		return "", false
+		return "", "", false
 	}
 	admin, err := adminRepo.FindByEmail(c.Context(), email)
 	if err != nil || admin == nil || !admin.IsActive {
 		clearAdminSessionCookie(c)
-		return "", false
+		return "", "", false
 	}
-	return admin.Email, true
+	return admin.Email, models.EffectiveAdminRole(admin.Role), true
 }
 
 func requireAdmin(c fiber.Ctx) (string, bool) {
@@ -4351,6 +4355,7 @@ func requirePrivilegedAdmin(c fiber.Ctx, adminRepo *repositories.AdminRepo) erro
 	if err != nil || admin == nil || !admin.IsActive {
 		return errors.New("Bu işlem için yetkiniz yok.")
 	}
+	c.Locals(adminSessionRoleLocal, models.EffectiveAdminRole(admin.Role))
 	if !adminRoleCanMutateHighRisk(admin.Role) {
 		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
 	}
@@ -6223,11 +6228,12 @@ func logDealerActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchant
 		correlationID = strings.TrimSpace(c.Get("X-Request-ID"))
 	}
 	safeDescription := redactAuditDescription(description)
-	actorRole := emptyDefault(actorType, "system")
+	resolvedActorType := emptyDefault(actorType, "system")
+	actorRole := dealerActorRole(c, resolvedActorType)
 	decision := emptyDefault(status, "info")
 	log := &models.ActivityLog{
 		MerchantID:    merchantID,
-		ActorType:     actorRole,
+		ActorType:     resolvedActorType,
 		ActorEmail:    strings.TrimSpace(actorEmail),
 		ActorRole:     actorRole,
 		Event:         emptyDefault(event, "activity"),
@@ -6256,12 +6262,13 @@ func logDealerDecisionActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, 
 		correlationID = strings.TrimSpace(c.Get("X-Request-ID"))
 	}
 	safeDescription := redactAuditDescription(description)
-	actorRole := emptyDefault(actorType, "system")
+	resolvedActorType := emptyDefault(actorType, "system")
+	actorRole := dealerActorRole(c, resolvedActorType)
 	decision := emptyDefault(status, "info")
 	_ = repo.Create(c.Context(), &models.ActivityLog{
 		MerchantID:    merchantID,
 		DomainID:      domainID,
-		ActorType:     actorRole,
+		ActorType:     resolvedActorType,
 		ActorEmail:    strings.TrimSpace(actorEmail),
 		ActorRole:     actorRole,
 		Event:         emptyDefault(event, "activity"),
@@ -6280,6 +6287,19 @@ func logDealerDecisionActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, 
 		CorrelationID: correlationID,
 		CreatedAt:     time.Now().UTC(),
 	})
+}
+
+func dealerActorRole(c fiber.Ctx, actorType string) string {
+	actorType = emptyDefault(actorType, "system")
+	if strings.EqualFold(actorType, "admin") {
+		if role, ok := c.Locals(adminSessionRoleLocal).(string); ok {
+			role = models.EffectiveAdminRole(role)
+			if role != "" {
+				return role
+			}
+		}
+	}
+	return actorType
 }
 
 func redactAuditDescription(description string) string {

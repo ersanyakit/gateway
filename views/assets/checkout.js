@@ -1,4 +1,6 @@
 document.addEventListener('DOMContentLoaded', function () {
+  document.body.classList.add('checkout-ready');
+
   var countdowns = Array.prototype.slice.call(document.querySelectorAll('[data-countdown-unix]'));
   var expiresAt = 0;
 
@@ -133,24 +135,35 @@ document.addEventListener('DOMContentLoaded', function () {
       !anchor.hasAttribute('download');
   }
 
+  function navigateWithTransition(event, link, delay) {
+    if (!isPlainNavigation(event, link)) {
+      return;
+    }
+    var href = link.href;
+    if (!href) {
+      return;
+    }
+    event.preventDefault();
+    document.body.classList.add('checkout-navigating');
+    window.setTimeout(function () {
+      window.location.assign(href);
+    }, delay || 120);
+  }
+
+  document.querySelectorAll('.crypto-lang-option, .crypto-header-left[href], a.crypto-ghost-btn[href], a.crypto-copy-btn[href]').forEach(function (link) {
+    link.addEventListener('click', function (event) {
+      navigateWithTransition(event, link, 120);
+    });
+  });
+
   document.querySelectorAll('.crypto-flow-select .crypto-btn').forEach(function (link) {
     link.addEventListener('pointerdown', function () {
       markPressing(link);
     });
 
     link.addEventListener('click', function (event) {
-      if (!isPlainNavigation(event, link)) {
-        return;
-      }
-      var href = link.href;
-      if (!href) {
-        return;
-      }
-      event.preventDefault();
       link.classList.add('is-pressing');
-      window.setTimeout(function () {
-        window.location.assign(href);
-      }, 105);
+      navigateWithTransition(event, link, 120);
     });
   });
 
@@ -172,6 +185,7 @@ document.addEventListener('DOMContentLoaded', function () {
       event.preventDefault();
       button.dataset.pressSubmit = '1';
       button.classList.add('is-pressing');
+      document.body.classList.add('checkout-navigating');
       window.setTimeout(function () {
         if (form.requestSubmit) {
           form.requestSubmit(button);

@@ -584,6 +584,98 @@ definitions:
         example: ok
         type: string
     type: object
+  types.V1PaymentLinkCreateRequest:
+    properties:
+      amount:
+        example: "25.00"
+        type: string
+      cancel_url:
+        example: https://example.com/cancel
+        type: string
+      currency:
+        example: USD
+        type: string
+      description:
+        example: Donation campaign
+        type: string
+      language:
+        enum:
+        - tr
+        - en
+        example: tr
+        type: string
+      link_type:
+        enum:
+        - fixed
+        - donation
+        example: donation
+        type: string
+      logo_url:
+        example: https://example.com/logo.png
+        type: string
+      name:
+        example: Support us
+        type: string
+      success_url:
+        example: https://example.com/success
+        type: string
+    type: object
+  types.V1PaymentLinkCreateResponse:
+    properties:
+      data:
+        $ref: '#/definitions/types.V1PaymentLinkDetail'
+      result:
+        example: ok
+        type: string
+    type: object
+  types.V1PaymentLinkDetail:
+    properties:
+      amount:
+        example: "0"
+        type: string
+      cancel_url:
+        example: https://example.com/cancel
+        type: string
+      created_at:
+        example: "2026-06-28T12:00:00Z"
+        type: string
+      currency:
+        example: ""
+        type: string
+      description:
+        example: Donation campaign
+        type: string
+      domain_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      is_active:
+        example: true
+        type: boolean
+      language:
+        example: tr
+        type: string
+      link_token:
+        example: b7d9f4b1c6a8e0d2f3a5b6c7d8e9f0a1b2c3
+        type: string
+      link_type:
+        example: donation
+        type: string
+      logo_url:
+        example: https://example.com/logo.png
+        type: string
+      name:
+        example: Support us
+        type: string
+      payment_link_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      payment_url:
+        example: https://pay.example.com/payment-links/b7d9f4b1c6a8e0d2f3a5b6c7d8e9f0a1b2c3
+        type: string
+      success_url:
+        example: https://example.com/success
+        type: string
+    type: object
   types.V1PaymentStatisticsData:
     properties:
       statuses:
@@ -1589,6 +1681,56 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: Payment information
+      tags:
+      - Payment
+  /api/v1/payment/link/create:
+    post:
+      consumes:
+      - application/json
+      description: Creates a hosted payment link under the authenticated API domain.
+        Set link_type=donation to create a donation link where the payer chooses the
+        crypto amount at checkout; amount and currency are ignored for donation links.
+      parameters:
+      - description: API secret returned when the domain was created or rotated
+        in: header
+        name: X-API-Secret
+        required: true
+        type: string
+      - description: Unix timestamp used in HMAC signature
+        in: header
+        name: X-Gateway-Timestamp
+        required: true
+        type: string
+      - description: HMAC-SHA256 over method + path/query + timestamp + raw body,
+          optionally prefixed with sha256=
+        in: header
+        name: X-Gateway-Signature
+        required: true
+        type: string
+      - description: Payment or donation link parameters
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/types.V1PaymentLinkCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/types.V1PaymentLinkCreateResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: Create payment or donation link
       tags:
       - Payment
   /api/v1/payment/static-address:
