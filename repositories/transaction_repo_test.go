@@ -129,6 +129,49 @@ func TestTransactionRepoFindFinalizedByHashRequiresFinality(t *testing.T) {
 	}
 }
 
+func TestTransactionRepoFindFailedByHashRequiresFailedStatus(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}); err != nil {
+		t.Fatalf("automigrate transactions: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	confirmed := models.Transaction{
+		ID:          uuid.New(),
+		ChainID:     constants.Ethereum,
+		UniqueHash:  "1-0xoutbound-confirmed-",
+		Hash:        "0xoutbound",
+		BlockNumber: "100",
+		BlockHash:   "0xblock",
+		Symbol:      "ETH",
+		FromAddress: "0xfrom",
+		ToAddress:   "0xto",
+		Amount:      "10",
+		Status:      models.TransactionStatusConfirmed,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	failed := confirmed
+	failed.ID = uuid.New()
+	failed.UniqueHash = "1-0xfailed-"
+	failed.Hash = "0xfailed"
+	failed.Status = models.TransactionStatusFailed
+	if err := db.WithContext(ctx).Create(&[]models.Transaction{confirmed, failed}).Error; err != nil {
+		t.Fatalf("seed transactions: %v", err)
+	}
+	repo := NewTransactionRepo(db)
+	if _, err := repo.FindFailedByHash(ctx, constants.Ethereum, "0xoutbound"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("confirmed hash lookup err = %v, want gorm.ErrRecordNotFound", err)
+	}
+	got, err := repo.FindFailedByHash(ctx, constants.Ethereum, " 0xFAILED ")
+	if err != nil {
+		t.Fatalf("find failed by hash: %v", err)
+	}
+	if got.UniqueHash != failed.UniqueHash {
+		t.Fatalf("failed lookup = %s, want %s", got.UniqueHash, failed.UniqueHash)
+	}
+}
+
 func TestTransactionInitialStatusDefersConfirmedUntilFinality(t *testing.T) {
 	confirmed := models.TransactionStatusConfirmed
 	if got := transactionInitialStatus(&confirmed); got != models.TransactionStatusPendingConfirmation {

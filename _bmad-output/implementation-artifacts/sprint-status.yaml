@@ -75,7 +75,7 @@ development_status:
   4-2-enforce-external-signer-boundary-and-production-software-signer-guard: done
   4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: done
   4-4-run-auto-sweeps-as-durable-recoverable-jobs: done
-  4-5-complete-withdrawal-payout-and-refund-lifecycle-events: review
+  4-5-complete-withdrawal-payout-and-refund-lifecycle-events: done
   4-6-harden-admin-security-limits-whitelists-and-audit-trails: backlog
   epic-4-retrospective: optional
   epic-5: backlog

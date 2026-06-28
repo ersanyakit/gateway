@@ -593,7 +593,7 @@ func (r *LedgerRepo) RequireRefundHoldForRefundWithDB(ctx context.Context, tx *g
 		return err
 	}
 	domainID := refund.DomainID
-	walletID := session.WalletID
+	walletID := refundLedgerWalletID(refund, session)
 	return requireLedgerHold(ctx, tx, ledgerHoldRequirement{
 		idColumn:       "refund_id",
 		id:             refund.ID,
@@ -907,6 +907,13 @@ func ledgerRefundAssetFromSession(session models.PaymentSession) (constants.Chai
 	return *session.SelectedChainID, symbol, session.SelectedDecimals, nil
 }
 
+func refundLedgerWalletID(refund models.Refund, session models.PaymentSession) uuid.UUID {
+	if refund.WalletID != nil && *refund.WalletID != uuid.Nil {
+		return *refund.WalletID
+	}
+	return session.WalletID
+}
+
 func (r *LedgerRepo) CreateRefundHold(ctx context.Context, refund models.Refund, session models.PaymentSession) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return r.createRefundHold(ctx, tx, refund, session)
@@ -939,7 +946,7 @@ func (r *LedgerRepo) createRefundHold(ctx context.Context, tx *gorm.DB, refund m
 	domainID := refund.DomainID
 	refundID := refund.ID
 	paymentID := session.ID
-	walletID := session.WalletID
+	walletID := refundLedgerWalletID(refund, session)
 	if err := r.lockLedgerAsset(ctx, tx, refund.MerchantID, &domainID, chainID, session.SelectedToken); err != nil {
 		return err
 	}
@@ -994,6 +1001,16 @@ func (r *LedgerRepo) createRefundHold(ctx context.Context, tx *gorm.DB, refund m
 		},
 	}
 	return tx.WithContext(ctx).Create(&entries).Error
+}
+
+func (r *LedgerRepo) AlignRefundHoldWalletWithDB(ctx context.Context, tx *gorm.DB, refundID uuid.UUID, walletID uuid.UUID) error {
+	if refundID == uuid.Nil || walletID == uuid.Nil {
+		return ErrLedgerReservationRequired
+	}
+	return tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("refund_id = ? AND entry_type = ? AND status = ?", refundID, models.LedgerEntryTypeRefundHold, models.LedgerStatusPending).
+		Update("wallet_id", &walletID).Error
 }
 
 func (r *LedgerRepo) VoidRefundHold(ctx context.Context, refundID uuid.UUID) error {
@@ -1249,7 +1266,7 @@ func (r *LedgerRepo) PostRefundDebitWithDB(ctx context.Context, tx *gorm.DB, ref
 	now := time.Now()
 	refundID := refund.ID
 	paymentID := session.ID
-	walletID := session.WalletID
+	walletID := refundLedgerWalletID(refund, session)
 	chainID, symbol, decimals, err := ledgerRefundAssetFromSession(session)
 	if err != nil {
 		return err

@@ -207,6 +207,7 @@ func NewRouter(db *gorm.DB) *Router {
 		LedgerRepo:          r.LedgerRepo,
 		SweepJobRepo:        r.SweepJobRepo,
 		TransactionRepo:     r.TransactionRepo,
+		ReconciliationRepo:  r.ReconciliationRepo,
 		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
 		ActivityLogRepo:     r.ActivityLogRepo,
 		AdminRepo:           r.AdminRepo,
@@ -227,6 +228,7 @@ func NewRouter(db *gorm.DB) *Router {
 		r.fiber.Get(prefix+"/domains", handlers.HandleDealerDashboard(dealerDeps))
 		r.fiber.Post(prefix+"/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))
 		r.fiber.Post(prefix+"/products", handlers.HandleDealerProductCreate(dealerDeps))
+		r.fiber.Post(prefix+"/products/:id/update", handlers.HandleDealerProductUpdate(dealerDeps))
 		r.fiber.Post(prefix+"/invoices", handlers.HandleDealerInvoiceCreate(dealerDeps))
 		r.fiber.Post(prefix+"/withdrawals", handlers.HandleDealerWithdrawalCreate(dealerDeps))
 		r.fiber.Post(prefix+"/rescan", handlers.HandleDealerTxRescan(dealerDeps))

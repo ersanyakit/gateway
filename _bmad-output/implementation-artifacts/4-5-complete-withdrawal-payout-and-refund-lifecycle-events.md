@@ -2,7 +2,7 @@
 story_id: "4.5"
 story_key: "4-5-complete-withdrawal-payout-and-refund-lifecycle-events"
 epic: "Epic 4: Safe Outbound Funds & Custody Controls"
-status: review
+status: done
 created: 2026-06-28
 updated: 2026-06-28
 baseline_commit: fa0ecb1f2c2fafaa108da71b3eac8af096f17555
@@ -10,7 +10,7 @@ baseline_commit: fa0ecb1f2c2fafaa108da71b3eac8af096f17555
 
 # Story 4.5: Complete Withdrawal, Payout, and Refund Lifecycle Events
 
-Status: review
+Status: done
 
 ## Story
 
@@ -89,6 +89,18 @@ so that users and operators can understand where funds are and recover safely wh
   - [x] Update Dev Agent Record, Debug Log References, Completion Notes, File List, and Change Log during implementation.
   - [x] If lifecycle/schema/API/docs behavior changes, update readiness or audit docs with precise claims and remaining caveats.
   - [x] Do not set story or sprint status to `review` until all tasks and validation pass.
+
+### Review Findings
+
+- [x] [Review][Patch] Idempotency completion failure leaves committed payout/refund holds unreplayable [api/handlers/v1api.go:1240] - fixed by surfacing completion failures and repairing duplicate-safe requested lifecycle enqueue on idempotent replay.
+- [x] [Review][Patch] Requested lifecycle enqueue failures are logged after successful create/idempotency completion with no durable repair record [api/handlers/v1api.go:1243] - fixed by returning retryable create failures and opening reconciliation for dealer requested-event enqueue failures.
+- [x] [Review][Patch] Refund ledger hold/debit uses payment session wallet while approval persists a potentially different source wallet [repositories/ledger_repo.go:596] - fixed by using the persisted refund source wallet for refund hold/debit attribution, including alignment of pre-existing pending refund holds.
+- [x] [Review][Patch] Broadcasted terminal failed transactions are never processed into failed/reconciled withdrawal or refund outcomes [main.go:1407] - fixed by detecting failed transaction evidence, preserving post-broadcast holds, opening reconciliation, and queueing failed lifecycle events.
+- [x] [Review][Patch] Terminal lifecycle events can be lost after ledger finalization commits [main.go:1424] - fixed by opening scoped reconciliation when terminal lifecycle enqueue fails after ledger finalization.
+- [x] [Review][Patch] Approval and rejection retries return failures instead of idempotent no-op outcomes [api/handlers/dealer.go:2725] - fixed with handler-level status guards for repeated approve/reject submissions.
+- [x] [Review][Patch] Refund approval audit logs drop merchant scope on several failure and success branches [api/handlers/dealer.go:2861] - fixed by preserving refund merchant scope in failure and success audit branches.
+- [x] [Review][Patch] Admin recover fund transfers bypass configured maker-checker lifecycle guard [api/handlers/dealer.go:2279] - fixed by applying the configured maker-checker guard before admin recover fund approval.
+- [x] [Review][Patch] Admin recover fund success does not enqueue the payout broadcast lifecycle event [api/handlers/dealer.go:2320] - fixed by enqueueing the payout broadcast lifecycle event after successful recover-fund broadcast persistence.
 
 ## Dev Notes
 
@@ -209,13 +221,18 @@ Codex
 - 2026-06-28: Story created from Epic 4.5 after Story 4.4 was completed. Existing withdrawal/refund models, repositories, V1/admin handlers, lifecycle payloads, event catalog, idempotency repo, activity logs, and finalization worker inspected. Core gaps identified: payout/refund create idempotency, refund source wallet metadata, broadcast/terminal timestamps, withdrawal terminal status ambiguity, terminal finalization without explicit finality evidence, and payload common metadata alignment.
 - 2026-06-28: Implemented Story 4.5 lifecycle separation: outbound persistence metadata, idempotent V1 payout/refund create, maker-checker default-off guard, broadcast-only admin approval, finality-gated terminal worker, common lifecycle payload metadata, schema/index contracts, Swagger/integration docs.
 - 2026-06-28: Validation passed: targeted repositories/webhook/database/api/main/docs, full go test ./..., go vet ./..., git diff --check && git diff --cached --check.
+- 2026-06-28: Code review follow-up applied: idempotency completion/enqueue failures are retry-safe, requested lifecycle repair runs on replay, refund ledger attribution follows the persisted source wallet, broadcast-uncertain admin paths preserve holds and open reconciliation, terminal failed transaction evidence is processed, terminal event enqueue failures open reconciliation, refund audit scope includes merchant id, admin recover funds uses maker-checker and emits broadcast events, and approve/reject retries are idempotent no-ops.
+- 2026-06-28: Post-review validation passed: targeted repositories/database/webhook, main/api handlers, full package-set `go test` coverage via clean-cache package-group reruns, go vet ./..., and git diff whitespace checks.
+- 2026-06-28: Donation refund follow-up applied: V1 refund limit calculation now uses paid donation `matched_amount_raw` when fixed expected amount is zero or absent.
 
 ### Completion Notes List
 
 - Withdrawal/payout now uses explicit `finalized` terminal status after transaction finality; broadcast leaves the request `processing`.
-- Refund approval persists source wallet, destination, and asset metadata; success is produced only by the finality-gated terminal worker.
+- Refund approval persists source wallet, destination, and asset metadata; refund hold/debit ledger attribution follows that source wallet; success is produced only by the finality-gated terminal worker.
 - V1 payout/refund create endpoints use `Idempotency-Key` through generic idempotency resource references and enqueue requested events after commit.
 - Lifecycle webhook payloads include common money-event metadata, and Swagger/integration docs were regenerated for the behavior changes.
+- Review fixes preserve post-broadcast funds on uncertain outcomes, create repair evidence for lost lifecycle enqueue, and record audit correlation ids for dealer/admin activity logs.
+- Donation payment refunds now cap against the matched paid amount when donation links do not carry a fixed expected raw amount.
 
 ### File List
 
@@ -224,6 +241,8 @@ Codex
 - `api/handlers/dealer.go`
 - `api/handlers/dealer_test.go`
 - `api/handlers/v1api.go`
+- `api/handlers/v1api_test.go`
+- `api/routes/routes.go`
 - `docs/docs.go`
 - `docs/integration-guide.md`
 - `docs/swagger.json`
@@ -231,6 +250,7 @@ Codex
 - `go.sum`
 - `main.go`
 - `main_sweep_reservation_test.go`
+- `models/activity_log.go`
 - `models/idempotency_key.go`
 - `models/refund.go`
 - `models/withdrawal_request.go`
@@ -244,6 +264,8 @@ Codex
 - `repositories/withdrawal_request_repo_test.go`
 - `services/database/database.go`
 - `services/database/database_test.go`
+- `services/webhook/event_catalog.go`
+- `services/webhook/event_catalog_test.go`
 - `services/webhook/lifecycle.go`
 - `services/webhook/lifecycle_test.go`
 - `types/v1api.go`
@@ -252,3 +274,5 @@ Codex
 
 - 2026-06-28: Created ready-for-dev Story 4.5 with lifecycle persistence, idempotent create, approval/audit, broadcast/finality separation, webhook payload, API/docs, and validation requirements.
 - 2026-06-28: Implemented outbound withdrawal/payout/refund lifecycle persistence, idempotent create, broadcast/finality separation, webhook payload metadata, API/docs updates, and validation; moved story to review.
+- 2026-06-28: Applied code-review fixes for retry-safe idempotency completion, requested-event repair/reconciliation, broadcast uncertainty preservation, failed transaction terminal handling, terminal event reconciliation, maker-checker recover funds, scoped refund audit logs, idempotent admin retries, and moved story to done.
+- 2026-06-28: Fixed donation refund limit fallback so donation refunds use matched paid amount instead of a zero expected amount.

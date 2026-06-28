@@ -22,6 +22,7 @@ import (
 	"core/types"
 
 	"github.com/gofiber/fiber/v3"
+	fiberhtml "github.com/gofiber/template/html/v3"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -654,28 +655,51 @@ func TestHandleCheckoutStatusUsesPayerStatePayload(t *testing.T) {
 	}
 }
 
-func TestHandleCheckoutRedirectsTerminalStateToPay(t *testing.T) {
+func TestHandleCheckoutRendersTerminalStateWithoutPayLoop(t *testing.T) {
 	future := time.Now().Add(10 * time.Minute)
 	session := &models.PaymentSession{
 		ID:           uuid.New(),
 		SessionToken: "checkout-token",
-		Status:       models.PaymentStatusUnderpaid,
+		Status:       models.PaymentStatusCanceled,
 		ExpiresAt:    &future,
 	}
 	repo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
-	app := fiber.New()
+	app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
 	app.Get("/checkout/:token", HandleCheckout(PaymentHandlerDeps{PaymentRepo: repo}))
+	app.Get("/checkout/:token/pay", HandleCheckoutPay(PaymentHandlerDeps{PaymentRepo: repo}))
 
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout/checkout-token", nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != fiber.StatusSeeOther {
-		t.Fatalf("status = %d, want redirect", resp.StatusCode)
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("checkout status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("Location"); got != "/checkout/checkout-token/pay" {
-		t.Fatalf("location = %q, want /checkout/checkout-token/pay", got)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	if !strings.Contains(html, "Iptal edildi") || strings.Contains(html, "/checkout/checkout-token/pay") || strings.Contains(html, "checkout.js") {
+		t.Fatalf("terminal checkout rendered unexpected page:\n%s", html)
+	}
+
+	payResp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout/checkout-token/pay", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer payResp.Body.Close()
+	if payResp.StatusCode != fiber.StatusOK {
+		t.Fatalf("pay status = %d, want 200", payResp.StatusCode)
+	}
+	payBody, err := io.ReadAll(payResp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payHTML := string(payBody)
+	if !strings.Contains(payHTML, "Iptal edildi") || strings.Contains(payHTML, "data-checkout-status") || strings.Contains(payHTML, "status.json") {
+		t.Fatalf("terminal pay rendered polling page:\n%s", payHTML)
 	}
 }
 

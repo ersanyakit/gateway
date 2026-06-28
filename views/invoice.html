@@ -5,186 +5,482 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}}</title>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { min-height: 100%; background: #f8f8fa; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f5f7;
-      color: #1d1d1f;
       min-height: 100vh;
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 32px 16px;
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% -12%, rgba(239, 45, 181, .09), transparent 30rem),
+        linear-gradient(180deg, #fff 0%, #f8f8fa 54%, #fff 100%);
+      color: #131313;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+      padding: 24px 14px;
     }
-    .invoice {
-      background: #fff;
-      border-radius: 20px;
-      box-shadow: 0 2px 24px rgba(0,0,0,.07);
-      max-width: 580px;
-      width: 100%;
-      padding: 40px;
+    button, a {
+      -webkit-tap-highlight-color: transparent;
     }
-    .invoice-header {
+    .invoice-shell {
+      width: min(760px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 12px;
+    }
+    .invoice-topbar {
+      min-height: 38px;
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
-      margin-bottom: 32px;
+      gap: 12px;
+      border: 1px solid rgba(19, 19, 19, .08);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .88);
+      padding: 0 12px;
+      box-shadow: 0 1px 2px rgba(19, 19, 19, .04);
+      backdrop-filter: blur(10px);
     }
-    .invoice-brand { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
-    .invoice-brand span { color: #e84393; }
-    .status-badge {
+    .brand {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      border-radius: 999px;
-      padding: 5px 14px;
+      gap: 8px;
+      min-width: 0;
+      color: #131313;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 900;
+      text-decoration: none;
     }
-    .status-paid { background: #d1fae5; color: #065f46; }
-    .status-pending { background: #fef9c3; color: #92400e; }
-    .status-canceled { background: #fee2e2; color: #991b1b; }
+    .brand-mark {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: #131313;
+      color: #fff;
+      font-size: 11px;
+      font-weight: 950;
+    }
+    .topbar-meta {
+      overflow: hidden;
+      color: rgba(19, 19, 19, .56);
+      font-size: 12px;
+      font-weight: 780;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-card {
+      overflow: hidden;
+      border: 1px solid rgba(19, 19, 19, .09);
+      border-radius: 10px;
+      background: #fff;
+      box-shadow: 0 18px 60px rgba(19, 19, 19, .1), 0 1px 2px rgba(19, 19, 19, .05);
+    }
+    .invoice-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      border-bottom: 1px solid #e9e9e9;
+      padding: 22px;
+    }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: rgba(19, 19, 19, .45);
+      font-size: 11px;
+      font-weight: 950;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      color: #131313;
+      font-size: 22px;
+      font-weight: 920;
+      line-height: 1.2;
+    }
+    .domain {
+      margin: 8px 0 0;
+      color: rgba(19, 19, 19, .58);
+      font-size: 13px;
+      font-weight: 760;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .status-badge {
+      display: inline-flex;
+      min-height: 30px;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 1px solid #e9e9e9;
+      border-radius: 999px;
+      background: #f9f9f9;
+      color: rgba(19, 19, 19, .64);
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1;
+      padding: 0 12px;
+      white-space: nowrap;
+    }
     .status-dot {
-      width: 7px; height: 7px;
-      border-radius: 50%;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
       background: currentColor;
     }
-    .divider { border: none; border-top: 1px solid #e8e8ed; margin: 28px 0; }
-    .invoice-title { font-size: 13px; color: #86868b; font-weight: 600; margin-bottom: 6px; }
-    .invoice-value { font-size: 15px; font-weight: 700; color: #1d1d1f; word-break: break-all; }
-    .amount-row {
-      display: flex;
-      align-items: flex-end;
-      gap: 10px;
-      margin: 28px 0;
+    .status-paid {
+      border-color: #bbf7d0;
+      background: #ecfdf5;
+      color: #047857;
     }
-    .amount-big { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
-    .amount-currency {
-      font-size: 16px;
-      font-weight: 700;
-      color: #86868b;
-      padding-bottom: 5px;
+    .status-pending {
+      border-color: #fde68a;
+      background: #fffbeb;
+      color: #b45309;
     }
-    .detail-grid {
+    .status-canceled {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .amount-panel {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: end;
+      border-bottom: 1px solid #e9e9e9;
+      background: #fbfbfb;
+      padding: 22px;
     }
-    .tx-hash {
-      font-family: "SF Mono", "Fira Code", monospace;
+    .amount-label {
+      margin: 0 0 6px;
+      color: rgba(19, 19, 19, .48);
       font-size: 12px;
-      color: #86868b;
-      background: #f5f5f7;
+      font-weight: 850;
+      line-height: 1.3;
+    }
+    .amount-value {
+      display: flex;
+      min-width: 0;
+      align-items: baseline;
+      gap: 10px;
+      color: #131313;
+      font-variant-numeric: tabular-nums;
+    }
+    .amount-value strong {
+      overflow-wrap: anywhere;
+      font-size: 38px;
+      font-weight: 940;
+      line-height: 1;
+    }
+    .amount-value span {
+      color: rgba(19, 19, 19, .54);
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1;
+    }
+    .checkout-button {
+      display: inline-flex;
+      min-height: 40px;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #131313;
+      border-radius: 6px;
+      background: #131313;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1;
+      padding: 0 16px;
+      text-decoration: none;
+      transition: transform .12s, background .12s, border-color .12s, box-shadow .12s;
+      white-space: nowrap;
+    }
+    .checkout-button:hover {
+      background: #2a2a2a;
+      border-color: #2a2a2a;
+    }
+    .checkout-button:active,
+    .button:active {
+      transform: translateY(1px) scale(.985);
+    }
+    .invoice-body {
+      display: grid;
+      gap: 18px;
+      padding: 22px;
+    }
+    .detail-table {
+      display: grid;
+      border: 1px solid #e9e9e9;
       border-radius: 8px;
+      overflow: hidden;
+    }
+    .detail-row {
+      display: grid;
+      grid-template-columns: minmax(132px, .35fr) minmax(0, 1fr);
+      gap: 14px;
+      align-items: center;
+      border-bottom: 1px solid #e9e9e9;
+      min-height: 44px;
       padding: 10px 12px;
-      word-break: break-all;
-      margin-top: 8px;
+    }
+    .detail-row:last-child {
+      border-bottom: 0;
+    }
+    .detail-label {
+      color: rgba(19, 19, 19, .46);
+      font-size: 11px;
+      font-weight: 950;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    .detail-value {
+      min-width: 0;
+      color: #131313;
+      font-size: 13px;
+      font-weight: 820;
+      line-height: 1.35;
+      text-align: right;
+      word-break: break-word;
+    }
+    .tx-block {
+      display: grid;
+      gap: 8px;
+    }
+    .tx-label {
+      color: rgba(19, 19, 19, .46);
+      font-size: 11px;
+      font-weight: 950;
+      text-transform: uppercase;
+    }
+    .tx-hash,
+    .self-link-box {
+      display: block;
+      overflow-wrap: anywhere;
+      border: 1px solid #e9e9e9;
+      border-radius: 8px;
+      background: #f9f9f9;
+      color: rgba(19, 19, 19, .66);
+      font-family: "SF Mono", "Fira Code", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      padding: 10px 12px;
     }
     .actions {
       display: flex;
-      gap: 10px;
-      margin-top: 32px;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-top: 1px solid #e9e9e9;
+      background: #fbfbfb;
+      padding: 14px 22px;
     }
-    .btn {
+    .button {
       display: inline-flex;
+      min-height: 38px;
       align-items: center;
       justify-content: center;
-      border-radius: 999px;
-      padding: 0 20px;
-      height: 40px;
-      font-size: 14px;
-      font-weight: 700;
+      border: 1px solid #dcdcdc;
+      border-radius: 6px;
+      background: #fff;
+      color: #131313;
       cursor: pointer;
+      font-size: 13px;
+      font-weight: 850;
+      line-height: 1;
+      padding: 0 14px;
       text-decoration: none;
-      border: none;
+      transition: transform .12s, background .12s, border-color .12s, box-shadow .12s;
     }
-    .btn-primary { background: #e84393; color: #fff; }
-    .btn-secondary { background: #f5f5f7; color: #1d1d1f; }
-    .checkout-link { font-size: 13px; color: #86868b; margin-top: 10px; text-align: center; }
-    .checkout-link a { color: #e84393; text-decoration: none; font-weight: 600; }
+    .button:hover {
+      border-color: #cfcfcf;
+      background: #f9f9f9;
+    }
+    .button:focus-visible,
+    .checkout-button:focus-visible {
+      outline: 0;
+      box-shadow: 0 0 0 3px rgba(255, 55, 199, .13);
+    }
+    .self-link {
+      display: grid;
+      gap: 8px;
+    }
+    .self-link a {
+      color: inherit;
+      text-decoration: none;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .checkout-button,
+      .button {
+        transition: none;
+      }
+      .checkout-button:active,
+      .button:active {
+        transform: none;
+      }
+    }
+    @media (max-width: 620px) {
+      body { padding: 12px; }
+      .invoice-head,
+      .amount-panel {
+        grid-template-columns: 1fr;
+      }
+      .amount-value strong {
+        font-size: 31px;
+      }
+      .checkout-button,
+      .button {
+        width: 100%;
+      }
+      .detail-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+      .detail-value {
+        text-align: left;
+      }
+      .actions {
+        padding: 12px;
+      }
+      .invoice-body,
+      .invoice-head,
+      .amount-panel {
+        padding: 16px;
+      }
+    }
     @media print {
-      body { background: #fff; padding: 0; }
-      .invoice { box-shadow: none; border-radius: 0; max-width: 100%; }
-      .actions { display: none; }
-      .checkout-link { display: none; }
-    }
-    @media (max-width: 520px) {
-      .invoice { padding: 24px; }
-      .detail-grid { grid-template-columns: 1fr; }
-      .invoice-header { flex-direction: column; gap: 14px; }
+      html,
+      body {
+        background: #fff;
+      }
+      body {
+        min-height: auto;
+        padding: 0;
+      }
+      .invoice-shell {
+        width: 100%;
+      }
+      .invoice-topbar,
+      .actions {
+        display: none;
+      }
+      .invoice-card {
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="invoice">
-    <div class="invoice-header">
-      <div>
-        <div class="invoice-brand">gateway<span>.</span></div>
-        <div style="font-size:13px;color:#86868b;margin-top:4px;font-weight:600;">{{.DomainURL}}</div>
+  <main class="invoice-shell">
+    <div class="invoice-topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">G</span>
+        <span>gateway</span>
+      </a>
+      <span class="topbar-meta">{{.DomainURL}}</span>
+    </div>
+
+    <section class="invoice-card" aria-label="Fatura">
+      <header class="invoice-head">
+        <div>
+          <p class="eyebrow">{{if .IsPaid}}Makbuz{{else}}Fatura{{end}}</p>
+          <h1>{{if .OrderID}}{{.OrderID}}{{else}}Hosted checkout{{end}}</h1>
+          <p class="domain">{{.DomainURL}}</p>
+        </div>
+        {{if .IsPaid}}
+          <span class="status-badge status-paid"><span class="status-dot"></span>Ödendi</span>
+        {{else if eq .Status "canceled"}}
+          <span class="status-badge status-canceled"><span class="status-dot"></span>İptal</span>
+        {{else if eq .Status "expired"}}
+          <span class="status-badge status-canceled"><span class="status-dot"></span>Süresi doldu</span>
+        {{else}}
+          <span class="status-badge status-pending"><span class="status-dot"></span>Beklemede</span>
+        {{end}}
+      </header>
+
+      <section class="amount-panel" aria-label="Tutar">
+        <div>
+          <p class="amount-label">Toplam tutar</p>
+          <div class="amount-value">
+            <strong>{{.Amount}}</strong>
+            <span>{{.Currency}}</span>
+          </div>
+        </div>
+        {{if not .IsPaid}}
+          <a class="checkout-button" href="{{.CheckoutURL}}">Ödeme sayfasına git</a>
+        {{end}}
+      </section>
+
+      <section class="invoice-body">
+        <div class="detail-table">
+          <div class="detail-row">
+            <div class="detail-label">Sipariş no</div>
+            <div class="detail-value">{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">Oluşturma</div>
+            <div class="detail-value">{{.CreatedAt}}</div>
+          </div>
+          {{if .PaidAt}}
+          <div class="detail-row">
+            <div class="detail-label">Ödeme tarihi</div>
+            <div class="detail-value">{{.PaidAt}}</div>
+          </div>
+          {{end}}
+          {{if .Symbol}}
+          <div class="detail-row">
+            <div class="detail-label">Ödenen coin</div>
+            <div class="detail-value">{{.Symbol}}</div>
+          </div>
+          {{end}}
+          <div class="detail-row">
+            <div class="detail-label">Durum</div>
+            <div class="detail-value">{{.Status}}</div>
+          </div>
+        </div>
+
+        {{if .TxHash}}
+        <div class="tx-block">
+          <div class="tx-label">Zincir işlem hash</div>
+          <code class="tx-hash">{{.TxHash}}</code>
+        </div>
+        {{end}}
+
+        <div class="self-link">
+          <div class="tx-label">Fatura linki</div>
+          <a class="self-link-box" href="#" id="invoice-self-link">{{.CheckoutURL}}</a>
+        </div>
+      </section>
+
+      <div class="actions">
+        <button class="button" type="button" onclick="window.print()">Yazdır / PDF</button>
+        <button class="button" type="button" id="copy-invoice-link">Fatura linkini kopyala</button>
+        {{if not .IsPaid}}
+          <a class="button" href="{{.CheckoutURL}}">Checkout</a>
+        {{end}}
       </div>
-      {{if .IsPaid}}
-        <span class="status-badge status-paid"><span class="status-dot"></span>Ödendi</span>
-      {{else if eq .Status "canceled"}}
-        <span class="status-badge status-canceled"><span class="status-dot"></span>İptal</span>
-      {{else if eq .Status "expired"}}
-        <span class="status-badge status-canceled"><span class="status-dot"></span>Süresi doldu</span>
-      {{else}}
-        <span class="status-badge status-pending"><span class="status-dot"></span>Beklemede</span>
-      {{end}}
-    </div>
+    </section>
+  </main>
 
-    <div class="amount-row">
-      <span class="amount-big">{{.Amount}}</span>
-      <span class="amount-currency">{{.Currency}}</span>
-    </div>
-
-    <hr class="divider">
-
-    <div class="detail-grid">
-      <div>
-        <div class="invoice-title">Sipariş No</div>
-        <div class="invoice-value">{{.OrderID}}</div>
-      </div>
-      <div>
-        <div class="invoice-title">Oluşturma</div>
-        <div class="invoice-value">{{.CreatedAt}}</div>
-      </div>
-      {{if .PaidAt}}
-      <div>
-        <div class="invoice-title">Ödeme Tarihi</div>
-        <div class="invoice-value">{{.PaidAt}}</div>
-      </div>
-      {{end}}
-      {{if .Symbol}}
-      <div>
-        <div class="invoice-title">Ödenen Coin</div>
-        <div class="invoice-value">{{.Symbol}}</div>
-      </div>
-      {{end}}
-    </div>
-
-    {{if .TxHash}}
-    <hr class="divider">
-    <div>
-      <div class="invoice-title">Zincir İşlem Hash</div>
-      <div class="tx-hash">{{.TxHash}}</div>
-    </div>
-    {{end}}
-
-    <div class="actions">
-      <button class="btn btn-primary" onclick="window.print()">Yazdır / PDF</button>
-      {{if not .IsPaid}}
-        <a class="btn btn-secondary" href="{{.CheckoutURL}}">Ödeme Sayfası</a>
-      {{end}}
-    </div>
-
-    <div class="checkout-link">
-      Fatura linki: <a href="/invoice/{{.OrderID}}" id="invoice-self-link">{{.CheckoutURL}}</a>
-    </div>
-  </div>
   <script>
     var selfLink = document.getElementById('invoice-self-link');
-    if (selfLink) { selfLink.href = window.location.href; selfLink.textContent = window.location.href; }
+    var copyButton = document.getElementById('copy-invoice-link');
+    if (selfLink) {
+      selfLink.href = window.location.href;
+      selfLink.textContent = window.location.href;
+    }
+    if (copyButton) {
+      copyButton.addEventListener('click', function () {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(window.location.href);
+        }
+        var text = copyButton.textContent;
+        copyButton.textContent = 'Kopyalandı';
+        window.setTimeout(function () {
+          copyButton.textContent = text;
+        }, 1200);
+      });
+    }
   </script>
 </body>
 </html>

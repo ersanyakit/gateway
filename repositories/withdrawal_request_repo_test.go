@@ -143,6 +143,65 @@ func TestWithdrawalRequestRepoApproveTransferFailureVoidsPreBroadcastHold(t *tes
 	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ? AND status = ?", request.ID, models.LedgerEntryTypeWithdrawalHold, models.LedgerStatusVoided)
 }
 
+func TestWithdrawalRequestRepoApproveBroadcastUncertainPreservesProcessingHold(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate withdrawal hold tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	prefix := "withdrawal-broadcast-uncertain-" + uuid.NewString()
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	ledgerRepo := NewLedgerRepo(db)
+	if err := ledgerRepo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post available balance: %v", err)
+	}
+	request := &models.WithdrawalRequest{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		DomainID:   &domainID,
+		WalletID:   walletID,
+		Chain:      "ethereum",
+		Symbol:     "ETH",
+		Decimals:   18,
+		ToAddress:  "0xto",
+		AmountRaw:  "25",
+		Status:     models.WithdrawalStatusPending,
+	}
+	repo := NewWithdrawalRequestRepo(db)
+	if err := repo.CreateWithHold(ctx, request, ledgerRepo); err != nil {
+		t.Fatalf("create withdrawal with hold: %v", err)
+	}
+
+	transferErr := fmt.Errorf("ethereum tx broadcast failed: context deadline exceeded")
+	after, err := repo.ApproveWithTransfer(ctx, request.ID, "admin@example.com", ledgerRepo, func(*models.WithdrawalRequest) (string, error) {
+		return "", transferErr
+	})
+	if !errors.Is(err, transferErr) {
+		t.Fatalf("ApproveWithTransfer err = %v, want %v", err, transferErr)
+	}
+	if after == nil || after.Status != models.WithdrawalStatusProcessing || after.TxHash != "" || !strings.Contains(after.Error, "broadcast outcome uncertain") {
+		t.Fatalf("uncertain withdrawal state = %#v", after)
+	}
+	var stored models.WithdrawalRequest
+	if err := db.WithContext(ctx).First(&stored, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != models.WithdrawalStatusProcessing || !strings.Contains(stored.Error, "broadcast outcome uncertain") {
+		t.Fatalf("stored uncertain withdrawal state = %#v", stored)
+	}
+	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ? AND status = ?", request.ID, models.LedgerEntryTypeWithdrawalHold, models.LedgerStatusPending)
+}
+
+func TestOutboundTransferFailureBroadcastUncertainClassifier(t *testing.T) {
+	if !OutboundTransferFailureBroadcastUncertain(errors.New("ethereum tx broadcast failed: already known")) {
+		t.Fatal("broadcast failure should be classified as uncertain")
+	}
+	if OutboundTransferFailureBroadcastUncertain(errors.New("signer unavailable before signing")) {
+		t.Fatal("pre-broadcast signer error should not be classified as uncertain")
+	}
+}
+
 func TestWithdrawalRequestRepoRecordBroadcastRequiresHashAndKeepsProcessing(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}); err != nil {

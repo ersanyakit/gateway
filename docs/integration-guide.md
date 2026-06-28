@@ -190,7 +190,7 @@ Response shape:
 }
 ```
 
-Send `Idempotency-Key` on create requests. If older client code still names this header `X-Idempotency-Key`, migrate it to `Idempotency-Key`; do not send both. A retry with the same key and identical payload returns the cached create response.
+Send `Idempotency-Key` on create requests. If older client code still names this header `X-Idempotency-Key`, migrate it to `Idempotency-Key`; do not send both. A fresh create returns `201`; a retry with the same key and identical payload returns the cached create response with `200`.
 
 Idempotency conflict example: reusing the same key with a different payload returns `409`:
 
@@ -401,7 +401,7 @@ POST /api/v1/payout/create
 Idempotency-Key: payout-ORDER-1001-v1
 ```
 
-`Idempotency-Key` is optional but recommended. Reusing the same key with the same payload returns the same payout response; reusing it with a different payload returns `409`.
+`Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same payout response with `200`; reusing it with a different payload returns `409`.
 
 Request body:
 
@@ -467,7 +467,7 @@ POST /api/v1/refund/create
 Idempotency-Key: refund-ORDER-1001-v1
 ```
 
-`Idempotency-Key` is optional but recommended. Reusing the same key with the same payload returns the same refund response; reusing it with a different payload returns `409`.
+`Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same refund response with `200`; reusing it with a different payload returns `409`.
 
 Request body:
 

@@ -21,10 +21,11 @@ type ActivityLog struct {
 	SubjectID   string `gorm:"size:128;index" json:"subject_id,omitempty"`
 	Description string `gorm:"type:text" json:"description,omitempty"`
 
-	IPAddress string `gorm:"size:64;index" json:"ip_address,omitempty"`
-	UserAgent string `gorm:"type:text" json:"user_agent,omitempty"`
-	Method    string `gorm:"size:16" json:"method,omitempty"`
-	Path      string `gorm:"size:255" json:"path,omitempty"`
+	IPAddress     string `gorm:"size:64;index" json:"ip_address,omitempty"`
+	UserAgent     string `gorm:"type:text" json:"user_agent,omitempty"`
+	Method        string `gorm:"size:16" json:"method,omitempty"`
+	Path          string `gorm:"size:255" json:"path,omitempty"`
+	CorrelationID string `gorm:"size:180;index" json:"correlation_id,omitempty"`
 
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }

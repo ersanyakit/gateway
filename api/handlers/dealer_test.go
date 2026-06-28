@@ -383,20 +383,25 @@ func TestV1RefundCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
 func TestV1OutboundCreateUsesIdempotencyAndCorrelationMetadata(t *testing.T) {
 	source := readHandlerSource(t, "v1api.go")
 	for _, tc := range []struct {
-		name     string
-		function string
-		resource string
+		name         string
+		function     string
+		resource     string
+		enqueueToken string
+		repairToken  string
 	}{
-		{name: "payout", function: "HandleV1PayoutCreate", resource: "payout"},
-		{name: "refund", function: "HandleV1RefundCreate", resource: "refund"},
+		{name: "payout", function: "HandleV1PayoutCreate", resource: "payout", enqueueToken: "enqueueV1PayoutRequestedLifecycle", repairToken: "repairV1PayoutRequestedLifecycleOnReplay"},
+		{name: "refund", function: "HandleV1RefundCreate", resource: "refund", enqueueToken: "enqueueV1RefundRequestedLifecycle", repairToken: "repairV1RefundRequestedLifecycleOnReplay"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := extractHandlerFunctionBody(t, source, tc.function)
 			for _, token := range []string{
 				"beginV1CreateIdempotency",
+				"validateV1CreateMetadata",
 				"IdempotencyKey:",
 				"CorrelationID:",
 				"CompleteResource",
+				tc.enqueueToken,
+				tc.repairToken,
 				`"` + tc.resource + `"`,
 			} {
 				if !strings.Contains(body, token) {
@@ -404,7 +409,7 @@ func TestV1OutboundCreateUsesIdempotencyAndCorrelationMetadata(t *testing.T) {
 				}
 			}
 			completeIndex := strings.Index(body, "CompleteResource")
-			enqueueIndex := strings.Index(body, "EnqueueLifecycle")
+			enqueueIndex := strings.Index(body, tc.enqueueToken)
 			if completeIndex == -1 || enqueueIndex == -1 || enqueueIndex < completeIndex {
 				t.Fatalf("%s must enqueue requested lifecycle events only after create/idempotency completion", tc.function)
 			}
@@ -414,12 +419,30 @@ func TestV1OutboundCreateUsesIdempotencyAndCorrelationMetadata(t *testing.T) {
 
 func TestAdminOutboundApproveDoesNotEmitTerminalEventAtBroadcast(t *testing.T) {
 	source := readHandlerSource(t, "dealer.go")
+	create := extractHandlerFunctionBody(t, source, "HandleDealerWithdrawalCreate")
+	for _, token := range []string{
+		"DomainID:",
+		"CorrelationID:",
+		"constants.WebhookEventPayoutRequestedV1",
+		"outbound_requested_event_enqueue_failed",
+	} {
+		if !strings.Contains(create, token) {
+			t.Fatalf("dealer withdrawal create must persist lifecycle metadata and enqueue requested event: %q", token)
+		}
+	}
+
 	withdrawal := extractHandlerFunctionBody(t, source, "HandleAdminWithdrawalApprove")
 	if !strings.Contains(withdrawal, "requireOutboundMakerChecker") {
 		t.Fatal("withdrawal approve must enforce configured maker-checker guard")
 	}
 	if !strings.Contains(withdrawal, "constants.WebhookEventPayoutBroadcastV1") {
 		t.Fatal("withdrawal approve must enqueue broadcast event")
+	}
+	if strings.Count(withdrawal, "constants.WebhookEventPayoutBroadcastV1") != 1 {
+		t.Fatal("withdrawal approve must enqueue broadcast only on the successful persist path")
+	}
+	if !strings.Contains(withdrawal, "openDealerOutboundLifecycleReconciliation") {
+		t.Fatal("withdrawal approve must open reconciliation for processing errors after possible broadcast")
 	}
 	if strings.Contains(withdrawal, "constants.WebhookEventPayoutFinalizedV1") {
 		t.Fatal("withdrawal approve must not enqueue finalized event without finality evidence")
@@ -432,6 +455,16 @@ func TestAdminOutboundApproveDoesNotEmitTerminalEventAtBroadcast(t *testing.T) {
 	if !strings.Contains(refund, "ClaimPendingWithHoldAndSource") || !strings.Contains(refund, "constants.WebhookEventRefundBroadcastV1") {
 		t.Fatal("refund approve must persist source metadata and enqueue broadcast event")
 	}
+	for _, token := range []string{
+		"repositories.OutboundTransferFailureBroadcastUncertain",
+		"SetProcessingError",
+		"openDealerOutboundLifecycleReconciliation",
+		"deps.RefundRepo.Find",
+	} {
+		if !strings.Contains(refund, token) {
+			t.Fatalf("refund approve must preserve processing holds on broadcast-uncertain errors: %q", token)
+		}
+	}
 	for _, forbidden := range []string{
 		"MarkSucceededWithLedger",
 		"constants.WebhookEventRefundSucceededV1",
@@ -439,6 +472,58 @@ func TestAdminOutboundApproveDoesNotEmitTerminalEventAtBroadcast(t *testing.T) {
 		if strings.Contains(refund, forbidden) {
 			t.Fatalf("refund approve must not terminalize immediately after broadcast: %q", forbidden)
 		}
+	}
+}
+
+func TestAdminOutboundActionsAreIdempotentNoOpsOnRetries(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	for _, tc := range []struct {
+		name        string
+		function    string
+		statusToken string
+		message     string
+		mutateToken string
+	}{
+		{
+			name:        "withdrawal approve",
+			function:    "HandleAdminWithdrawalApprove",
+			statusToken: "case models.WithdrawalStatusProcessing, models.WithdrawalStatusFinalized, models.WithdrawalStatusApproved:",
+			message:     "Çekim onayı zaten işlenmiş.",
+			mutateToken: "ApproveWithTransfer",
+		},
+		{
+			name:        "withdrawal reject",
+			function:    "HandleAdminWithdrawalReject",
+			statusToken: "case models.WithdrawalStatusRejected:",
+			message:     "Çekim talebi zaten reddedilmiş.",
+			mutateToken: "MarkRejected",
+		},
+		{
+			name:        "refund approve",
+			function:    "HandleAdminRefundApprove",
+			statusToken: "case models.RefundStatusProcessing, models.RefundStatusSucceeded, models.RefundStatusApproved:",
+			message:     "Refund onayı zaten işlenmiş.",
+			mutateToken: "ClaimPendingWithHoldAndSource",
+		},
+		{
+			name:        "refund reject",
+			function:    "HandleAdminRefundReject",
+			statusToken: "case models.RefundStatusRejected:",
+			message:     "Refund talebi zaten reddedilmiş.",
+			mutateToken: "MarkRejected",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := extractHandlerFunctionBody(t, source, tc.function)
+			retryIndex := strings.Index(body, tc.message)
+			mutateIndex := strings.Index(body, tc.mutateToken)
+			if !strings.Contains(body, tc.statusToken) || retryIndex < 0 {
+				t.Fatalf("%s missing idempotent retry no-op guard", tc.function)
+			}
+			if mutateIndex < 0 || retryIndex > mutateIndex {
+				t.Fatalf("%s must return idempotent retry no-op before mutation", tc.function)
+			}
+		})
 	}
 }
 
@@ -450,8 +535,92 @@ func TestOutboundMakerCheckerGuardDefaultsOffAndRejectsSelfApprovalWhenEnabled(t
 	if err := requireOutboundMakerChecker("admin@example.com", "admin@example.com"); err == nil {
 		t.Fatal("configured maker-checker guard should reject self approval")
 	}
+	if err := requireOutboundMakerChecker("", "admin@example.com"); err == nil {
+		t.Fatal("configured maker-checker guard should reject blank requester identity")
+	}
 	if err := requireOutboundMakerChecker("requester@example.com", "admin@example.com"); err != nil {
 		t.Fatalf("configured maker-checker guard rejected separate reviewer: %v", err)
+	}
+}
+
+func TestDealerActivityLogCapturesCorrelationID(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	body := extractHandlerFunctionBody(t, source, "logDealerActivity")
+	for _, token := range []string{
+		"middleware.RequestIDFromCtx",
+		"CorrelationID:",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("logDealerActivity must capture audit correlation token %q", token)
+		}
+	}
+}
+
+func TestDealerDonationPaymentLinkCreateAndUpdateContracts(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	for _, fn := range []string{"HandleDealerProductCreate", "HandleDealerProductUpdate"} {
+		body := extractHandlerFunctionBody(t, source, fn)
+		for _, token := range []string{
+			"parseDealerProductForm",
+			"form.linkType",
+			"form.amount",
+			"form.currency",
+		} {
+			if !strings.Contains(body, token) {
+				t.Fatalf("%s missing payment link form token %q", fn, token)
+			}
+		}
+	}
+
+	form := extractHandlerFunctionBody(t, source, "parseDealerProductForm")
+	for _, token := range []string{
+		"models.IsDonationLinkType(form.linkType)",
+		`form.amount = "0"`,
+		`form.currency = ""`,
+		"types.ValidatePositiveDecimal(form.amount)",
+	} {
+		if !strings.Contains(form, token) {
+			t.Fatalf("parseDealerProductForm missing donation/fixed validation token %q", token)
+		}
+	}
+
+	routes := readHandlerSource(t, "../routes/routes.go")
+	if !strings.Contains(routes, `r.fiber.Post(prefix+"/products/:id/update", handlers.HandleDealerProductUpdate(dealerDeps))`) {
+		t.Fatal("dealer product update route is not registered")
+	}
+
+	dashboard, err := os.ReadFile("../../views/dealer/dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dashboardHTML := string(dashboard)
+	for _, token := range []string{
+		`data-payment-link-type`,
+		`data-payment-fixed-fields`,
+		`data-required-when-fixed="true"`,
+		`/merchant/products/{{.ID}}/update`,
+		`Donation / serbest tutar`,
+	} {
+		if !strings.Contains(dashboardHTML, token) {
+			t.Fatalf("merchant dashboard missing payment link UI token %q", token)
+		}
+	}
+
+	dashboardJS, err := os.ReadFile("../../views/assets/dashboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(dashboardJS)
+	for _, token := range []string{
+		"initPaymentLinkTypeToggle",
+		"fixedFields.classList.toggle('hidden', donation)",
+		"input.required = !donation",
+		"input.disabled = donation",
+		"currency.disabled = donation",
+	} {
+		if !strings.Contains(js, token) {
+			t.Fatalf("dashboard.js missing payment link toggle token %q", token)
+		}
 	}
 }
 
@@ -479,8 +648,7 @@ func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
 			function: "HandleAdminRefundApprove",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success"`,
+				`logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "success"`,
 			},
 		},
 		{

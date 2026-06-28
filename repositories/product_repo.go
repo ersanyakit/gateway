@@ -69,6 +69,44 @@ func (r *ProductRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Produ
 	return &product, nil
 }
 
+func (r *ProductRepo) Update(ctx context.Context, product *models.Product) error {
+	if product == nil {
+		return errors.New("product is required")
+	}
+	if product.ID == uuid.Nil {
+		return errors.New("product id is required")
+	}
+	if strings.TrimSpace(product.Language) == "" {
+		product.Language = "tr"
+	}
+	product.LinkType = models.NormalizePaymentLinkType(product.LinkType)
+	product.UpdatedAt = time.Now()
+	result := r.db.WithContext(ctx).
+		Model(&models.Product{}).
+		Where("id = ? AND merchant_id = ?", product.ID, product.MerchantID).
+		Updates(map[string]interface{}{
+			"domain_id":   product.DomainID,
+			"name":        product.Name,
+			"description": product.Description,
+			"link_type":   product.LinkType,
+			"amount":      product.Amount,
+			"currency":    product.Currency,
+			"language":    product.Language,
+			"success_url": product.SuccessURL,
+			"cancel_url":  product.CancelURL,
+			"logo_url":    product.LogoURL,
+			"is_active":   product.IsActive,
+			"updated_at":  product.UpdatedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *ProductRepo) ListByMerchant(ctx context.Context, merchantID uuid.UUID, limit int) ([]models.Product, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100

@@ -518,6 +518,33 @@
   transition: border-color .12s, box-shadow .12s, background .12s;
 }
 
+.admin-rich-select[data-size="compact"] .admin-rich-trigger {
+  min-height: 2.2rem;
+  border-radius: 6px;
+  gap: .48rem;
+  padding: .28rem .4rem;
+}
+
+.admin-rich-select[data-size="compact"] .admin-rich-avatar {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 6px;
+  font-size: .58rem;
+}
+
+.admin-rich-select[data-size="compact"] .admin-rich-primary {
+  font-size: .74rem;
+}
+
+.admin-rich-select[data-size="compact"] .admin-rich-meta,
+.admin-rich-select[data-size="compact"] .admin-rich-chip {
+  font-size: .6rem;
+}
+
+.admin-rich-select[data-size="compact"] .admin-rich-option {
+  min-height: 2.2rem;
+}
+
 .admin-rich-trigger:hover {
   background: #fff;
   border-color: rgba(19, 19, 19, .16);
@@ -1932,6 +1959,32 @@
   gap: .5rem;
 }
 
+.merchant-toolbar-badge {
+  display: inline-flex;
+  min-height: 2.1rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e9e9e9;
+  border-radius: 6px;
+  background: #f9f9f9;
+  color: rgba(19, 19, 19, .56);
+  font-size: .7rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0 .7rem;
+  white-space: nowrap;
+}
+
+.merchant-panel-note {
+  border-bottom: 1px solid #e9e9e9;
+  background: #fbfbfb;
+  color: rgba(19, 19, 19, .56);
+  font-size: .76rem;
+  font-weight: 780;
+  line-height: 1.45;
+  padding: .78rem 1rem;
+}
+
 .merchant-action-button,
 .merchant-row-button,
 .merchant-products-tab,
@@ -2054,7 +2107,9 @@
 }
 
 .merchant-product-row,
-.merchant-link-row {
+.merchant-link-row,
+.merchant-withdrawal-row,
+.merchant-domain-row {
   display: grid;
   min-width: 0;
   align-items: center;
@@ -2073,12 +2128,22 @@
   grid-template-columns: minmax(240px, 1.25fr) minmax(120px, .55fr) minmax(122px, .5fr) minmax(180px, .7fr);
 }
 
+.merchant-withdrawal-row {
+  grid-template-columns: minmax(230px, .95fr) minmax(130px, .5fr) minmax(230px, 1fr) minmax(210px, .8fr);
+}
+
+.merchant-domain-row {
+  grid-template-columns: minmax(200px, .85fr) minmax(230px, 1fr) minmax(260px, 1.1fr) minmax(190px, .7fr);
+}
+
 .merchant-table-shell > :last-child {
   border-bottom: 0 !important;
 }
 
 .merchant-product-row:hover,
-.merchant-link-row:hover {
+.merchant-link-row:hover,
+.merchant-withdrawal-row:hover,
+.merchant-domain-row:hover {
   background: #fbfbfb !important;
 }
 
@@ -2169,6 +2234,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: .45rem;
+  flex-wrap: wrap;
 }
 
 .merchant-product-actions code {
@@ -2205,6 +2271,66 @@
 .merchant-row-button:hover {
   border-color: #cfcfcf;
   background: #f9f9f9;
+}
+
+.merchant-danger-text {
+  color: #b91c1c !important;
+}
+
+.merchant-error-code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #fecaca !important;
+  border-radius: 6px !important;
+  background: #fef2f2 !important;
+  color: #b91c1c !important;
+  font-size: .66rem !important;
+  line-height: 1.35;
+  padding: .38rem .48rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-credential-stack {
+  display: grid;
+  min-width: 0;
+  gap: .42rem;
+}
+
+.merchant-credential-line {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 4.6rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: .4rem;
+}
+
+.merchant-credential-line span {
+  color: rgba(19, 19, 19, .46);
+  font-size: .64rem;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.merchant-credential-line code {
+  min-width: 0;
+  min-height: 1.8rem;
+  border: 1px solid #e9e9e9;
+  border-radius: 6px;
+  background: #f9f9f9;
+  color: rgba(19, 19, 19, .62);
+  font-size: .68rem;
+  line-height: 1.8rem;
+  padding: 0 .48rem;
+}
+
+.merchant-webhook-result {
+  width: 100%;
+  border-radius: 6px !important;
+  font-size: .68rem !important;
+  line-height: 1.35;
 }
 
 .merchant-status-pill {
@@ -2450,7 +2576,9 @@ body.merchant-modal-open {
 
 @media (max-width: 980px) {
   .merchant-product-row,
-  .merchant-link-row {
+  .merchant-link-row,
+  .merchant-withdrawal-row,
+  .merchant-domain-row {
     grid-template-columns: 1fr;
     gap: .55rem;
   }

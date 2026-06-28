@@ -135,6 +135,21 @@ func (r *RefundRepo) FindByDomain(ctx context.Context, merchantID, domainID, id 
 	return &refund, nil
 }
 
+func (r *RefundRepo) FindByDomainIdempotencyKey(ctx context.Context, merchantID, domainID uuid.UUID, key string) (*models.Refund, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var refund models.Refund
+	if err := r.db.WithContext(ctx).
+		Where("merchant_id = ? AND domain_id = ? AND idempotency_key = ?", merchantID, domainID, key).
+		Order("created_at DESC").
+		First(&refund).Error; err != nil {
+		return nil, err
+	}
+	return &refund, nil
+}
+
 func (r *RefundRepo) ActiveTotalRawByPayment(ctx context.Context, paymentID uuid.UUID) (*big.Int, error) {
 	var raw string
 	err := r.db.WithContext(ctx).
@@ -227,11 +242,19 @@ func (r *RefundRepo) ClaimPendingWithHoldAndSource(ctx context.Context, id uuid.
 			First(&refund, "id = ? AND status = ?", id, models.RefundStatusPending).Error; err != nil {
 			return err
 		}
+		applyRefundSessionMetadata(&refund, session)
+		walletID := sourceWallet.ID
+		if walletID != uuid.Nil {
+			refund.WalletID = &walletID
+		}
 		if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, refund, session); err != nil {
 			return err
 		}
-		applyRefundSessionMetadata(&refund, session)
-		walletID := sourceWallet.ID
+		if walletID != uuid.Nil {
+			if err := NewLedgerRepo(tx).AlignRefundHoldWalletWithDB(ctx, tx, refund.ID, walletID); err != nil {
+				return err
+			}
+		}
 		updates := map[string]any{
 			"status":      models.RefundStatusProcessing,
 			"reviewed_by": reviewedBy,
@@ -244,7 +267,6 @@ func (r *RefundRepo) ClaimPendingWithHoldAndSource(ctx context.Context, id uuid.
 			"error":       "",
 		}
 		if walletID != uuid.Nil {
-			refund.WalletID = &walletID
 			updates["wallet_id"] = &walletID
 		}
 		result := tx.Model(&models.Refund{}).
@@ -423,6 +445,36 @@ func (r *RefundRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy st
 		}
 		if strings.TrimSpace(refund.TxHash) != "" {
 			return nil
+		}
+		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+	})
+}
+
+func (r *RefundRepo) MarkFailedFinalWithLedgerRelease(ctx context.Context, id uuid.UUID, reviewedBy string, errText string, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
+	now := time.Now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			First(&refund, "id = ? AND status IN ? AND tx_hash <> ''", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
+			Updates(map[string]any{
+				"status":       models.RefundStatusFailed,
+				"reviewed_by":  reviewedBy,
+				"reviewed_at":  &now,
+				"finalized_at": &now,
+				"error":        errText,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
 		}
 		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
 	})

@@ -1029,8 +1029,20 @@ func v1PaymentStatusTable() []types.V1StatusTableItem {
 // Payout API
 // ────────────────────────────────────────────────────────────────────────────
 
+const v1CreateMetadataMaxLen = 180
+
 func v1CreateIdempotencyKey(c fiber.Ctx) string {
 	return strings.TrimSpace(c.Get("Idempotency-Key"))
+}
+
+func validateV1CreateMetadata(idempotencyKey string, correlationID string) error {
+	if len(idempotencyKey) > v1CreateMetadataMaxLen {
+		return fmt.Errorf("Idempotency-Key must be at most %d characters", v1CreateMetadataMaxLen)
+	}
+	if len(correlationID) > v1CreateMetadataMaxLen {
+		return fmt.Errorf("X-Request-ID must be at most %d characters", v1CreateMetadataMaxLen)
+	}
+	return nil
 }
 
 func beginV1CreateIdempotency(ctx context.Context, repo *repositories.IdempotencyRepo, domain models.Domain, key string, payload any) (*models.IdempotencyKey, bool, error) {
@@ -1052,15 +1064,31 @@ func replayV1CreateIdempotency(c fiber.Ctx, record *models.IdempotencyKey) error
 	return v1Err(c, fiber.StatusConflict, "idempotency key is still in progress")
 }
 
-func completeV1CreateIdempotencyWithCompleteResource(ctx context.Context, repo *repositories.IdempotencyRepo, record *models.IdempotencyKey, resourceType string, resourceID uuid.UUID, response any) {
+func completeV1CreateIdempotencyWithCompleteResource(ctx context.Context, repo *repositories.IdempotencyRepo, record *models.IdempotencyKey, resourceType string, resourceID uuid.UUID, response any) error {
 	if repo == nil || record == nil || resourceID == uuid.Nil {
-		return
+		return nil
 	}
-	body, err := json.Marshal(response)
+	bodyBytes, err := json.Marshal(response)
 	if err != nil {
-		return
+		return err
 	}
-	_ = repo.CompleteResource(ctx, record.ID, resourceType, resourceID, string(body))
+	body := string(bodyBytes)
+	if record.ID != uuid.Nil {
+		if err := repo.CompleteResource(ctx, record.ID, resourceType, resourceID, body); err != nil {
+			return err
+		}
+	} else {
+		if err := repo.CompleteResourceByKey(ctx, record.DomainID, record.Key, resourceType, resourceID, body); err != nil {
+			return err
+		}
+	}
+	resourceIDCopy := resourceID
+	record.Status = models.IdempotencyStatusCompleted
+	record.ResourceType = resourceType
+	record.ResourceID = &resourceIDCopy
+	record.ResponseBody = body
+	record.Error = ""
+	return nil
 }
 
 func failV1CreateIdempotency(ctx context.Context, repo *repositories.IdempotencyRepo, record *models.IdempotencyKey, err error) {
@@ -1068,6 +1096,96 @@ func failV1CreateIdempotency(ctx context.Context, repo *repositories.Idempotency
 		return
 	}
 	_ = repo.Fail(ctx, record.ID, err.Error())
+}
+
+func enqueueV1PayoutRequestedLifecycle(ctx context.Context, deps V1APIDeps, domain models.Domain, request models.WithdrawalRequest) error {
+	if deps.WebhookDeliveryRepo == nil {
+		return nil
+	}
+	payload := webhooksvc.NewPayoutPayload(constants.WebhookEventPayoutRequestedV1, request)
+	_, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	return err
+}
+
+func enqueueV1RefundRequestedLifecycle(ctx context.Context, deps V1APIDeps, domain models.Domain, refund models.Refund) error {
+	if deps.WebhookDeliveryRepo == nil {
+		return nil
+	}
+	payload := webhooksvc.NewRefundPayload(constants.WebhookEventRefundRequestedV1, refund)
+	_, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	return err
+}
+
+func openV1OutboundLifecycleReconciliation(ctx context.Context, deps V1APIDeps, chain string, merchantID uuid.UUID, domainID *uuid.UUID, resourceType string, resourceID string, lifecycleStatus string, reason string, err error, txHash string) {
+	if deps.ReconciliationRepo == nil {
+		return
+	}
+	evidence := map[string]any{
+		"chain":   strings.TrimSpace(chain),
+		"tx_hash": strings.TrimSpace(txHash),
+	}
+	if err != nil {
+		evidence["error"] = err.Error()
+	}
+	_, _, openErr := deps.ReconciliationRepo.OpenStuckLifecycleJob(ctx, chainSlugToID(chain), &merchantID, domainID, resourceType, resourceID, lifecycleStatus, reason, evidence)
+	if openErr != nil {
+		fmt.Println("v1 outbound lifecycle reconciliation open error:", openErr)
+	}
+}
+
+func repairV1PayoutRequestedLifecycleOnReplay(ctx context.Context, deps V1APIDeps, domain models.Domain, record *models.IdempotencyKey) *models.IdempotencyKey {
+	if deps.WithdrawalRepo == nil || record == nil || (record.ResourceType != "" && record.ResourceType != "payout") {
+		return record
+	}
+	var request *models.WithdrawalRequest
+	var err error
+	if record.ResourceID != nil {
+		request, err = deps.WithdrawalRepo.FindByDomain(ctx, domain.MerchantID, domain.ID, *record.ResourceID)
+	} else {
+		request, err = deps.WithdrawalRepo.FindByDomainIdempotencyKey(ctx, domain.MerchantID, domain.ID, record.Key)
+	}
+	if err != nil || request == nil {
+		return record
+	}
+	if strings.TrimSpace(record.ResponseBody) == "" {
+		response := fiber.Map{"result": "ok", "data": v1PayoutResponse(*request)}
+		if err := completeV1CreateIdempotencyWithCompleteResource(ctx, deps.IdempotencyRepo, record, "payout", request.ID, response); err != nil {
+			fmt.Println("payout idempotency replay repair error:", err)
+		}
+	}
+	if err := enqueueV1PayoutRequestedLifecycle(ctx, deps, domain, *request); err != nil {
+		fmt.Println("payout lifecycle webhook replay enqueue error:", err)
+		openV1OutboundLifecycleReconciliation(ctx, deps, request.Chain, request.MerchantID, request.DomainID, "payout", request.ID.String(), request.Status, "outbound_requested_event_repair_failed", err, request.TxHash)
+	}
+	return record
+}
+
+func repairV1RefundRequestedLifecycleOnReplay(ctx context.Context, deps V1APIDeps, domain models.Domain, record *models.IdempotencyKey) *models.IdempotencyKey {
+	if deps.RefundRepo == nil || record == nil || (record.ResourceType != "" && record.ResourceType != "refund") {
+		return record
+	}
+	var refund *models.Refund
+	var err error
+	if record.ResourceID != nil {
+		refund, err = deps.RefundRepo.FindByDomain(ctx, domain.MerchantID, domain.ID, *record.ResourceID)
+	} else {
+		refund, err = deps.RefundRepo.FindByDomainIdempotencyKey(ctx, domain.MerchantID, domain.ID, record.Key)
+	}
+	if err != nil || refund == nil {
+		return record
+	}
+	if strings.TrimSpace(record.ResponseBody) == "" {
+		response := fiber.Map{"result": "ok", "data": v1RefundResponse(*refund)}
+		if err := completeV1CreateIdempotencyWithCompleteResource(ctx, deps.IdempotencyRepo, record, "refund", refund.ID, response); err != nil {
+			fmt.Println("refund idempotency replay repair error:", err)
+		}
+	}
+	if err := enqueueV1RefundRequestedLifecycle(ctx, deps, domain, *refund); err != nil {
+		fmt.Println("refund lifecycle webhook replay enqueue error:", err)
+		domainID := refund.DomainID
+		openV1OutboundLifecycleReconciliation(ctx, deps, refund.Chain, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_requested_event_repair_failed", err, refund.TxHash)
+	}
+	return record
 }
 
 // HandleV1PayoutCreate godoc
@@ -1082,6 +1200,7 @@ func failV1CreateIdempotency(ctx context.Context, repo *repositories.Idempotency
 // @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param Idempotency-Key header string false "Idempotency key for replay-safe payout creation."
 // @Param payload body types.V1PayoutRequest true "Payout parameters"
+// @Success 200 {object} types.V1PayoutCreateResponse "Idempotent replay response"
 // @Success 201 {object} types.V1PayoutCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
@@ -1124,6 +1243,9 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 
 		idempotencyKey := v1CreateIdempotencyKey(c)
 		correlationID := v1RequestID(c)
+		if err := validateV1CreateMetadata(idempotencyKey, correlationID); err != nil {
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
 		idempotencyRecord, shouldCreate, err := beginV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, *domain, idempotencyKey, body)
 		if err != nil {
 			status := fiber.StatusInternalServerError
@@ -1133,6 +1255,7 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, status, err.Error())
 		}
 		if !shouldCreate {
+			idempotencyRecord = repairV1PayoutRequestedLifecycleOnReplay(c.Context(), deps, *domain, idempotencyRecord)
 			return replayV1CreateIdempotency(c, idempotencyRecord)
 		}
 
@@ -1176,12 +1299,14 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			"result": "ok",
 			"data":   v1PayoutResponse(*req),
 		}
-		completeV1CreateIdempotencyWithCompleteResource(c.Context(), deps.IdempotencyRepo, idempotencyRecord, "payout", req.ID, response)
-		if deps.WebhookDeliveryRepo != nil {
-			payload := webhooksvc.NewPayoutPayload(constants.WebhookEventPayoutRequestedV1, *req)
-			if _, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(c.Context(), *domain, payload); err != nil {
-				fmt.Println("payout lifecycle webhook enqueue error:", err)
-			}
+		if err := completeV1CreateIdempotencyWithCompleteResource(c.Context(), deps.IdempotencyRepo, idempotencyRecord, "payout", req.ID, response); err != nil {
+			openV1OutboundLifecycleReconciliation(c.Context(), deps, req.Chain, req.MerchantID, req.DomainID, "payout", req.ID.String(), req.Status, "outbound_idempotency_completion_failed", err, req.TxHash)
+			return v1Err(c, fiber.StatusInternalServerError, "idempotency completion failed")
+		}
+		if err := enqueueV1PayoutRequestedLifecycle(c.Context(), deps, *domain, *req); err != nil {
+			fmt.Println("payout lifecycle webhook enqueue error:", err)
+			openV1OutboundLifecycleReconciliation(c.Context(), deps, req.Chain, req.MerchantID, req.DomainID, "payout", req.ID.String(), req.Status, "outbound_requested_event_enqueue_failed", err, req.TxHash)
+			return v1Err(c, fiber.StatusInternalServerError, "payout lifecycle webhook enqueue failed")
 		}
 		return c.Status(fiber.StatusCreated).JSON(response)
 	}
@@ -1307,6 +1432,7 @@ func HandleV1PayoutStatusTable(deps V1APIDeps) fiber.Handler {
 // @Param X-Gateway-Signature header string true "HMAC-SHA256 over method + path/query + timestamp + raw body, optionally prefixed with sha256="
 // @Param Idempotency-Key header string false "Idempotency key for replay-safe refund creation."
 // @Param payload body types.V1RefundRequest true "Refund parameters"
+// @Success 200 {object} types.V1RefundCreateResponse "Idempotent replay response"
 // @Success 201 {object} types.V1RefundCreateResponse
 // @Failure 400 {object} types.V1ErrorResponse
 // @Failure 401 {object} types.V1ErrorResponse
@@ -1341,6 +1467,9 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 
 		idempotencyKey := v1CreateIdempotencyKey(c)
 		correlationID := v1RequestID(c)
+		if err := validateV1CreateMetadata(idempotencyKey, correlationID); err != nil {
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
 		idempotencyRecord, shouldCreate, err := beginV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, *domain, idempotencyKey, body)
 		if err != nil {
 			status := fiber.StatusInternalServerError
@@ -1350,6 +1479,7 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, status, err.Error())
 		}
 		if !shouldCreate {
+			idempotencyRecord = repairV1RefundRequestedLifecycleOnReplay(c.Context(), deps, *domain, idempotencyRecord)
 			return replayV1CreateIdempotency(c, idempotencyRecord)
 		}
 
@@ -1379,10 +1509,17 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, fmt.Errorf("refund amount exceeds refundable payment amount"))
 			return v1Err(c, fiber.StatusBadRequest, "refund amount exceeds refundable payment amount")
 		}
+		sourceWallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
+		if err != nil {
+			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
+			return v1Err(c, fiber.StatusInternalServerError, "reserve wallet initialization failed: "+err.Error())
+		}
 		chainName := constants.ChainName(*session.SelectedChainID)
+		walletID := sourceWallet.ID
 		refund := &models.Refund{
 			MerchantID:     domain.MerchantID,
 			DomainID:       domain.ID,
+			WalletID:       &walletID,
 			PaymentID:      session.ID,
 			AmountRaw:      amountRaw,
 			Reason:         strings.TrimSpace(body.Reason),
@@ -1404,12 +1541,16 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 			return v1Err(c, status, "refund creation failed: "+err.Error())
 		}
 		response := fiber.Map{"result": "ok", "data": v1RefundResponse(*refund)}
-		completeV1CreateIdempotencyWithCompleteResource(c.Context(), deps.IdempotencyRepo, idempotencyRecord, "refund", refund.ID, response)
-		if deps.WebhookDeliveryRepo != nil {
-			payload := webhooksvc.NewRefundPayload(constants.WebhookEventRefundRequestedV1, *refund)
-			if _, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(c.Context(), *domain, payload); err != nil {
-				fmt.Println("refund lifecycle webhook enqueue error:", err)
-			}
+		if err := completeV1CreateIdempotencyWithCompleteResource(c.Context(), deps.IdempotencyRepo, idempotencyRecord, "refund", refund.ID, response); err != nil {
+			domainID := refund.DomainID
+			openV1OutboundLifecycleReconciliation(c.Context(), deps, refund.Chain, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_idempotency_completion_failed", err, refund.TxHash)
+			return v1Err(c, fiber.StatusInternalServerError, "idempotency completion failed")
+		}
+		if err := enqueueV1RefundRequestedLifecycle(c.Context(), deps, *domain, *refund); err != nil {
+			fmt.Println("refund lifecycle webhook enqueue error:", err)
+			domainID := refund.DomainID
+			openV1OutboundLifecycleReconciliation(c.Context(), deps, refund.Chain, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_requested_event_enqueue_failed", err, refund.TxHash)
+			return v1Err(c, fiber.StatusInternalServerError, "refund lifecycle webhook enqueue failed")
 		}
 		return c.Status(fiber.StatusCreated).JSON(response)
 	}
@@ -1548,27 +1689,42 @@ func stringsToPositiveBigInt(value string) (*big.Int, bool) {
 }
 
 func v1RefundLimitRaw(ctx context.Context, deps V1APIDeps, session *models.PaymentSession) (*big.Int, error) {
-	limitSource := session.ExpectedAmountRaw
-	if models.IsDonationLinkType(session.LinkType) && strings.TrimSpace(limitSource) == "" {
-		limitSource = session.MatchedAmountRaw
+	var limit *big.Int
+	if models.IsDonationLinkType(session.LinkType) {
+		if matched, ok := stringsToPositiveBigInt(session.MatchedAmountRaw); ok {
+			limit = matched
+		}
 	}
-	expected, ok := stringsToPositiveBigInt(limitSource)
-	if !ok {
-		return nil, fmt.Errorf("payment expected amount is invalid")
+	if limit == nil {
+		expected, ok := stringsToPositiveBigInt(session.ExpectedAmountRaw)
+		if !ok && !models.IsDonationLinkType(session.LinkType) {
+			return nil, fmt.Errorf("payment expected amount is invalid")
+		}
+		if ok {
+			limit = expected
+		}
 	}
-	limit := new(big.Int).Set(expected)
 	if deps.TransactionRepo == nil || session.TxUniqueHash == nil || strings.TrimSpace(*session.TxUniqueHash) == "" {
-		return limit, nil
+		if limit == nil {
+			return nil, fmt.Errorf("payment expected amount is invalid")
+		}
+		return new(big.Int).Set(limit), nil
 	}
 	txModel, err := deps.TransactionRepo.FindByUniqueHash(ctx, strings.TrimSpace(*session.TxUniqueHash))
 	if err != nil {
-		return limit, nil
+		if limit == nil {
+			return nil, fmt.Errorf("payment expected amount is invalid")
+		}
+		return new(big.Int).Set(limit), nil
 	}
 	actual, ok := stringsToPositiveBigInt(txModel.Amount)
-	if ok && actual.Cmp(limit) > 0 {
+	if ok && (limit == nil || actual.Cmp(limit) > 0) {
 		limit = actual
 	}
-	return limit, nil
+	if limit == nil {
+		return nil, fmt.Errorf("payment expected amount is invalid")
+	}
+	return new(big.Int).Set(limit), nil
 }
 
 func ensureV1ReserveWallet(ctx context.Context, deps V1APIDeps, merchantID uuid.UUID) (*models.Wallet, error) {

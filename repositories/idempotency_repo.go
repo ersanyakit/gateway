@@ -117,6 +117,20 @@ func (r *IdempotencyRepo) CompleteResource(ctx context.Context, id uuid.UUID, re
 		}).Error
 }
 
+func (r *IdempotencyRepo) CompleteResourceByKey(ctx context.Context, domainID uuid.UUID, key string, resourceType string, resourceID uuid.UUID, responseBody string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.IdempotencyKey{}).
+		Where("domain_id = ? AND key = ?", domainID, key).
+		Updates(map[string]any{
+			"status":        models.IdempotencyStatusCompleted,
+			"resource_type": resourceType,
+			"resource_id":   &resourceID,
+			"response_body": responseBody,
+			"error":         "",
+			"updated_at":    time.Now(),
+		}).Error
+}
+
 func (r *IdempotencyRepo) Fail(ctx context.Context, id uuid.UUID, errText string) error {
 	return r.db.WithContext(ctx).
 		Model(&models.IdempotencyKey{}).

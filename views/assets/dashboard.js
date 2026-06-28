@@ -170,7 +170,8 @@ function initDashboardModals() {
     document.body.classList.add('merchant-modal-open');
 
     window.setTimeout(function () {
-      var target = modal.querySelector('input:not([type="hidden"]):not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled)');
+      var target = modal.querySelector('.merchant-modal-form input:not([type="hidden"]):not(:disabled), .merchant-modal-form select:not(:disabled), .merchant-modal-form textarea:not(:disabled), .merchant-modal-form button:not(:disabled)') ||
+        modal.querySelector('button:not([data-close-dashboard-modal]):not(:disabled)');
       if (target) {
         target.focus();
       }
@@ -341,12 +342,13 @@ function patchCSRFFetch() {
 function initAdminRichSelects() {
   var controls = [];
 
-  document.querySelectorAll('select[data-rich-select]').forEach(function (select) {
+  document.querySelectorAll('select[data-rich-select], .admin-vscode-body select, .merchant-workbench select, .merchant-modal-form select').forEach(function (select) {
+    if (!shouldEnhanceSelect(select)) return;
     if (select.getAttribute('data-rich-select-ready') === 'true') return;
     select.setAttribute('data-rich-select-ready', 'true');
 
-    var kind = select.getAttribute('data-rich-select') || 'default';
-    var placeholder = select.getAttribute('data-placeholder') || 'Seç';
+    var kind = select.getAttribute('data-rich-select') || inferRichSelectKind(select);
+    var placeholder = select.getAttribute('data-placeholder') || selectPlaceholder(select);
     var root = document.createElement('div');
     var trigger = document.createElement('button');
     var avatar = document.createElement('span');
@@ -365,6 +367,9 @@ function initAdminRichSelects() {
     root.setAttribute('data-kind', kind);
     root.setAttribute('data-open', 'false');
     root.setAttribute('data-empty', 'true');
+    if (isCompactSelect(select)) {
+      root.setAttribute('data-size', 'compact');
+    }
 
     trigger.type = 'button';
     trigger.className = 'admin-rich-trigger';
@@ -416,7 +421,7 @@ function initAdminRichSelects() {
 
     function optionRecords() {
       return Array.prototype.slice.call(select.options).filter(function (option) {
-        return option.value !== '';
+        return option.value !== '' || !select.required;
       }).map(function (option) {
         return readOption(option);
       });
@@ -434,7 +439,8 @@ function initAdminRichSelects() {
       root.setAttribute('data-empty', empty ? 'true' : 'false');
       avatar.textContent = empty ? initials(placeholder) : record.avatar;
       primary.textContent = empty ? placeholder : record.primary;
-      meta.textContent = empty ? placeholder : record.meta;
+      meta.textContent = empty ? '' : record.meta;
+      meta.hidden = empty || !record.meta;
       chip.textContent = empty ? '' : record.chip;
       chip.hidden = empty || !record.chip;
     }
@@ -484,6 +490,7 @@ function initAdminRichSelects() {
         optionPrimary.textContent = record.primary;
         optionMeta.className = 'admin-rich-meta';
         optionMeta.textContent = record.meta;
+        optionMeta.hidden = !record.meta;
         optionChip.className = 'admin-rich-chip';
         optionChip.textContent = record.chip;
         optionChip.hidden = !record.chip;
@@ -536,15 +543,25 @@ function initAdminRichSelects() {
       controls.forEach(function (control) {
         if (control.root !== root) control.close();
       });
+      var searchable = kind === 'wallet' || kind === 'asset' || optionRecords().length > 7;
       root.setAttribute('data-open', 'true');
       trigger.setAttribute('aria-expanded', 'true');
       menu.hidden = false;
       search.value = '';
+      searchWrap.hidden = !searchable;
       renderOptions('');
       window.setTimeout(function () {
-        search.focus();
         var selected = optionsEl.querySelector('[aria-selected="true"]');
         if (selected) selected.scrollIntoView({ block: 'nearest' });
+        if (searchable) {
+          search.focus();
+          return;
+        }
+        if (selected) {
+          selected.focus();
+          return;
+        }
+        focusFirstOption();
       }, 0);
     }
 
@@ -1067,7 +1084,7 @@ function isPositiveIntegerString(value) {
 function readOption(option) {
   var text = compactText(option.textContent || '');
   var primary = option.getAttribute('data-primary') || text;
-  var meta = option.getAttribute('data-meta') || text;
+  var meta = option.getAttribute('data-meta') || '';
   var chip = option.getAttribute('data-chip') || '';
   var avatarSource = option.getAttribute('data-avatar') || primary;
   var group = compactText(option.getAttribute('data-group') || '');
@@ -1097,6 +1114,56 @@ function readOption(option) {
       kind: compactText(option.getAttribute('data-detail-kind') || ''),
     },
   };
+}
+
+function shouldEnhanceSelect(select) {
+  if (!select || select.multiple || select.closest('.admin-rich-select')) return false;
+  if (select.classList.contains('admin-native-select-hidden')) return false;
+  if (select.getAttribute('data-native-select') === 'true') return false;
+  if (select.getAttribute('data-rich-select-ready') === 'true') return true;
+  var options = Array.prototype.slice.call(select.options || []);
+  if (options.length === 0) return false;
+  return Boolean(
+    select.hasAttribute('data-rich-select') ||
+    select.closest('.admin-vscode-body') ||
+    select.closest('.merchant-workbench') ||
+    select.closest('.merchant-modal-form')
+  );
+}
+
+function inferRichSelectKind(select) {
+  var key = normalize([select.name, select.id].join(' '));
+  if (key.indexOf('wallet') !== -1) return 'wallet';
+  if (key === 'asset' || key.indexOf(' asset') !== -1 || key.indexOf('symbol') !== -1) return 'asset';
+  return 'default';
+}
+
+function isCompactSelect(select) {
+  var className = select.getAttribute('class') || '';
+  var key = normalize([select.name, select.id].join(' '));
+  return className.indexOf('min-h-9') !== -1 ||
+    key === 'status' ||
+    key.indexOf('status') !== -1 ||
+    key.indexOf('merchant_id') !== -1;
+}
+
+function selectPlaceholder(select) {
+  var emptyOption = Array.prototype.slice.call(select.options || []).find(function (option) {
+    return !option.value;
+  });
+  if (emptyOption && compactText(emptyOption.textContent)) {
+    return compactText(emptyOption.textContent);
+  }
+  var label = select.closest('label');
+  if (label) {
+    var clone = label.cloneNode(true);
+    Array.prototype.slice.call(clone.querySelectorAll('select, input, textarea, button, .admin-rich-select')).forEach(function (node) {
+      node.remove();
+    });
+    var labelText = compactText(clone.textContent);
+    if (labelText) return labelText;
+  }
+  return 'Seç';
 }
 
 function compactText(value) {
