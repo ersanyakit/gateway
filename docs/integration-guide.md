@@ -403,6 +403,8 @@ Idempotency-Key: payout-ORDER-1001-v1
 
 `Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same payout response with `200`; reusing it with a different payload returns `409`.
 
+Outbound security policy is enforced before the payout request is persisted. When configured by the platform operator, emergency freeze, address whitelist, per-transfer raw amount limit, and rolling velocity limit can reject the request with `400` and an `outbound policy rejects transfer: ...` message. Policy rejections are audit logged and do not create a ledger hold.
+
 Request body:
 
 ```json
@@ -468,6 +470,8 @@ Idempotency-Key: refund-ORDER-1001-v1
 ```
 
 `Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same refund response with `200`; reusing it with a different payload returns `409`.
+
+Refund requests are also checked against the configured outbound policy before the refund hold is created. Destination whitelist checks run again during admin approval when the original sender address is known.
 
 Request body:
 

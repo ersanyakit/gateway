@@ -276,6 +276,12 @@ func TestOutboundLifecycleSchemaColumnsAreRequired(t *testing.T) {
 			"ResourceID":   false,
 		},
 		"activity_logs": {
+			"DomainID":      false,
+			"ActorRole":     false,
+			"Decision":      false,
+			"Reason":        false,
+			"BeforeStatus":  false,
+			"AfterStatus":   false,
 			"CorrelationID": false,
 		},
 	}
@@ -307,6 +313,11 @@ func TestOutboundLifecycleSchemaColumnsAreRequired(t *testing.T) {
 		"idx_refunds_broadcasted_at":              false,
 		"idx_refunds_finalized_at":                false,
 		"idx_idempotency_keys_resource_id":        false,
+		"idx_activity_logs_domain_id":             false,
+		"idx_activity_logs_actor_role":            false,
+		"idx_activity_logs_decision":              false,
+		"idx_activity_logs_before_status":         false,
+		"idx_activity_logs_after_status":          false,
 		"idx_activity_logs_correlation_id":        false,
 	}
 	for _, index := range requiredSchemaIndexes() {
@@ -317,6 +328,80 @@ func TestOutboundLifecycleSchemaColumnsAreRequired(t *testing.T) {
 	for name, found := range requiredIndexes {
 		if !found {
 			t.Fatalf("VerifySchema does not require lifecycle index %s", name)
+		}
+	}
+}
+
+func TestOutboundPolicySchemaIsRegistered(t *testing.T) {
+	if !autoMigrateModelsIncludes(&models.OutboundPolicySetting{}) {
+		t.Fatal("OutboundPolicySetting must be registered in AutoMigrate models")
+	}
+	if !autoMigrateModelsIncludes(&models.OutboundAddressWhitelist{}) {
+		t.Fatal("OutboundAddressWhitelist must be registered in AutoMigrate models")
+	}
+
+	required := map[string]map[string]bool{
+		"outbound_policy_settings": {
+			"MerchantID":         false,
+			"DomainID":           false,
+			"Chain":              false,
+			"Token":              false,
+			"WhitelistRequired":  false,
+			"EmergencyFrozen":    false,
+			"MaxAmountRaw":       false,
+			"VelocityLimitRaw":   false,
+			"VelocityWindowSecs": false,
+		},
+		"outbound_address_whitelists": {
+			"MerchantID": false,
+			"DomainID":   false,
+			"Chain":      false,
+			"Token":      false,
+			"Address":    false,
+			"IsActive":   false,
+		},
+		"admins": {
+			"Role": false,
+		},
+	}
+	for _, column := range requiredSchemaColumns() {
+		fields, ok := required[column.table]
+		if !ok {
+			continue
+		}
+		if _, ok := fields[column.field]; ok {
+			fields[column.field] = true
+		}
+	}
+	for table, fields := range required {
+		for field, found := range fields {
+			if !found {
+				t.Fatalf("VerifySchema does not require %s.%s", table, field)
+			}
+		}
+	}
+
+	requiredIndexes := map[string]bool{
+		"idx_outbound_policy_settings_merchant_id":    false,
+		"idx_outbound_policy_settings_domain_id":      false,
+		"idx_outbound_policy_settings_chain":          false,
+		"idx_outbound_policy_settings_token":          false,
+		"idx_outbound_address_whitelists_merchant_id": false,
+		"idx_outbound_address_whitelists_domain_id":   false,
+		"idx_outbound_address_whitelists_chain":       false,
+		"idx_outbound_address_whitelists_token":       false,
+		"idx_outbound_address_whitelists_address":     false,
+		"idx_outbound_address_whitelists_is_active":   false,
+		"idx_admins_role":                             false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require outbound policy index %s", name)
 		}
 	}
 }

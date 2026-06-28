@@ -2,11 +2,29 @@ package walletcore
 
 import (
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 
 	"core/constants"
 )
+
+func TestTrustWalletCoreProviderIsDefaultBuild(t *testing.T) {
+	trustWalletProvider, err := os.ReadFile("provider_trustwalletcore.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallbackProvider, err := os.ReadFile("provider_fallback.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(trustWalletProvider), "//go:build !walletcorefallback") {
+		t.Fatal("Trust Wallet Core provider must remain the default build; do not gate it behind an opt-in tag")
+	}
+	if !strings.Contains(string(fallbackProvider), "//go:build walletcorefallback") {
+		t.Fatal("fallback provider must remain opt-in only; money and wallet flows require Trust Wallet Core by default")
+	}
+}
 
 func TestGenerateAndValidateMnemonic(t *testing.T) {
 	mnemonic, err := GenerateMnemonic(128)

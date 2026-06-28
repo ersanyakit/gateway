@@ -43,6 +43,25 @@ func TestDealerViewsRender(t *testing.T) {
 				Users:         1,
 			},
 		},
+		TreasuryGroups: []handlers.DealerVaultAssetView{
+			{
+				ID:               "treasury-sol",
+				Symbol:           "SOL",
+				SearchText:       "SOL Solana",
+				NetworkCount:     1,
+				VariantCount:     1,
+				AvailableDisplay: "50",
+				AvailableSort:    "50",
+				Details: []handlers.DealerVaultBalanceView{
+					{
+						Chain:            "Solana",
+						Symbol:           "SOL",
+						DisplayToken:     "-",
+						AvailableDisplay: "50",
+					},
+				},
+			},
+		},
 		ChainVaults: []handlers.DealerChainVaultView{
 			{Chain: "Bitcoin", Empty: true},
 			{Chain: "TRON", Empty: true},
@@ -84,7 +103,7 @@ func TestDealerViewsRender(t *testing.T) {
 		}
 		if view == "dealer/dashboard" {
 			output := buf.String()
-			for _, expected := range []string{"Bitcoin", "TRON", "Solana üzerinde SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan"} {
+			for _, expected := range []string{"Bitcoin", "TRON", "Coin bazında konsolide treasury", "Solana", "SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan"} {
 				if !strings.Contains(output, expected) {
 					t.Fatalf("%s output missing %q", view, expected)
 				}

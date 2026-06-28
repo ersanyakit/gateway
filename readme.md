@@ -92,14 +92,24 @@ Desteklenen ağlar:
 
 ## Kurulum
 
-Bağımlılıkları indirin:
+Repoyu submodule'lerle birlikte çekin ya da mevcut clone içinde Trust Wallet Core submodule'ünü başlatın:
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd gateway
+
+# Repo daha önce normal git clone ile çekildiyse:
+git submodule update --init --recursive third_party/trustwallet/wallet-core
+```
+
+Go bağımlılıklarını indirin:
 
 ```bash
 go mod download
 npm install
 ```
 
-Trust Wallet Core native library dosyalarını üretin. Cüzdan mnemonic doğrulama, HD private key türetme ve adres üretimi default olarak Trust Wallet Core üzerinden yapılır:
+Trust Wallet Core native library dosyalarını üretin. Cüzdan mnemonic doğrulama, HD private key türetme, adres üretimi ve ilgili signing yolları Trust Wallet Core'a bağlıdır:
 
 ```bash
 ./scripts/build_wallet_core.sh
@@ -468,7 +478,7 @@ cd ../exchange
 
 Bu test admin login gerektirmez; gateway domain webhook secret'ını decrypt eder, exchange callback'e imzalı BTC deposit gönderir ve exchange DB'deki bakiyenin arttığını doğrular.
 
-Trust Wallet Core native build'i hazır değilse önce `./scripts/build_wallet_core.sh` çalıştırılmalıdır. Sadece lokal debug için fallback provider kullanılacaksa Go komutlarına `-tags walletcorefallback` eklenebilir; production wallet üretimi için kullanılmamalıdır.
+Trust Wallet Core submodule'ü hazır değilse önce `git submodule update --init --recursive third_party/trustwallet/wallet-core`, native build hazır değilse `./scripts/build_wallet_core.sh` çalıştırılmalıdır. `walletcorefallback` build tag'i yalnızca dar kapsamlı lokal debug içindir; production wallet üretimi veya transfer signing için kullanılmamalıdır.
 
 CSS build:
 

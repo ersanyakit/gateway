@@ -25,9 +25,9 @@ type ActivityLog struct {
 	Decision   string `gorm:"size:48;index" json:"decision,omitempty"`
 	Reason     string `gorm:"type:text" json:"reason,omitempty"`
 
-	SubjectType string `gorm:"size:80;index" json:"subject_type,omitempty"`
-	SubjectID   string `gorm:"size:128;index" json:"subject_id,omitempty"`
-	Description string `gorm:"type:text" json:"description,omitempty"`
+	SubjectType  string `gorm:"size:80;index" json:"subject_type,omitempty"`
+	SubjectID    string `gorm:"size:128;index" json:"subject_id,omitempty"`
+	Description  string `gorm:"type:text" json:"description,omitempty"`
 	BeforeStatus string `gorm:"size:32;index" json:"before_status,omitempty"`
 	AfterStatus  string `gorm:"size:32;index" json:"after_status,omitempty"`
 

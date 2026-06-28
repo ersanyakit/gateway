@@ -544,8 +544,12 @@ type DealerAuditLogView struct {
 	Event       string
 	Status      string
 	Actor       string
+	ActorRole   string
+	Decision    string
 	Subject     string
 	Description string
+	Reason      string
+	BeforeAfter string
 	IPAddress   string
 	UserAgent   string
 	Method      string
@@ -1848,9 +1852,11 @@ func HandleAdminCreateAdmin(deps DealerDeps) fiber.Handler {
 		if email == "" || password == "" {
 			return redirectWithError(c, "/admin/admins", "E-posta ve şifre zorunlu.")
 		}
-		if _, err := deps.AdminRepo.CreateWithRole(c.Context(), email, name, password, role); err != nil {
+		admin, err := deps.AdminRepo.CreateWithRole(c.Context(), email, name, password, role)
+		if err != nil {
 			return redirectWithError(c, "/admin/admins", "Admin oluşturulamadı: "+err.Error())
 		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.create", "success", "admin", admin.ID.String(), "Admin hesabı oluşturuldu.")
 		return redirectWithSuccess(c, "/admin/admins", "Admin hesabı oluşturuldu.")
 	}
 }
@@ -1873,7 +1879,9 @@ func HandleAdminToggleAdmin(deps DealerDeps) fiber.Handler {
 		if err != nil {
 			return redirectWithError(c, "/admin/admins", "Admin bulunamadı.")
 		}
-		_ = deps.AdminRepo.SetActive(c.Context(), id, !admin.IsActive)
+		newActive := !admin.IsActive
+		_ = deps.AdminRepo.SetActive(c.Context(), id, newActive)
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.toggle", "success", "admin", id.String(), fmt.Sprintf("Admin active=%t olarak güncellendi.", newActive))
 		return redirectWithSuccess(c, "/admin/admins", "Admin durumu güncellendi.")
 	}
 }
@@ -1894,6 +1902,7 @@ func HandleAdminResetTOTP(deps DealerDeps) fiber.Handler {
 		}
 		// Clear TOTP so next login triggers re-setup.
 		_ = deps.AdminRepo.DisableTOTP(c.Context(), id)
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.reset_totp", "success", "admin", id.String(), "Admin 2FA sıfırlandı.")
 		return redirectWithSuccess(c, "/admin/admins", "2FA sıfırlandı. Sonraki girişte yeniden kurulacak.")
 	}
 }
@@ -1914,6 +1923,7 @@ func HandleAdminTOTPEnable(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/security", "2FA zaten etkin.")
 		}
 		setAdminTempCookie(c, adminSetupTOTPCookie, admin.ID, false, adminSetupTOTPTTL)
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.totp_setup", "success", "admin", admin.ID.String(), "Admin 2FA kurulumu başlatıldı.")
 		return c.Redirect().To("/admin/2fa/setup")
 	}
 }
@@ -1963,6 +1973,7 @@ func HandleAdminTOTPDisableSubmit(deps DealerDeps) fiber.Handler {
 		if err := deps.AdminRepo.DisableTOTP(c.Context(), admin.ID); err != nil {
 			return redirectWithError(c, "/admin/security", "2FA devre dışı bırakılamadı: "+err.Error())
 		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.totp_disable", "success", "admin", admin.ID.String(), "Admin 2FA devre dışı bırakıldı.")
 		return redirectWithSuccess(c, "/admin/security", "2FA başarıyla devre dışı bırakıldı.")
 	}
 }
@@ -1973,7 +1984,7 @@ func HandleAdminOutboundPolicyUpdate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "failed", "outbound_policy", "global", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2007,7 +2018,7 @@ func HandleAdminOutboundWhitelistCreate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "failed", "outbound_whitelist", "", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2043,7 +2054,7 @@ func HandleAdminOutboundWhitelistToggle(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "failed", "outbound_whitelist", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -3170,7 +3181,11 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if approvedRequest != nil {
 			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
 		}
-		logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success", "withdrawal", id.String(), "Çekim onaylandı ve transfer gönderildi.")
+		afterStatus := models.WithdrawalStatusProcessing
+		if approvedRequest != nil {
+			afterStatus = approvedRequest.Status
+		}
+		logDealerDecisionActivity(c, deps.ActivityLogRepo, &request.MerchantID, request.DomainID, "admin", adminEmail, "withdrawal.approve", "success", "withdrawal", id.String(), "Çekim onaylandı ve transfer gönderildi.", request.Status, afterStatus)
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
 	}
 }
@@ -3213,9 +3228,9 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		}
 		if updated, err := deps.WithdrawalRepo.Find(c.Context(), id); err == nil && updated != nil {
 			enqueueDealerPayoutLifecycle(c.Context(), deps, *updated, constants.WebhookEventPayoutRejectedV1)
-			logDealerActivity(c, deps.ActivityLogRepo, &updated.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason)
+			logDealerDecisionActivity(c, deps.ActivityLogRepo, &updated.MerchantID, updated.DomainID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason, request.Status, updated.Status)
 		} else if findErr == nil && request != nil {
-			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason)
+			logDealerDecisionActivity(c, deps.ActivityLogRepo, &request.MerchantID, request.DomainID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), reason, request.Status, models.WithdrawalStatusRejected)
 		}
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi reddedildi.")
 	}
@@ -3356,7 +3371,8 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			claimedRefund.ReviewedBy = adminEmail
 		}
 		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundBroadcastV1)
-		logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+txHash)
+		refundDomainID := refund.DomainID
+		logDealerDecisionActivity(c, deps.ActivityLogRepo, &refund.MerchantID, &refundDomainID, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+txHash, refund.Status, claimedRefund.Status)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")
 	}
 }
@@ -3404,11 +3420,16 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund reddedilemedi: "+err.Error())
 		}
-		if refund, err := deps.RefundRepo.Find(c.Context(), id); err == nil {
-			enqueueDealerRefundLifecycle(c.Context(), deps, *refund, constants.WebhookEventRefundRejectedV1)
-			merchantID = &refund.MerchantID
+		afterStatus := models.RefundStatusRejected
+		var domainID *uuid.UUID
+		if updated, err := deps.RefundRepo.Find(c.Context(), id); err == nil {
+			enqueueDealerRefundLifecycle(c.Context(), deps, *updated, constants.WebhookEventRefundRejectedV1)
+			merchantID = &updated.MerchantID
+			domain := updated.DomainID
+			domainID = &domain
+			afterStatus = updated.Status
 		}
-		logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason)
+		logDealerDecisionActivity(c, deps.ActivityLogRepo, merchantID, domainID, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), reason, refund.Status, afterStatus)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund talebi reddedildi.")
 	}
 }
@@ -4112,21 +4133,6 @@ func requirePrivilegedAdmin(c fiber.Ctx, adminRepo *repositories.AdminRepo) erro
 		return errors.New("Bu işlem için yetkiniz yok.")
 	}
 	if !adminRoleCanMutateHighRisk(admin.Role) {
-		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
-	}
-	return nil
-}
-
-func requireAdminPrivilege(c fiber.Ctx, deps DealerDeps, adminEmail string, roles ...string) error {
-	adminEmail = strings.ToLower(strings.TrimSpace(adminEmail))
-	if adminEmail == "" || deps.AdminRepo == nil {
-		return errors.New("Bu işlem için yetkiniz yok.")
-	}
-	admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
-	if err != nil || admin == nil || !admin.IsActive {
-		return errors.New("Bu işlem için yetkiniz yok.")
-	}
-	if !models.AdminRoleAllowed(admin.Role, roles...) {
 		return errors.New("Bu işlem için güvenlik yetkisi gerekli.")
 	}
 	return nil
@@ -5709,8 +5715,12 @@ func dealerAuditLogViews(logs []models.ActivityLog) []DealerAuditLogView {
 			Event:       log.Event,
 			Status:      log.Status,
 			Actor:       emptyDash(log.ActorEmail),
+			ActorRole:   emptyDash(log.ActorRole),
+			Decision:    emptyDash(log.Decision),
 			Subject:     emptyDash(subject),
 			Description: emptyDash(log.Description),
+			Reason:      emptyDash(log.Reason),
+			BeforeAfter: dealerAuditBeforeAfter(log.BeforeStatus, log.AfterStatus),
 			IPAddress:   emptyDash(log.IPAddress),
 			UserAgent:   shortText(log.UserAgent, 52, 18),
 			Method:      emptyDash(log.Method),
@@ -5724,6 +5734,21 @@ func dealerAuditLogViews(logs []models.ActivityLog) []DealerAuditLogView {
 	return views
 }
 
+func dealerAuditBeforeAfter(before string, after string) string {
+	before = strings.TrimSpace(before)
+	after = strings.TrimSpace(after)
+	if before == "" && after == "" {
+		return "-"
+	}
+	if before == "" {
+		before = "-"
+	}
+	if after == "" {
+		after = "-"
+	}
+	return before + " -> " + after
+}
+
 func logDealerActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchantID *uuid.UUID, actorType string, actorEmail string, event string, status string, subjectType string, subjectID string, description string) {
 	if repo == nil {
 		return
@@ -5732,15 +5757,21 @@ func logDealerActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchant
 	if correlationID == "" {
 		correlationID = strings.TrimSpace(c.Get("X-Request-ID"))
 	}
+	safeDescription := redactAuditDescription(description)
+	actorRole := emptyDefault(actorType, "system")
+	decision := emptyDefault(status, "info")
 	log := &models.ActivityLog{
 		MerchantID:    merchantID,
-		ActorType:     emptyDefault(actorType, "system"),
+		ActorType:     actorRole,
 		ActorEmail:    strings.TrimSpace(actorEmail),
+		ActorRole:     actorRole,
 		Event:         emptyDefault(event, "activity"),
-		Status:        emptyDefault(status, "info"),
+		Status:        decision,
+		Decision:      decision,
+		Reason:        safeDescription,
 		SubjectType:   strings.TrimSpace(subjectType),
 		SubjectID:     strings.TrimSpace(subjectID),
-		Description:   strings.TrimSpace(description),
+		Description:   safeDescription,
 		IPAddress:     clientIP(c),
 		UserAgent:     strings.TrimSpace(c.Get("User-Agent")),
 		Method:        strings.TrimSpace(c.Method()),
@@ -5749,6 +5780,72 @@ func logDealerActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchant
 		CreatedAt:     time.Now().UTC(),
 	}
 	_ = repo.Create(c.Context(), log)
+}
+
+func logDealerDecisionActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchantID *uuid.UUID, domainID *uuid.UUID, actorType string, actorEmail string, event string, status string, subjectType string, subjectID string, description string, beforeStatus string, afterStatus string) {
+	if repo == nil {
+		return
+	}
+	correlationID := strings.TrimSpace(middleware.RequestIDFromCtx(c))
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(c.Get("X-Request-ID"))
+	}
+	safeDescription := redactAuditDescription(description)
+	actorRole := emptyDefault(actorType, "system")
+	decision := emptyDefault(status, "info")
+	_ = repo.Create(c.Context(), &models.ActivityLog{
+		MerchantID:    merchantID,
+		DomainID:      domainID,
+		ActorType:     actorRole,
+		ActorEmail:    strings.TrimSpace(actorEmail),
+		ActorRole:     actorRole,
+		Event:         emptyDefault(event, "activity"),
+		Status:        decision,
+		Decision:      decision,
+		Reason:        safeDescription,
+		SubjectType:   strings.TrimSpace(subjectType),
+		SubjectID:     strings.TrimSpace(subjectID),
+		Description:   safeDescription,
+		BeforeStatus:  strings.TrimSpace(beforeStatus),
+		AfterStatus:   strings.TrimSpace(afterStatus),
+		IPAddress:     clientIP(c),
+		UserAgent:     strings.TrimSpace(c.Get("User-Agent")),
+		Method:        strings.TrimSpace(c.Method()),
+		Path:          strings.TrimSpace(c.Path()),
+		CorrelationID: correlationID,
+		CreatedAt:     time.Now().UTC(),
+	})
+}
+
+func redactAuditDescription(description string) string {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return ""
+	}
+	lower := strings.ToLower(description)
+	for _, token := range []string{
+		"api_secret",
+		"api secret",
+		"webhook_secret",
+		"webhook secret",
+		"x-api-secret",
+		"x-gateway-signature",
+		"signature",
+		"mnemonic",
+		"private key",
+		"private_key",
+		"raw signed",
+		"signed transaction",
+		"secret=",
+	} {
+		if strings.Contains(lower, token) {
+			return "[redacted]"
+		}
+	}
+	if len(description) > 1000 {
+		return description[:1000] + "...[truncated]"
+	}
+	return description
 }
 
 func clientIP(c fiber.Ctx) string {

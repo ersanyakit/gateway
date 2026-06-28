@@ -161,10 +161,10 @@ func (r *OutboundPolicyRepo) AddWhitelist(ctx context.Context, input OutboundWhi
 		Address:    address,
 		Label:      strings.TrimSpace(input.Label),
 		IsActive:   true,
-		CreatedBy: strings.TrimSpace(input.ActorEmail),
-		UpdatedBy: strings.TrimSpace(input.ActorEmail),
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
+		CreatedBy:  strings.TrimSpace(input.ActorEmail),
+		UpdatedBy:  strings.TrimSpace(input.ActorEmail),
+		CreatedAt:  time.Now().UTC(),
+		UpdatedAt:  time.Now().UTC(),
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing models.OutboundAddressWhitelist
