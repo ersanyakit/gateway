@@ -686,12 +686,16 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 			return renderPaymentError(c, fiber.StatusNotFound, "Payment session was not found.")
 		}
 		checkoutState := checkoutPayerState(*session, time.Now())
-		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid || checkoutState.Terminal {
+		if checkoutState.Terminal {
+			return renderCheckoutStateResult(c, fiber.StatusOK, checkoutState)
+		}
+		if session.Status == models.PaymentStatusAwaitingPayment || session.Status == models.PaymentStatusPaid {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
 		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
-			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
+			session.Status = models.PaymentStatusExpired
+			return renderCheckoutStateResult(c, fiber.StatusGone, checkoutPayerState(*session, time.Now()))
 		}
 
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
@@ -743,7 +747,7 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			if session.Status == models.PaymentStatusPaid {
 				return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
 			}
-			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
+			return renderCheckoutStateResult(c, fiber.StatusOK, checkoutPayerState(*session, time.Now()))
 		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
@@ -848,7 +852,7 @@ func HandleCheckoutChangeAsset(deps PaymentHandlerDeps) fiber.Handler {
 			if session.Status == models.PaymentStatusPaid {
 				return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
 			}
-			return c.Redirect().To("/checkout/" + session.SessionToken + "/pay")
+			return renderCheckoutStateResult(c, fiber.StatusOK, checkoutPayerState(*session, time.Now()))
 		}
 		if isSessionExpired(session) {
 			_ = markPaymentCanceledOrExpired(c.Context(), deps, session, models.PaymentStatusExpired)
@@ -886,15 +890,15 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		if session.Status == models.PaymentStatusPaid {
 			return c.Redirect().To("/checkout/" + session.SessionToken + "/return/success")
 		}
+		checkoutState := checkoutPayerState(*session, time.Now())
+		if checkoutState.Terminal {
+			return renderCheckoutStateResult(c, fiber.StatusOK, checkoutState)
+		}
 		if session.Status == models.PaymentStatusPending {
 			return c.Redirect().To("/checkout/" + session.SessionToken)
 		}
 
-		checkoutState := checkoutPayerState(*session, time.Now())
 		if session.SelectedChainID == nil || session.SelectedSymbol == "" || session.DepositAddress == "" {
-			if checkoutState.Terminal {
-				return renderCheckoutStateResult(c, fiber.StatusOK, checkoutState)
-			}
 			return c.Redirect().To("/checkout/" + session.SessionToken)
 		}
 		amountDisplay := formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)

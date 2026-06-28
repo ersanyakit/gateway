@@ -126,6 +126,10 @@ func TestSweepJobLockTimeoutCannotExpireBeforeExecutionTimeout(t *testing.T) {
 	if got := sweepJobLockTimeout(); got <= sweepJobExecutionTimeout {
 		t.Fatalf("lock timeout = %s, must exceed execution timeout %s", got, sweepJobExecutionTimeout)
 	}
+	t.Setenv("SWEEP_JOB_LOCK_TIMEOUT", "91s")
+	if got := sweepJobLockTimeout(); got != sweepJobExecutionTimeout+30*time.Second {
+		t.Fatalf("lock timeout = %s, want execution timeout plus safety buffer", got)
+	}
 }
 
 func TestFinalizeProcessingTransfersRequiresFinalityEvidence(t *testing.T) {
@@ -135,17 +139,21 @@ func TestFinalizeProcessingTransfersRequiresFinalityEvidence(t *testing.T) {
 	}
 	body := extractMainSweepFunctionBody(t, string(sourceBytes), "finalizeProcessingTransfers")
 	for _, token := range []string{
-		"outboundTransactionFinalized(ctx, router.TransactionRepo",
+		"outboundTerminalTransaction(ctx, router.TransactionRepo",
 		"continue",
 		"models.WithdrawalStatusFinalized",
 		"constants.WebhookEventPayoutFinalizedV1",
+		"constants.WebhookEventPayoutFailedV1",
 		"constants.WebhookEventRefundSucceededV1",
+		"constants.WebhookEventRefundFailedV1",
+		"openOutboundLifecycleReconciliation",
+		"terminalTx.Status == models.TransactionStatusFailed",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("finalizeProcessingTransfers missing finality evidence token %q", token)
 		}
 	}
-	finalityIndex := strings.Index(body, "outboundTransactionFinalized(ctx, router.TransactionRepo")
+	finalityIndex := strings.Index(body, "outboundTerminalTransaction(ctx, router.TransactionRepo")
 	withdrawalFinalizeIndex := strings.Index(body, "router.WithdrawalRepo.FinalizeProcessingWithLedger")
 	refundFinalizeIndex := strings.Index(body, "router.RefundRepo.MarkSucceededWithLedger")
 	if finalityIndex == -1 || withdrawalFinalizeIndex == -1 || refundFinalizeIndex == -1 {

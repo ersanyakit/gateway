@@ -99,12 +99,26 @@ document.addEventListener('DOMContentLoaded', function () {
     var pressChild = element.querySelector('.crypto-circle, .crypto-network-left img');
     element.classList.add('is-pressing');
     if (pressChild) {
+      pressChild.setAttribute('data-press-style', pressChild.getAttribute('style') || '');
       pressChild.classList.add('is-pressing-child');
+      pressChild.style.transform = 'scale(.88)';
+      pressChild.style.filter = 'saturate(1.08)';
+      if (pressChild.classList.contains('crypto-circle')) {
+        pressChild.style.background = 'rgba(255, 55, 199, .12)';
+        pressChild.style.boxShadow = 'inset 0 1px 3px rgba(13, 17, 28, .12)';
+      }
     }
     window.setTimeout(function () {
       element.classList.remove('is-pressing');
       if (pressChild) {
         pressChild.classList.remove('is-pressing-child');
+        var originalStyle = pressChild.getAttribute('data-press-style');
+        if (originalStyle) {
+          pressChild.setAttribute('style', originalStyle);
+        } else {
+          pressChild.removeAttribute('style');
+        }
+        pressChild.removeAttribute('data-press-style');
       }
     }, 180);
   }

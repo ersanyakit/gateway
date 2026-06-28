@@ -905,6 +905,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Idempotent replay response",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1PayoutCreateResponse"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {
@@ -1120,6 +1126,12 @@ const docTemplate = `{
                     }
                 ],
                 "responses": {
+                    "200": {
+                        "description": "Idempotent replay response",
+                        "schema": {
+                            "$ref": "#/definitions/types.V1RefundCreateResponse"
+                        }
+                    },
                     "201": {
                         "description": "Created",
                         "schema": {

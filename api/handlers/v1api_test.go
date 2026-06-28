@@ -59,6 +59,22 @@ func TestV1PaymentResponseIncludesDonationLinkType(t *testing.T) {
 	}
 }
 
+func TestV1RefundLimitUsesDonationMatchedAmountWhenExpectedIsZero(t *testing.T) {
+	session := &models.PaymentSession{
+		LinkType:          models.PaymentLinkTypeDonation,
+		ExpectedAmountRaw: "0",
+		MatchedAmountRaw:  "997",
+	}
+
+	limit, err := v1RefundLimitRaw(context.Background(), V1APIDeps{}, session)
+	if err != nil {
+		t.Fatalf("v1RefundLimitRaw returned error: %v", err)
+	}
+	if limit.String() != "997" {
+		t.Fatalf("limit = %s, want 997", limit.String())
+	}
+}
+
 func TestV1OutboundResponsesIncludeLifecycleMetadata(t *testing.T) {
 	now := time.Date(2026, 6, 28, 12, 30, 0, 0, time.UTC)
 	domainID := uuid.New()

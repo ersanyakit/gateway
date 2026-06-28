@@ -125,7 +125,7 @@ func sweepJobLockTimeout() time.Duration {
 	if err != nil || timeout <= 0 {
 		return 2 * time.Minute
 	}
-	if timeout <= sweepJobExecutionTimeout {
+	if timeout < minimum {
 		return minimum
 	}
 	return timeout
@@ -1404,17 +1404,42 @@ func finalizeProcessingTransfers(ctx context.Context) {
 			log.Println("Processing withdrawal query error:", err)
 		} else {
 			for _, request := range withdrawals {
-				if !outboundTransactionFinalized(ctx, router.TransactionRepo, request.Chain, request.TxHash) {
+				terminalTx, finalityErr := outboundTerminalTransaction(ctx, router.TransactionRepo, request.Chain, request.TxHash)
+				if finalityErr != nil {
+					log.Printf("Processing withdrawal finality lookup error %s: %v\n", request.ID, finalityErr)
+					openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, request.Chain, request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_finality_lookup_failed", finalityErr, request.TxHash)
+					continue
+				}
+				if terminalTx == nil {
+					continue
+				}
+				if terminalTx.Status == models.TransactionStatusFailed {
+					errText := "outbound transaction failed after broadcast: " + request.TxHash
+					if err := router.WithdrawalRepo.MarkFailedFinalWithLedgerRelease(ctx, request.ID, request.ReviewedBy, errText, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+						log.Printf("Processing withdrawal failed finalize error %s: %v\n", request.ID, err)
+						openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, request.Chain, request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_failed_transition_failed", err, request.TxHash)
+					} else if err == nil {
+						now := time.Now()
+						request.Status = models.WithdrawalStatusFailed
+						request.FinalizedAt = &now
+						request.Error = errText
+						if deliveryID := enqueuePayoutLifecycleWebhook(ctx, request, constants.WebhookEventPayoutFailedV1); deliveryID == uuid.Nil {
+							openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, request.Chain, request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_terminal_event_enqueue_failed", errors.New("payout failed lifecycle enqueue failed"), request.TxHash)
+						}
+					}
 					continue
 				}
 				if err := router.WithdrawalRepo.FinalizeProcessingWithLedger(ctx, request.ID, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing withdrawal finalize error %s: %v\n", request.ID, err)
+					openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, request.Chain, request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_ledger_finalization_failed", err, request.TxHash)
 				} else if err == nil {
 					now := time.Now()
 					request.Status = models.WithdrawalStatusFinalized
 					request.FinalizedAt = &now
 					request.Error = ""
-					enqueuePayoutLifecycleWebhook(ctx, request, constants.WebhookEventPayoutFinalizedV1)
+					if deliveryID := enqueuePayoutLifecycleWebhook(ctx, request, constants.WebhookEventPayoutFinalizedV1); deliveryID == uuid.Nil {
+						openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, request.Chain, request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_terminal_event_enqueue_failed", errors.New("payout finalized lifecycle enqueue failed"), request.TxHash)
+					}
 				}
 			}
 		}
@@ -1428,35 +1453,99 @@ func finalizeProcessingTransfers(ctx context.Context) {
 				session, err := router.PaymentRepo.FindByID(ctx, refund.PaymentID)
 				if err != nil {
 					log.Printf("Processing refund payment lookup error %s: %v\n", refund.ID, err)
+					domainID := refund.DomainID
+					openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, refund.Chain, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_payment_lookup_failed", err, refund.TxHash)
 					continue
 				}
-				if !outboundTransactionFinalized(ctx, router.TransactionRepo, outboundRefundChainName(refund, *session), refund.TxHash) {
+				chainName := outboundRefundChainName(refund, *session)
+				terminalTx, finalityErr := outboundTerminalTransaction(ctx, router.TransactionRepo, chainName, refund.TxHash)
+				if finalityErr != nil {
+					log.Printf("Processing refund finality lookup error %s: %v\n", refund.ID, finalityErr)
+					domainID := refund.DomainID
+					openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, chainName, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_finality_lookup_failed", finalityErr, refund.TxHash)
+					continue
+				}
+				if terminalTx == nil {
+					continue
+				}
+				if terminalTx.Status == models.TransactionStatusFailed {
+					errText := "outbound refund transaction failed after broadcast: " + refund.TxHash
+					if err := router.RefundRepo.MarkFailedFinalWithLedgerRelease(ctx, refund.ID, refund.ReviewedBy, errText, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+						log.Printf("Processing refund failed finalize error %s: %v\n", refund.ID, err)
+						domainID := refund.DomainID
+						openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, chainName, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_failed_transition_failed", err, refund.TxHash)
+					} else if err == nil {
+						now := time.Now()
+						refund.Status = models.RefundStatusFailed
+						refund.FinalizedAt = &now
+						refund.Error = errText
+						if deliveryID := enqueueRefundLifecycleWebhook(ctx, refund, constants.WebhookEventRefundFailedV1); deliveryID == uuid.Nil {
+							domainID := refund.DomainID
+							openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, chainName, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_terminal_event_enqueue_failed", errors.New("refund failed lifecycle enqueue failed"), refund.TxHash)
+						}
+					}
 					continue
 				}
 				if err := router.RefundRepo.MarkSucceededWithLedger(ctx, refund.ID, refund.ReviewedBy, refund.TxHash, *session, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing refund finalize error %s: %v\n", refund.ID, err)
+					domainID := refund.DomainID
+					openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, chainName, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_ledger_finalization_failed", err, refund.TxHash)
 				} else if err == nil {
 					now := time.Now()
 					refund.Status = models.RefundStatusSucceeded
 					refund.FinalizedAt = &now
 					refund.Error = ""
-					enqueueRefundLifecycleWebhook(ctx, refund, constants.WebhookEventRefundSucceededV1)
+					if deliveryID := enqueueRefundLifecycleWebhook(ctx, refund, constants.WebhookEventRefundSucceededV1); deliveryID == uuid.Nil {
+						domainID := refund.DomainID
+						openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, chainName, refund.MerchantID, &domainID, "refund", refund.ID.String(), refund.Status, "outbound_terminal_event_enqueue_failed", errors.New("refund succeeded lifecycle enqueue failed"), refund.TxHash)
+					}
 				}
 			}
 		}
 	}
 }
 
-func outboundTransactionFinalized(ctx context.Context, repo *repositories.TransactionRepo, chainName string, txHash string) bool {
+func outboundTransactionFinalized(ctx context.Context, repo *repositories.TransactionRepo, chainName string, txHash string) (bool, error) {
+	txModel, err := outboundTerminalTransaction(ctx, repo, chainName, txHash)
+	if err != nil || txModel == nil {
+		return false, err
+	}
+	return txModel.Status == models.TransactionStatusConfirmed && txModel.FinalizedAt != nil, nil
+}
+
+func outboundTerminalTransaction(ctx context.Context, repo *repositories.TransactionRepo, chainName string, txHash string) (*models.Transaction, error) {
 	if repo == nil || strings.TrimSpace(txHash) == "" {
-		return false
+		return nil, nil
 	}
 	chainID, ok := outboundChainIDFromName(chainName)
 	if !ok {
-		return false
+		return nil, nil
 	}
-	txModel, err := repo.FindFinalizedByHash(ctx, chainID, txHash)
-	return err == nil && txModel != nil
+	txModel, err := repo.FindTerminalByHash(ctx, chainID, txHash)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return txModel, nil
+}
+
+func openOutboundLifecycleReconciliation(ctx context.Context, repo *repositories.ReconciliationRepo, chainName string, merchantID uuid.UUID, domainID *uuid.UUID, resourceType string, resourceID string, lifecycleStatus string, reason string, err error, txHash string) {
+	if repo == nil {
+		return
+	}
+	chainID, _ := outboundChainIDFromName(chainName)
+	evidence := map[string]any{
+		"chain":   strings.TrimSpace(chainName),
+		"tx_hash": strings.TrimSpace(txHash),
+	}
+	if err != nil {
+		evidence["error"] = err.Error()
+	}
+	if _, _, openErr := repo.OpenStuckLifecycleJob(ctx, chainID, &merchantID, domainID, resourceType, resourceID, lifecycleStatus, reason, evidence); openErr != nil {
+		log.Printf("Outbound lifecycle reconciliation open error resource=%s/%s: %v\n", resourceType, resourceID, openErr)
+	}
 }
 
 func outboundRefundChainName(refund models.Refund, session models.PaymentSession) string {

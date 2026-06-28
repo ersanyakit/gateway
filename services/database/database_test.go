@@ -275,6 +275,9 @@ func TestOutboundLifecycleSchemaColumnsAreRequired(t *testing.T) {
 			"ResourceType": false,
 			"ResourceID":   false,
 		},
+		"activity_logs": {
+			"CorrelationID": false,
+		},
 	}
 	for _, column := range requiredSchemaColumns() {
 		fields, ok := required[column.table]
@@ -304,6 +307,7 @@ func TestOutboundLifecycleSchemaColumnsAreRequired(t *testing.T) {
 		"idx_refunds_broadcasted_at":              false,
 		"idx_refunds_finalized_at":                false,
 		"idx_idempotency_keys_resource_id":        false,
+		"idx_activity_logs_correlation_id":        false,
 	}
 	for _, index := range requiredSchemaIndexes() {
 		if _, ok := requiredIndexes[index.name]; ok {

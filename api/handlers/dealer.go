@@ -92,6 +92,7 @@ type DealerDeps struct {
 	LedgerRepo          *repositories.LedgerRepo
 	SweepJobRepo        *repositories.SweepJobRepo
 	TransactionRepo     *repositories.TransactionRepo
+	ReconciliationRepo  *repositories.ReconciliationRepo
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
 	ActivityLogRepo     *repositories.ActivityLogRepo
 	AdminRepo           *repositories.AdminRepo
@@ -272,6 +273,7 @@ type DealerProductView struct {
 	AmountDisplay string
 	Language      string
 	Merchant      string
+	DomainID      string
 	Domain        string
 	PaymentURL    string
 	LogoURL       string
@@ -928,60 +930,27 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/merchant/dashboard/products", "Product repository hazır değil.")
 		}
 
-		domainIDRaw := strings.TrimSpace(c.FormValue("domain_id"))
-		domainID, err := uuid.Parse(domainIDRaw)
+		form, err := parseDealerProductForm(c, deps, merchant)
 		if err != nil {
-			return redirectWithError(c, "/merchant/dashboard/products", "Geçerli domain seçmelisin.")
-		}
-		domainIDString := domainID.String()
-		domain, err := deps.DomainService.FindByID(types.DomainParams{
-			Context:  c.Context(),
-			DomainID: &domainIDString,
-		})
-		if err != nil || domain.MerchantID != merchant.ID {
-			return redirectWithError(c, "/merchant/dashboard/products", "Domain bulunamadı.")
-		}
-
-		name := strings.TrimSpace(c.FormValue("name"))
-		description := strings.TrimSpace(c.FormValue("description"))
-		amount := strings.TrimSpace(c.FormValue("amount"))
-		currency := strings.ToUpper(strings.TrimSpace(c.FormValue("currency")))
-		linkType := models.NormalizePaymentLinkType(c.FormValue("link_type"))
-		language := normalizeLanguage(c.FormValue("language"))
-		successURL := strings.TrimSpace(c.FormValue("success_url"))
-		cancelURL := strings.TrimSpace(c.FormValue("cancel_url"))
-		logoURL := strings.TrimSpace(c.FormValue("logo_url"))
-		if name == "" {
-			return redirectWithError(c, "/merchant/dashboard/products", "Ürün adı zorunlu.")
-		}
-		if models.IsDonationLinkType(linkType) {
-			amount = "0"
-			currency = ""
-		} else {
-			if err := types.ValidatePositiveDecimal(amount); err != nil {
-				return redirectWithError(c, "/merchant/dashboard/products", "Tutar pozitif decimal olmalı.")
-			}
-			if currency == "" {
-				currency = "USD"
-			}
+			return redirectWithError(c, "/merchant/dashboard/products", err.Error())
 		}
 
 		product := &models.Product{
 			MerchantID:  merchant.ID,
-			DomainID:    domain.ID,
-			Name:        name,
-			Description: description,
-			LinkType:    linkType,
-			Amount:      amount,
-			Currency:    currency,
-			Language:    language,
-			SuccessURL:  successURL,
-			CancelURL:   cancelURL,
-			LogoURL:     logoURL,
+			DomainID:    form.domain.ID,
+			Name:        form.name,
+			Description: form.description,
+			LinkType:    form.linkType,
+			Amount:      form.amount,
+			Currency:    form.currency,
+			Language:    form.language,
+			SuccessURL:  form.successURL,
+			CancelURL:   form.cancelURL,
+			LogoURL:     form.logoURL,
 			IsActive:    true,
 		}
 		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
-			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "failed", "product", name, err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "failed", "product", form.name, err.Error())
 			return redirectWithError(c, "/merchant/dashboard/products", "Ürün oluşturulamadı: "+err.Error())
 		}
 		activityMessage := "Payment link ürünü oluşturuldu."
@@ -992,6 +961,109 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		link := baseURL(c) + "/payment-links/" + product.LinkToken
 		return redirectWithSuccess(c, "/merchant/dashboard/products", "Payment link oluşturuldu: "+link)
 	}
+}
+
+func HandleDealerProductUpdate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return redirectDealerLogin(c)
+		}
+		if deps.ProductRepo == nil {
+			return redirectWithError(c, "/merchant/dashboard/products", "Product repository hazır değil.")
+		}
+
+		productID, err := uuid.Parse(strings.TrimSpace(c.Params("id")))
+		if err != nil {
+			return redirectWithError(c, "/merchant/dashboard/products", "Geçersiz payment link.")
+		}
+		product, err := deps.ProductRepo.FindByID(c.Context(), productID)
+		if err != nil || product.MerchantID != merchant.ID {
+			return redirectWithError(c, "/merchant/dashboard/products", "Payment link bulunamadı.")
+		}
+
+		form, err := parseDealerProductForm(c, deps, merchant)
+		if err != nil {
+			return redirectWithError(c, "/merchant/dashboard/products", err.Error())
+		}
+
+		product.DomainID = form.domain.ID
+		product.Name = form.name
+		product.Description = form.description
+		product.LinkType = form.linkType
+		product.Amount = form.amount
+		product.Currency = form.currency
+		product.Language = form.language
+		product.SuccessURL = form.successURL
+		product.CancelURL = form.cancelURL
+		product.LogoURL = form.logoURL
+
+		if err := deps.ProductRepo.Update(c.Context(), product); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.update", "failed", "product", product.ID.String(), err.Error())
+			return redirectWithError(c, "/merchant/dashboard/products", "Payment link güncellenemedi: "+err.Error())
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.update", "success", "product", product.ID.String(), "Payment link güncellendi.")
+		return redirectWithSuccess(c, "/merchant/dashboard/products", "Payment link güncellendi.")
+	}
+}
+
+type dealerProductFormData struct {
+	domain      *models.Domain
+	name        string
+	description string
+	linkType    string
+	amount      string
+	currency    string
+	language    string
+	successURL  string
+	cancelURL   string
+	logoURL     string
+}
+
+func parseDealerProductForm(c fiber.Ctx, deps DealerDeps, merchant *models.Merchant) (dealerProductFormData, error) {
+	var form dealerProductFormData
+	if merchant == nil {
+		return form, errors.New("Merchant oturumu bulunamadı.")
+	}
+	domainIDRaw := strings.TrimSpace(c.FormValue("domain_id"))
+	domainID, err := uuid.Parse(domainIDRaw)
+	if err != nil {
+		return form, errors.New("Geçerli domain seçmelisin.")
+	}
+	domainIDString := domainID.String()
+	domain, err := deps.DomainService.FindByID(types.DomainParams{
+		Context:  c.Context(),
+		DomainID: &domainIDString,
+	})
+	if err != nil || domain.MerchantID != merchant.ID {
+		return form, errors.New("Domain bulunamadı.")
+	}
+
+	form.domain = domain
+	form.name = strings.TrimSpace(c.FormValue("name"))
+	form.description = strings.TrimSpace(c.FormValue("description"))
+	form.amount = strings.TrimSpace(c.FormValue("amount"))
+	form.currency = strings.ToUpper(strings.TrimSpace(c.FormValue("currency")))
+	form.linkType = models.NormalizePaymentLinkType(c.FormValue("link_type"))
+	form.language = normalizeLanguage(c.FormValue("language"))
+	form.successURL = strings.TrimSpace(c.FormValue("success_url"))
+	form.cancelURL = strings.TrimSpace(c.FormValue("cancel_url"))
+	form.logoURL = strings.TrimSpace(c.FormValue("logo_url"))
+	if form.name == "" {
+		return form, errors.New("Ürün adı zorunlu.")
+	}
+	if models.IsDonationLinkType(form.linkType) {
+		form.amount = "0"
+		form.currency = ""
+		return form, nil
+	}
+	if err := types.ValidatePositiveDecimal(form.amount); err != nil {
+		return form, errors.New("Tutar pozitif decimal olmalı.")
+	}
+	if form.currency == "" {
+		form.currency = "USD"
+	}
+	return form, nil
 }
 
 func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
@@ -1243,22 +1315,37 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/merchant/dashboard", err.Error())
 		}
 
+		requestID := uuid.New()
+		domainID := wallet.DomainID
+		idempotencyKey := strings.TrimSpace(c.Get("Idempotency-Key"))
+		correlationID := dealerSignerCorrelationID(c, "withdrawal:"+requestID.String())
+		if err := validateV1CreateMetadata(idempotencyKey, correlationID); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
+			return redirectWithError(c, "/merchant/dashboard", err.Error())
+		}
 		request := &models.WithdrawalRequest{
-			MerchantID:  merchant.ID,
-			WalletID:    wallet.ID,
-			Chain:       *params.Chain,
-			Token:       token,
-			Symbol:      symbol,
-			Decimals:    decimals,
-			ToAddress:   *params.ToAddress,
-			AmountRaw:   *params.AmountRaw,
-			Note:        note,
-			Status:      models.WithdrawalStatusPending,
-			RequestedBy: merchant.Email,
+			ID:             requestID,
+			MerchantID:     merchant.ID,
+			DomainID:       &domainID,
+			WalletID:       wallet.ID,
+			Chain:          *params.Chain,
+			Token:          token,
+			Symbol:         symbol,
+			Decimals:       decimals,
+			ToAddress:      *params.ToAddress,
+			AmountRaw:      *params.AmountRaw,
+			Note:           note,
+			Status:         models.WithdrawalStatusPending,
+			RequestedBy:    merchant.Email,
+			IdempotencyKey: idempotencyKey,
+			CorrelationID:  correlationID,
 		}
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
 			return redirectWithError(c, "/merchant/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
+		}
+		if deliveryID := enqueueDealerPayoutLifecycle(c.Context(), deps, *request, constants.WebhookEventPayoutRequestedV1); deps.WebhookDeliveryRepo != nil && deliveryID == uuid.Nil {
+			openDealerOutboundLifecycleReconciliation(c.Context(), deps, request.Chain, &request.MerchantID, request.DomainID, "withdrawal", request.ID.String(), request.Status, "outbound_requested_event_enqueue_failed", "requested lifecycle enqueue failed", request.TxHash)
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "success", "withdrawal", request.ID.String(), "Çekim talebi admin onayına gönderildi.")
 		return redirectWithSuccess(c, "/merchant/dashboard", "Çekim talebi admin onayına gönderildi.")
@@ -2249,6 +2336,12 @@ func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 		if err := params.ValidateWithdraw(); err != nil {
 			return redirectWithError(c, "/admin/recover", err.Error())
 		}
+		if err := requireOutboundMakerChecker(adminEmail, adminEmail); err != nil {
+			if deps.ActivityLogRepo != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, err.Error())
+			}
+			return redirectWithError(c, "/admin/recover", err.Error())
+		}
 		domainID := sourceWallet.DomainID
 		note := "admin recover funds to " + destinationLabel
 		if networkFeeRaw != "0" {
@@ -2304,13 +2397,15 @@ func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "withdrawal", request.ID.String(), err.Error())
 			}
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
-				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
-				return redirectWithError(c, "/admin/recover", "Transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
+				openDealerOutboundLifecycleReconciliation(c.Context(), deps, approvedRequest.Chain, &approvedRequest.MerchantID, approvedRequest.DomainID, "withdrawal", approvedRequest.ID.String(), approvedRequest.Status, "outbound_broadcast_uncertain", approvedRequest.Error, approvedRequest.TxHash)
 			}
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusFailed {
 				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFailedV1)
 			}
 			return redirectWithError(c, "/admin/recover", "Transfer başarısız: "+err.Error())
+		}
+		if approvedRequest != nil {
+			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
 		}
 		if deps.ActivityLogRepo != nil {
 			txHash := ""
@@ -2356,7 +2451,10 @@ func requireOutboundMakerChecker(requestedBy string, actorEmail string) error {
 	}
 	requestedBy = strings.TrimSpace(requestedBy)
 	actorEmail = strings.TrimSpace(actorEmail)
-	if requestedBy != "" && actorEmail != "" && strings.EqualFold(requestedBy, actorEmail) {
+	if requestedBy == "" || actorEmail == "" {
+		return errors.New("maker-checker policy requires requester and approver identity")
+	}
+	if strings.EqualFold(requestedBy, actorEmail) {
 		return errors.New("maker-checker policy rejects self approval")
 	}
 	return nil
@@ -2704,7 +2802,16 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/withdrawals", "Geçersiz talep.")
 		}
 		request, err := deps.WithdrawalRepo.Find(c.Context(), id)
-		if err != nil || request.Status != models.WithdrawalStatusPending {
+		if err != nil {
+			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
+		}
+		switch request.Status {
+		case models.WithdrawalStatusPending:
+		case models.WithdrawalStatusProcessing, models.WithdrawalStatusFinalized, models.WithdrawalStatusApproved:
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success", "withdrawal", id.String(), "Çekim onayı zaten işlenmiş.")
+			return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onayı zaten işlenmiş.")
+		default:
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), "Pending talep bulunamadı.")
 			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
 		}
 		if err := requireOutboundMakerChecker(request.RequestedBy, adminEmail); err != nil {
@@ -2730,13 +2837,15 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			if err != nil {
 				return "", err
 			}
+			if result == nil || strings.TrimSpace(result.TxHash) == "" {
+				return "", errors.New("transfer broadcast missing transaction hash")
+			}
 			return result.TxHash, nil
 		})
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), err.Error())
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusProcessing {
-				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
-				return redirectWithError(c, "/admin/withdrawals", "Transfer gönderildi ancak ledger güncellenemedi: "+err.Error())
+				openDealerOutboundLifecycleReconciliation(c.Context(), deps, approvedRequest.Chain, &approvedRequest.MerchantID, approvedRequest.DomainID, "withdrawal", approvedRequest.ID.String(), approvedRequest.Status, "outbound_broadcast_uncertain", approvedRequest.Error, approvedRequest.TxHash)
 			}
 			if approvedRequest != nil && approvedRequest.Status == models.WithdrawalStatusFailed {
 				enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFailedV1)
@@ -2765,6 +2874,19 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		reason := strings.TrimSpace(c.FormValue("reason"))
 		if reason == "" {
 			reason = "Admin tarafından reddedildi."
+		}
+		if findErr != nil || request == nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", id.String(), "Pending talep bulunamadı.")
+			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
+		}
+		switch request.Status {
+		case models.WithdrawalStatusPending:
+		case models.WithdrawalStatusRejected:
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "success", "withdrawal", id.String(), "Çekim talebi zaten reddedilmiş.")
+			return redirectWithSuccess(c, "/admin/withdrawals", "Çekim talebi zaten reddedilmiş.")
+		default:
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", id.String(), "Pending talep bulunamadı.")
+			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
 		}
 		if err := deps.WithdrawalRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", id.String(), err.Error())
@@ -2795,7 +2917,16 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/refunds", "Geçersiz refund.")
 		}
 		refund, err := deps.RefundRepo.Find(c.Context(), id)
-		if err != nil || refund.Status != models.RefundStatusPending {
+		if err != nil {
+			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
+		}
+		switch refund.Status {
+		case models.RefundStatusPending:
+		case models.RefundStatusProcessing, models.RefundStatusSucceeded, models.RefundStatusApproved:
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund onayı zaten işlenmiş.")
+			return redirectWithSuccess(c, "/admin/refunds", "Refund onayı zaten işlenmiş.")
+		default:
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), "Pending refund bulunamadı.")
 			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
 		}
 		if err := requireOutboundMakerChecker(refund.RequestedBy, adminEmail); err != nil {
@@ -2853,28 +2984,48 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 			claimedRefund.Status = models.RefundStatusFailed
 			claimedRefund.Error = err.Error()
 			enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundFailedV1)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", err.Error())
 		}
 
 		result, err := ExecuteReservedWalletTransfer(deps.WalletRepo, deps.Blockchains, params, false)
 		if err != nil {
+			if repositories.OutboundTransferFailureBroadcastUncertain(err) {
+				errText := "broadcast outcome uncertain: " + err.Error()
+				_ = deps.RefundRepo.SetProcessingError(c.Context(), id, errText)
+				claimedRefund.Status = models.RefundStatusProcessing
+				claimedRefund.Error = errText
+				openDealerOutboundLifecycleReconciliation(c.Context(), deps, chain, &refund.MerchantID, &refund.DomainID, "refund", id.String(), claimedRefund.Status, "outbound_broadcast_uncertain", errText, "")
+				logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), errText)
+				return redirectWithError(c, "/admin/refunds", "Refund transfer sonucu belirsiz; hold korunuyor ve operatör takibi gerekiyor: "+err.Error())
+			}
 			_ = deps.RefundRepo.MarkFailed(c.Context(), id, adminEmail, err.Error())
 			claimedRefund.Status = models.RefundStatusFailed
 			claimedRefund.Error = err.Error()
 			enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundFailedV1)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer başarısız: "+err.Error())
 		}
-		if err := deps.RefundRepo.RecordBroadcast(c.Context(), id, adminEmail, result.TxHash); err != nil {
+		txHash := ""
+		if result != nil {
+			txHash = result.TxHash
+		}
+		if err := deps.RefundRepo.RecordBroadcast(c.Context(), id, adminEmail, txHash); err != nil {
+			errText := "broadcast sent but tx hash persist failed: " + err.Error()
+			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, errText)
+			openDealerOutboundLifecycleReconciliation(c.Context(), deps, chain, &refund.MerchantID, &refund.DomainID, "refund", id.String(), models.RefundStatusProcessing, "outbound_tx_hash_persist_failed", errText, txHash)
 			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak tx hash kaydedilemedi: "+err.Error())
 		}
-		claimedRefund.Status = models.RefundStatusProcessing
-		claimedRefund.TxHash = result.TxHash
-		claimedRefund.ReviewedBy = adminEmail
+		if persistedRefund, err := deps.RefundRepo.Find(c.Context(), id); err == nil && persistedRefund != nil {
+			claimedRefund = persistedRefund
+		} else {
+			claimedRefund.Status = models.RefundStatusProcessing
+			claimedRefund.TxHash = txHash
+			claimedRefund.ReviewedBy = adminEmail
+		}
 		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundBroadcastV1)
-		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+result.TxHash)
+		logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+txHash)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")
 	}
 }
@@ -2900,6 +3051,19 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 		reason := strings.TrimSpace(c.FormValue("reason"))
 		if reason == "" {
 			reason = "Admin tarafından reddedildi."
+		}
+		if findErr != nil || refund == nil {
+			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed", "refund", id.String(), "Pending refund bulunamadı.")
+			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
+		}
+		switch refund.Status {
+		case models.RefundStatusPending:
+		case models.RefundStatusRejected:
+			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "success", "refund", id.String(), "Refund talebi zaten reddedilmiş.")
+			return redirectWithSuccess(c, "/admin/refunds", "Refund talebi zaten reddedilmiş.")
+		default:
+			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed", "refund", id.String(), "Pending refund bulunamadı.")
+			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
 		}
 		if err := deps.RefundRepo.MarkRejected(c.Context(), id, adminEmail, reason); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed", "refund", id.String(), err.Error())
@@ -4153,6 +4317,33 @@ func enqueueDealerRefundLifecycle(ctx context.Context, deps DealerDeps, refund m
 	return enqueueDealerLifecycleWebhook(ctx, deps, *domain, payload)
 }
 
+func openDealerOutboundLifecycleReconciliation(ctx context.Context, deps DealerDeps, chain string, merchantID *uuid.UUID, domainID *uuid.UUID, resourceType string, resourceID string, lifecycleStatus string, reason string, errText string, txHash string) {
+	if deps.ReconciliationRepo == nil {
+		return
+	}
+	evidence := map[string]any{
+		"chain":   strings.TrimSpace(chain),
+		"tx_hash": strings.TrimSpace(txHash),
+	}
+	if strings.TrimSpace(errText) != "" {
+		evidence["error"] = strings.TrimSpace(errText)
+	}
+	_, _, err := deps.ReconciliationRepo.OpenStuckLifecycleJob(
+		ctx,
+		chainSlugToID(chain),
+		merchantID,
+		domainID,
+		resourceType,
+		resourceID,
+		lifecycleStatus,
+		reason,
+		evidence,
+	)
+	if err != nil {
+		fmt.Println("outbound lifecycle reconciliation open error:", err)
+	}
+}
+
 func markAdminWebhookDeliveryAttempt(ctx context.Context, deps DealerDeps, deliveryID uuid.UUID, delivered bool, lastErr error) {
 	if deps.WebhookDeliveryRepo == nil || deliveryID == uuid.Nil {
 		return
@@ -4281,6 +4472,7 @@ func dealerProductViews(c fiber.Ctx, products []models.Product) []DealerProductV
 			AmountDisplay: amountDisplay,
 			Language:      strings.ToUpper(product.Language),
 			Merchant:      product.Merchant.Name,
+			DomainID:      product.DomainID.String(),
 			Domain:        product.Domain.DomainURL,
 			PaymentURL:    baseURL(c) + "/payment-links/" + product.LinkToken,
 			LogoURL:       product.LogoURL,
@@ -5137,20 +5329,25 @@ func logDealerActivity(c fiber.Ctx, repo *repositories.ActivityLogRepo, merchant
 	if repo == nil {
 		return
 	}
+	correlationID := strings.TrimSpace(middleware.RequestIDFromCtx(c))
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(c.Get("X-Request-ID"))
+	}
 	log := &models.ActivityLog{
-		MerchantID:  merchantID,
-		ActorType:   emptyDefault(actorType, "system"),
-		ActorEmail:  strings.TrimSpace(actorEmail),
-		Event:       emptyDefault(event, "activity"),
-		Status:      emptyDefault(status, "info"),
-		SubjectType: strings.TrimSpace(subjectType),
-		SubjectID:   strings.TrimSpace(subjectID),
-		Description: strings.TrimSpace(description),
-		IPAddress:   clientIP(c),
-		UserAgent:   strings.TrimSpace(c.Get("User-Agent")),
-		Method:      strings.TrimSpace(c.Method()),
-		Path:        strings.TrimSpace(c.Path()),
-		CreatedAt:   time.Now().UTC(),
+		MerchantID:    merchantID,
+		ActorType:     emptyDefault(actorType, "system"),
+		ActorEmail:    strings.TrimSpace(actorEmail),
+		Event:         emptyDefault(event, "activity"),
+		Status:        emptyDefault(status, "info"),
+		SubjectType:   strings.TrimSpace(subjectType),
+		SubjectID:     strings.TrimSpace(subjectID),
+		Description:   strings.TrimSpace(description),
+		IPAddress:     clientIP(c),
+		UserAgent:     strings.TrimSpace(c.Get("User-Agent")),
+		Method:        strings.TrimSpace(c.Method()),
+		Path:          strings.TrimSpace(c.Path()),
+		CorrelationID: correlationID,
+		CreatedAt:     time.Now().UTC(),
 	}
 	_ = repo.Create(c.Context(), log)
 }

@@ -24,6 +24,27 @@ var (
 	ErrRefundTxHashRequired     = ErrTxHashRequired
 )
 
+func OutboundTransferFailureBroadcastUncertain(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"broadcast",
+		"sendtransaction",
+		"already known",
+		"nonce too low",
+		"replacement transaction underpriced",
+		"transaction underpriced",
+		"mempool",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
+}
+
 func NewWithdrawalRequestRepo(db *gorm.DB) *WithdrawalRequestRepo {
 	return &WithdrawalRequestRepo{db: db}
 }
@@ -176,6 +197,24 @@ func (r *WithdrawalRequestRepo) FindByDomain(ctx context.Context, merchantID, do
 	return &request, nil
 }
 
+func (r *WithdrawalRequestRepo) FindByDomainIdempotencyKey(ctx context.Context, merchantID, domainID uuid.UUID, key string) (*models.WithdrawalRequest, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var request models.WithdrawalRequest
+	err := r.db.WithContext(ctx).
+		Preload("Merchant").
+		Preload("Wallet").
+		Where("merchant_id = ? AND domain_id = ? AND idempotency_key = ?", merchantID, domainID, key).
+		Order("created_at DESC").
+		First(&request).Error
+	if err != nil {
+		return nil, err
+	}
+	return &request, nil
+}
+
 func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
 	txHash = strings.TrimSpace(txHash)
 	if txHash == "" {
@@ -309,6 +348,49 @@ func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, re
 	})
 }
 
+func (r *WithdrawalRequestRepo) MarkFailedFinalWithLedgerRelease(ctx context.Context, id uuid.UUID, reviewedBy string, errText string, ledger *LedgerRepo) error {
+	if ledger == nil {
+		return ErrLedgerReservationRequired
+	}
+	now := time.Now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
+			First(&request, "id = ? AND status = ? AND tx_hash <> ''", id, models.WithdrawalStatusProcessing).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+			Updates(map[string]any{
+				"status":       models.WithdrawalStatusFailed,
+				"reviewed_by":  reviewedBy,
+				"reviewed_at":  &now,
+				"finalized_at": &now,
+				"error":        errText,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
+	})
+}
+
+func (r *WithdrawalRequestRepo) SetProcessingError(ctx context.Context, id uuid.UUID, errText string) error {
+	result := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
+		Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+		Update("error", errText)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *WithdrawalRequestRepo) LockPending(ctx context.Context, id uuid.UUID) (*models.WithdrawalRequest, error) {
 	var request models.WithdrawalRequest
 	err := r.db.WithContext(ctx).
@@ -384,14 +466,24 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 
 	txHash, transferErr := transfer(&request)
 	if transferErr != nil {
+		if OutboundTransferFailureBroadcastUncertain(transferErr) {
+			errText := "broadcast outcome uncertain: " + transferErr.Error()
+			_ = r.SetProcessingError(ctx, id, errText)
+			request.Status = models.WithdrawalStatusProcessing
+			request.Error = errText
+			return &request, transferErr
+		}
 		_ = r.MarkFailed(ctx, id, reviewedBy, transferErr.Error())
 		request.Status = models.WithdrawalStatusFailed
 		request.Error = transferErr.Error()
 		return &request, transferErr
 	}
 	if err := r.RecordBroadcast(ctx, id, reviewedBy, txHash); err != nil {
+		errText := "broadcast sent but tx hash persist failed: " + err.Error()
+		_ = r.SetProcessingError(ctx, id, errText)
+		request.Status = models.WithdrawalStatusProcessing
 		request.TxHash = strings.TrimSpace(txHash)
-		request.Error = "broadcast sent but tx hash persist failed: " + err.Error()
+		request.Error = errText
 		return &request, err
 	}
 	now := time.Now()

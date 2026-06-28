@@ -337,6 +337,7 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, field: "Outcome"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, field: "NextRunAt"},
 		{table: "activity_logs", model: &models.ActivityLog{}, field: "ID"},
+		{table: "activity_logs", model: &models.ActivityLog{}, field: "CorrelationID"},
 		{table: "admins", model: &models.Admin{}, field: "ID"},
 		{table: "transactions", model: &models.Transaction{}, field: "WebhookLockedUntil"},
 		{table: "payment_sessions", model: &models.PaymentSession{}, field: "WebhookLockedUntil"},
@@ -375,6 +376,7 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_resource_id"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_outcome"},
 		{table: "reconciliation_jobs", model: &models.ReconciliationJob{}, name: "idx_reconciliation_jobs_next_run_at"},
+		{table: "activity_logs", model: &models.ActivityLog{}, name: "idx_activity_logs_correlation_id"},
 	}
 }
 
