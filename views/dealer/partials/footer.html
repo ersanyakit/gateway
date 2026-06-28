@@ -4,7 +4,7 @@
   <span>{{.AdminPanel}}</span>
   <span>{{.MerchantEmail}}</span>
 </footer>
-{{else if .HasSession}}
+{{else if and .HasSession (ne .Active "home")}}
 <footer class="admin-statusbar merchant-statusbar">
   <span>Gateway Merchant</span>
   <span>{{.ActivePanel}}</span>

@@ -4864,6 +4864,151 @@ h1 {
   }
 }
 
+.crypto-payment-flow.crypto-pay-page {
+  padding: 18px 12px 24px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-container {
+  width: min(calc(100vw - 24px), 480px);
+  max-width: 480px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-header,
+.crypto-payment-flow.crypto-pay-page .crypto-card,
+.crypto-payment-flow.crypto-pay-page .crypto-stack,
+.crypto-payment-flow.crypto-pay-page .crypto-section,
+.crypto-payment-flow.crypto-pay-page .crypto-copy-section,
+.crypto-payment-flow.crypto-pay-page .crypto-live-panel,
+.crypto-payment-flow.crypto-pay-page .crypto-warning,
+.crypto-payment-flow.crypto-pay-page .crypto-qr-wrap,
+.crypto-payment-flow.crypto-pay-page .crypto-summary-card {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-card {
+  height: auto;
+  min-height: auto;
+  overflow: visible;
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-stack > * + * {
+  margin-top: 0;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-product-strip.compact,
+.crypto-payment-flow.crypto-pay-page .crypto-section,
+.crypto-payment-flow.crypto-pay-page .crypto-copy-section,
+.crypto-payment-flow.crypto-pay-page .crypto-live-panel,
+.crypto-payment-flow.crypto-pay-page .crypto-warning,
+.crypto-payment-flow.crypto-pay-page .crypto-qr-wrap {
+  padding: 13px;
+  border-radius: 13px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-flex-between > div:first-child,
+.crypto-payment-flow.crypto-pay-page .crypto-header-left,
+.crypto-payment-flow.crypto-pay-page .crypto-live-row span:last-child,
+.crypto-payment-flow.crypto-pay-page .crypto-status-box span {
+  min-width: 0;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-send-amount {
+  font-size: 26px;
+  line-height: 1.12;
+  overflow-wrap: anywhere;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-muted,
+.crypto-payment-flow.crypto-pay-page .crypto-product-title,
+.crypto-payment-flow.crypto-pay-page .crypto-product-description,
+.crypto-payment-flow.crypto-pay-page .crypto-payment-steps-list,
+.crypto-payment-flow.crypto-pay-page .crypto-warning p,
+.crypto-payment-flow.crypto-pay-page .crypto-live-row small {
+  overflow-wrap: anywhere;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box {
+  min-height: 64px;
+  align-items: flex-start;
+  padding: 13px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box > svg {
+  flex: 0 0 18px;
+  margin-top: 2px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-bouncing-dots {
+  flex: 0 0 auto;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-wrap {
+  gap: 10px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer {
+  width: min(100%, 220px);
+  aspect-ratio: 1;
+  padding: 13px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer > img:first-child {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-copy-header {
+  flex-wrap: wrap;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-copy-value {
+  width: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (min-width: 761px) {
+  .crypto-payment-flow.crypto-pay-page .crypto-card {
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 460px) {
+  .crypto-payment-flow.crypto-pay-page {
+    padding: 12px 8px 18px;
+  }
+
+  .crypto-payment-flow.crypto-pay-page .crypto-container {
+    width: min(calc(100vw - 16px), 480px);
+  }
+
+  .crypto-payment-flow.crypto-pay-page .crypto-card {
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .crypto-payment-flow.crypto-pay-page .crypto-send-amount {
+    font-size: 23px;
+  }
+
+  .crypto-payment-flow.crypto-pay-page .crypto-qr-outer {
+    width: min(100%, 198px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .crypto-payment-flow :where(.crypto-btn, .crypto-network-option, .crypto-primary-btn, .crypto-ghost-btn, .crypto-copy-btn),
   .crypto-progress-bar span,

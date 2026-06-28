@@ -12,7 +12,7 @@
     <a class="admin-titlebar-link" href="{{.LogoutURL}}">Çıkış</a>
   </nav>
 </header>
-{{else if .HasSession}}
+{{else if and .HasSession (ne .Active "home")}}
 <header class="admin-titlebar merchant-titlebar" role="banner">
   <a class="admin-titlebar-brand" href="{{.DashboardURL}}" aria-label="Gateway Üye İşyeri Portalı">
     <span class="admin-titlebar-mark">G</span>
