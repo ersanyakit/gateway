@@ -2106,6 +2106,38 @@
   background: #fff;
 }
 
+.merchant-treasury-toolbar {
+  padding: .65rem .75rem;
+}
+
+.merchant-treasury-wrap {
+  border: 0 !important;
+  border-radius: 0 !important;
+}
+
+.merchant-treasury-table td {
+  height: 3.15rem;
+}
+
+.merchant-treasury-table tbody tr[data-admin-row-expanded="true"] {
+  background: #fbfbfb;
+}
+
+.merchant-treasury-table .merchant-treasury-asset .adm-coin-icon {
+  width: 1.25rem;
+  height: 1.25rem;
+  min-width: 1.25rem;
+  max-width: 1.25rem;
+}
+
+.merchant-treasury-detail {
+  padding-left: 2.35rem;
+}
+
+.merchant-treasury-detail .admin-vault-detail-table td {
+  height: 2.65rem;
+}
+
 .merchant-product-row,
 .merchant-link-row,
 .merchant-withdrawal-row,
@@ -2590,6 +2622,17 @@ body.merchant-modal-open {
   .merchant-product-actions,
   .merchant-row-actions {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .merchant-treasury-detail {
+    padding-left: 0;
+  }
+
+  .merchant-treasury-table th:nth-child(4),
+  .merchant-treasury-table td:nth-child(4) {
+    display: none;
   }
 }
 

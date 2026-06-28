@@ -94,7 +94,7 @@ Auditor: Senior payment systems architect / Go backend engineer
 | # | Task | File(s) | Status |
 |---|---|---|---|
 | T1-1 | Encrypt TOTP secret in DB — wrap `SaveTOTPSecret` with `helpers.EncryptSecret`, decrypt on verify | `repositories/admin_repo.go:75` | ✅ Done |
-| T1-2 | Add CSRF tokens to all admin/merchant portal forms — use Fiber's built-in `csrf` middleware | `api/routes/routes.go`, all HTML templates | ❌ Open |
+| T1-2 | Add portal mutation JWTs to all admin/merchant portal forms | `api/routes/routes.go`, all HTML templates | ❌ Open |
 | T1-3 | Remove hardcoded default admin credentials (`admin123`) — generate random password on first run | `main.go` | ✅ Done |
 | T1-4 | Document minimum mnemonic security — add `SECURITY.md` with env hardening guide; path toward KMS/Vault integration | `main.go`, `SECURITY.md` | ✅ Done |
 | T1-5 | Fix bootstrap admin race condition — use transaction with count check instead of count-then-insert | `repositories/admin_repo.go` | ✅ Done |

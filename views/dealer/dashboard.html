@@ -66,41 +66,90 @@
 
   <section class="grid{{if ne .ActivePanel "treasury"}} hidden{{end}} gap-4">
     <div class="grid gap-4">
-      <section class="rounded-[28px] border border-line bg-white/90 p-4 shadow-soft">
-        <div class="mb-3.5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+      <section class="merchant-products-panel merchant-treasury-panel">
+        <div class="merchant-products-toolbar">
           <div>
-            <h2 class="m-0 text-[18px] font-black text-ink">Biriken varlıklar</h2>
-            <p class="m-0 mt-1 text-[13px] leading-6 text-muted">Her kart tek bir network + asset bakiyesini gösterir.</p>
+            <h2>Biriken varlıklar</h2>
+            <p>Coin bazında konsolide treasury görünümü ve network kırılımları.</p>
           </div>
-          <span class="w-fit rounded-full border border-line bg-wash px-3 py-1.5 text-[10px] font-extrabold text-muted">{{.AssetCount}} asset</span>
+          <div class="merchant-products-actions">
+            <span class="merchant-toolbar-badge">{{len .TreasuryGroups}} coin</span>
+            <span class="merchant-toolbar-badge">{{.AssetCount}} network asset</span>
+          </div>
         </div>
-
-        <div class="overflow-hidden rounded-3xl border border-line">
-          {{range .Balances}}
-            <article class="flex items-center gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-wash">
-              <div style="position:relative;width:36px;height:36px;flex-shrink:0;">
-                {{if .LogoURL}}
-                  <img src="{{.LogoURL}}" alt="{{.Symbol}}" style="width:36px;height:36px;border-radius:50%;border:1px solid #e5e7eb;background:#fff;padding:2px;object-fit:contain;display:block;">
-                {{else}}
-                  <div class="grid place-items-center rounded-full bg-ink text-[10px] font-black text-white" style="width:36px;height:36px;">{{.Symbol}}</div>
-                {{end}}
-                {{if .ChainLogoURL}}
-                  <div style="position:absolute;bottom:-3px;right:-3px;width:16px;height:16px;border-radius:50%;background:#fff;border:2px solid #fff;box-shadow:0 0 0 1px #e5e7eb;display:flex;align-items:center;justify-content:center;">
-                    <img src="{{.ChainLogoURL}}" alt="{{.Chain}}" style="width:11px;height:11px;object-fit:contain;">
+        <div class="admin-data-toolbar merchant-treasury-toolbar">
+          <input class="admin-data-search" type="search" placeholder="Coin, network veya token ara" aria-label="Treasury ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-treasury-table">
+          <span class="admin-data-count" data-admin-table-count="merchant-treasury-table" data-total="{{len .TreasuryGroups}}" data-label="coin">{{len .TreasuryGroups}} coin</span>
+        </div>
+        <div class="adm-wrap merchant-treasury-wrap">
+          <table class="adm-table admin-data-table merchant-treasury-table" id="merchant-treasury-table" data-admin-table>
+            <thead>
+              <tr>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Coin <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="number">Network <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="number">Toplam <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="number">Varyant <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+              </tr>
+            </thead>
+            <tbody>
+            {{range .TreasuryGroups}}
+              <tr data-admin-table-row data-admin-table-key="{{.ID}}" data-search="{{.SearchText}}">
+                <td data-sort-value="{{.Symbol}}">
+                  <span class="adm-asset admin-vault-asset merchant-treasury-asset">
+                    <button class="admin-expand-button" type="button" aria-label="{{.Symbol}} network detayını aç" aria-expanded="false" aria-controls="{{.ID}}-details" data-admin-table-toggle="{{.ID}}">
+                      <span aria-hidden="true"></span>
+                    </button>
+                    {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="adm-coin-icon">{{end}}
+                    <strong class="text-ink">{{.Symbol}}</strong>
+                  </span>
+                  <span class="admin-vault-meta">{{.NetworkCount}} network{{if gt .VariantCount 1}} · {{.VariantCount}} asset varyantı{{end}}</span>
+                </td>
+                <td class="text-xs font-semibold whitespace-nowrap" data-sort-value="{{.NetworkCount}}">{{.NetworkCount}}</td>
+                <td class="font-mono whitespace-nowrap text-emerald-700" data-sort-value="{{.AvailableSort}}"><strong>{{.AvailableDisplay}}</strong> <span class="text-xs">{{.Symbol}}</span></td>
+                <td class="text-xs font-semibold whitespace-nowrap" data-sort-value="{{.VariantCount}}">{{.VariantCount}}</td>
+              </tr>
+              <tr class="admin-vault-detail-row merchant-treasury-detail-row" id="{{.ID}}-details" data-admin-table-detail-for="{{.ID}}" hidden>
+                <td colspan="4">
+                  <div class="admin-vault-detail merchant-treasury-detail">
+                    <table class="admin-vault-detail-table">
+                      <thead>
+                        <tr>
+                          <th>Network</th>
+                          <th>Asset</th>
+                          <th>Toplam</th>
+                          <th>Token</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {{range .Details}}
+                        <tr>
+                          <td class="text-xs font-semibold whitespace-nowrap">
+                            <span class="adm-asset">
+                              {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.Chain}}" class="adm-chain-icon">{{end}}
+                              {{.Chain}}
+                            </span>
+                          </td>
+                          <td class="whitespace-nowrap">
+                            <span class="adm-asset">
+                              {{if .LogoURL}}<img src="{{.LogoURL}}" alt="{{.Symbol}}" class="adm-coin-icon">{{end}}
+                              <strong class="text-ink">{{.Symbol}}</strong>
+                            </span>
+                          </td>
+                          <td class="font-mono whitespace-nowrap text-emerald-700"><strong>{{.AvailableDisplay}}</strong> <span class="text-xs">{{.Symbol}}</span></td>
+                          <td class="whitespace-nowrap">{{if ne .DisplayToken "-"}}<code class="block max-w-[220px] truncate" title="{{.Token}}">{{.DisplayToken}}</code>{{else}}<span class="text-xs font-semibold text-muted">native</span>{{end}}</td>
+                        </tr>
+                        {{end}}
+                      </tbody>
+                    </table>
                   </div>
-                {{end}}
-              </div>
-              <div class="min-w-0 flex-1">
-                <span class="block text-sm font-black text-ink">{{.Symbol}}</span>
-                <span class="block text-xs font-semibold text-muted">{{.Chain}} üzerinde {{.Symbol}}</span>
-              </div>
-              <div class="shrink-0 text-right">
-                <strong class="block text-sm font-black text-ink">{{.AmountDisplay}}</strong>
-                {{if .AmountUSD}}<span class="block text-xs font-bold text-emerald-600">{{.AmountUSD}}</span>{{end}}
-                <span class="block text-xs font-semibold text-muted">{{.Deposits}} dep · {{.Users}} user</span>
-              </div>
-            </article>
-          {{end}}
+                </td>
+              </tr>
+            {{else}}
+              <tr><td colspan="4" class="py-8 text-center text-sm text-muted">Treasury bakiyesi yok.</td></tr>
+            {{end}}
+              <tr data-admin-table-empty hidden><td colspan="4" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+            </tbody>
+          </table>
         </div>
       </section>
 
@@ -906,7 +955,7 @@
                 {{if .WebhookURL}}
                   <button class="merchant-row-button" type="button" data-test-webhook="{{.ID}}" data-webhook-url="{{.WebhookURL}}">Test et</button>
                 {{end}}
-                <button class="merchant-row-button" type="button" data-open-dashboard-modal="domain-webhook-{{.ID}}">Webhook güncelle</button>
+                <button class="merchant-row-button" type="button" data-open-dashboard-modal="domain-edit-{{.ID}}">Düzenle</button>
                 <div id="webhook-result-{{.ID}}" class="merchant-webhook-result hidden"></div>
               </div>
             </article>
@@ -950,27 +999,32 @@
     </div>
 
     {{range .Domains}}
-    <div class="merchant-modal" data-dashboard-modal="domain-webhook-{{.ID}}" hidden>
+    <div class="merchant-modal" data-dashboard-modal="domain-edit-{{.ID}}" hidden>
       <div class="merchant-modal-backdrop" data-close-dashboard-modal></div>
-      <section class="merchant-modal-panel" role="dialog" aria-modal="true" aria-labelledby="domainWebhookModalTitle{{.ID}}">
+      <section class="merchant-modal-panel" role="dialog" aria-modal="true" aria-labelledby="domainEditModalTitle{{.ID}}">
         <div class="merchant-modal-head">
           <div>
-            <h2 id="domainWebhookModalTitle{{.ID}}">Webhook güncelle</h2>
-            <p>{{.DomainURL}} için hedef URL ve secret bilgisini yenile.</p>
+            <h2 id="domainEditModalTitle{{.ID}}">Domain düzenle</h2>
+            <p>{{.DomainURL}}</p>
           </div>
           <button class="merchant-modal-close" type="button" data-close-dashboard-modal aria-label="Kapat">×</button>
         </div>
-        <form class="merchant-modal-form" method="post" action="/merchant/domains/{{.ID}}/update-webhook">
-          <label for="webhook_url_{{.ID}}">Webhook URL
-            <input id="webhook_url_{{.ID}}" name="webhook_url" type="url" placeholder="https://example.com/webhook" value="{{.WebhookURL}}" required>
-          </label>
+        <form class="merchant-modal-form" method="post" action="/merchant/domains/{{.ID}}/update">
+          <div class="merchant-form-grid">
+            <label for="domain_url_{{.ID}}">Domain
+              <input id="domain_url_{{.ID}}" name="domain_url" type="text" placeholder="example.com" value="{{.DomainURL}}" required>
+            </label>
+            <label for="webhook_url_{{.ID}}">Webhook URL
+              <input id="webhook_url_{{.ID}}" name="webhook_url" type="url" placeholder="https://example.com/webhook" value="{{.WebhookURL}}" required>
+            </label>
+          </div>
           <label for="webhook_secret_{{.ID}}">Webhook secret
-            <input id="webhook_secret_{{.ID}}" name="webhook_secret" type="text" placeholder="Yeni webhook secret" autocomplete="off" required>
+            <input id="webhook_secret_{{.ID}}" name="webhook_secret" type="text" placeholder="Mevcut secret korunur" autocomplete="off">
           </label>
           <div class="merchant-modal-actions">
             <button class="merchant-row-button" type="button" data-generate-secret="webhook_secret_{{.ID}}">Secret üret</button>
             <button class="merchant-row-button" type="button" data-close-dashboard-modal>Vazgeç</button>
-            <button class="merchant-action-button is-primary" type="submit">Kaydet</button>
+            <button class="merchant-action-button is-primary" type="submit">Domain kaydet</button>
           </div>
         </form>
       </section>

@@ -95,6 +95,7 @@ type DealerDeps struct {
 	ReconciliationRepo  *repositories.ReconciliationRepo
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
 	ActivityLogRepo     *repositories.ActivityLogRepo
+	OutboundPolicyRepo  *repositories.OutboundPolicyRepo
 	AdminRepo           *repositories.AdminRepo
 	AssetRegistry       *asset.Registry
 	Blockchains         *blockchain.ChainFactory
@@ -146,6 +147,7 @@ type DealerPageData struct {
 	Products          []DealerProductView
 	Payments          []DealerPaymentView
 	Balances          []DealerBalanceView
+	TreasuryGroups    []DealerVaultAssetView
 	ChainVaults       []DealerChainVaultView
 	Activities        []DealerActivityView
 	AuditLogs         []DealerAuditLogView
@@ -201,6 +203,7 @@ type DealerPageData struct {
 	AdminPagination          DealerPaginationView
 	AdminMerchantFilter      string
 	AdminTOTPEnabled         bool
+	AdminRole                string
 	AdminSecurityURL         string
 	AdminLoginEmail          string
 	AdminRememberMe          bool
@@ -213,6 +216,8 @@ type DealerPageData struct {
 	AdminWebhookStatusFilter string
 	AdminRefundStatusFilter  string
 	AdminRescanResult        string
+	AdminOutboundPolicy      DealerOutboundPolicyView
+	AdminOutboundWhitelist   []DealerOutboundWhitelistView
 }
 
 type DealerDomainView struct {
@@ -307,8 +312,34 @@ type DealerAdminMerchantView struct {
 	ID        string
 	Name      string
 	Email     string
+	Role      string
 	IsActive  bool
 	CreatedAt string
+}
+
+type DealerOutboundPolicyView struct {
+	ID                   string
+	WhitelistRequired    bool
+	EmergencyFrozen      bool
+	MaxAmountRaw         string
+	VelocityLimitRaw     string
+	VelocityWindowHours  int64
+	VelocityWindowLabel  string
+	UpdatedBy            string
+	UpdatedAt            string
+	ConfigurationSummary string
+}
+
+type DealerOutboundWhitelistView struct {
+	ID        string
+	Scope     string
+	Chain     string
+	Token     string
+	Address   string
+	Label     string
+	IsActive  bool
+	UpdatedBy string
+	UpdatedAt string
 }
 
 type DealerPageURL struct {
@@ -861,6 +892,7 @@ func HandleDealerDashboard(deps DealerDeps) fiber.Handler {
 			data.Balances = filterBalancesBySettings(data.Balances, merchant.HideTestnets, merchant.HiddenChains)
 			data.ChainVaults = filterVaultsBySettings(data.ChainVaults, merchant.HideTestnets, merchant.HiddenChains)
 		}
+		data.TreasuryGroups = dealerTreasuryBalanceGroups(data.Balances, deps.AssetRegistry)
 		data.AssetCount = len(data.Balances)
 		data.NetworkCount = len(data.ChainVaults)
 		data.ActivityCount = len(data.AuditLogs) + len(transactions)
@@ -1340,6 +1372,10 @@ func HandleDealerWithdrawalCreate(deps DealerDeps) fiber.Handler {
 			IdempotencyKey: idempotencyKey,
 			CorrelationID:  correlationID,
 		}
+		if err := enforceDealerOutboundPolicy(c.Context(), deps, outboundPolicyCheckFromWithdrawal("withdrawal.create", request, false)); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", request.ID.String(), err.Error())
+			return redirectWithError(c, "/merchant/dashboard", err.Error())
+		}
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "withdrawal.create", "failed", "withdrawal", walletIDRaw, err.Error())
 			return redirectWithError(c, "/merchant/dashboard", "Çekim talebi oluşturulamadı: "+err.Error())
@@ -1479,6 +1515,57 @@ func HandleDealerDomainUpdateWebhook(deps DealerDeps) fiber.Handler {
 
 		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.update_webhook", "success", "domain", domainIDStr, "Webhook URL ve secret güncellendi.")
 		return redirectWithSuccess(c, "/merchant/dashboard/domains", "Webhook başarıyla güncellendi.")
+	}
+}
+
+func HandleDealerDomainUpdate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		merchant, ok := requireDealerMerchant(c, deps.MerchantService)
+		if !ok {
+			return redirectDealerLogin(c)
+		}
+		if deps.DomainService == nil {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Domain servisi hazır değil.")
+		}
+
+		domainIDStr := strings.TrimSpace(c.Params("id"))
+		domainUUID, err := uuid.Parse(domainIDStr)
+		if err != nil {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Geçersiz domain ID.")
+		}
+
+		domain, err := deps.DomainService.FindByID(types.DomainParams{
+			Context:  c.Context(),
+			DomainID: &domainIDStr,
+		})
+		if err != nil || domain.MerchantID != merchant.ID {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Domain bulunamadı.")
+		}
+
+		domainURL := strings.TrimSpace(c.FormValue("domain_url"))
+		webhookURL := strings.TrimSpace(c.FormValue("webhook_url"))
+		webhookSecret := strings.TrimSpace(c.FormValue("webhook_secret"))
+		if domainURL == "" {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Domain boş olamaz.")
+		}
+		if webhookURL == "" {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Webhook URL boş olamaz.")
+		}
+		if webhookSecret == "" && strings.TrimSpace(domain.WebhookSecret) == "" {
+			return redirectWithError(c, "/merchant/dashboard/domains", "Webhook secret gerekli.")
+		}
+
+		var secretPtr *string
+		if webhookSecret != "" {
+			secretPtr = &webhookSecret
+		}
+		if err := deps.DomainService.Update(c.Context(), domainUUID, merchant.ID, domainURL, webhookURL, secretPtr); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.update", "failed", "domain", domainIDStr, err.Error())
+			return redirectWithError(c, "/merchant/dashboard/domains", "Domain güncellenemedi: "+err.Error())
+		}
+
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "domain.update", "success", "domain", domainIDStr, "Domain bilgileri güncellendi.")
+		return redirectWithSuccess(c, "/merchant/dashboard/domains", "Domain güncellendi.")
 	}
 }
 
@@ -1727,9 +1814,13 @@ func HandleAdminTOTPVerifySubmit(adminRepo *repositories.AdminRepo) fiber.Handle
 // HandleAdminManageAdmins shows admin list and create form.
 func HandleAdminManageAdmins(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		_, ok := requireAdmin(c)
+		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.manage", "failed", "admin", "", err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		admins, _ := deps.AdminRepo.List(c.Context())
 		data := adminPageData("", "admins")
@@ -1742,17 +1833,22 @@ func HandleAdminManageAdmins(deps DealerDeps) fiber.Handler {
 
 func HandleAdminCreateAdmin(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		_, ok := requireAdmin(c)
+		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.create", "failed", "admin", "", err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		email := strings.TrimSpace(c.FormValue("email"))
 		name := strings.TrimSpace(c.FormValue("name"))
 		password := c.FormValue("password")
+		role := strings.TrimSpace(c.FormValue("role"))
 		if email == "" || password == "" {
 			return redirectWithError(c, "/admin/admins", "E-posta ve şifre zorunlu.")
 		}
-		if _, err := deps.AdminRepo.Create(c.Context(), email, name, password); err != nil {
+		if _, err := deps.AdminRepo.CreateWithRole(c.Context(), email, name, password, role); err != nil {
 			return redirectWithError(c, "/admin/admins", "Admin oluşturulamadı: "+err.Error())
 		}
 		return redirectWithSuccess(c, "/admin/admins", "Admin hesabı oluşturuldu.")
@@ -1761,9 +1857,13 @@ func HandleAdminCreateAdmin(deps DealerDeps) fiber.Handler {
 
 func HandleAdminToggleAdmin(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		_, ok := requireAdmin(c)
+		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.toggle", "failed", "admin", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
@@ -1780,9 +1880,13 @@ func HandleAdminToggleAdmin(deps DealerDeps) fiber.Handler {
 
 func HandleAdminResetTOTP(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
-		_, ok := requireAdmin(c)
+		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.reset_totp", "failed", "admin", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
@@ -1889,8 +1993,79 @@ func adminListToMerchantViews(admins []models.Admin) []DealerAdminMerchantView {
 			ID:        a.ID.String(),
 			Name:      a.Name,
 			Email:     a.Email,
+			Role:      models.EffectiveAdminRole(a.Role),
 			IsActive:  a.IsActive,
 			CreatedAt: formatPanelTime(a.CreatedAt),
+		})
+	}
+	return views
+}
+
+func dealerOutboundPolicyView(setting *models.OutboundPolicySetting) DealerOutboundPolicyView {
+	if setting == nil {
+		return DealerOutboundPolicyView{
+			VelocityWindowHours:  24,
+			VelocityWindowLabel:  "24 saat",
+			ConfigurationSummary: "Default-off",
+		}
+	}
+	hours := setting.VelocityWindowSecs / 3600
+	if hours <= 0 {
+		hours = 24
+	}
+	summaryParts := make([]string, 0, 4)
+	if setting.EmergencyFrozen {
+		summaryParts = append(summaryParts, "freeze aktif")
+	}
+	if setting.WhitelistRequired {
+		summaryParts = append(summaryParts, "whitelist zorunlu")
+	}
+	if strings.TrimSpace(setting.MaxAmountRaw) != "" {
+		summaryParts = append(summaryParts, "max "+setting.MaxAmountRaw)
+	}
+	if strings.TrimSpace(setting.VelocityLimitRaw) != "" {
+		summaryParts = append(summaryParts, "velocity "+setting.VelocityLimitRaw)
+	}
+	if len(summaryParts) == 0 {
+		summaryParts = append(summaryParts, "Default-off")
+	}
+	return DealerOutboundPolicyView{
+		ID:                   setting.ID.String(),
+		WhitelistRequired:    setting.WhitelistRequired,
+		EmergencyFrozen:      setting.EmergencyFrozen,
+		MaxAmountRaw:         setting.MaxAmountRaw,
+		VelocityLimitRaw:     setting.VelocityLimitRaw,
+		VelocityWindowHours:  hours,
+		VelocityWindowLabel:  fmt.Sprintf("%d saat", hours),
+		UpdatedBy:            setting.UpdatedBy,
+		UpdatedAt:            formatPanelTime(setting.UpdatedAt),
+		ConfigurationSummary: strings.Join(summaryParts, " · "),
+	}
+}
+
+func dealerOutboundWhitelistViews(rows []models.OutboundAddressWhitelist) []DealerOutboundWhitelistView {
+	views := make([]DealerOutboundWhitelistView, 0, len(rows))
+	for _, row := range rows {
+		scope := "global"
+		if row.DomainID != nil {
+			scope = "domain:" + row.DomainID.String()
+		} else if row.MerchantID != nil {
+			scope = "merchant:" + row.MerchantID.String()
+		}
+		token := "native"
+		if row.Token != nil && strings.TrimSpace(*row.Token) != "" {
+			token = *row.Token
+		}
+		views = append(views, DealerOutboundWhitelistView{
+			ID:        row.ID.String(),
+			Scope:     scope,
+			Chain:     emptyDefault(row.Chain, "all"),
+			Token:     token,
+			Address:   row.Address,
+			Label:     row.Label,
+			IsActive:  row.IsActive,
+			UpdatedBy: row.UpdatedBy,
+			UpdatedAt: formatPanelTime(row.UpdatedAt),
 		})
 	}
 	return views
@@ -1914,6 +2089,14 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		}
 		if limit < 1 || limit > 200 {
 			limit = 50
+		}
+
+		var currentAdmin *models.Admin
+		if deps.AdminRepo != nil {
+			if admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail); err == nil {
+				currentAdmin = admin
+				data.AdminRole = models.EffectiveAdminRole(admin.Role)
+			}
 		}
 
 		adminHeaderStatsFor(c.Context(), deps).applyTo(&data)
@@ -2081,11 +2264,28 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/links")
 
 		case "security":
-			admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
-			if err != nil {
-				return renderAdminDashboardError(c, data, "Admin güvenlik ayarları okunamadı", err)
+			if currentAdmin == nil {
+				admin, err := deps.AdminRepo.FindByEmail(c.Context(), adminEmail)
+				if err != nil {
+					return renderAdminDashboardError(c, data, "Admin güvenlik ayarları okunamadı", err)
+				}
+				currentAdmin = admin
+				data.AdminRole = models.EffectiveAdminRole(admin.Role)
 			}
-			data.AdminTOTPEnabled = admin.TOTPEnabled
+			data.AdminTOTPEnabled = currentAdmin.TOTPEnabled
+			data.AdminOutboundPolicy = dealerOutboundPolicyView(nil)
+			if deps.OutboundPolicyRepo != nil {
+				if setting, err := deps.OutboundPolicyRepo.GetGlobal(c.Context()); err == nil {
+					data.AdminOutboundPolicy = dealerOutboundPolicyView(setting)
+				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return renderAdminDashboardError(c, data, "Outbound policy ayarları okunamadı", err)
+				}
+				rows, err := deps.OutboundPolicyRepo.ListWhitelist(c.Context(), 100)
+				if err != nil {
+					return renderAdminDashboardError(c, data, "Whitelist listesi okunamadı", err)
+				}
+				data.AdminOutboundWhitelist = dealerOutboundWhitelistViews(rows)
+			}
 
 		default: // overview
 			recentRows, _, err := deps.TransactionRepo.ListPage(c.Context(), 1, 8)
@@ -2247,6 +2447,10 @@ func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", "", err.Error())
+			return redirectWithError(c, "/admin", err.Error())
+		}
 		if deps.WalletRepo == nil || deps.Blockchains == nil || deps.WithdrawalRepo == nil || deps.LedgerRepo == nil {
 			return redirectWithError(c, "/admin/recover", "Recover funds altyapısı hazır değil.")
 		}
@@ -2360,6 +2564,12 @@ func HandleAdminRecoverFunds(deps DealerDeps) fiber.Handler {
 			Note:        note,
 			Status:      models.WithdrawalStatusPending,
 			RequestedBy: adminEmail,
+		}
+		if err := enforceDealerOutboundPolicy(c.Context(), deps, outboundPolicyCheckFromWithdrawal("admin.recover_funds", request, false)); err != nil {
+			if deps.ActivityLogRepo != nil {
+				logDealerActivity(c, deps.ActivityLogRepo, &sourceWallet.MerchantID, "admin", adminEmail, "admin.recover_funds", "failed", "wallet", walletID, err.Error())
+			}
+			return redirectWithError(c, "/admin/recover", err.Error())
 		}
 		if err := deps.WithdrawalRepo.CreateWithHold(c.Context(), request, deps.LedgerRepo); err != nil {
 			if deps.ActivityLogRepo != nil {
@@ -2797,6 +3007,10 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
+		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
 			return redirectWithError(c, "/admin/withdrawals", "Geçersiz talep.")
@@ -2815,6 +3029,10 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
 		}
 		if err := requireOutboundMakerChecker(request.RequestedBy, adminEmail); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), err.Error())
+			return redirectWithError(c, "/admin/withdrawals", err.Error())
+		}
+		if err := enforceDealerOutboundPolicy(c.Context(), deps, outboundPolicyCheckFromWithdrawal("withdrawal.approve", request, true)); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), err.Error())
 			return redirectWithError(c, "/admin/withdrawals", err.Error())
 		}
@@ -2866,6 +3084,10 @@ func HandleAdminWithdrawalReject(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed", "withdrawal", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
+		}
 		id, err := uuid.Parse(c.Params("id"))
 		if err != nil {
 			return redirectWithError(c, "/admin/withdrawals", "Geçersiz talep.")
@@ -2907,6 +3129,10 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "failed", "refund", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		if deps.RefundRepo == nil || deps.PaymentRepo == nil || deps.TransactionRepo == nil {
 			return redirectWithError(c, "/admin/refunds", "Refund altyapısı hazır değil.")
@@ -2955,6 +3181,14 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		toAddress := strings.TrimSpace(txModel.FromAddress)
 		if toAddress == "" {
 			return redirectWithError(c, "/admin/refunds", "Refund hedef adresi bulunamadı.")
+		}
+		refund.Chain = constants.ChainName(*session.SelectedChainID)
+		refund.Token = session.SelectedToken
+		refund.Symbol = session.SelectedSymbol
+		refund.Decimals = session.SelectedDecimals
+		if err := enforceDealerOutboundPolicy(c.Context(), deps, outboundPolicyCheckFromRefund("refund.approve", refund, toAddress, true)); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			return redirectWithError(c, "/admin/refunds", err.Error())
 		}
 
 		reserveWallet, err := ensureDealerReserveWallet(c.Context(), refund.MerchantID, deps)
@@ -3035,6 +3269,10 @@ func HandleAdminRefundReject(deps DealerDeps) fiber.Handler {
 		adminEmail, ok := requireAdmin(c)
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.reject", "failed", "refund", c.Params("id"), err.Error())
+			return redirectWithError(c, "/admin", err.Error())
 		}
 		if deps.RefundRepo == nil {
 			return redirectWithError(c, "/admin/refunds", "Refund altyapısı hazır değil.")
@@ -4938,6 +5176,31 @@ func dealerAllBalanceViews(registry *asset.Registry, balances []DealerBalanceVie
 		})
 	}
 	return views
+}
+
+func dealerTreasuryBalanceGroups(balances []DealerBalanceView, registry *asset.Registry) []DealerVaultAssetView {
+	details := make([]DealerVaultBalanceView, 0, len(balances))
+	for _, balance := range balances {
+		amountRaw := zeroTokenAmountRaw(balance.AmountRaw)
+		amountDisplay := formatTokenAmount(amountRaw, balance.Decimals)
+		amountSort := tokenAmountSortValue(amountRaw, balance.Decimals)
+		details = append(details, DealerVaultBalanceView{
+			Chain:            balance.Chain,
+			ChainLogoURL:     balance.ChainLogoURL,
+			Symbol:           balance.Symbol,
+			Token:            balance.Token,
+			DisplayToken:     balance.DisplayToken,
+			LogoURL:          balance.LogoURL,
+			Decimals:         balance.Decimals,
+			VaultRaw:         amountRaw,
+			VaultDisplay:     amountDisplay,
+			VaultSort:        amountSort,
+			AvailableRaw:     amountRaw,
+			AvailableDisplay: amountDisplay,
+			AvailableSort:    amountSort,
+		})
+	}
+	return dealerVaultAssetGroups(details, registry)
 }
 
 func dealerVaultBalanceViews(rows []repositories.LedgerBalanceRow, registry *asset.Registry) []DealerVaultAssetView {

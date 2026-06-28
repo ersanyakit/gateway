@@ -58,6 +58,13 @@ func (s *DomainService) UpdateWebhook(ctx context.Context, domainID uuid.UUID, m
 	return s.domainRepo.UpdateWebhook(ctx, domainID, merchantID, webhookURL, plainSecret)
 }
 
+func (s *DomainService) Update(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID, domainURL string, webhookURL string, plainSecret *string) error {
+	if err := helpers.ValidateWebhookURL(webhookURL); err != nil {
+		return err
+	}
+	return s.domainRepo.Update(ctx, domainID, merchantID, domainURL, webhookURL, plainSecret)
+}
+
 func (s *DomainService) RotateAPISecret(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID) (string, error) {
 	return s.domainRepo.RotateAPISecret(ctx, domainID, merchantID)
 }

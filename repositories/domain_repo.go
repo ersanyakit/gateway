@@ -210,6 +210,43 @@ func (r *DomainRepo) UpdateWebhook(ctx context.Context, domainID uuid.UUID, merc
 	return nil
 }
 
+func (r *DomainRepo) Update(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID, domainURL string, webhookURL string, plainSecret *string) error {
+	var count int64
+	if err := r.DB().WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("merchant_id = ? AND id <> ? AND domain_url = ? AND webhook_url = ?", merchantID, domainID, domainURL, webhookURL).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.New("domain with this webhook already exists for the merchant")
+	}
+
+	updates := map[string]interface{}{
+		"domain_url":  domainURL,
+		"webhook_url": webhookURL,
+	}
+	if plainSecret != nil && *plainSecret != "" {
+		encryptedSecret, err := helpers.EncryptSecret(*plainSecret)
+		if err != nil {
+			return err
+		}
+		updates["webhook_secret"] = encryptedSecret
+	}
+
+	result := r.DB().WithContext(ctx).
+		Model(&models.Domain{}).
+		Where("id = ? AND merchant_id = ?", domainID, merchantID).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("domain not found")
+	}
+	return nil
+}
+
 func (r *DomainRepo) RotateAPISecret(ctx context.Context, domainID uuid.UUID, merchantID uuid.UUID) (string, error) {
 	apiSecretPlain, err := helpers.GenerateSecret()
 	if err != nil {

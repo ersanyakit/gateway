@@ -114,7 +114,7 @@ The project is not empty or fake. It has a real payment-gateway skeleton:
    Enforce status enums/check constraints, partial unique indexes for pending withdrawals/jobs, unique merchant email, unique idempotency keys, and ledger invariants at the DB level.
 
 7. Admin/security hardening.
-   Complete CSRF audit on all portal actions, add audit trails for signer/withdrawal decisions, separate duties for approval and execution, and add IP/device/session controls.
+   Complete portal JWT audit on all portal actions, add audit trails for signer/withdrawal decisions, separate duties for approval and execution, and add IP/device/session controls.
 
 ### P2 - Needed For Binance-Level Tracking
 

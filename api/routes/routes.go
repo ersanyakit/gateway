@@ -58,6 +58,7 @@ type Router struct {
 	ReconciliationRepo   *repositories.ReconciliationRepo
 	RefundRepo           *repositories.RefundRepo
 	ActivityLogRepo      *repositories.ActivityLogRepo
+	OutboundPolicyRepo   *repositories.OutboundPolicyRepo
 	AdminRepo            *repositories.AdminRepo
 	MerchantService      *services.MerchantService
 	WalletService        *services.WalletService
@@ -124,7 +125,7 @@ func NewRouter(db *gorm.DB) *Router {
 		AllowHeaders: []string{
 			"Accept", "Authorization", "Content-Type", "Content-Length",
 			"X-API-Key", "X-API-Secret", "X-Gateway-Signature", "X-Gateway-Timestamp", "X-Gateway-Event",
-			"X-CSRF-Token", "Token", "session", "Origin", "Host", "Connection",
+			"X-Portal-JWT", "Token", "session", "Origin", "Host", "Connection",
 			"Accept-Encoding", "Accept-Language", "X-Requested-With",
 			"AMP-Redirect-To", "__amp_source_origin", "Access-Control-Allow-Origin",
 		},
@@ -154,6 +155,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.ReconciliationRepo = repositories.NewReconciliationRepo(r.db)
 	r.RefundRepo = repositories.NewRefundRepo(r.db)
 	r.ActivityLogRepo = repositories.NewActivityLogRepo(r.db)
+	r.OutboundPolicyRepo = repositories.NewOutboundPolicyRepo(r.db)
 	r.AdminRepo = repositories.NewAdminRepo(r.db)
 	r.PaymentHub = realtime.NewPaymentHub()
 	r.MerchantRepo = repositories.NewMerchantRepo(r.db, r.blockchains)
@@ -190,10 +192,10 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post(constants.CMD_SWEEP.String(), handlers.HandleSweep(r.WalletRepo, r.blockchains))
 
 	r.fiber.Get("/", handlers.HandleDealerHome())
-	portalCSRF := middleware.PortalCSRF()
-	r.fiber.Use("/dealer", portalCSRF)
-	r.fiber.Use("/merchant", portalCSRF)
-	r.fiber.Use("/admin", portalCSRF)
+	portalJWT := middleware.PortalMutationJWT()
+	r.fiber.Use("/dealer", portalJWT)
+	r.fiber.Use("/merchant", portalJWT)
+	r.fiber.Use("/admin", portalJWT)
 
 	priceOracle := pricing.NewCoinGecko()
 	dealerDeps := handlers.DealerDeps{
@@ -210,6 +212,7 @@ func NewRouter(db *gorm.DB) *Router {
 		ReconciliationRepo:  r.ReconciliationRepo,
 		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
 		ActivityLogRepo:     r.ActivityLogRepo,
+		OutboundPolicyRepo:  r.OutboundPolicyRepo,
 		AdminRepo:           r.AdminRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
@@ -234,6 +237,7 @@ func NewRouter(db *gorm.DB) *Router {
 		r.fiber.Post(prefix+"/rescan", handlers.HandleDealerTxRescan(dealerDeps))
 		r.fiber.Post(prefix+"/wallets/:id/fill-address", handlers.HandleDealerFillWalletAddress(dealerDeps))
 		r.fiber.Post(prefix+"/domains/:id/test-webhook", handlers.HandleDealerWebhookTest(dealerDeps))
+		r.fiber.Post(prefix+"/domains/:id/update", handlers.HandleDealerDomainUpdate(dealerDeps))
 		r.fiber.Post(prefix+"/domains/:id/update-webhook", handlers.HandleDealerDomainUpdateWebhook(dealerDeps))
 		r.fiber.Post(prefix+"/domains/:id/rotate-api-secret", handlers.HandleDealerDomainRotateAPISecret(dealerDeps))
 		r.fiber.Post(prefix+"/settings", handlers.HandleDealerSettingsUpdate(dealerDeps))
@@ -315,6 +319,8 @@ func NewRouter(db *gorm.DB) *Router {
 		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
 		SweepJobRepo:        r.SweepJobRepo,
 		ReconciliationRepo:  r.ReconciliationRepo,
+		ActivityLogRepo:     r.ActivityLogRepo,
+		OutboundPolicyRepo:  r.OutboundPolicyRepo,
 		AssetRegistry:       r.assetRegistry,
 		Blockchains:         r.blockchains,
 		PriceOracle:         priceOracle,
@@ -397,7 +403,7 @@ func (r *Router) handlePacket(c fiber.Ctx) error {
 		c.Set("Access-Control-Allow-Origin", origin)
 	}
 	c.Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-	c.Set("Access-Control-Allow-Headers", "Accept,Authorization,Content-Type,X-CSRF-Token,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With")
+	c.Set("Access-Control-Allow-Headers", "Accept,Authorization,Content-Type,X-Portal-JWT,Token,session,Origin,Host,Connection,Accept-Encoding,Accept-Language,X-Requested-With")
 
 	if c.Method() == fiber.MethodOptions {
 		return c.SendStatus(fiber.StatusNoContent)

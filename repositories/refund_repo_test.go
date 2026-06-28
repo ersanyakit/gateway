@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
@@ -50,6 +51,36 @@ func TestRefundRepoHoldPathsRequireLedger(t *testing.T) {
 	_, err = NewRefundRepo(db).ClaimPendingWithHold(ctx, refund.ID, "admin@example.com", session, nil)
 	if !errors.Is(err, ErrLedgerReservationRequired) {
 		t.Fatalf("ClaimPendingWithHold err = %v, want ErrLedgerReservationRequired", err)
+	}
+}
+
+func TestRefundRepoSumActiveAmountRawByMerchantSince(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.Refund{}); err != nil {
+		t.Fatalf("automigrate refund tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, _ := seedWithdrawalOwner(t, db)
+	otherMerchantID, otherDomainID, _ := seedWithdrawalOwner(t, db)
+	now := time.Now().UTC()
+	rows := []models.Refund{
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: domainID, PaymentID: uuid.New(), Chain: "ethereum", Symbol: "ETH", AmountRaw: "10", Status: models.RefundStatusPending, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: domainID, PaymentID: uuid.New(), Chain: "Ethereum", Symbol: "ETH", AmountRaw: "15", Status: models.RefundStatusProcessing, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: domainID, PaymentID: uuid.New(), Chain: "ethereum", Symbol: "ETH", AmountRaw: "50", Status: models.RefundStatusRejected, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: domainID, PaymentID: uuid.New(), Chain: "polygon", Symbol: "POL", AmountRaw: "20", Status: models.RefundStatusPending, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: domainID, PaymentID: uuid.New(), Chain: "ethereum", Symbol: "ETH", AmountRaw: "40", Status: models.RefundStatusPending, CreatedAt: now.Add(-48 * time.Hour)},
+		{ID: uuid.New(), MerchantID: otherMerchantID, DomainID: otherDomainID, PaymentID: uuid.New(), Chain: "ethereum", Symbol: "ETH", AmountRaw: "60", Status: models.RefundStatusPending, CreatedAt: now},
+	}
+	if err := db.WithContext(ctx).Create(&rows).Error; err != nil {
+		t.Fatalf("seed refunds: %v", err)
+	}
+
+	total, err := NewRefundRepo(db).SumActiveAmountRawByMerchantSince(ctx, merchantID, " ethereum ", nil, "ETH", now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("sum refunds: %v", err)
+	}
+	if total.String() != "25" {
+		t.Fatalf("refund active total = %s, want 25", total.String())
 	}
 }
 

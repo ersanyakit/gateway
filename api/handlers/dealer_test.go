@@ -33,6 +33,12 @@ func TestAdminDashboardTemplateParses(t *testing.T) {
 	}
 }
 
+func TestMerchantDashboardTemplateParses(t *testing.T) {
+	if _, err := template.ParseFiles("../../views/dealer/dashboard.html"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAdminLiveBalanceRawParsesTronHexNative(t *testing.T) {
 	raw, err := adminLiveBalanceRaw("0xf4240", asset.NewTRX(constants.TRON))
 	if err != nil {
@@ -111,6 +117,23 @@ func TestRequireAdminUsesGuardLocal(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusOK)
+	}
+}
+
+func TestAdminRoleCanMutateHighRiskActions(t *testing.T) {
+	for _, tc := range []struct {
+		role string
+		want bool
+	}{
+		{"", true},
+		{"owner", true},
+		{"admin", true},
+		{"operator", false},
+		{"viewer", false},
+	} {
+		if got := adminRoleCanMutateHighRisk(tc.role); got != tc.want {
+			t.Fatalf("adminRoleCanMutateHighRisk(%q) = %v, want %v", tc.role, got, tc.want)
+		}
 	}
 }
 
@@ -348,6 +371,82 @@ func TestAdminOutboundTransfersCarrySignerAuditContext(t *testing.T) {
 		}
 		if !strings.Contains(body, "CorrelationID: dealerSignerCorrelationID") {
 			t.Fatalf("%s must pass request/resource correlation id into signer audit context", name)
+		}
+	}
+}
+
+func TestOutboundMoneyActionsEnforcePolicyBeforeMutation(t *testing.T) {
+	dealerSource := readHandlerSource(t, "dealer.go")
+	for _, tc := range []struct {
+		function      string
+		policyToken   string
+		mutationToken string
+	}{
+		{"HandleDealerWithdrawalCreate", "enforceDealerOutboundPolicy", "deps.WithdrawalRepo.CreateWithHold"},
+		{"HandleAdminRecoverFunds", "enforceDealerOutboundPolicy", "deps.WithdrawalRepo.CreateWithHold"},
+		{"HandleAdminWithdrawalApprove", "enforceDealerOutboundPolicy", "deps.WithdrawalRepo.ApproveWithTransfer"},
+		{"HandleAdminRefundApprove", "enforceDealerOutboundPolicy", "ensureDealerReserveWallet"},
+	} {
+		body := extractHandlerFunctionBody(t, dealerSource, tc.function)
+		policyIndex := strings.Index(body, tc.policyToken)
+		mutationIndex := strings.Index(body, tc.mutationToken)
+		if policyIndex == -1 {
+			t.Fatalf("%s missing outbound policy guard", tc.function)
+		}
+		if mutationIndex == -1 {
+			t.Fatalf("%s missing mutation token %q", tc.function, tc.mutationToken)
+		}
+		if policyIndex > mutationIndex {
+			t.Fatalf("%s must enforce outbound policy before %q", tc.function, tc.mutationToken)
+		}
+	}
+
+	v1Source := readHandlerSource(t, "v1api.go")
+	for _, tc := range []struct {
+		function      string
+		mutationToken string
+	}{
+		{"HandleV1PayoutCreate", "ensureV1ReserveWallet"},
+		{"HandleV1RefundCreate", "ensureV1ReserveWallet"},
+	} {
+		body := extractHandlerFunctionBody(t, v1Source, tc.function)
+		policyIndex := strings.Index(body, "enforceV1OutboundPolicy")
+		mutationIndex := strings.Index(body, tc.mutationToken)
+		if policyIndex == -1 {
+			t.Fatalf("%s missing V1 outbound policy guard", tc.function)
+		}
+		if mutationIndex == -1 {
+			t.Fatalf("%s missing mutation token %q", tc.function, tc.mutationToken)
+		}
+		if policyIndex > mutationIndex {
+			t.Fatalf("%s must enforce outbound policy before %q", tc.function, tc.mutationToken)
+		}
+	}
+}
+
+func TestAdminHighRiskActionsRequirePrivilegedRoleBeforeLookup(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	for _, tc := range []struct {
+		function    string
+		lookupToken string
+	}{
+		{"HandleAdminRecoverFunds", "parseAdminAssetSelection"},
+		{"HandleAdminWithdrawalApprove", "uuid.Parse"},
+		{"HandleAdminWithdrawalReject", "uuid.Parse"},
+		{"HandleAdminRefundApprove", "uuid.Parse"},
+		{"HandleAdminRefundReject", "uuid.Parse"},
+	} {
+		body := extractHandlerFunctionBody(t, source, tc.function)
+		guardIndex := strings.Index(body, "requirePrivilegedAdmin(c, deps.AdminRepo)")
+		lookupIndex := strings.Index(body, tc.lookupToken)
+		if guardIndex < 0 {
+			t.Fatalf("%s missing privileged admin guard", tc.function)
+		}
+		if lookupIndex < 0 {
+			t.Fatalf("%s missing lookup token %q", tc.function, tc.lookupToken)
+		}
+		if guardIndex > lookupIndex {
+			t.Fatalf("%s must check privileged admin role before %q", tc.function, tc.lookupToken)
 		}
 	}
 }
@@ -886,6 +985,31 @@ func TestDealerVaultBalanceViewsGroupsWrappedAssetsByCanonicalSymbol(t *testing.
 	}
 	if !strings.Contains(view.SearchText, "WETH") || !strings.Contains(view.SearchText, "Base") {
 		t.Fatalf("search text = %q, want wrapped asset detail terms", view.SearchText)
+	}
+}
+
+func TestDealerTreasuryBalanceGroupsAggregatesSameCoinAcrossNetworks(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewERC20(constants.Ethereum, "0x0000000000000000000000000000000000000001", "USDC", "USD Coin", 6))
+	registry.Register(asset.NewERC20(constants.Base, "0x0000000000000000000000000000000000000002", "USDC", "USD Coin", 6))
+
+	groups := dealerTreasuryBalanceGroups([]DealerBalanceView{
+		{Chain: "Ethereum", Symbol: "USDC", Token: "0x0000000000000000000000000000000000000001", AmountRaw: "12250000", AmountDisplay: "12.25", Decimals: 6, DisplayToken: "0x0000000000000000000000000000000000000001"},
+		{Chain: "Base", Symbol: "USDC", Token: "0x0000000000000000000000000000000000000002", AmountRaw: "7750000", AmountDisplay: "7.75", Decimals: 6, DisplayToken: "0x0000000000000000000000000000000000000002"},
+	}, registry)
+
+	if len(groups) != 1 {
+		t.Fatalf("groups = %d, want one USDC group", len(groups))
+	}
+	group := groups[0]
+	if group.Symbol != "USDC" || group.AvailableDisplay != "20" || group.VaultDisplay != "20" {
+		t.Fatalf("group = %#v, want USDC total 20", group)
+	}
+	if group.NetworkCount != 2 || group.VariantCount != 1 || len(group.Details) != 2 {
+		t.Fatalf("group counts/details = networks %d variants %d details %#v", group.NetworkCount, group.VariantCount, group.Details)
+	}
+	if !strings.Contains(group.SearchText, "Ethereum") || !strings.Contains(group.SearchText, "Base") {
+		t.Fatalf("search text = %q, want network terms", group.SearchText)
 	}
 }
 

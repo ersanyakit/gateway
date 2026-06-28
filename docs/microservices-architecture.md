@@ -173,7 +173,7 @@ Kural: Bir servis başka servisin tablosuna doğrudan yazmaz. Monolit içinde bi
 - Payment link wallet reuse kaldırılır.
 - Balance endpoint sadece ledger available hesaplarını döner.
 - Webhook URL delivery anında yeniden doğrulanır.
-- CSRF, rate limit, confirmation gate, quote snapshot ve reorg reversal tamamlanır.
+- Portal JWT, rate limit, confirmation gate, quote snapshot ve reorg reversal tamamlanır.
 
 ### Faz 1: Modüler Monolit
 
@@ -212,7 +212,7 @@ Bu fazdan önce integration test ve staging replay yapılmadan production geçi�
 
 ## Production Öncesi Bloklayıcılar
 
-- Admin/merchant formlarına CSRF token eklenmeli.
+- Admin/merchant formlarına portal mutasyon JWT eklenmeli.
 - Chain confirmation gate ödeme status akışına bağlanmalı.
 - Reorg reversal ledger entryleri yazılmalı.
 - Withdrawal nonce ve hold akışı integration test ile kapatılmalı.
