@@ -1973,7 +1973,7 @@ func HandleAdminOutboundPolicyUpdate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_policy.update", "failed", "outbound_policy", "global", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2007,7 +2007,7 @@ func HandleAdminOutboundWhitelistCreate(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.create", "failed", "outbound_whitelist", "", err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
@@ -2043,7 +2043,7 @@ func HandleAdminOutboundWhitelistToggle(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
+		if err := requireAdminPrivilege(c, deps, adminEmail, models.AdminRoleOwner, models.AdminRoleSecurity); err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "outbound_whitelist.toggle", "failed", "outbound_whitelist", c.Params("id"), err.Error())
 			return redirectWithError(c, "/admin/security", err.Error())
 		}
