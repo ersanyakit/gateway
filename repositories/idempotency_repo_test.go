@@ -1,9 +1,14 @@
 package repositories
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"core/models"
 	"core/types"
+
+	"github.com/google/uuid"
 )
 
 func TestIdempotencyRequestHashIncludesSelectedAssetFields(t *testing.T) {
@@ -94,5 +99,37 @@ func TestIdempotencyRequestHashIsStableForSameNormalizedPayload(t *testing.T) {
 	}
 	if hashA != hashB {
 		t.Fatalf("same normalized payload hash mismatch: %s != %s", hashA, hashB)
+	}
+}
+
+func TestIdempotencyRepoCompleteResourceStoresGenericReference(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.IdempotencyKey{}); err != nil {
+		t.Fatalf("automigrate idempotency keys: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewIdempotencyRepo(db)
+	domainID := uuid.New()
+	merchantID := uuid.New()
+	record, shouldCreate, err := repo.Begin(ctx, domainID, merchantID, "outbound-key", "hash-a", time.Hour)
+	if err != nil {
+		t.Fatalf("begin idempotency: %v", err)
+	}
+	if !shouldCreate {
+		t.Fatal("new idempotency key should create")
+	}
+	resourceID := uuid.New()
+	if err := repo.CompleteResource(ctx, record.ID, "payout", resourceID, `{"result":"ok"}`); err != nil {
+		t.Fatalf("complete resource: %v", err)
+	}
+	replayed, shouldCreate, err := repo.Begin(ctx, domainID, merchantID, "outbound-key", "hash-a", time.Hour)
+	if err != nil {
+		t.Fatalf("replay begin: %v", err)
+	}
+	if shouldCreate {
+		t.Fatal("completed idempotency key should replay instead of creating")
+	}
+	if replayed.ResourceType != "payout" || replayed.ResourceID == nil || *replayed.ResourceID != resourceID || replayed.PaymentSessionID != nil || replayed.ResponseBody == "" {
+		t.Fatalf("generic resource reference not preserved: %#v", replayed)
 	}
 }

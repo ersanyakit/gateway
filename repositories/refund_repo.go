@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"core/constants"
 	"core/models"
 	"math/big"
 	"strings"
@@ -40,6 +41,7 @@ func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, 
 	if refund.Status == "" {
 		refund.Status = models.RefundStatusPending
 	}
+	applyRefundSessionMetadata(refund, session)
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(refund).Error; err != nil {
 			return err
@@ -210,6 +212,10 @@ func (r *RefundRepo) ClaimPending(ctx context.Context, id uuid.UUID, reviewedBy 
 }
 
 func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, reviewedBy string, session models.PaymentSession, ledger *LedgerRepo) (*models.Refund, error) {
+	return r.ClaimPendingWithHoldAndSource(ctx, id, reviewedBy, session, models.Wallet{}, "", ledger)
+}
+
+func (r *RefundRepo) ClaimPendingWithHoldAndSource(ctx context.Context, id uuid.UUID, reviewedBy string, session models.PaymentSession, sourceWallet models.Wallet, toAddress string, ledger *LedgerRepo) (*models.Refund, error) {
 	if ledger == nil {
 		return nil, ErrLedgerReservationRequired
 	}
@@ -224,14 +230,26 @@ func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, rev
 		if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, refund, session); err != nil {
 			return err
 		}
+		applyRefundSessionMetadata(&refund, session)
+		walletID := sourceWallet.ID
+		updates := map[string]any{
+			"status":      models.RefundStatusProcessing,
+			"reviewed_by": reviewedBy,
+			"reviewed_at": &now,
+			"chain":       refund.Chain,
+			"token":       refund.Token,
+			"symbol":      refund.Symbol,
+			"decimals":    refund.Decimals,
+			"to_address":  strings.TrimSpace(toAddress),
+			"error":       "",
+		}
+		if walletID != uuid.Nil {
+			refund.WalletID = &walletID
+			updates["wallet_id"] = &walletID
+		}
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status = ?", id, models.RefundStatusPending).
-			Updates(map[string]any{
-				"status":      models.RefundStatusProcessing,
-				"reviewed_by": reviewedBy,
-				"reviewed_at": &now,
-				"error":       "",
-			})
+			Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -241,6 +259,7 @@ func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, rev
 		refund.Status = models.RefundStatusProcessing
 		refund.ReviewedBy = reviewedBy
 		refund.ReviewedAt = &now
+		refund.ToAddress = strings.TrimSpace(toAddress)
 		refund.Error = ""
 		claimed = refund
 		return nil
@@ -252,14 +271,19 @@ func (r *RefundRepo) ClaimPendingWithHold(ctx context.Context, id uuid.UUID, rev
 }
 
 func (r *RefundRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrTxHashRequired
+	}
 	now := time.Now()
 	result := r.db.WithContext(ctx).Model(&models.Refund{}).
 		Where("id = ? AND status = ?", id, models.RefundStatusProcessing).
 		Updates(map[string]any{
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"tx_hash":     txHash,
-			"error":       "finalizing ledger",
+			"reviewed_by":    reviewedBy,
+			"reviewed_at":    &now,
+			"tx_hash":        txHash,
+			"broadcasted_at": &now,
+			"error":          "",
 		})
 	if result.Error != nil {
 		return result.Error
@@ -270,16 +294,42 @@ func (r *RefundRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewed
 	return nil
 }
 
+func applyRefundSessionMetadata(refund *models.Refund, session models.PaymentSession) {
+	if refund == nil || session.SelectedChainID == nil {
+		return
+	}
+	if strings.TrimSpace(refund.Chain) == "" {
+		refund.Chain = constants.ChainName(*session.SelectedChainID)
+	}
+	if refund.Token == nil {
+		refund.Token = session.SelectedToken
+	}
+	if strings.TrimSpace(refund.Symbol) == "" {
+		refund.Symbol = strings.ToUpper(strings.TrimSpace(session.SelectedSymbol))
+	}
+	if strings.TrimSpace(refund.Symbol) == "" {
+		refund.Symbol = strings.ToUpper(constants.ChainName(*session.SelectedChainID))
+	}
+	if refund.Decimals == 0 {
+		refund.Decimals = session.SelectedDecimals
+	}
+}
+
 func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrTxHashRequired
+	}
 	now := time.Now()
 	result := r.db.WithContext(ctx).Model(&models.Refund{}).
 		Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
 		Updates(map[string]any{
-			"status":      models.RefundStatusSucceeded,
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"tx_hash":     txHash,
-			"error":       "",
+			"status":       models.RefundStatusSucceeded,
+			"reviewed_by":  reviewedBy,
+			"reviewed_at":  &now,
+			"tx_hash":      txHash,
+			"finalized_at": &now,
+			"error":        "",
 		})
 	if result.Error != nil {
 		return result.Error
@@ -294,6 +344,10 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 	if ledger == nil {
 		return ErrLedgerReservationRequired
 	}
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrTxHashRequired
+	}
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var refund models.Refund
@@ -307,11 +361,12 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
 			Updates(map[string]any{
-				"status":      models.RefundStatusSucceeded,
-				"reviewed_by": reviewedBy,
-				"reviewed_at": &now,
-				"tx_hash":     txHash,
-				"error":       "",
+				"status":       models.RefundStatusSucceeded,
+				"reviewed_by":  reviewedBy,
+				"reviewed_at":  &now,
+				"tx_hash":      txHash,
+				"finalized_at": &now,
+				"error":        "",
 			})
 		if result.Error != nil {
 			return result.Error

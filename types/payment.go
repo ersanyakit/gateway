@@ -43,6 +43,7 @@ type PaymentCreateResponse struct {
 	Status            string `json:"status"`
 	ExpiresAt         string `json:"expires_at"`
 	DepositWallet     string `json:"deposit_wallet"`
+	LinkType          string `json:"link_type"`
 	ChainID           *int64 `json:"chain_id,omitempty"`
 	Symbol            string `json:"symbol,omitempty"`
 	Token             string `json:"token,omitempty"`

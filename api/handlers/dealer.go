@@ -262,20 +262,23 @@ type DealerMissingChainView struct {
 }
 
 type DealerProductView struct {
-	ID          string
-	Name        string
-	Description string
-	Amount      string
-	Currency    string
-	Language    string
-	Merchant    string
-	Domain      string
-	PaymentURL  string
-	LogoURL     string
-	LogoText    string
-	SuccessURL  string
-	CancelURL   string
-	CreatedAt   string
+	ID            string
+	Name          string
+	Description   string
+	LinkType      string
+	LinkTypeLabel string
+	Amount        string
+	Currency      string
+	AmountDisplay string
+	Language      string
+	Merchant      string
+	Domain        string
+	PaymentURL    string
+	LogoURL       string
+	LogoText      string
+	SuccessURL    string
+	CancelURL     string
+	CreatedAt     string
 }
 
 type DealerPaymentView struct {
@@ -285,8 +288,10 @@ type DealerPaymentView struct {
 	UserID         string
 	Merchant       string
 	Domain         string
+	LinkType       string
 	Amount         string
 	Currency       string
+	AmountDisplay  string
 	Status         string
 	CheckoutURL    string
 	InvoiceURL     string
@@ -941,6 +946,7 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		description := strings.TrimSpace(c.FormValue("description"))
 		amount := strings.TrimSpace(c.FormValue("amount"))
 		currency := strings.ToUpper(strings.TrimSpace(c.FormValue("currency")))
+		linkType := models.NormalizePaymentLinkType(c.FormValue("link_type"))
 		language := normalizeLanguage(c.FormValue("language"))
 		successURL := strings.TrimSpace(c.FormValue("success_url"))
 		cancelURL := strings.TrimSpace(c.FormValue("cancel_url"))
@@ -948,11 +954,16 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 		if name == "" {
 			return redirectWithError(c, "/merchant/dashboard/products", "Ürün adı zorunlu.")
 		}
-		if err := types.ValidatePositiveDecimal(amount); err != nil {
-			return redirectWithError(c, "/merchant/dashboard/products", "Tutar pozitif decimal olmalı.")
-		}
-		if currency == "" {
-			currency = "USD"
+		if models.IsDonationLinkType(linkType) {
+			amount = "0"
+			currency = ""
+		} else {
+			if err := types.ValidatePositiveDecimal(amount); err != nil {
+				return redirectWithError(c, "/merchant/dashboard/products", "Tutar pozitif decimal olmalı.")
+			}
+			if currency == "" {
+				currency = "USD"
+			}
 		}
 
 		product := &models.Product{
@@ -960,6 +971,7 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			DomainID:    domain.ID,
 			Name:        name,
 			Description: description,
+			LinkType:    linkType,
 			Amount:      amount,
 			Currency:    currency,
 			Language:    language,
@@ -972,7 +984,11 @@ func HandleDealerProductCreate(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "failed", "product", name, err.Error())
 			return redirectWithError(c, "/merchant/dashboard/products", "Ürün oluşturulamadı: "+err.Error())
 		}
-		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "success", "product", product.ID.String(), "Payment link ürünü oluşturuldu.")
+		activityMessage := "Payment link ürünü oluşturuldu."
+		if models.IsDonationLinkType(product.LinkType) {
+			activityMessage = "Donation payment link oluşturuldu."
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "product.create", "success", "product", product.ID.String(), activityMessage)
 		link := baseURL(c) + "/payment-links/" + product.LinkToken
 		return redirectWithSuccess(c, "/merchant/dashboard/products", "Payment link oluşturuldu: "+link)
 	}
@@ -1120,6 +1136,7 @@ func HandlePaymentLink(deps DealerDeps) fiber.Handler {
 			OrderID:    orderID,
 			ProductID:  productID,
 			UserID:     userID,
+			LinkType:   models.NormalizePaymentLinkType(product.LinkType),
 			Amount:     product.Amount,
 			Currency:   product.Currency,
 			SuccessURL: product.SuccessURL,
@@ -2333,6 +2350,28 @@ func dealerSignerCorrelationID(c fiber.Ctx, fallback string) string {
 	return requestID + ":" + fallback
 }
 
+func requireOutboundMakerChecker(requestedBy string, actorEmail string) error {
+	if !outboundMakerCheckerRequired() {
+		return nil
+	}
+	requestedBy = strings.TrimSpace(requestedBy)
+	actorEmail = strings.TrimSpace(actorEmail)
+	if requestedBy != "" && actorEmail != "" && strings.EqualFold(requestedBy, actorEmail) {
+		return errors.New("maker-checker policy rejects self approval")
+	}
+	return nil
+}
+
+func outboundMakerCheckerRequired() bool {
+	for _, key := range []string{"OUTBOUND_MAKER_CHECKER_REQUIRED", "REQUIRE_OUTBOUND_MAKER_CHECKER"} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	}
+	return false
+}
+
 func adminBalanceResultForAddress(results []models.BalanceResult, address string) (models.BalanceResult, bool) {
 	for _, result := range results {
 		if strings.EqualFold(strings.TrimSpace(result.Address), strings.TrimSpace(address)) {
@@ -2668,6 +2707,10 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 		if err != nil || request.Status != models.WithdrawalStatusPending {
 			return redirectWithError(c, "/admin/withdrawals", "Pending talep bulunamadı.")
 		}
+		if err := requireOutboundMakerChecker(request.RequestedBy, adminEmail); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed", "withdrawal", id.String(), err.Error())
+			return redirectWithError(c, "/admin/withdrawals", err.Error())
+		}
 		approvedRequest, err := deps.WithdrawalRepo.ApproveWithTransfer(c.Context(), id, adminEmail, deps.LedgerRepo, func(locked *models.WithdrawalRequest) (string, error) {
 			walletID := locked.WalletID.String()
 			params := types.TransferParams{
@@ -2701,10 +2744,7 @@ func HandleAdminWithdrawalApprove(deps DealerDeps) fiber.Handler {
 			return redirectWithError(c, "/admin/withdrawals", "Transfer başarısız: "+err.Error())
 		}
 		if approvedRequest != nil {
-			broadcastRequest := *approvedRequest
-			broadcastRequest.Status = models.WithdrawalStatusProcessing
-			enqueueDealerPayoutLifecycle(c.Context(), deps, broadcastRequest, constants.WebhookEventPayoutBroadcastV1)
-			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutFinalizedV1)
+			enqueueDealerPayoutLifecycle(c.Context(), deps, *approvedRequest, constants.WebhookEventPayoutBroadcastV1)
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success", "withdrawal", id.String(), "Çekim onaylandı ve transfer gönderildi.")
 		return redirectWithSuccess(c, "/admin/withdrawals", "Çekim onaylandı ve transfer gönderildi.")
@@ -2758,6 +2798,10 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		if err != nil || refund.Status != models.RefundStatusPending {
 			return redirectWithError(c, "/admin/refunds", "Pending refund bulunamadı.")
 		}
+		if err := requireOutboundMakerChecker(refund.RequestedBy, adminEmail); err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
+			return redirectWithError(c, "/admin/refunds", err.Error())
+		}
 
 		session, err := deps.PaymentRepo.FindByID(c.Context(), refund.PaymentID)
 		if err != nil || session.Status != models.PaymentStatusPaid {
@@ -2788,7 +2832,7 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		}
 		walletID := reserveWallet.ID.String()
 		chain := constants.ChainName(*session.SelectedChainID)
-		claimedRefund, err := deps.RefundRepo.ClaimPendingWithHold(c.Context(), id, adminEmail, *session, deps.LedgerRepo)
+		claimedRefund, err := deps.RefundRepo.ClaimPendingWithHoldAndSource(c.Context(), id, adminEmail, *session, *reserveWallet, toAddress, deps.LedgerRepo)
 		if err != nil {
 			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
 			return redirectWithError(c, "/admin/refunds", "Refund başka bir işlem tarafından alınmış, artık pending değil veya ledger rezervasyonu yapılamadı: "+err.Error())
@@ -2830,14 +2874,6 @@ func HandleAdminRefundApprove(deps DealerDeps) fiber.Handler {
 		claimedRefund.TxHash = result.TxHash
 		claimedRefund.ReviewedBy = adminEmail
 		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundBroadcastV1)
-		if err := deps.RefundRepo.MarkSucceededWithLedger(c.Context(), id, adminEmail, result.TxHash, *session, deps.LedgerRepo); err != nil {
-			_ = deps.RefundRepo.SetProcessingError(c.Context(), id, "ledger/finalize failed: "+err.Error())
-			logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed", "refund", id.String(), err.Error())
-			return redirectWithError(c, "/admin/refunds", "Refund transfer gönderildi ancak ledger/status güncellenemedi: "+err.Error())
-		}
-		claimedRefund.Status = models.RefundStatusSucceeded
-		claimedRefund.Error = ""
-		enqueueDealerRefundLifecycle(c.Context(), deps, *claimedRefund, constants.WebhookEventRefundSucceededV1)
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "refund.approve", "success", "refund", id.String(), "Refund gönderildi. Tx: "+result.TxHash)
 		return redirectWithSuccess(c, "/admin/refunds", "Refund onaylandı ve transfer gönderildi.")
 	}
@@ -4227,21 +4263,31 @@ func dealerProductViews(c fiber.Ctx, products []models.Product) []DealerProductV
 			runes := []rune(product.Name)
 			logoText = strings.ToUpper(string(runes[0]))
 		}
+		linkType := models.NormalizePaymentLinkType(product.LinkType)
+		linkTypeLabel := "Sabit tutar"
+		amountDisplay := strings.TrimSpace(product.Amount + " " + product.Currency)
+		if models.IsDonationLinkType(linkType) {
+			linkTypeLabel = "Donation"
+			amountDisplay = "Serbest tutar"
+		}
 		views = append(views, DealerProductView{
-			ID:          product.ID.String(),
-			Name:        product.Name,
-			Description: product.Description,
-			Amount:      product.Amount,
-			Currency:    product.Currency,
-			Language:    strings.ToUpper(product.Language),
-			Merchant:    product.Merchant.Name,
-			Domain:      product.Domain.DomainURL,
-			PaymentURL:  baseURL(c) + "/payment-links/" + product.LinkToken,
-			LogoURL:     product.LogoURL,
-			LogoText:    logoText,
-			SuccessURL:  product.SuccessURL,
-			CancelURL:   product.CancelURL,
-			CreatedAt:   formatPanelTime(product.CreatedAt),
+			ID:            product.ID.String(),
+			Name:          product.Name,
+			Description:   product.Description,
+			LinkType:      linkType,
+			LinkTypeLabel: linkTypeLabel,
+			Amount:        product.Amount,
+			Currency:      product.Currency,
+			AmountDisplay: amountDisplay,
+			Language:      strings.ToUpper(product.Language),
+			Merchant:      product.Merchant.Name,
+			Domain:        product.Domain.DomainURL,
+			PaymentURL:    baseURL(c) + "/payment-links/" + product.LinkToken,
+			LogoURL:       product.LogoURL,
+			LogoText:      logoText,
+			SuccessURL:    product.SuccessURL,
+			CancelURL:     product.CancelURL,
+			CreatedAt:     formatPanelTime(product.CreatedAt),
 		})
 	}
 	return views
@@ -4257,6 +4303,14 @@ func dealerPaymentViews(c fiber.Ctx, payments []models.PaymentSession) []DealerP
 		base := baseURL(c)
 		checkoutURL := base + "/checkout/" + payment.SessionToken
 		invoiceURL := base + "/invoice/" + payment.SessionToken
+		linkType := models.NormalizePaymentLinkType(payment.LinkType)
+		amountDisplay := strings.TrimSpace(payment.Amount + " " + payment.Currency)
+		if models.IsDonationLinkType(linkType) {
+			amountDisplay = "Serbest tutar"
+			if strings.TrimSpace(payment.MatchedAmountRaw) != "" {
+				amountDisplay = strings.TrimSpace(formatTokenAmount(payment.MatchedAmountRaw, payment.SelectedDecimals) + " " + payment.SelectedSymbol)
+			}
+		}
 		merchant := payment.Merchant.Name
 		if strings.TrimSpace(merchant) == "" {
 			merchant = shortText(payment.MerchantID.String(), 8, 6)
@@ -4272,8 +4326,10 @@ func dealerPaymentViews(c fiber.Ctx, payments []models.PaymentSession) []DealerP
 			UserID:         emptyDash(payment.UserID),
 			Merchant:       merchant,
 			Domain:         domain,
+			LinkType:       linkType,
 			Amount:         payment.Amount,
 			Currency:       payment.Currency,
+			AmountDisplay:  emptyDash(amountDisplay),
 			Status:         payment.Status,
 			CheckoutURL:    checkoutURL,
 			InvoiceURL:     invoiceURL,

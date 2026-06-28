@@ -67,6 +67,8 @@ func (r *IdempotencyRepo) Begin(ctx context.Context, domainID, merchantID uuid.U
 			Updates(map[string]any{
 				"status":             models.IdempotencyStatusInProgress,
 				"payment_session_id": nil,
+				"resource_type":      "",
+				"resource_id":        nil,
 				"response_body":      "",
 				"error":              "",
 				"expires_at":         &expiresAt,
@@ -76,6 +78,8 @@ func (r *IdempotencyRepo) Begin(ctx context.Context, domainID, merchantID uuid.U
 		}
 		current.Status = models.IdempotencyStatusInProgress
 		current.PaymentSessionID = nil
+		current.ResourceType = ""
+		current.ResourceID = nil
 		current.ResponseBody = ""
 		current.Error = ""
 		current.ExpiresAt = &expiresAt
@@ -91,9 +95,25 @@ func (r *IdempotencyRepo) Complete(ctx context.Context, id uuid.UUID, sessionID 
 		Updates(map[string]any{
 			"status":             models.IdempotencyStatusCompleted,
 			"payment_session_id": &sessionID,
+			"resource_type":      "payment_session",
+			"resource_id":        &sessionID,
 			"response_body":      responseBody,
 			"error":              "",
 			"updated_at":         time.Now(),
+		}).Error
+}
+
+func (r *IdempotencyRepo) CompleteResource(ctx context.Context, id uuid.UUID, resourceType string, resourceID uuid.UUID, responseBody string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.IdempotencyKey{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":        models.IdempotencyStatusCompleted,
+			"resource_type": resourceType,
+			"resource_id":   &resourceID,
+			"response_body": responseBody,
+			"error":         "",
+			"updated_at":    time.Now(),
 		}).Error
 }
 

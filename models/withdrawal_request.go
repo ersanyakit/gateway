@@ -10,6 +10,7 @@ const (
 	WithdrawalStatusPending    = "pending"
 	WithdrawalStatusProcessing = "processing"
 	WithdrawalStatusApproved   = "approved"
+	WithdrawalStatusFinalized  = "finalized"
 	WithdrawalStatusRejected   = "rejected"
 	WithdrawalStatusFailed     = "failed"
 )
@@ -36,6 +37,11 @@ type WithdrawalRequest struct {
 	ReviewedAt  *time.Time `json:"reviewed_at,omitempty"`
 	TxHash      string     `gorm:"size:128;index" json:"tx_hash,omitempty"`
 	Error       string     `gorm:"type:text" json:"error,omitempty"`
+
+	BroadcastedAt  *time.Time `gorm:"index" json:"broadcasted_at,omitempty"`
+	FinalizedAt    *time.Time `gorm:"index" json:"finalized_at,omitempty"`
+	IdempotencyKey string     `gorm:"size:180;index" json:"idempotency_key,omitempty"`
+	CorrelationID  string     `gorm:"size:180;index" json:"correlation_id,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

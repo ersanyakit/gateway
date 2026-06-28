@@ -34,6 +34,103 @@ func TestV1WalletProductIDDefaultsToWallet(t *testing.T) {
 	}
 }
 
+func TestV1PaymentResponseIncludesDonationLinkType(t *testing.T) {
+	paidAt := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	session := models.PaymentSession{
+		ID:               uuid.New(),
+		SessionToken:     "donation-track",
+		OrderID:          "donation-order",
+		LinkType:         models.PaymentLinkTypeDonation,
+		Amount:           "0",
+		Currency:         "",
+		Status:           models.PaymentStatusPaid,
+		PaymentOutcome:   models.PaymentOutcomeDonation,
+		MatchedAmountRaw: "42000000000000000",
+		PaidAt:           &paidAt,
+		CreatedAt:        paidAt.Add(-time.Minute),
+	}
+
+	resp := v1PaymentResponse(session)
+	if resp["link_type"] != models.PaymentLinkTypeDonation {
+		t.Fatalf("link_type = %#v, want donation", resp["link_type"])
+	}
+	if resp["matched_amount_raw"] != "42000000000000000" || resp["payment_outcome"] != models.PaymentOutcomeDonation {
+		t.Fatalf("donation payment outcome fields missing: %#v", resp)
+	}
+}
+
+func TestV1OutboundResponsesIncludeLifecycleMetadata(t *testing.T) {
+	now := time.Date(2026, 6, 28, 12, 30, 0, 0, time.UTC)
+	domainID := uuid.New()
+	walletID := uuid.New()
+	withdrawal := models.WithdrawalRequest{
+		ID:             uuid.New(),
+		DomainID:       &domainID,
+		WalletID:       walletID,
+		Chain:          "ethereum",
+		Symbol:         "ETH",
+		Decimals:       18,
+		ToAddress:      "0xto",
+		AmountRaw:      "10",
+		Status:         models.WithdrawalStatusProcessing,
+		TxHash:         "0xtx",
+		BroadcastedAt:  &now,
+		FinalizedAt:    &now,
+		IdempotencyKey: "payout-key",
+		CorrelationID:  "corr-payout",
+		CreatedAt:      now,
+	}
+	payout := v1PayoutResponse(withdrawal)
+	for key, want := range map[string]any{
+		"wallet_id":       walletID.String(),
+		"broadcasted_at":  now.UTC().Format(time.RFC3339),
+		"finalized_at":    now.UTC().Format(time.RFC3339),
+		"idempotency_key": "payout-key",
+		"correlation_id":  "corr-payout",
+	} {
+		if payout[key] != want {
+			t.Fatalf("payout[%s] = %#v, want %#v; payload=%#v", key, payout[key], want, payout)
+		}
+	}
+
+	refundWalletID := uuid.New()
+	refund := models.Refund{
+		ID:             uuid.New(),
+		MerchantID:     uuid.New(),
+		DomainID:       uuid.New(),
+		PaymentID:      uuid.New(),
+		WalletID:       &refundWalletID,
+		Chain:          "ethereum",
+		Symbol:         "ETH",
+		Decimals:       18,
+		ToAddress:      "0xrefund",
+		AmountRaw:      "10",
+		Status:         models.RefundStatusProcessing,
+		TxHash:         "0xrefund",
+		BroadcastedAt:  &now,
+		FinalizedAt:    &now,
+		IdempotencyKey: "refund-key",
+		CorrelationID:  "corr-refund",
+		CreatedAt:      now,
+	}
+	refundResp := v1RefundResponse(refund)
+	for key, want := range map[string]any{
+		"wallet_id":       refundWalletID.String(),
+		"chain":           "ethereum",
+		"symbol":          "ETH",
+		"decimals":        uint8(18),
+		"to_address":      "0xrefund",
+		"broadcasted_at":  now.UTC().Format(time.RFC3339),
+		"finalized_at":    now.UTC().Format(time.RFC3339),
+		"idempotency_key": "refund-key",
+		"correlation_id":  "corr-refund",
+	} {
+		if refundResp[key] != want {
+			t.Fatalf("refund[%s] = %#v, want %#v; payload=%#v", key, refundResp[key], want, refundResp)
+		}
+	}
+}
+
 func TestV1WalletResponseIncludesProviderAddresses(t *testing.T) {
 	createdAt := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 	wallet := &models.Wallet{
@@ -238,6 +335,43 @@ func TestV1StaticAddressResponseRequiresRequestedChainAddress(t *testing.T) {
 	}, "")
 	if err == nil || !strings.Contains(err.Error(), "address unavailable") {
 		t.Fatalf("err = %v, want address unavailable", err)
+	}
+}
+
+func TestV1OutboundCreateSourceContractUsesIdempotencyBeforeMutation(t *testing.T) {
+	source := readHandlerSource(t, "v1api.go")
+	for _, tc := range []struct {
+		function      string
+		mutationToken string
+		metadataToken string
+	}{
+		{
+			function:      "HandleV1PayoutCreate",
+			mutationToken: "ensureV1ReserveWallet",
+			metadataToken: "IdempotencyKey: idempotencyKey",
+		},
+		{
+			function:      "HandleV1RefundCreate",
+			mutationToken: "deps.RefundRepo.CreateWithHold",
+			metadataToken: "IdempotencyKey: idempotencyKey",
+		},
+	} {
+		body := extractHandlerFunctionBody(t, source, tc.function)
+		for _, token := range []string{
+			"beginV1CreateIdempotency",
+			"replayV1CreateIdempotency",
+			"completeV1CreateIdempotency",
+			"failV1CreateIdempotency",
+			tc.metadataToken,
+			"CorrelationID:  correlationID",
+		} {
+			if !strings.Contains(body, token) {
+				t.Fatalf("%s idempotency contract missing %q", tc.function, token)
+			}
+		}
+		if strings.Index(body, "beginV1CreateIdempotency") > strings.Index(body, tc.mutationToken) {
+			t.Fatalf("%s must begin idempotency before mutation %q", tc.function, tc.mutationToken)
+		}
 	}
 }
 

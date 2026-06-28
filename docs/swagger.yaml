@@ -129,6 +129,8 @@ definitions:
         type: string
       expires_at:
         type: string
+      link_type:
+        type: string
       payment_id:
         type: string
       session_token:
@@ -446,6 +448,9 @@ definitions:
       expires_at:
         example: "2024-06-01T12:30:00Z"
         type: string
+      link_type:
+        example: fixed
+        type: string
       order_id:
         example: ORD-2024-001
         type: string
@@ -502,6 +507,9 @@ definitions:
         type: string
       expires_at:
         example: "2024-06-01T12:30:00Z"
+        type: string
+      link_type:
+        example: fixed
         type: string
       matched_amount_raw:
         example: "25000000"
@@ -631,20 +639,38 @@ definitions:
       amount_raw:
         example: "50000000"
         type: string
+      broadcasted_at:
+        example: "2024-06-01T12:06:00Z"
+        type: string
       chain:
         example: ethereum
+        type: string
+      correlation_id:
+        example: req_01J2ABCDEF
         type: string
       created_at:
         example: "2024-06-01T12:00:00Z"
         type: string
+      decimals:
+        example: 6
+        type: integer
       domain_id:
         example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      finalized_at:
+        example: "2024-06-01T12:12:00Z"
+        type: string
+      idempotency_key:
+        example: payout-2026-06-28-001
         type: string
       note:
         example: Monthly settlement
         type: string
       payout_id:
         example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      reviewed_at:
+        example: "2024-06-01T12:05:00Z"
         type: string
       status:
         example: pending
@@ -660,6 +686,9 @@ definitions:
         type: string
       tx_hash:
         example: ""
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440002
         type: string
     type: object
   types.V1PayoutHistoryResponse:
@@ -803,8 +832,26 @@ definitions:
       amount_raw:
         example: "25000000"
         type: string
+      broadcasted_at:
+        example: "2024-06-01T12:06:00Z"
+        type: string
+      chain:
+        example: ethereum
+        type: string
+      correlation_id:
+        example: req_01J2ABCDEF
+        type: string
       created_at:
         example: "2024-06-01T12:00:00Z"
+        type: string
+      decimals:
+        example: 6
+        type: integer
+      finalized_at:
+        example: "2024-06-01T12:12:00Z"
+        type: string
+      idempotency_key:
+        example: refund-2026-06-28-001
         type: string
       order_id:
         example: ORD-2024-001
@@ -818,11 +865,26 @@ definitions:
       refund_id:
         example: 550e8400-e29b-41d4-a716-446655440000
         type: string
+      reviewed_at:
+        example: "2024-06-01T12:05:00Z"
+        type: string
       status:
         example: pending
         type: string
+      symbol:
+        example: USDT
+        type: string
+      to_address:
+        example: 0xAbCdEf1234567890AbCdEf1234567890AbCdEf12
+        type: string
+      token_address:
+        example: 0xdAC17F958D2ee523a2206206994597C13D831ec7
+        type: string
       tx_hash:
         example: ""
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440002
         type: string
     type: object
   types.V1RefundHistoryResponse:
@@ -1736,6 +1798,10 @@ paths:
         name: X-Gateway-Signature
         required: true
         type: string
+      - description: Idempotency key for replay-safe payout creation.
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Payout parameters
         in: body
         name: payload
@@ -1755,6 +1821,10 @@ paths:
             $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/types.V1ErrorResponse'
       security:
@@ -1871,6 +1941,10 @@ paths:
         name: X-Gateway-Signature
         required: true
         type: string
+      - description: Idempotency key for replay-safe refund creation.
+        in: header
+        name: Idempotency-Key
+        type: string
       - description: Refund parameters
         in: body
         name: payload
@@ -1890,6 +1964,10 @@ paths:
             $ref: '#/definitions/types.V1ErrorResponse'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.V1ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/types.V1ErrorResponse'
       security:

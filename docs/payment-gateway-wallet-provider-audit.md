@@ -100,7 +100,7 @@ Sonuç: Merchant payment gateway olarak MVP seviyesi güçlü. Üretim seviyesi 
 | HD derivation | Trust Wallet Core ile yapılıyor | İyi | External signer ile uyumlu key derivation tasarımı eksik |
 | Private key handling | Process içinde mnemonic/private key derivation var | Kritik zayıf | KMS/HSM/MPC yok |
 | Deposit balance | Ledger wallet/domain bazlı bakiye üretiyor | Orta | Liability proof, asset reconciliation, snapshot/close period eksik |
-| Sweep | Deposit sonrası auto-sweep var | Zayıf-orta | Durable job değil, hata sadece log, retry/idempotency/policy eksik |
+| Sweep | Durable `sweep_jobs`, retry/dead-letter, tx-hash guard ve reconciliation temeli var | Orta | Multi-replica resource ownership, replacement evidence ve operator recovery UI eksik |
 | Withdrawal | Admin onaylı transfer var | Orta | Nonce/UTXO lock, address whitelist, risk engine, approval matrix eksik |
 | Token desteği | ERC-20, TRC-20, SPL gibi transfer pathleri var | Orta | Token registry ve chain-specific edge case testleri genişlemeli |
 | Custody policy | Reserve wallet kavramı var | Zayıf | Hot/warm/cold tier, daily limit, freeze, signer audit, segregation eksik |
@@ -201,9 +201,9 @@ Bu düzeltmeler durable sweep, webhook hardening, configurable backfill, reorg c
    - Kabul kriteri: Policy engine, per-tenant limits, address whitelist, dual approval, nonce/UTXO lock, stuck tx replacement.
 
 6. Auto-sweep durable job'a taşındı.
-   - Güncel durum: `sweep_jobs` status machine, retry, lock, idempotency, dead-letter ve sweep tx hash kaydı eklendi.
-   - Kalan risk: Gas prefund ayrı idempotent alt-job değil; admin recovery ekranı ve per-wallet concurrency policy hâlâ güçlendirilmeli.
-   - Kalan kabul kriteri: Gas-prefund idempotency, per-wallet lock policy, admin recovery ekranı.
+   - Güncel durum: `sweep_jobs` status machine, retry, lock, idempotency, dead-letter, bounded failure category, sweep tx hash kaydı ve parent-job prefund attempt/error/category state eklendi.
+   - Kalan risk: Gas prefund ayrı idempotent alt-job değil; admin recovery ekranı ve multi-replica durable resource ownership hâlâ güçlendirilmeli.
+   - Kalan kabul kriteri: Admin recovery ekranı, durable multi-replica nonce/UTXO/resource locking, operator replay/reconcile workflow.
 
 ### P1 - Production readiness için gerekli
 
@@ -330,7 +330,7 @@ Binance ayarında tracking diyebilmek için:
 
 1. Reorg tracking: transaction reorg status, ledger reversal ve correction webhook temeli tamamlandı; block hash chain ve rollback window açık.
 2. Nonce/UTXO reservation: EVM nonce manager, Bitcoin UTXO lock, stuck tx replacement.
-3. Sweep state machine: pending, processing, succeeded, failed, dead-letter. Durum: temel tamamlandı; prefunding alt-state açık.
+3. Sweep state machine: pending, processing, succeeded, failed, dead-letter. Durum: temel tamamlandı; prefunding parent-job attempt/error/category state eklendi, ayrı child-job ve operator UI açık.
 4. Reconciliation job: ledger invariant job temel tamamlandı; on-chain reserve/user wallet balance karşılaştırması açık.
 5. Observability: Prometheus metrics ve alert rules.
 

@@ -39,6 +39,7 @@ func (r *ProductRepo) Create(ctx context.Context, product *models.Product) error
 	if strings.TrimSpace(product.Language) == "" {
 		product.Language = "tr"
 	}
+	product.LinkType = models.NormalizePaymentLinkType(product.LinkType)
 	now := time.Now()
 	if product.CreatedAt.IsZero() {
 		product.CreatedAt = now

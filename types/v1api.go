@@ -206,6 +206,7 @@ type V1PaymentCreatedData struct {
 	Status            string `json:"status"         example:"pending"`
 	ExpiresAt         string `json:"expires_at"     example:"2024-06-01T12:30:00Z"`
 	OrderID           string `json:"order_id"       example:"ORD-2024-001"`
+	LinkType          string `json:"link_type"      example:"fixed"`
 	Amount            string `json:"amount"         example:"25.00"`
 	Currency          string `json:"currency"       example:"USD"`
 	ChainID           *int64 `json:"chain_id,omitempty" example:"1"`
@@ -227,6 +228,7 @@ type V1PaymentDetail struct {
 	TrackID              string `json:"track_id"        example:"550e8400-e29b-41d4-a716-446655440000"`
 	OrderID              string `json:"order_id"        example:"ORD-2024-001"`
 	Status               string `json:"status"          example:"paid"`
+	LinkType             string `json:"link_type"       example:"fixed"`
 	Amount               string `json:"amount"          example:"25.00"`
 	Currency             string `json:"currency"        example:"USD"`
 	UserID               string `json:"user_id"         example:"customer_42"`
@@ -387,17 +389,24 @@ type V1PayoutCreateResponse struct {
 }
 
 type V1PayoutDetail struct {
-	PayoutID     string `json:"payout_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
-	DomainID     string `json:"domain_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Chain        string `json:"chain"         example:"ethereum"`
-	Symbol       string `json:"symbol"        example:"USDT"`
-	TokenAddress string `json:"token_address" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
-	ToAddress    string `json:"to_address"    example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
-	AmountRaw    string `json:"amount_raw"    example:"50000000"`
-	Status       string `json:"status"        example:"pending"`
-	Note         string `json:"note"          example:"Monthly settlement"`
-	TxHash       string `json:"tx_hash"       example:""`
-	CreatedAt    string `json:"created_at"    example:"2024-06-01T12:00:00Z"`
+	PayoutID       string `json:"payout_id"     example:"550e8400-e29b-41d4-a716-446655440000"`
+	DomainID       string `json:"domain_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440000"`
+	WalletID       string `json:"wallet_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440002"`
+	Chain          string `json:"chain"         example:"ethereum"`
+	Symbol         string `json:"symbol"        example:"USDT"`
+	TokenAddress   string `json:"token_address" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	ToAddress      string `json:"to_address"    example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	AmountRaw      string `json:"amount_raw"    example:"50000000"`
+	Decimals       uint8  `json:"decimals"      example:"6"`
+	Status         string `json:"status"        example:"pending"`
+	Note           string `json:"note"          example:"Monthly settlement"`
+	TxHash         string `json:"tx_hash"       example:""`
+	IdempotencyKey string `json:"idempotency_key,omitempty" example:"payout-2026-06-28-001"`
+	CorrelationID  string `json:"correlation_id,omitempty" example:"req_01J2ABCDEF"`
+	ReviewedAt     string `json:"reviewed_at,omitempty" example:"2024-06-01T12:05:00Z"`
+	BroadcastedAt  string `json:"broadcasted_at,omitempty" example:"2024-06-01T12:06:00Z"`
+	FinalizedAt    string `json:"finalized_at,omitempty" example:"2024-06-01T12:12:00Z"`
+	CreatedAt      string `json:"created_at"    example:"2024-06-01T12:00:00Z"`
 }
 
 // V1PayoutInfoResponse is returned by GET /api/v1/payout/info.
@@ -432,14 +441,25 @@ type V1PayoutStatusTableResponse struct {
 
 // V1RefundDetail holds refund request details.
 type V1RefundDetail struct {
-	RefundID  string `json:"refund_id"   example:"550e8400-e29b-41d4-a716-446655440000"`
-	PaymentID string `json:"payment_id"  example:"550e8400-e29b-41d4-a716-446655440001"`
-	OrderID   string `json:"order_id"    example:"ORD-2024-001"`
-	AmountRaw string `json:"amount_raw"  example:"25000000"`
-	Status    string `json:"status"      example:"pending"`
-	Reason    string `json:"reason"      example:"Customer requested refund"`
-	TxHash    string `json:"tx_hash"     example:""`
-	CreatedAt string `json:"created_at"  example:"2024-06-01T12:00:00Z"`
+	RefundID       string `json:"refund_id"   example:"550e8400-e29b-41d4-a716-446655440000"`
+	PaymentID      string `json:"payment_id"  example:"550e8400-e29b-41d4-a716-446655440001"`
+	OrderID        string `json:"order_id"    example:"ORD-2024-001"`
+	WalletID       string `json:"wallet_id,omitempty" example:"550e8400-e29b-41d4-a716-446655440002"`
+	Chain          string `json:"chain,omitempty" example:"ethereum"`
+	Symbol         string `json:"symbol,omitempty" example:"USDT"`
+	TokenAddress   string `json:"token_address,omitempty" example:"0xdAC17F958D2ee523a2206206994597C13D831ec7"`
+	Decimals       uint8  `json:"decimals,omitempty" example:"6"`
+	ToAddress      string `json:"to_address,omitempty" example:"0xAbCdEf1234567890AbCdEf1234567890AbCdEf12"`
+	AmountRaw      string `json:"amount_raw"  example:"25000000"`
+	Status         string `json:"status"      example:"pending"`
+	Reason         string `json:"reason"      example:"Customer requested refund"`
+	TxHash         string `json:"tx_hash"     example:""`
+	IdempotencyKey string `json:"idempotency_key,omitempty" example:"refund-2026-06-28-001"`
+	CorrelationID  string `json:"correlation_id,omitempty" example:"req_01J2ABCDEF"`
+	ReviewedAt     string `json:"reviewed_at,omitempty" example:"2024-06-01T12:05:00Z"`
+	BroadcastedAt  string `json:"broadcasted_at,omitempty" example:"2024-06-01T12:06:00Z"`
+	FinalizedAt    string `json:"finalized_at,omitempty" example:"2024-06-01T12:12:00Z"`
+	CreatedAt      string `json:"created_at"  example:"2024-06-01T12:00:00Z"`
 }
 
 // V1RefundCreateResponse is returned by POST /api/v1/refund/create.

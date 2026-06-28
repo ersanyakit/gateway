@@ -72,6 +72,7 @@ func (r *PaymentRepo) Create(ctx context.Context, session *models.PaymentSession
 	if session.Status == "" {
 		session.Status = models.PaymentStatusPending
 	}
+	session.LinkType = models.NormalizePaymentLinkType(session.LinkType)
 	now := time.Now()
 	if session.CreatedAt.IsZero() {
 		session.CreatedAt = now
@@ -502,6 +503,8 @@ func paymentMatchDecisionPriority(decision paymentMatchDecision) int {
 	switch {
 	case decision.Status == models.PaymentStatusPaid && decision.Outcome == models.PaymentOutcomeExact:
 		return 0
+	case decision.Status == models.PaymentStatusPaid && decision.Outcome == models.PaymentOutcomeDonation:
+		return 0
 	case decision.Status == models.PaymentStatusUnderpaid || decision.Status == models.PaymentStatusPartialPaid || decision.Status == models.PaymentStatusOverpaid:
 		return 10
 	case decision.Outcome == models.PaymentOutcomeExpiredAfterDeposit:
@@ -611,6 +614,18 @@ func paymentMatchDecisionForSession(session models.PaymentSession, txModel model
 			WebhookEvent:     constants.WebhookEventPaymentExpired,
 			MatchedAmountRaw: txModel.Amount,
 			LedgerEligible:   true,
+		}, true
+	}
+
+	if models.IsDonationLinkType(session.LinkType) {
+		return paymentMatchDecision{
+			Status:            models.PaymentStatusPaid,
+			Outcome:           models.PaymentOutcomeDonation,
+			Reason:            "donation amount accepted without fixed expected amount",
+			WebhookEvent:      constants.WebhookEventPaymentSucceeded,
+			MatchedAmountRaw:  txModel.Amount,
+			LedgerEligible:    true,
+			ConfirmingPayment: true,
 		}, true
 	}
 

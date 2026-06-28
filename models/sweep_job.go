@@ -15,6 +15,18 @@ const (
 	SweepJobStatusDeadLetter = "dead_letter"
 )
 
+const (
+	SweepJobErrorMaxLength = 500
+)
+
+const (
+	SweepFailureCategoryUnknown            = "unknown"
+	SweepFailureCategoryPolicy             = "policy"
+	SweepFailureCategoryTimeout            = "timeout"
+	SweepFailureCategoryTransient          = "transient"
+	SweepFailureCategoryBroadcastUncertain = "broadcast_uncertain"
+)
+
 type SweepJob struct {
 	ID uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
 
@@ -25,17 +37,20 @@ type SweepJob struct {
 	ChainID               constants.ChainID `gorm:"type:bigint;not null;index" json:"chain_id"`
 	Token                 *string           `gorm:"type:varchar(128);index" json:"token,omitempty"`
 
-	Status      string     `gorm:"size:24;not null;index" json:"status"`
-	Attempts    uint       `gorm:"not null;default:0" json:"attempts"`
-	MaxAttempts uint       `gorm:"not null;default:12" json:"max_attempts"`
-	LastError   string     `gorm:"type:text" json:"last_error,omitempty"`
-	NextRunAt   *time.Time `gorm:"index" json:"next_run_at,omitempty"`
-	LockedUntil *time.Time `gorm:"index" json:"locked_until,omitempty"`
-	SweepTxHash string     `gorm:"size:128;index" json:"sweep_tx_hash,omitempty"`
+	Status          string     `gorm:"size:24;not null;index" json:"status"`
+	Attempts        uint       `gorm:"not null;default:0" json:"attempts"`
+	MaxAttempts     uint       `gorm:"not null;default:12" json:"max_attempts"`
+	LastError       string     `gorm:"type:text" json:"last_error,omitempty"`
+	FailureCategory string     `gorm:"size:64;index" json:"failure_category,omitempty"`
+	NextRunAt       *time.Time `gorm:"index" json:"next_run_at,omitempty"`
+	LockedUntil     *time.Time `gorm:"index" json:"locked_until,omitempty"`
+	SweepTxHash     string     `gorm:"size:128;index" json:"sweep_tx_hash,omitempty"`
 
-	PrefundAttempts  uint       `gorm:"not null;default:0" json:"prefund_attempts"`
-	PrefundLastError string     `gorm:"type:text" json:"prefund_last_error,omitempty"`
-	PrefundedAt      *time.Time `gorm:"index" json:"prefunded_at,omitempty"`
+	PrefundAttempts        uint       `gorm:"not null;default:0" json:"prefund_attempts"`
+	PrefundLastError       string     `gorm:"type:text" json:"prefund_last_error,omitempty"`
+	PrefundFailureCategory string     `gorm:"size:64;index" json:"prefund_failure_category,omitempty"`
+	PrefundLastAttemptAt   *time.Time `gorm:"index" json:"prefund_last_attempt_at,omitempty"`
+	PrefundedAt            *time.Time `gorm:"index" json:"prefunded_at,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

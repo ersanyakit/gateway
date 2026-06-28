@@ -95,6 +95,7 @@ type PaymentPayload struct {
 
 	Amount             string  `json:"amount"`
 	Currency           string  `json:"currency"`
+	LinkType           string  `json:"link_type,omitempty"`
 	ChainID            *int64  `json:"chain_id,omitempty"`
 	Symbol             string  `json:"symbol,omitempty"`
 	Token              *string `json:"token,omitempty"`
@@ -244,6 +245,7 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 		WalletID:           session.WalletID.String(),
 		Amount:             session.Amount,
 		Currency:           session.Currency,
+		LinkType:           models.NormalizePaymentLinkType(session.LinkType),
 		ChainID:            chainID,
 		Symbol:             session.SelectedSymbol,
 		Token:              session.SelectedToken,
@@ -316,7 +318,7 @@ func paymentCorrectionRelation(session models.PaymentSession) (string, string, s
 
 func paymentOriginalEventType(session models.PaymentSession) string {
 	switch session.PaymentOutcome {
-	case models.PaymentOutcomeExact:
+	case models.PaymentOutcomeExact, models.PaymentOutcomeDonation:
 		return constants.WebhookEventPaymentSucceeded
 	case models.PaymentOutcomeUnderpaid:
 		return constants.WebhookEventPaymentUnderpaid

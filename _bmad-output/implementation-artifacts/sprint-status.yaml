@@ -1,5 +1,5 @@
 # generated: 2026-06-27
-# last_updated: 2026-06-27
+# last_updated: 2026-06-28
 # project: gateway
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,7 +41,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-06-27
-last_updated: 2026-06-27
+last_updated: 2026-06-28
 project: gateway
 project_key: NOKEY
 tracking_system: file-system
@@ -73,9 +73,9 @@ development_status:
   epic-4: in-progress
   4-1-reserve-ledger-holds-before-outbound-money-movement: done
   4-2-enforce-external-signer-boundary-and-production-software-signer-guard: done
-  4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: in-progress
-  4-4-run-auto-sweeps-as-durable-recoverable-jobs: backlog
-  4-5-complete-withdrawal-payout-and-refund-lifecycle-events: backlog
+  4-3-reserve-chain-resources-and-apply-fee-gas-policy-before-broadcast: done
+  4-4-run-auto-sweeps-as-durable-recoverable-jobs: done
+  4-5-complete-withdrawal-payout-and-refund-lifecycle-events: review
   4-6-harden-admin-security-limits-whitelists-and-audit-trails: backlog
   epic-4-retrospective: optional
   epic-5: backlog

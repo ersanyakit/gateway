@@ -253,6 +253,7 @@ func handlePaymentCreate(deps PaymentHandlerDeps, mode paymentCreateMode) fiber.
 			OrderID:        *params.OrderID,
 			ProductID:      productID,
 			UserID:         userID,
+			LinkType:       models.PaymentLinkTypeFixed,
 			Amount:         *params.Amount,
 			Currency:       *params.Currency,
 			SuccessURL:     valueOrDefault(params.SuccessURL, ""),
@@ -403,6 +404,7 @@ func paymentCreateResponseBody(mode paymentCreateMode, session models.PaymentSes
 		"status":         data["status"],
 		"expires_at":     data["expires_at"],
 		"deposit_wallet": walletID,
+		"link_type":      data["link_type"],
 	}
 	copySelectedPaymentFields(response, data)
 	return response
@@ -421,6 +423,7 @@ func paymentCreateResponseData(session models.PaymentSession, checkoutURL string
 		"status":        paymentSessionResponseStatus(session, now),
 		"expires_at":    expiresAt,
 		"order_id":      session.OrderID,
+		"link_type":     models.NormalizePaymentLinkType(session.LinkType),
 		"amount":        session.Amount,
 		"currency":      session.Currency,
 		"wallet_id":     walletID.String(),
@@ -597,8 +600,13 @@ func checkoutPayerState(session models.PaymentSession, now time.Time) checkoutPa
 		state.Payable = true
 		state.TitleEN = "Waiting for payment"
 		state.TitleTR = "Odeme bekleniyor"
-		state.BodyEN = "Send the exact amount to the address below."
-		state.BodyTR = "Tam tutari asagidaki adrese gonder."
+		if models.IsDonationLinkType(session.LinkType) {
+			state.BodyEN = "Choose the amount in your wallet and send it to the address below."
+			state.BodyTR = "Tutari wallet uygulamanda belirleyip asagidaki adrese gonder."
+		} else {
+			state.BodyEN = "Send the exact amount to the address below."
+			state.BodyTR = "Tam tutari asagidaki adrese gonder."
+		}
 	default:
 		state.Status = checkoutStatePending
 		state.Mode = "detecting"
@@ -700,6 +708,7 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 			"AssetGroups":        checkoutAssetGroups(c.Context(), deps, *session),
 			"SelectedSymbol":     selectedSymbol,
 			"Assets":             options,
+			"IsDonation":         models.IsDonationLinkType(session.LinkType),
 			"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
 			"Error":              "",
 			"ProductName":        productName,
@@ -757,10 +766,6 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			session = ensureCheckoutWalletAddresses(c.Context(), deps, session)
 		}
 
-		amountRaw, quotePrice, quoteSource, err := checkoutExpectedQuote(c.Context(), deps.PriceOracle, *session, assetInfo)
-		if err != nil {
-			return renderCheckoutWithError(c, deps, session, err.Error())
-		}
 		depositAddress := paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID())
 		if depositAddress == "" {
 			return renderCheckoutWithError(c, deps, session, "Deposit address is not available for this network.")
@@ -771,28 +776,38 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 			identifier := assetInfo.GetIdentifier()
 			selectedToken = &identifier
 		}
-		quotedAt := time.Now()
-		quoteExpiresAt := quotedAt.Add(15 * time.Minute)
-		if session.ExpiresAt != nil && session.ExpiresAt.Before(quoteExpiresAt) {
-			quoteExpiresAt = *session.ExpiresAt
-		}
-		quote := &models.PriceQuote{
-			ChainID:           assetInfo.GetChainID(),
-			Token:             selectedToken,
-			Symbol:            assetInfo.GetSymbol(),
-			Decimals:          assetInfo.GetDecimals(),
-			FiatCurrency:      strings.ToUpper(strings.TrimSpace(session.Currency)),
-			FiatAmount:        strings.TrimSpace(session.Amount),
-			ExpectedAmountRaw: amountRaw,
-			PriceSource:       quoteSource,
-			Price:             quotePrice,
-			QuotedAt:          quotedAt,
-			ExpiresAt:         quoteExpiresAt,
-			CreatedAt:         quotedAt,
-			UpdatedAt:         quotedAt,
-		}
-		if quote.FiatCurrency == "" {
-			quote.FiatCurrency = "USD"
+
+		amountRaw := ""
+		var quote *models.PriceQuote
+		if !models.IsDonationLinkType(session.LinkType) {
+			var quotePrice, quoteSource string
+			amountRaw, quotePrice, quoteSource, err = checkoutExpectedQuote(c.Context(), deps.PriceOracle, *session, assetInfo)
+			if err != nil {
+				return renderCheckoutWithError(c, deps, session, err.Error())
+			}
+			quotedAt := time.Now()
+			quoteExpiresAt := quotedAt.Add(15 * time.Minute)
+			if session.ExpiresAt != nil && session.ExpiresAt.Before(quoteExpiresAt) {
+				quoteExpiresAt = *session.ExpiresAt
+			}
+			quote = &models.PriceQuote{
+				ChainID:           assetInfo.GetChainID(),
+				Token:             selectedToken,
+				Symbol:            assetInfo.GetSymbol(),
+				Decimals:          assetInfo.GetDecimals(),
+				FiatCurrency:      strings.ToUpper(strings.TrimSpace(session.Currency)),
+				FiatAmount:        strings.TrimSpace(session.Amount),
+				ExpectedAmountRaw: amountRaw,
+				PriceSource:       quoteSource,
+				Price:             quotePrice,
+				QuotedAt:          quotedAt,
+				ExpiresAt:         quoteExpiresAt,
+				CreatedAt:         quotedAt,
+				UpdatedAt:         quotedAt,
+			}
+			if quote.FiatCurrency == "" {
+				quote.FiatCurrency = "USD"
+			}
 		}
 		updatedSession, err := deps.PaymentRepo.SelectAsset(
 			c.Context(),
@@ -883,6 +898,12 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			return c.Redirect().To("/checkout/" + session.SessionToken)
 		}
 		amountDisplay := formatPaymentAmount(session.ExpectedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)
+		if models.IsDonationLinkType(session.LinkType) {
+			amountDisplay = strings.ToUpper(strings.TrimSpace(session.SelectedSymbol))
+			if session.MatchedAmountRaw != "" {
+				amountDisplay = formatPaymentAmount(session.MatchedAmountRaw, session.SelectedDecimals, session.SelectedSymbol)
+			}
+		}
 		lang := checkoutLanguage(c)
 		statusTitle := checkoutState.TitleTR
 		statusBody := checkoutState.BodyTR
@@ -905,6 +926,7 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 			"ChainName":            constants.ChainName(*session.SelectedChainID),
 			"ChainLogoURL":         asset.ChainLogoURL(*session.SelectedChainID),
 			"AmountDisplay":        amountDisplay,
+			"IsDonation":           models.IsDonationLinkType(session.LinkType),
 			"ExpiresAtUnix":        checkoutExpiresAtUnix(session),
 			"ProductName":          productName,
 			"ProductDescription":   productDesc,
@@ -1393,6 +1415,7 @@ func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *mode
 		"AssetGroups":        checkoutAssetGroups(c.Context(), deps, *session),
 		"SelectedSymbol":     strings.ToUpper(strings.TrimSpace(c.FormValue("symbol"))),
 		"Assets":             checkoutAssetOptions(c.Context(), deps, *session, strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))),
+		"IsDonation":         models.IsDonationLinkType(session.LinkType),
 		"ExpiresAtUnix":      checkoutExpiresAtUnix(session),
 		"Error":              message,
 		"ProductName":        productName,
@@ -1490,6 +1513,18 @@ func paymentURI(session models.PaymentSession) string {
 	}
 	if session.SelectedToken != nil && *session.SelectedToken != "" {
 		return session.DepositAddress
+	}
+	if models.IsDonationLinkType(session.LinkType) || strings.TrimSpace(session.ExpectedAmountRaw) == "" {
+		switch *session.SelectedChainID {
+		case constants.Bitcoin:
+			return "bitcoin:" + session.DepositAddress
+		case constants.Solana:
+			return "solana:" + session.DepositAddress
+		case constants.TRON:
+			return session.DepositAddress
+		default:
+			return fmt.Sprintf("ethereum:%s@%d", session.DepositAddress, *session.SelectedChainID)
+		}
 	}
 	switch *session.SelectedChainID {
 	case constants.Bitcoin:

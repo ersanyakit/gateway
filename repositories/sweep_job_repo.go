@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+)
+
+var (
+	ErrSweepJobStateConflict  = errors.New("sweep job state conflict")
+	ErrSweepJobTxHashRequired = errors.New("sweep transaction hash is required")
 )
 
 type SweepJobRepo struct {
@@ -104,7 +110,7 @@ func (r *SweepJobRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Dur
 			ORDER BY sj.created_at ASC
 			FOR UPDATE OF sj SKIP LOCKED
 		`,
-			[]string{models.SweepJobStatusPending, models.SweepJobStatusFailed},
+			[]string{models.SweepJobStatusPending, models.SweepJobStatusFailed, models.SweepJobStatusProcessing},
 			now,
 			now,
 			models.SweepJobStatusProcessing,
@@ -137,41 +143,56 @@ func (r *SweepJobRepo) MarkPrefunded(ctx context.Context, id uuid.UUID) error {
 		Model(&models.SweepJob{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"prefund_attempts":   gorm.Expr("prefund_attempts + 1"),
-			"prefund_last_error": "",
-			"prefunded_at":       &now,
-			"updated_at":         now,
+			"prefund_attempts":         gorm.Expr("prefund_attempts + 1"),
+			"prefund_last_error":       "",
+			"prefund_failure_category": "",
+			"prefund_last_attempt_at":  &now,
+			"prefunded_at":             &now,
+			"updated_at":               now,
 		}).Error
 }
 
 func (r *SweepJobRepo) MarkPrefundFailed(ctx context.Context, id uuid.UUID, err error) error {
-	lastErr := ""
-	if err != nil {
-		lastErr = err.Error()
-	}
-	return r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Updates(map[string]any{
-			"prefund_attempts":   gorm.Expr("prefund_attempts + 1"),
-			"prefund_last_error": lastErr,
-			"updated_at":         time.Now(),
-		}).Error
-}
-
-func (r *SweepJobRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, txHash string) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).
 		Model(&models.SweepJob{}).
 		Where("id = ?", id).
 		Updates(map[string]any{
-			"status":        models.SweepJobStatusSucceeded,
-			"sweep_tx_hash": strings.TrimSpace(txHash),
-			"last_error":    "",
-			"locked_until":  nil,
-			"next_run_at":   nil,
-			"updated_at":    now,
+			"prefund_attempts":         gorm.Expr("prefund_attempts + 1"),
+			"prefund_last_error":       sweepJobErrorText(err, ""),
+			"prefund_failure_category": sweepJobFailureCategory(err),
+			"prefund_last_attempt_at":  &now,
+			"updated_at":               now,
 		}).Error
+}
+
+func (r *SweepJobRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, txHash string) error {
+	now := time.Now()
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrSweepJobTxHashRequired
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("id = ?", id).
+		Where("status = ?", models.SweepJobStatusProcessing).
+		Where("locked_until IS NULL OR locked_until >= ?", now).
+		Updates(map[string]any{
+			"status":           models.SweepJobStatusSucceeded,
+			"sweep_tx_hash":    txHash,
+			"last_error":       "",
+			"failure_category": "",
+			"locked_until":     nil,
+			"next_run_at":      nil,
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSweepJobStateConflict
+	}
+	return nil
 }
 
 func (r *SweepJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error) error {
@@ -179,34 +200,70 @@ func (r *SweepJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error) 
 	if readErr := r.db.WithContext(ctx).First(&job, "id = ?", id).Error; readErr != nil {
 		return readErr
 	}
+	if job.Status == models.SweepJobStatusSucceeded || job.Status == models.SweepJobStatusDeadLetter {
+		return ErrSweepJobStateConflict
+	}
 	attempts := job.Attempts + 1
 	maxAttempts := job.MaxAttempts
 	if maxAttempts == 0 {
 		maxAttempts = uintFromEnv("SWEEP_MAX_ATTEMPTS", 12)
 	}
+	category := sweepJobFailureCategory(err)
 	status := models.SweepJobStatusFailed
 	var nextRunAt *time.Time
-	if attempts >= maxAttempts {
+	if category == models.SweepFailureCategoryPolicy || attempts >= maxAttempts {
 		status = models.SweepJobStatusDeadLetter
 	} else {
 		next := time.Now().Add(sweepRetryBackoff(attempts))
 		nextRunAt = &next
 	}
-	lastErr := ""
-	if err != nil {
-		lastErr = err.Error()
-	}
-	return r.db.WithContext(ctx).
+	now := time.Now()
+	result := r.db.WithContext(ctx).
 		Model(&models.SweepJob{}).
 		Where("id = ?", id).
+		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
+		Where("locked_until IS NULL OR locked_until >= ?", now).
 		Updates(map[string]any{
-			"status":       status,
-			"attempts":     attempts,
-			"last_error":   lastErr,
-			"locked_until": nil,
-			"next_run_at":  nextRunAt,
-			"updated_at":   time.Now(),
-		}).Error
+			"status":           status,
+			"attempts":         attempts,
+			"last_error":       sweepJobErrorText(err, ""),
+			"failure_category": category,
+			"locked_until":     nil,
+			"next_run_at":      nextRunAt,
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSweepJobStateConflict
+	}
+	return nil
+}
+
+func (r *SweepJobRepo) MarkBroadcastUncertain(ctx context.Context, id uuid.UUID, err error) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("id = ?", id).
+		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
+		Where("locked_until IS NULL OR locked_until >= ?", now).
+		Updates(map[string]any{
+			"status":           models.SweepJobStatusDeadLetter,
+			"attempts":         gorm.Expr("attempts + 1"),
+			"last_error":       sweepJobErrorText(err, "broadcast outcome uncertain"),
+			"failure_category": models.SweepFailureCategoryBroadcastUncertain,
+			"locked_until":     nil,
+			"next_run_at":      nil,
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSweepJobStateConflict
+	}
+	return nil
 }
 
 func (r *SweepJobRepo) Find(ctx context.Context, id uuid.UUID) (*models.SweepJob, error) {
@@ -255,4 +312,132 @@ func (r *SweepJobRepo) CountByStatus(ctx context.Context, statuses ...string) (m
 		out[row.Status] = row.Count
 	}
 	return out, nil
+}
+
+func (r *SweepJobRepo) EnqueueMissingFinalizedTransactions(ctx context.Context, limit int) ([]models.SweepJob, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 500
+	}
+	var txs []models.Transaction
+	if err := r.db.WithContext(ctx).
+		Model(&models.Transaction{}).
+		Joins("JOIN wallets ON wallets.id = transactions.wallet_id").
+		Joins("LEFT JOIN sweep_jobs ON sweep_jobs.transaction_unique_hash = transactions.unique_hash").
+		Where("transactions.wallet_id IS NOT NULL").
+		Where("transactions.merchant_id IS NOT NULL").
+		Where("transactions.finalized_at IS NOT NULL").
+		Where("transactions.status = ?", models.TransactionStatusConfirmed).
+		Where("wallets.hd_address_id <> 0").
+		Where("sweep_jobs.id IS NULL").
+		Order("transactions.finalized_at ASC, transactions.created_at ASC").
+		Limit(limit).
+		Find(&txs).Error; err != nil {
+		return nil, err
+	}
+	created := make([]models.SweepJob, 0, len(txs))
+	for _, txModel := range txs {
+		job, inserted, err := r.EnqueueForTransaction(ctx, txModel)
+		if err != nil {
+			return created, err
+		}
+		if inserted && job != nil {
+			created = append(created, *job)
+		}
+	}
+	return created, nil
+}
+
+func sweepJobErrorText(err error, fallback string) string {
+	text := strings.TrimSpace(fallback)
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		text = strings.TrimSpace(err.Error())
+	}
+	text = redactSweepJobErrorText(text)
+	runes := []rune(text)
+	if len(runes) > models.SweepJobErrorMaxLength {
+		return string(runes[:models.SweepJobErrorMaxLength])
+	}
+	return text
+}
+
+func redactSweepJobErrorText(text string) string {
+	for _, prefix := range []string{"raw_tx=0x", "signed_tx=0x", "signature=0x"} {
+		text = redactHexDiagnostic(text, prefix)
+	}
+	return text
+}
+
+func redactHexDiagnostic(text, prefix string) string {
+	for {
+		idx := strings.Index(strings.ToLower(text), prefix)
+		if idx == -1 {
+			return text
+		}
+		start := idx + len(prefix)
+		end := start
+		for end < len(text) && isASCIIHex(text[end]) {
+			end++
+		}
+		if end-start < 16 {
+			return text
+		}
+		replacement := prefix + "<redacted:" + strconv.Itoa(end-start) + "hex>"
+		text = text[:idx] + replacement + text[end:]
+	}
+}
+
+func isASCIIHex(ch byte) bool {
+	return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+func sweepJobFailureCategory(err error) string {
+	if err == nil {
+		return models.SweepFailureCategoryUnknown
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return models.SweepFailureCategoryTimeout
+	}
+	if errors.Is(err, ErrLedgerReservationRequired) || errors.Is(err, ErrInsufficientAvailableBalance) {
+		return models.SweepFailureCategoryPolicy
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	for _, token := range []string{
+		"policy",
+		"not found",
+		"no reserve wallet",
+		"has no address",
+		"re-derive",
+		"reservation",
+		"amount must be positive",
+		"mismatch",
+		"gas balance below threshold",
+		"fee cap",
+		"fee/resource",
+	} {
+		if strings.Contains(msg, token) {
+			return models.SweepFailureCategoryPolicy
+		}
+	}
+	for _, token := range []string{
+		"timeout",
+		"timed out",
+		"deadline exceeded",
+	} {
+		if strings.Contains(msg, token) {
+			return models.SweepFailureCategoryTimeout
+		}
+	}
+	for _, token := range []string{
+		"connection refused",
+		"connection reset",
+		"network",
+		"temporary",
+		"unavailable",
+		"rpc",
+	} {
+		if strings.Contains(msg, token) {
+			return models.SweepFailureCategoryTransient
+		}
+	}
+	return models.SweepFailureCategoryTransient
 }

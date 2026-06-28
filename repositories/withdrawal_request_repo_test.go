@@ -143,6 +143,105 @@ func TestWithdrawalRequestRepoApproveTransferFailureVoidsPreBroadcastHold(t *tes
 	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ? AND status = ?", request.ID, models.LedgerEntryTypeWithdrawalHold, models.LedgerStatusVoided)
 }
 
+func TestWithdrawalRequestRepoRecordBroadcastRequiresHashAndKeepsProcessing(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}); err != nil {
+		t.Fatalf("automigrate withdrawal tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	request := models.WithdrawalRequest{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		DomainID:   &domainID,
+		WalletID:   walletID,
+		Chain:      "ethereum",
+		Symbol:     "ETH",
+		Decimals:   18,
+		ToAddress:  "0xto",
+		AmountRaw:  "10",
+		Status:     models.WithdrawalStatusProcessing,
+	}
+	if err := db.WithContext(ctx).Create(&request).Error; err != nil {
+		t.Fatalf("seed withdrawal: %v", err)
+	}
+	repo := NewWithdrawalRequestRepo(db)
+
+	if err := repo.RecordBroadcast(ctx, request.ID, "admin@example.com", "  "); !errors.Is(err, ErrWithdrawalTxHashRequired) {
+		t.Fatalf("blank tx hash err = %v, want ErrWithdrawalTxHashRequired", err)
+	}
+	if err := repo.RecordBroadcast(ctx, request.ID, "admin@example.com", " 0xtx "); err != nil {
+		t.Fatalf("record broadcast: %v", err)
+	}
+	var after models.WithdrawalRequest
+	if err := db.WithContext(ctx).First(&after, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != models.WithdrawalStatusProcessing || after.TxHash != "0xtx" || after.BroadcastedAt == nil || after.FinalizedAt != nil {
+		t.Fatalf("broadcast state = status:%s tx:%q broadcasted:%v finalized:%v", after.Status, after.TxHash, after.BroadcastedAt, after.FinalizedAt)
+	}
+}
+
+func TestWithdrawalRequestRepoApproveStopsAtBroadcastAndFinalizesLater(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate withdrawal lifecycle tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	prefix := "withdrawal-broadcast-finalize-" + uuid.NewString()
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, prefix+":deposit", "100")
+	ledgerRepo := NewLedgerRepo(db)
+	if err := ledgerRepo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post available balance: %v", err)
+	}
+	request := &models.WithdrawalRequest{
+		ID:             uuid.New(),
+		MerchantID:     merchantID,
+		DomainID:       &domainID,
+		WalletID:       walletID,
+		Chain:          "ethereum",
+		Symbol:         "ETH",
+		Decimals:       18,
+		ToAddress:      "0xto",
+		AmountRaw:      "25",
+		Status:         models.WithdrawalStatusPending,
+		IdempotencyKey: "payout-key",
+		CorrelationID:  "corr-payout",
+	}
+	repo := NewWithdrawalRequestRepo(db)
+	if err := repo.CreateWithHold(ctx, request, ledgerRepo); err != nil {
+		t.Fatalf("create withdrawal with hold: %v", err)
+	}
+
+	after, err := repo.ApproveWithTransfer(ctx, request.ID, "admin@example.com", ledgerRepo, func(*models.WithdrawalRequest) (string, error) {
+		return " 0xbroadcast ", nil
+	})
+	if err != nil {
+		t.Fatalf("approve transfer: %v", err)
+	}
+	if after == nil || after.Status != models.WithdrawalStatusProcessing || after.TxHash != "0xbroadcast" || after.BroadcastedAt == nil || after.FinalizedAt != nil {
+		t.Fatalf("approved broadcast state = %#v", after)
+	}
+	requireLedgerCount(t, db, 0, "withdrawal_id = ? AND entry_type = ?", request.ID, models.LedgerEntryTypeWithdrawalDebit)
+
+	if err := repo.FinalizeProcessingWithLedger(ctx, request.ID, ledgerRepo); err != nil {
+		t.Fatalf("finalize withdrawal: %v", err)
+	}
+	var finalized models.WithdrawalRequest
+	if err := db.WithContext(ctx).First(&finalized, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finalized.Status != models.WithdrawalStatusFinalized || finalized.FinalizedAt == nil || finalized.TxHash != "0xbroadcast" {
+		t.Fatalf("finalized state = status:%s tx:%q finalized:%v", finalized.Status, finalized.TxHash, finalized.FinalizedAt)
+	}
+	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ?", request.ID, models.LedgerEntryTypeWithdrawalDebit)
+	if err := repo.FinalizeProcessingWithLedger(ctx, request.ID, ledgerRepo); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("duplicate finalize err = %v, want gorm.ErrRecordNotFound", err)
+	}
+	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ?", request.ID, models.LedgerEntryTypeWithdrawalDebit)
+}
+
 func TestWithdrawalRequestRepoMarkFailedPreservesHoldAfterBroadcast(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}, &models.LedgerEntry{}); err != nil {
@@ -182,6 +281,47 @@ func TestWithdrawalRequestRepoMarkFailedPreservesHoldAfterBroadcast(t *testing.T
 		t.Fatalf("mark failed: %v", err)
 	}
 	requireLedgerCount(t, db, 2, "withdrawal_id = ? AND entry_type = ? AND status = ?", request.ID, models.LedgerEntryTypeWithdrawalHold, models.LedgerStatusPending)
+}
+
+func TestWithdrawalRequestRepoRecordBroadcastRequiresTxHashAndStoresTimestamp(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}); err != nil {
+		t.Fatalf("automigrate withdrawal tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	request := models.WithdrawalRequest{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		DomainID:   &domainID,
+		WalletID:   walletID,
+		Chain:      "ethereum",
+		Symbol:     "ETH",
+		Decimals:   18,
+		ToAddress:  "0xto",
+		AmountRaw:  "10",
+		Status:     models.WithdrawalStatusProcessing,
+	}
+	if err := db.WithContext(ctx).Create(&request).Error; err != nil {
+		t.Fatalf("seed withdrawal request: %v", err)
+	}
+	repo := NewWithdrawalRequestRepo(db)
+	if err := repo.RecordBroadcast(ctx, request.ID, "admin@example.com", "   "); !errors.Is(err, ErrTxHashRequired) {
+		t.Fatalf("blank tx hash err = %v, want ErrTxHashRequired", err)
+	}
+	if err := repo.RecordBroadcast(ctx, request.ID, "admin@example.com", "0xbroadcast"); err != nil {
+		t.Fatalf("record broadcast: %v", err)
+	}
+	var after models.WithdrawalRequest
+	if err := db.WithContext(ctx).First(&after, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.TxHash != "0xbroadcast" || after.BroadcastedAt == nil {
+		t.Fatalf("broadcast metadata not persisted: tx=%q broadcasted_at=%v", after.TxHash, after.BroadcastedAt)
+	}
+	if after.Status != models.WithdrawalStatusProcessing {
+		t.Fatalf("broadcast must remain non-terminal processing, got %s", after.Status)
+	}
 }
 
 func seedWithdrawalOwner(t *testing.T, db *gorm.DB) (uuid.UUID, uuid.UUID, uuid.UUID) {

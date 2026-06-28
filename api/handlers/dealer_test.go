@@ -380,6 +380,81 @@ func TestV1RefundCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
 	}
 }
 
+func TestV1OutboundCreateUsesIdempotencyAndCorrelationMetadata(t *testing.T) {
+	source := readHandlerSource(t, "v1api.go")
+	for _, tc := range []struct {
+		name     string
+		function string
+		resource string
+	}{
+		{name: "payout", function: "HandleV1PayoutCreate", resource: "payout"},
+		{name: "refund", function: "HandleV1RefundCreate", resource: "refund"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := extractHandlerFunctionBody(t, source, tc.function)
+			for _, token := range []string{
+				"beginV1CreateIdempotency",
+				"IdempotencyKey:",
+				"CorrelationID:",
+				"CompleteResource",
+				`"` + tc.resource + `"`,
+			} {
+				if !strings.Contains(body, token) {
+					t.Fatalf("%s missing idempotent create token %q", tc.function, token)
+				}
+			}
+			completeIndex := strings.Index(body, "CompleteResource")
+			enqueueIndex := strings.Index(body, "EnqueueLifecycle")
+			if completeIndex == -1 || enqueueIndex == -1 || enqueueIndex < completeIndex {
+				t.Fatalf("%s must enqueue requested lifecycle events only after create/idempotency completion", tc.function)
+			}
+		})
+	}
+}
+
+func TestAdminOutboundApproveDoesNotEmitTerminalEventAtBroadcast(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	withdrawal := extractHandlerFunctionBody(t, source, "HandleAdminWithdrawalApprove")
+	if !strings.Contains(withdrawal, "requireOutboundMakerChecker") {
+		t.Fatal("withdrawal approve must enforce configured maker-checker guard")
+	}
+	if !strings.Contains(withdrawal, "constants.WebhookEventPayoutBroadcastV1") {
+		t.Fatal("withdrawal approve must enqueue broadcast event")
+	}
+	if strings.Contains(withdrawal, "constants.WebhookEventPayoutFinalizedV1") {
+		t.Fatal("withdrawal approve must not enqueue finalized event without finality evidence")
+	}
+
+	refund := extractHandlerFunctionBody(t, source, "HandleAdminRefundApprove")
+	if !strings.Contains(refund, "requireOutboundMakerChecker") {
+		t.Fatal("refund approve must enforce configured maker-checker guard")
+	}
+	if !strings.Contains(refund, "ClaimPendingWithHoldAndSource") || !strings.Contains(refund, "constants.WebhookEventRefundBroadcastV1") {
+		t.Fatal("refund approve must persist source metadata and enqueue broadcast event")
+	}
+	for _, forbidden := range []string{
+		"MarkSucceededWithLedger",
+		"constants.WebhookEventRefundSucceededV1",
+	} {
+		if strings.Contains(refund, forbidden) {
+			t.Fatalf("refund approve must not terminalize immediately after broadcast: %q", forbidden)
+		}
+	}
+}
+
+func TestOutboundMakerCheckerGuardDefaultsOffAndRejectsSelfApprovalWhenEnabled(t *testing.T) {
+	if err := requireOutboundMakerChecker("admin@example.com", "admin@example.com"); err != nil {
+		t.Fatalf("default-off maker-checker guard rejected self approval: %v", err)
+	}
+	t.Setenv("OUTBOUND_MAKER_CHECKER_REQUIRED", "true")
+	if err := requireOutboundMakerChecker("admin@example.com", "admin@example.com"); err == nil {
+		t.Fatal("configured maker-checker guard should reject self approval")
+	}
+	if err := requireOutboundMakerChecker("requester@example.com", "admin@example.com"); err != nil {
+		t.Fatalf("configured maker-checker guard rejected separate reviewer: %v", err)
+	}
+}
+
 func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
 	source := readHandlerSource(t, "dealer.go")
 	for _, tc := range []struct {
