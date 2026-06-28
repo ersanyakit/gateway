@@ -189,8 +189,22 @@ func TestChainFactRepoListForDepositProcessingSkipsUnownedUnmatchedFacts(t *test
 		t.Fatalf("consume rematchable fact: %v", err)
 	}
 	wallet := testDepositWallet()
+	wallet.TronAddress = "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7"
 	if err := db.WithContext(ctx).Create(&wallet).Error; err != nil {
 		t.Fatalf("create wallet: %v", err)
+	}
+
+	tronTestnetRematchable := testDepositChainFact("99999997:tron-testnet-rematch:tx:0", true)
+	tronTestnetRematchable.ChainID = constants.TRONTestnet
+	tronTestnetRematchable.TxHash = "tron-testnet-rematch"
+	tronTestnetRematchable.LogIndex = "tx:0"
+	tronTestnetRematchable.ObservedAddress = wallet.TronAddress
+	tronTestnetRematchable.Status = models.ChainFactStatusObserved
+	if err := db.WithContext(ctx).Create(&tronTestnetRematchable).Error; err != nil {
+		t.Fatalf("create tron testnet rematchable fact: %v", err)
+	}
+	if _, _, err := depositRepo.ConsumeChainFact(ctx, tronTestnetRematchable, nil); err != nil {
+		t.Fatalf("consume tron testnet rematchable fact: %v", err)
 	}
 
 	newFact := testDepositChainFact("1:0xnew:log:1", true)
@@ -214,6 +228,9 @@ func TestChainFactRepoListForDepositProcessingSkipsUnownedUnmatchedFacts(t *test
 	}
 	if !seen[rematchable.EventID] {
 		t.Fatal("unmatched fact must be selected after its wallet appears")
+	}
+	if !seen[tronTestnetRematchable.EventID] {
+		t.Fatal("tron testnet unmatched fact must be selected after its wallet appears")
 	}
 	if !seen[newFact.EventID] {
 		t.Fatal("new fact without a deposit must still be selected")

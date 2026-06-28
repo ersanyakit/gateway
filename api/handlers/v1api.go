@@ -453,6 +453,7 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 			constants.Unichain,
 			constants.Solana,
 			constants.TRON,
+			constants.TRONTestnet,
 			constants.Chiliz,
 			constants.ChilizSpicy,
 		}
@@ -470,7 +471,7 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 				ChainID: int64(id),
 				Name:    chainLabel(id),
 				LogoURL: asset.ChainLogoURL(id),
-				IsEVM:   id != constants.Bitcoin && id != constants.Solana && id != constants.TRON,
+				IsEVM:   id != constants.Bitcoin && id != constants.Solana && !constants.IsTRONChain(id),
 			})
 		}
 		return v1OK(c, fiber.Map{"networks": networks})
@@ -2223,6 +2224,7 @@ func v1WalletItem(w models.Wallet) v1WalletItemType {
 	}
 	if w.TronAddress != "" {
 		addrs["tron"] = w.TronAddress
+		addrs["tron_testnet"] = w.TronAddress
 	}
 	if w.SolanaAddress != "" {
 		addrs["solana"] = w.SolanaAddress

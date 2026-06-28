@@ -141,6 +141,8 @@ func (b *BaseChain) rpcEnvNames() []string {
 		names = append(names, "BSC_RPC_URLS", "BINANCE_RPC_URLS")
 	case "tron":
 		names = append(names, "TRON_JSONRPC_URLS")
+	case "tron-testnet":
+		names = append(names, "TRON_TESTNET_JSONRPC_URLS")
 	}
 
 	return names

@@ -198,7 +198,7 @@ func coinTypeForChain(chainID constants.ChainID) C.enum_TWCoinType {
 		return C.enum_TWCoinType(C.TWCoinTypeBitcoin)
 	case constants.Solana:
 		return C.enum_TWCoinType(C.TWCoinTypeSolana)
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return C.enum_TWCoinType(C.TWCoinTypeTron)
 	default:
 		return C.enum_TWCoinType(C.TWCoinTypeEthereum)

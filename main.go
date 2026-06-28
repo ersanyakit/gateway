@@ -211,7 +211,7 @@ func chainConfirmationRequirement(chainID constants.ChainID) uint {
 		return 3
 	case constants.Solana:
 		return 1
-	case constants.TRON:
+	case constants.TRON, constants.TRONTestnet:
 		return 20
 	default:
 		return 12
@@ -611,7 +611,7 @@ func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transac
 	}
 
 	var result *blockchain.TransactionResult
-	if txModel.ChainID == constants.TRON {
+	if constants.IsTRONChain(txModel.ChainID) {
 		result, err = chain.SweepTo(ctx, *userDetails, reserveAddr)
 	} else {
 		result, err = chain.Withdraw(ctx, *userDetails, txModel.Amount, reserveAddr)
@@ -1582,6 +1582,8 @@ func outboundChainIDFromName(name string) (constants.ChainID, bool) {
 		return constants.Solana, true
 	case "tron", "trx":
 		return constants.TRON, true
+	case "tron-testnet", "trx-testnet", "tron-shasta", "shasta":
+		return constants.TRONTestnet, true
 	default:
 		return 0, false
 	}
@@ -1695,7 +1697,7 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
 					},
 				)
-			case constants.TRON:
+			case constants.TRON, constants.TRONTestnet:
 				worker = tronListener.NewRpcListener(
 					chain,
 					coreApplication.CORE.Router.AssetRegistry(),

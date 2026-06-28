@@ -101,6 +101,7 @@ func defaultAssetDefinitions() []asset.AssetDefinition {
 			LogoSlug: "trx",
 			Deployments: []asset.Deployment{
 				{ChainID: constants.TRON, Native: true, Enabled: true},
+				{ChainID: constants.TRONTestnet, Native: true, Name: "TRON Shasta TRX (Testnet)", Enabled: true},
 			},
 		},
 		{

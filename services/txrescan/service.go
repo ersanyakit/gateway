@@ -118,8 +118,8 @@ func (s *Service) rescan(ctx context.Context, chainID constants.ChainID, hash st
 		events, err = s.scanBitcoin(ctx, chain, hash)
 	case constants.Solana:
 		events, err = s.scanSolana(ctx, chain, hash)
-	case constants.TRON:
-		events, err = s.scanTron(ctx, hash)
+	case constants.TRON, constants.TRONTestnet:
+		events, err = s.scanTron(ctx, chain, hash)
 	default:
 		events, err = s.scanEVM(ctx, chain, hash)
 	}
@@ -678,19 +678,20 @@ func (s *Service) solanaRPC(ctx context.Context, chain blockchain.Chain, method 
 	return lastErr
 }
 
-func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, error) {
-	tx, err := s.tronPost(ctx, "/wallet/gettransactionbyid", map[string]string{"value": hash})
+func (s *Service) scanTron(ctx context.Context, chain blockchain.Chain, hash string) ([]eventCandidate, error) {
+	chainID := chain.ChainID()
+	tx, err := s.tronPost(ctx, chain, "/wallet/gettransactionbyid", map[string]string{"value": hash})
 	if err != nil {
 		return nil, err
 	}
 	if len(tx) == 0 || string(tx) == "{}" {
 		return nil, ErrTransactionNotFound
 	}
-	info, err := s.tronPost(ctx, "/wallet/gettransactioninfobyid", map[string]string{"value": hash})
+	info, err := s.tronPost(ctx, chain, "/wallet/gettransactioninfobyid", map[string]string{"value": hash})
 	if err != nil {
 		return nil, err
 	}
-	native, ok := s.Registry.GetNative(constants.TRON)
+	native, ok := s.Registry.GetNative(chainID)
 	if !ok {
 		return nil, errors.New("native tron asset is not registered")
 	}
@@ -708,10 +709,10 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 	if strings.EqualFold(infoObj.Receipt.Result, "FAILED") || strings.EqualFold(infoObj.Result, "FAILED") {
 		status = "failed"
 	}
-	confirmationsRequired := s.confirmationsRequired(constants.TRON)
+	confirmationsRequired := s.confirmationsRequired(chainID)
 	confirmations := uint(0)
 	if strings.EqualFold(status, "confirmed") && infoObj.BlockNumber > 0 {
-		if latest, err := s.tronLatestBlockNumber(ctx); err == nil && latest >= infoObj.BlockNumber {
+		if latest, err := s.tronLatestBlockNumber(ctx, chain); err == nil && latest >= infoObj.BlockNumber {
 			confirmations = uint(latest - infoObj.BlockNumber + 1)
 		}
 	}
@@ -724,7 +725,7 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 			continue
 		}
 		events = append(events, eventCandidate{Type: "native_transfer", Confirmations: confirmations, ConfirmationsRequired: confirmationsRequired, Tx: &types.TransactionParam{
-			Context: context.Background(), ChainID: constants.TRON, Symbol: helpers.StrPtr(native.GetSymbol()), Decimals: native.GetDecimals(),
+			Context: context.Background(), ChainID: chainID, Symbol: helpers.StrPtr(native.GetSymbol()), Decimals: native.GetDecimals(),
 			Hash: helpers.StrPtr(hash), Block: helpers.StrPtr(blockNumber), BlockHash: helpers.StrPtr(blockHash), Token: nil,
 			From: helpers.StrPtr(tronHexToBase58(contract.Parameter.Value.OwnerAddress)), To: helpers.StrPtr(tronHexToBase58(contract.Parameter.Value.ToAddress)),
 			Amount: helpers.StrPtr(fmt.Sprintf("%d", contract.Parameter.Value.Amount)), LogIndex: helpers.StrPtr(fmt.Sprintf("tx:%d", idx)), Status: helpers.StrPtr(status),
@@ -735,14 +736,14 @@ func (s *Service) scanTron(ctx context.Context, hash string) ([]eventCandidate, 
 			continue
 		}
 		token := tronHexToBase58(logEntry.Address)
-		assetInfo, ok := s.Registry.Get(constants.TRON, token)
+		assetInfo, ok := s.Registry.Get(chainID, token)
 		if !ok {
 			continue
 		}
 		amount := new(big.Int)
 		amount.SetString(strings.TrimPrefix(logEntry.Data, "0x"), 16)
 		events = append(events, eventCandidate{Type: "token_transfer", Confirmations: confirmations, ConfirmationsRequired: confirmationsRequired, Tx: &types.TransactionParam{
-			Context: context.Background(), ChainID: constants.TRON, Symbol: helpers.StrPtr(assetInfo.GetSymbol()), Decimals: assetInfo.GetDecimals(),
+			Context: context.Background(), ChainID: chainID, Symbol: helpers.StrPtr(assetInfo.GetSymbol()), Decimals: assetInfo.GetDecimals(),
 			Hash: helpers.StrPtr(hash), Block: helpers.StrPtr(blockNumber), BlockHash: helpers.StrPtr(blockHash), Token: helpers.StrPtr(token),
 			From: helpers.StrPtr(tronTopicToAddress(logEntry.Topics[1])), To: helpers.StrPtr(tronTopicToAddress(logEntry.Topics[2])),
 			Amount: helpers.StrPtr(amount.String()), LogIndex: helpers.StrPtr(fmt.Sprintf("log:%d", idx)), Status: helpers.StrPtr(status),
@@ -760,8 +761,8 @@ func (s *Service) confirmationsRequired(chainID constants.ChainID) uint {
 	return 1
 }
 
-func (s *Service) tronLatestBlockNumber(ctx context.Context) (int64, error) {
-	body, err := s.tronPost(ctx, "/wallet/getnowblock", map[string]any{})
+func (s *Service) tronLatestBlockNumber(ctx context.Context, chain blockchain.Chain) (int64, error) {
+	body, err := s.tronPost(ctx, chain, "/wallet/getnowblock", map[string]any{})
 	if err != nil {
 		return 0, err
 	}
@@ -781,12 +782,12 @@ func (s *Service) tronLatestBlockNumber(ctx context.Context) (int64, error) {
 	return result.BlockHeader.RawData.Number, nil
 }
 
-func (s *Service) tronPost(ctx context.Context, path string, payload any) ([]byte, error) {
+func (s *Service) tronPost(ctx context.Context, chain blockchain.Chain, path string, payload any) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
-	endpoints := tronHTTPEndpoints()
+	endpoints := tronHTTPEndpointsForChain(chain.Name(), chain.RPCs())
 	var lastErr error
 	for _, baseURL := range endpoints {
 		baseURL = strings.TrimSpace(baseURL)
@@ -827,19 +828,52 @@ func (s *Service) tronPost(ctx context.Context, path string, payload any) ([]byt
 }
 
 func tronHTTPEndpoints() []string {
+	return tronHTTPEndpointsForChain("tron", nil)
+}
+
+func tronHTTPEndpointsForChain(chainName string, rpcs []string) []string {
+	if strings.EqualFold(strings.TrimSpace(chainName), "tron-testnet") {
+		raw := strings.TrimSpace(os.Getenv("TRON_TESTNET_HTTP_ENDPOINTS"))
+		if raw == "" {
+			raw = strings.TrimSpace(os.Getenv("TRON_TESTNET_HTTP_ENDPOINT"))
+		}
+		if raw == "" {
+			raw = strings.Join(rpcs, ",")
+		}
+		if raw == "" {
+			return []string{"https://api.shasta.trongrid.io"}
+		}
+		return splitTronHTTPEndpoints(raw)
+	}
+
 	raw := strings.TrimSpace(os.Getenv("TRON_HTTP_ENDPOINTS"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("TRON_HTTP_ENDPOINT"))
 	}
 	if raw == "" {
+		raw = strings.Join(rpcs, ",")
+	}
+	if raw == "" {
 		return []string{"https://api.trongrid.io"}
 	}
+	return splitTronHTTPEndpoints(raw)
+}
+
+func splitTronHTTPEndpoints(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
 	for _, part := range parts {
-		if value := strings.TrimSpace(part); value != "" {
-			out = append(out, value)
+		value := strings.TrimSuffix(strings.TrimSpace(part), "/")
+		value = strings.TrimSuffix(value, "/jsonrpc")
+		if value == "" {
+			continue
 		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
 	return out
 }
