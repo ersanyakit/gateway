@@ -1982,10 +1982,17 @@ func HandleAdminManageAdmins(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "admin.manage", "failed", "admin", "", err.Error())
 			return redirectWithError(c, "/admin", err.Error())
 		}
-		admins, _ := deps.AdminRepo.List(c.Context())
-		data := adminPageData("", "admins")
+		page, limit := adminDashboardPageParams(c)
+		admins, err := deps.AdminRepo.List(c.Context())
+		if err != nil {
+			return redirectWithError(c, "/admin", "Admin listesi okunamadı: "+err.Error())
+		}
+		data := adminPageData(adminEmail, "admins")
 		data.AdminPanel = "admins"
-		data.AdminMerchants = adminListToMerchantViews(admins)
+		adminHeaderStatsFor(c.Context(), deps).applyTo(&data)
+		adminViews := adminListToMerchantViews(admins)
+		data.AdminMerchants = paginateViewSlice(adminViews, page, limit)
+		data.AdminPagination = dealerPaginationView(page, limit, int64(len(adminViews)), "/admin/admins")
 		applyFlash(c, &data)
 		return c.Render("dealer/admin_dashboard", data, "dealer/layout")
 	}
@@ -2346,14 +2353,7 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 		data := adminPageData(adminEmail, panel)
 		applyFlash(c, &data)
 
-		page := parseQueryInt(c.Query("page"), 1)
-		limit := parseQueryInt(c.Query("limit"), 50)
-		if page < 1 {
-			page = 1
-		}
-		if limit < 1 || limit > 200 {
-			limit = 50
-		}
+		page, limit := adminDashboardPageParams(c)
 
 		var currentAdmin *models.Admin
 		if deps.AdminRepo != nil {
@@ -2387,7 +2387,9 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			if err != nil {
 				return renderAdminDashboardError(c, data, "Vault bakiyeleri okunamadı", err)
 			}
-			data.AdminVaults = dealerVaultBalanceViews(rows, deps.AssetRegistry)
+			vaultViews := dealerVaultBalanceViews(rows, deps.AssetRegistry)
+			data.AdminVaults = paginateViewSlice(vaultViews, page, limit)
+			data.AdminPagination = dealerPaginationView(page, limit, int64(len(vaultViews)), "/admin/vault")
 
 		case "deposits":
 			fromFilter := strings.TrimSpace(c.Query("from"))
@@ -2544,11 +2546,12 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 					return renderAdminDashboardError(c, data, "Outbound policy ayarları okunamadı", err)
 				}
-				rows, err := deps.OutboundPolicyRepo.ListWhitelist(c.Context(), 100)
+				rows, total, err := deps.OutboundPolicyRepo.ListWhitelistPage(c.Context(), page, limit)
 				if err != nil {
 					return renderAdminDashboardError(c, data, "Whitelist listesi okunamadı", err)
 				}
 				data.AdminOutboundWhitelist = dealerOutboundWhitelistViews(rows)
+				data.AdminPagination = dealerPaginationView(page, limit, total, "/admin/security")
 			}
 
 		default: // overview
@@ -4622,6 +4625,18 @@ func merchantDashboardPageLimit(c fiber.Ctx) int {
 	return limit
 }
 
+func adminDashboardPageParams(c fiber.Ctx) (int, int) {
+	page := parseQueryInt(c.Query("page"), 1)
+	limit := parseQueryInt(c.Query("limit"), 50)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 200 {
+		limit = 50
+	}
+	return page, limit
+}
+
 func activityPaymentPaginationBase(status string) string {
 	base := merchantDashboardActivityPaymentsURL
 	if status = strings.TrimSpace(status); status != "" {
@@ -5572,6 +5587,27 @@ func totalPagesFor(total int64, limit int) int {
 		limit = 20
 	}
 	return int((total + int64(limit) - 1) / int64(limit))
+}
+
+func paginateViewSlice[T any](items []T, page int, limit int) []T {
+	if len(items) == 0 {
+		return items
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		return items
+	}
+	start := (page - 1) * limit
+	if start >= len(items) {
+		return items[:0]
+	}
+	end := start + limit
+	if end > len(items) {
+		end = len(items)
+	}
+	return items[start:end]
 }
 
 func min(a, b int) int {

@@ -304,11 +304,11 @@
         <h2 class="m-0 text-lg font-black text-ink">Vault</h2>
         <p class="m-0 mt-0.5 text-xs font-semibold text-muted">Ledger hesap toplamları</p>
       </div>
-      <span class="inline-flex rounded-full bg-wash px-3 py-1 text-xs font-black text-muted">{{len .AdminVaults}} asset</span>
+      <span class="inline-flex rounded-full bg-wash px-3 py-1 text-xs font-black text-muted">{{.AdminPagination.Total}} asset</span>
     </div>
     <div class="admin-data-toolbar">
       <input class="admin-data-search" type="search" placeholder="Vault ara" aria-label="Vault ara" autocomplete="off" spellcheck="false" data-admin-table-search="admin-vault-table">
-      <span class="admin-data-count" data-admin-table-count="admin-vault-table" data-total="{{len .AdminVaults}}">{{len .AdminVaults}} asset</span>
+      <span class="admin-data-count" data-admin-table-count="admin-vault-table" data-total="{{len .AdminVaults}}">{{.AdminPagination.From}}-{{.AdminPagination.To}} / {{.AdminPagination.Total}} asset</span>
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table admin-data-table" id="admin-vault-table" data-admin-table>
@@ -399,6 +399,7 @@
         </tbody>
       </table>
     </div>
+    {{template "pg" .AdminPagination}}
   </div>
   {{end}}
 
@@ -1058,6 +1059,7 @@
           </tbody>
         </table>
       </div>
+      {{template "pg" .AdminPagination}}
     </div>
 
     {{/* New admin form as a separate clean card */}}
@@ -1197,8 +1199,9 @@
       </form>
 
       <div class="mt-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <div class="adm-wrap rounded-2xl">
-          <table class="adm-table">
+        <div class="min-w-0 overflow-hidden rounded-2xl border border-line bg-white">
+          <div class="adm-wrap rounded-none border-0">
+            <table class="adm-table">
             <thead><tr><th>Scope</th><th>Chain</th><th>Token</th><th>Adres</th><th>Durum</th><th></th></tr></thead>
             <tbody>
               {{range .AdminOutboundWhitelist}}
@@ -1219,7 +1222,9 @@
               <tr><td colspan="6" class="py-6 text-center text-sm text-muted">Whitelist kaydı yok.</td></tr>
               {{end}}
             </tbody>
-          </table>
+            </table>
+          </div>
+          {{template "pg" .AdminPagination}}
         </div>
 
         <form class="grid gap-3 rounded-2xl border border-line bg-wash p-4" method="post" action="/admin/security/outbound-whitelist">

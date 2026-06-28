@@ -77,6 +77,50 @@ func TestMerchantDashboardTemplateParses(t *testing.T) {
 	}
 }
 
+func TestMerchantUsersPanelHasSingleSearch(t *testing.T) {
+	dashboard, err := os.ReadFile("../../views/dealer/dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(dashboard)
+	if strings.Count(html, `name="q" type="search"`) != 1 {
+		t.Fatal("merchant users panel must keep one server-side user search")
+	}
+	if strings.Contains(html, `data-admin-table-search="merchant-wallet-table"`) {
+		t.Fatal("merchant users panel must not render a second page-local wallet table search")
+	}
+}
+
+func TestMerchantDashboardPanelsUseSharedHeaders(t *testing.T) {
+	dashboard, err := os.ReadFile("../../views/dealer/dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(dashboard)
+	if strings.Contains(html, "merchant-products-toolbar") || strings.Contains(html, "merchant-products-actions") {
+		t.Fatal("merchant dashboard panels must use the shared section header/action classes")
+	}
+	for _, title := range []string{
+		"Biriken varlıklar",
+		"Network kasaları",
+		"Users &amp; Wallets",
+		"Transaction yeniden işleme",
+		"Activity",
+		"Transactions",
+		"Integrations",
+		"Çekim talepleri",
+		"Görünüm ayarları",
+		"Desteklenen ağlar",
+	} {
+		if !strings.Contains(html, "<h2>"+title+"</h2>") {
+			t.Fatalf("merchant dashboard missing panel title %q", title)
+		}
+	}
+	if count := strings.Count(html, `class="merchant-section-header"`); count < 10 {
+		t.Fatalf("merchant dashboard section header count = %d, want at least 10", count)
+	}
+}
+
 func TestAdminLiveBalanceRawParsesTronHexNative(t *testing.T) {
 	raw, err := adminLiveBalanceRaw("0xf4240", asset.NewTRX(constants.TRON))
 	if err != nil {
@@ -319,6 +363,51 @@ func TestAdminVaultUsesLedgerPlatformBalances(t *testing.T) {
 		if strings.Contains(dashboard, forbidden) {
 			t.Fatalf("admin vault must not use non-ledger balance source %q", forbidden)
 		}
+	}
+}
+
+func TestAdminDashboardPaginatesStandaloneAdminLists(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	manageAdmins := extractHandlerFunctionBody(t, source, "HandleAdminManageAdmins")
+	for _, required := range []string{
+		"adminDashboardPageParams(c)",
+		"adminHeaderStatsFor(c.Context(), deps).applyTo(&data)",
+		"data.AdminMerchants = paginateViewSlice(adminViews, page, limit)",
+		`dealerPaginationView(page, limit, int64(len(adminViews)), "/admin/admins")`,
+	} {
+		if !strings.Contains(manageAdmins, required) {
+			t.Fatalf("admin accounts route missing pagination token %q", required)
+		}
+	}
+
+	dashboard := extractHandlerFunctionBody(t, source, "HandleAdminDashboard")
+	for _, required := range []string{
+		"data.AdminVaults = paginateViewSlice(vaultViews, page, limit)",
+		`dealerPaginationView(page, limit, int64(len(vaultViews)), "/admin/vault")`,
+		"deps.OutboundPolicyRepo.ListWhitelistPage(c.Context(), page, limit)",
+		`dealerPaginationView(page, limit, total, "/admin/security")`,
+	} {
+		if !strings.Contains(dashboard, required) {
+			t.Fatalf("admin dashboard missing pagination token %q", required)
+		}
+	}
+
+	templateBytes, err := os.ReadFile("../../views/dealer/admin_dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(templateBytes)
+	for _, required := range []string{
+		`{{.AdminPagination.Total}} asset`,
+		`data-admin-table-count="admin-vault-table"`,
+		`action="/admin/security/outbound-whitelist"`,
+	} {
+		if !strings.Contains(template, required) {
+			t.Fatalf("admin template missing pagination token %q", required)
+		}
+	}
+	if strings.Count(template, `{{template "pg" .AdminPagination}}`) < 13 {
+		t.Fatal("admin template should render pagination on every list-heavy panel")
 	}
 }
 
@@ -746,10 +835,33 @@ func TestDealerActivityLogCapturesCorrelationID(t *testing.T) {
 	for _, token := range []string{
 		"middleware.RequestIDFromCtx",
 		"CorrelationID:",
+		"dealerActorRole",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("logDealerActivity must capture audit correlation token %q", token)
 		}
+	}
+}
+
+func TestDealerActorRoleUsesAdminSessionRole(t *testing.T) {
+	app := fiber.New()
+	app.Get("/probe", func(c fiber.Ctx) error {
+		c.Locals(adminSessionRoleLocal, models.AdminRoleSecurity)
+		if got := dealerActorRole(c, "admin"); got != models.AdminRoleSecurity {
+			t.Fatalf("dealerActorRole admin = %q, want %q", got, models.AdminRoleSecurity)
+		}
+		if got := dealerActorRole(c, "dealer"); got != "dealer" {
+			t.Fatalf("dealerActorRole dealer = %q, want dealer", got)
+		}
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/probe", nil))
+	if err != nil {
+		t.Fatalf("app.Test: %v", err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, fiber.StatusOK)
 	}
 }
 

@@ -12,7 +12,7 @@
 
   <main class="crypto-container">
     <header class="crypto-header">
-      <a class="crypto-header-left" href="/checkout/{{.Session.SessionToken}}/change">
+      <a class="crypto-header-left" href="{{.ChangeAssetURL}}">
         <span class="crypto-header-icon">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
         </span>
@@ -21,10 +21,16 @@
           <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
         </span>
       </a>
-      <div class="crypto-steps" aria-label="Checkout progress">
-        <span class="crypto-step-dot done"></span>
-        <span class="crypto-step-dot done"></span>
-        <span class="crypto-step-dot active"></span>
+      <div class="crypto-header-tools">
+        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
+          <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" {{if not .IsEnglish}}aria-current="true"{{end}}>TR</a>
+          <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" {{if .IsEnglish}}aria-current="true"{{end}}>EN</a>
+        </nav>
+        <div class="crypto-steps" aria-label="Checkout progress">
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot active"></span>
+        </div>
       </div>
     </header>
 
@@ -41,8 +47,8 @@
         {{end}}
         <div class="crypto-flex-between crypto-align-start">
           <div>
-            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Send any amount{{else}}Dilediğin tutarı gönder{{end}}{{else}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Odeme durumu{{end}}{{end}}</p>
-            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Any amount{{else}}Dilediğin tutar{{end}} {{.Session.SelectedSymbol}}{{else}}{{.AmountDisplay}}{{end}}{{else}}{{.StatusTitle}}{{end}}</div>
+            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Send your chosen amount{{else}}İstediğiniz tutarı gönderin{{end}}{{else}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Ödeme durumu{{end}}{{end}}</p>
+            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Chosen amount{{else}}İstediğiniz tutar{{end}} {{.Session.SelectedSymbol}}{{else}}{{.AmountDisplay}}{{end}}{{else}}{{.StatusTitle}}{{end}}</div>
             <p class="crypto-muted">Order {{.Session.OrderID}}{{if not .IsDonation}} · {{.Session.Amount}} {{.Session.Currency}}{{end}}</p>
           </div>
           <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
@@ -52,7 +58,9 @@
         </div>
 
         <section class="crypto-status-box {{.StatusMode}}" id="statusLabel" data-checkout-status="{{.CheckoutState.Status}}">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          <span class="crypto-status-orb" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          </span>
           <span>
             <strong id="statusTitle">{{.StatusTitle}}</strong>
             <small id="statusBody">{{.StatusBody}}</small>
@@ -91,7 +99,7 @@
           </div>
           <ol class="crypto-payment-steps-list">
             <li>{{if .IsEnglish}}Open your wallet app and choose {{.ChainName}}.{{else}}Wallet uygulamanı aç ve {{.ChainName}} networkünü seç.{{end}}</li>
-            <li>{{if .IsDonation}}{{if .IsEnglish}}Enter the amount you want to send and use the address below.{{else}}Göndermek istediğin tutarı gir ve aşağıdaki adresi kullan.{{end}}{{else}}{{if .IsEnglish}}Send exactly {{.AmountDisplay}} to the address below.{{else}}Aşağıdaki adrese tam olarak {{.AmountDisplay}} gönder.{{end}}{{end}}</li>
+            <li>{{if .IsDonation}}{{if .IsEnglish}}Enter the amount you want to send and use the address below.{{else}}Göndermek istediğiniz tutarı girin ve aşağıdaki adresi kullanın.{{end}}{{else}}{{if .IsEnglish}}Send exactly {{.AmountDisplay}} to the address below.{{else}}Aşağıdaki adrese tam olarak {{.AmountDisplay}} gönder.{{end}}{{end}}</li>
             <li>{{if .IsEnglish}}Keep this page open until the confirmation arrives.{{else}}Onay gelene kadar bu sayfayı açık tut.{{end}}</li>
           </ol>
         </section>
@@ -134,8 +142,8 @@
 
         <div class="crypto-actions" data-payable-action>
           <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
-          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/change">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
-          <a class="crypto-ghost-btn" href="/checkout/{{.Session.SessionToken}}/cancel">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
+          <a class="crypto-ghost-btn" href="{{.ChangeAssetURL}}">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
+          <a class="crypto-ghost-btn" href="{{.CancelURL}}">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</a>
         </div>
         {{else}}
         <section class="crypto-summary-card">
@@ -158,9 +166,17 @@
       var statusTitle = document.getElementById("statusTitle");
       var statusBody = document.getElementById("statusBody");
       if (!status || !statusTitle || !statusBody) return;
+      var waitIndicator = status.querySelector(".crypto-bouncing-dots");
+      var terminalModes = ["paid", "expired", "canceled", "failed", "underpaid", "overpaid", "partial_paid"];
+      var isTerminalMode = terminalModes.indexOf(mode) !== -1;
       status.className = "crypto-status-box " + mode;
+      status.setAttribute("data-checkout-status", mode);
+      status.classList.toggle("is-terminal", isTerminalMode);
       statusTitle.textContent = title;
       statusBody.textContent = body;
+      if (waitIndicator) {
+        waitIndicator.hidden = isTerminalMode;
+      }
     }
 
     function handlePaymentPayload(data) {
@@ -186,7 +202,7 @@
         setPaymentStatus(
           "detecting",
           "{{if .IsEnglish}}Waiting for payment{{else}}Ödeme bekleniyor{{end}}",
-          "{{if .IsDonation}}{{if .IsEnglish}}Choose the amount in your wallet and send it to the address below.{{else}}Tutarı wallet uygulamanda belirleyip aşağıdaki adrese gönder.{{end}}{{else}}{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}{{end}}"
+          "{{if .IsDonation}}{{if .IsEnglish}}Choose the amount in your wallet and send it to the address below.{{else}}Tutarı wallet uygulamanızda belirleyip aşağıdaki adrese gönderin.{{end}}{{else}}{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}{{end}}"
         );
         return false;
       }
@@ -218,7 +234,7 @@
         setPaymentStatus(
           "detecting",
           "{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}",
-          "{{if .IsDonation}}{{if .IsEnglish}}Live connection is active. Send the amount you choose now.{{else}}Canlı bağlantı aktif. Seçtiğin tutarı şimdi gönder.{{end}}{{else}}{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}{{end}}"
+          "{{if .IsDonation}}{{if .IsEnglish}}Live connection is active. Send the amount you choose now.{{else}}Canlı bağlantı aktif. Seçtiğiniz tutarı şimdi gönderin.{{end}}{{else}}{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}{{end}}"
         );
       });
 

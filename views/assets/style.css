@@ -30,11 +30,40 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-color: rgba(19, 19, 19, .22) transparent;
+  scrollbar-width: thin;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: rgba(19, 19, 19, .2);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(19, 19, 19, .32);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 html {
   min-height: 100%;
   background: #f8f8fa;
+  scrollbar-color: rgba(19, 19, 19, .24) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 body {
@@ -4717,11 +4746,11 @@ h1 {
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
-    scrollbar-color: #cfd5e2 transparent;
+    scrollbar-color: rgba(13, 17, 28, .22) transparent;
   }
 
   .crypto-payment-flow .crypto-card::-webkit-scrollbar {
-    width: 10px;
+    width: 8px;
   }
 
   .crypto-payment-flow .crypto-card::-webkit-scrollbar-track {
@@ -4729,10 +4758,14 @@ h1 {
   }
 
   .crypto-payment-flow .crypto-card::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
+    border: 2px solid transparent;
     border-radius: 999px;
-    background: #cfd5e2;
+    background-color: rgba(13, 17, 28, .2);
     background-clip: content-box;
+  }
+
+  .crypto-payment-flow .crypto-card::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(13, 17, 28, .32);
   }
 }
 
@@ -5009,7 +5042,644 @@ h1 {
   }
 }
 
+.crypto-payment-flow {
+  --pay-ink: #101828;
+  --pay-muted: #667085;
+  --pay-soft: #f8fafc;
+  --pay-soft-hover: #f2f4f7;
+  --pay-line: #e6e9f0;
+  --pay-line-strong: #d4d9e4;
+  --pay-accent: #ff3ecb;
+  --pay-accent-strong: #d91fa2;
+  --pay-accent-soft: rgba(255, 62, 203, .08);
+  --pay-blue: #2563eb;
+  --pay-blue-soft: rgba(37, 99, 235, .08);
+  --pay-green: #12b76a;
+  --pay-green-soft: rgba(18, 183, 106, .09);
+  --pay-amber: #f79009;
+  background:
+    radial-gradient(circle at 50% -120px, rgba(255, 62, 203, .11), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #f7f8fb 52%, #ffffff 100%);
+}
+
+.crypto-payment-flow .crypto-card {
+  border: 1px solid rgba(16, 24, 40, .08);
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 22px 60px rgba(16, 24, 40, .10), 0 1px 2px rgba(16, 24, 40, .04);
+}
+
+.crypto-payment-flow .crypto-header-icon,
+.crypto-payment-flow .crypto-timer,
+.crypto-payment-flow :where(.crypto-section, .crypto-copy-section, .crypto-live-panel, .crypto-warning, .crypto-qr-wrap, .crypto-summary-card, .crypto-thank-box),
+.crypto-payment-flow :where(.crypto-btn, .crypto-network-option, .crypto-copy-value, .crypto-copy-btn, .crypto-ghost-btn) {
+  border-color: var(--pay-line);
+}
+
+.crypto-payment-flow .crypto-header-icon,
+.crypto-payment-flow .crypto-timer,
+.crypto-payment-flow :where(.crypto-btn, .crypto-network-option, .crypto-copy-btn, .crypto-copy-value, .crypto-ghost-btn) {
+  box-shadow: inset 0 -1px 0 rgba(16, 24, 40, .035);
+}
+
+.crypto-payment-flow .crypto-header-left {
+  touch-action: manipulation;
+  user-select: none;
+  transition: transform .14s cubic-bezier(.2, .8, .2, 1), opacity .14s ease;
+}
+
+.crypto-payment-flow .crypto-header-left:focus-visible {
+  outline: none;
+}
+
+.crypto-payment-flow .crypto-header-left:focus-visible .crypto-header-icon {
+  box-shadow: 0 0 0 4px var(--pay-focus), 0 0 0 1px var(--pay-accent);
+}
+
+.crypto-payment-flow .crypto-header-icon {
+  transition: transform .14s cubic-bezier(.2, .8, .2, 1), background .14s ease, border-color .14s ease, box-shadow .14s ease, color .14s ease;
+}
+
+.crypto-payment-flow .crypto-header-left:hover .crypto-header-icon {
+  border-color: rgba(217, 31, 162, .24);
+  background: #fffafd;
+  color: var(--pay-accent-strong);
+  box-shadow: 0 6px 16px rgba(16, 24, 40, .08), inset 0 -1px 0 rgba(16, 24, 40, .04);
+}
+
+.crypto-payment-flow .crypto-header-left:active {
+  transform: translateY(1px);
+}
+
+.crypto-payment-flow .crypto-header-left:active .crypto-header-icon {
+  border-color: rgba(217, 31, 162, .36);
+  background: #fff5fb;
+  box-shadow: inset 0 2px 7px rgba(16, 24, 40, .14), 0 0 0 1px rgba(255, 62, 203, .08);
+  transform: scale(.9);
+}
+
+.crypto-payment-flow .crypto-step-dot.done,
+.crypto-payment-flow .crypto-step-dot.active {
+  background: linear-gradient(90deg, var(--pay-accent), #8b5cf6);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-container {
+  width: min(calc(100vw - 24px), 510px);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-card {
+  padding: 11px;
+  border-radius: 18px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-stack > * + * {
+  margin-top: 8px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-section,
+.crypto-payment-flow.crypto-flow-select .crypto-alert {
+  padding: 10px;
+  border-radius: 13px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-flex-between.crypto-align-end {
+  align-items: center;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-price {
+  color: var(--pay-ink);
+  font-size: 23px;
+  line-height: 1.08;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-grid {
+  gap: 6px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn,
+.crypto-payment-flow.crypto-flow-select .crypto-network-option {
+  position: relative;
+  overflow: hidden;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn::after,
+.crypto-payment-flow.crypto-flow-select .crypto-network-option::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, .62) 42%, transparent 72%);
+  opacity: 0;
+  transform: translateX(-120%);
+  pointer-events: none;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn:hover::after,
+.crypto-payment-flow.crypto-flow-select .crypto-network-option:hover::after {
+  opacity: 1;
+  transform: translateX(120%);
+  transition: transform .58s cubic-bezier(.2, .8, .2, 1), opacity .18s ease;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn {
+  min-height: 54px;
+  border-radius: 13px;
+  background: #ffffff;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn:hover,
+.crypto-payment-flow.crypto-flow-select .crypto-network-option:hover {
+  border-color: rgba(217, 31, 162, .28);
+  background: #fffafd;
+  box-shadow: 0 10px 24px rgba(16, 24, 40, .08), 0 0 0 1px rgba(255, 62, 203, .06);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-network-option {
+  min-height: 54px;
+  background: #ffffff;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-network-count {
+  background: #eef2f7;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-badges span {
+  background: #ffffff;
+}
+
+.crypto-payment-flow.crypto-pay-page {
+  padding-top: 16px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-container {
+  width: min(calc(100vw - 24px), 470px);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-card {
+  padding: 12px;
+  border-radius: 18px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-stack {
+  gap: 9px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-card > .crypto-stack > .crypto-flex-between {
+  padding: 12px;
+  border: 1px solid var(--pay-line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  box-shadow: inset 0 -1px 0 rgba(16, 24, 40, .035);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-send-amount {
+  font-size: 25px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box {
+  min-height: 66px;
+  align-items: center;
+  overflow: hidden;
+  border-color: var(--pay-line);
+  background: #ffffff;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box::before {
+  inset: 0;
+  border-radius: inherit;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.detecting {
+  border-color: rgba(37, 99, 235, .20);
+  background: linear-gradient(180deg, #ffffff 0%, #f5f8ff 100%);
+  color: var(--pay-blue);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.detecting::before {
+  background: linear-gradient(110deg, transparent 0%, rgba(37, 99, 235, .08) 45%, transparent 74%);
+  animation-duration: 2.6s;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.confirming,
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.paid {
+  border-color: rgba(18, 183, 106, .22);
+  background: linear-gradient(180deg, #ffffff 0%, #f3fbf6 100%);
+  color: #079455;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.offline,
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.underpaid {
+  border-color: rgba(247, 144, 9, .24);
+  background: linear-gradient(180deg, #ffffff 0%, #fff8eb 100%);
+  color: #b54708;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.expired,
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.canceled,
+.crypto-payment-flow.crypto-pay-page .crypto-status-box.failed {
+  border-color: rgba(240, 68, 56, .22);
+  background: linear-gradient(180deg, #ffffff 0%, #fff5f5 100%);
+  color: #b42318;
+}
+
+.crypto-status-orb {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #ffffff;
+  color: currentColor;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .07), inset 0 -1px 0 rgba(16, 24, 40, .05);
+}
+
+.crypto-status-orb::before,
+.crypto-status-orb::after {
+  content: "";
+  position: absolute;
+  border-radius: inherit;
+}
+
+.crypto-status-orb::before {
+  inset: -40%;
+  background: conic-gradient(from 0deg, transparent 0 52%, currentColor 62%, transparent 72% 100%);
+  opacity: .55;
+  animation: crypto-orb-spin 2.8s linear infinite;
+}
+
+.crypto-status-orb::after {
+  inset: 3px;
+  background: #ffffff;
+}
+
+.crypto-status-orb svg {
+  position: relative;
+  z-index: 1;
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.25;
+}
+
+.crypto-status-box.paid .crypto-status-orb::before,
+.crypto-status-box.expired .crypto-status-orb::before,
+.crypto-status-box.canceled .crypto-status-orb::before,
+.crypto-status-box.failed .crypto-status-orb::before,
+.crypto-status-box.underpaid .crypto-status-orb::before,
+.crypto-status-box.overpaid .crypto-status-orb::before,
+.crypto-status-box.partial_paid .crypto-status-orb::before {
+  animation: none;
+  background: currentColor;
+  opacity: .16;
+}
+
+.crypto-status-box.confirming .crypto-status-orb::before {
+  animation-duration: 1.7s;
+  opacity: .66;
+}
+
+.crypto-bouncing-dots[hidden] {
+  display: none;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-bouncing-dots {
+  width: 38px;
+  height: 24px;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 8px;
+  border: 1px solid rgba(37, 99, 235, .14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-bouncing-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: .42;
+  animation: crypto-wait-dots 1.1s cubic-bezier(.2, .8, .2, 1) infinite;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-bouncing-dots i:nth-child(2) {
+  animation-delay: .13s;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-bouncing-dots i:nth-child(3) {
+  animation-delay: .26s;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-progress-bar {
+  height: 4px;
+  overflow: hidden;
+  background: #edf1f7;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-progress-bar span {
+  background: linear-gradient(90deg, var(--pay-green), var(--pay-blue));
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-wrap {
+  position: relative;
+  gap: 10px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, .07), transparent 38%),
+    linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer {
+  overflow: hidden;
+  border-color: rgba(16, 24, 40, .08);
+  border-radius: 20px;
+  background: #ffffff;
+  box-shadow: 0 16px 34px rgba(16, 24, 40, .09);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer::before,
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer::after {
+  content: none;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-outer > img:first-child {
+  position: relative;
+  z-index: 1;
+  border-radius: 10px;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-qr-logo {
+  z-index: 3;
+  box-shadow: 0 8px 18px rgba(16, 24, 40, .16);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-net-pill {
+  min-height: 28px;
+  border-color: rgba(37, 99, 235, .14);
+  background: #ffffff;
+  color: var(--pay-ink);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-live-panel {
+  border-color: rgba(18, 183, 106, .18);
+  background: linear-gradient(180deg, #ffffff 0%, #f3fbf6 100%);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-live-pulse {
+  background: var(--pay-green);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-copy-section {
+  background: #ffffff;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-copy-value {
+  min-height: 42px;
+  background: #f8fafc;
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-actions {
+  gap: 7px;
+}
+
+@keyframes crypto-orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes crypto-wait-dots {
+  0%, 100% {
+    opacity: .34;
+    transform: translateY(2px) scale(.82);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1);
+  }
+}
+
+@media (max-width: 640px) {
+  .crypto-payment-flow.crypto-flow-select .crypto-container,
+  .crypto-payment-flow.crypto-pay-page .crypto-container {
+    width: min(calc(100vw - 18px), 510px);
+  }
+
+  .crypto-payment-flow.crypto-flow-select .crypto-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .crypto-payment-flow.crypto-pay-page .crypto-card > .crypto-stack > .crypto-flex-between {
+    padding: 10px;
+  }
+
+  .crypto-payment-flow.crypto-pay-page .crypto-send-amount {
+    font-size: 22px;
+  }
+
+  .crypto-status-orb {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+}
+
+@media (max-width: 360px) {
+  .crypto-payment-flow.crypto-flow-select .crypto-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.crypto-payment-flow .crypto-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.crypto-payment-flow .crypto-header-tools .crypto-steps {
+  margin-left: 0;
+}
+
+.crypto-lang-switch {
+  min-height: 32px;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(34px, 1fr));
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--pay-line);
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: inset 0 -1px 0 rgba(16, 24, 40, .035);
+}
+
+.crypto-lang-option {
+  min-width: 34px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--pay-muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  transition: background .16s ease, color .16s ease, box-shadow .16s ease, transform .16s cubic-bezier(.2, .8, .2, 1);
+}
+
+.crypto-lang-option:hover {
+  color: var(--pay-ink);
+  background: var(--pay-soft-hover);
+}
+
+.crypto-lang-option.active {
+  background: var(--pay-ink);
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(16, 24, 40, .16);
+}
+
+.crypto-lang-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--pay-focus), 0 0 0 1px var(--pay-accent);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-container {
+  width: min(calc(100vw - 24px), 540px);
+}
+
+.crypto-payment-flow.crypto-pay-page .crypto-container {
+  width: min(calc(100vw - 24px), 520px);
+  max-width: 520px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-card,
+.crypto-payment-flow.crypto-pay-page .crypto-card {
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-section,
+.crypto-payment-flow.crypto-flow-select .crypto-alert,
+.crypto-payment-flow.crypto-pay-page .crypto-product-strip.compact,
+.crypto-payment-flow.crypto-pay-page .crypto-section,
+.crypto-payment-flow.crypto-pay-page .crypto-copy-section,
+.crypto-payment-flow.crypto-pay-page .crypto-live-panel,
+.crypto-payment-flow.crypto-pay-page .crypto-warning,
+.crypto-payment-flow.crypto-pay-page .crypto-qr-wrap {
+  padding: 14px;
+  border-radius: 14px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-stack > * + * {
+  margin-top: 10px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-btn {
+  min-height: 68px;
+  padding: 10px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-network-option {
+  min-height: 64px;
+  padding: 11px 12px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-price,
+.crypto-payment-flow.crypto-pay-page .crypto-send-amount {
+  font-size: 26px;
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-label {
+  max-width: 100%;
+  line-height: 1.25;
+}
+
+.crypto-payment-flow.checkout-ready .crypto-header,
+.crypto-payment-flow.checkout-ready .crypto-card,
+.crypto-payment-flow.checkout-ready .crypto-footer {
+  animation: checkout-surface-in .28s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.crypto-payment-flow.checkout-ready .crypto-card {
+  animation-delay: .035s;
+}
+
+.crypto-payment-flow.checkout-ready .crypto-footer {
+  animation-delay: .07s;
+}
+
+.crypto-payment-flow.checkout-navigating .crypto-card {
+  opacity: .72;
+  transform: translateY(5px) scale(.992);
+  transition: opacity .14s ease, transform .14s cubic-bezier(.2, .8, .2, 1);
+}
+
+@keyframes checkout-surface-in {
+  from {
+    opacity: .01;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 560px) {
+  .crypto-payment-flow .crypto-header {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .crypto-payment-flow .crypto-header-tools {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .crypto-payment-flow.crypto-flow-select .crypto-card,
+  .crypto-payment-flow.crypto-pay-page .crypto-card {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .crypto-payment-flow.crypto-flow-select .crypto-section,
+  .crypto-payment-flow.crypto-flow-select .crypto-alert,
+  .crypto-payment-flow.crypto-pay-page .crypto-product-strip.compact,
+  .crypto-payment-flow.crypto-pay-page .crypto-section,
+  .crypto-payment-flow.crypto-pay-page .crypto-copy-section,
+  .crypto-payment-flow.crypto-pay-page .crypto-live-panel,
+  .crypto-payment-flow.crypto-pay-page .crypto-warning,
+  .crypto-payment-flow.crypto-pay-page .crypto-qr-wrap {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 420px) {
+  .crypto-payment-flow .crypto-header {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .crypto-payment-flow .crypto-header-tools {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .crypto-lang-switch {
+    min-height: 30px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .crypto-payment-flow .crypto-header-left,
+  .crypto-payment-flow .crypto-header-icon,
   .crypto-payment-flow :where(.crypto-btn, .crypto-network-option, .crypto-primary-btn, .crypto-ghost-btn, .crypto-copy-btn),
   .crypto-progress-bar span,
   .crypto-progress-bar span::after,
@@ -5018,7 +5688,12 @@ h1 {
   .crypto-live-pulse::after,
   .crypto-status-box.detecting::before,
   .crypto-status-box.detecting > svg,
-  .crypto-bouncing-dots i {
+  .crypto-status-orb::before,
+  .crypto-bouncing-dots i,
+  .crypto-payment-flow.checkout-ready .crypto-header,
+  .crypto-payment-flow.checkout-ready .crypto-card,
+  .crypto-payment-flow.checkout-ready .crypto-footer,
+  .crypto-lang-option {
     animation: none !important;
     transition-duration: .01ms !important;
   }

@@ -1787,6 +1787,139 @@
   margin-top: .35rem !important;
 }
 
+.merchant-dashboard-header {
+  display: grid;
+  gap: .85rem;
+}
+
+.merchant-header-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: start;
+}
+
+.merchant-header-copy {
+  min-width: 0;
+}
+
+.merchant-eyebrow {
+  display: inline-flex;
+  min-height: 1.65rem;
+  align-items: center;
+  border: 1px solid #e9e9e9;
+  border-radius: 6px;
+  background: #f9f9f9;
+  color: rgba(19, 19, 19, .58);
+  font-size: .66rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0 .55rem;
+  text-transform: uppercase;
+}
+
+.merchant-header-actions {
+  display: grid;
+  min-width: 12rem;
+  gap: .45rem;
+}
+
+.merchant-header-actions .merchant-action-button {
+  width: 100%;
+}
+
+.merchant-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(8.5rem, 1fr)) minmax(12rem, 1.25fr) minmax(18rem, 1.6fr);
+  gap: .55rem;
+}
+
+.merchant-kpi-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: .22rem;
+  border: 1px solid #e9e9e9;
+  border-radius: 8px;
+  background: #fbfbfb;
+  padding: .72rem .75rem;
+}
+
+.merchant-kpi-card span {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(19, 19, 19, .48);
+  font-size: .66rem;
+  font-weight: 900;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.merchant-kpi-card strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: #131313;
+  font-size: 1.22rem;
+  font-weight: 920;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-kpi-card small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(19, 19, 19, .55);
+  font-size: .7rem;
+  font-weight: 760;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-kpi-id {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: .65rem;
+}
+
+.merchant-kpi-id span,
+.merchant-kpi-id code {
+  grid-column: 1;
+}
+
+.merchant-kpi-id button {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  align-self: center;
+}
+
+.merchant-kpi-id code {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e4e4e4;
+  border-radius: 6px;
+  background: #fff;
+  color: rgba(19, 19, 19, .7);
+  font-size: .72rem;
+  font-weight: 760;
+  line-height: 1.85rem;
+  padding: 0 .55rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-treasury-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(18rem, .72fr);
+  gap: 1rem;
+  align-items: start;
+}
+
 .merchant-workbench > .sticky {
   top: 0 !important;
   border-width: 0 0 1px !important;
@@ -1799,7 +1932,12 @@
 
 .merchant-workbench > .sticky > div {
   gap: .25rem !important;
-  scrollbar-width: thin;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.merchant-workbench > .sticky > div::-webkit-scrollbar {
+  display: none;
 }
 
 .merchant-workbench .dash-tab {
@@ -1926,6 +2064,7 @@
   box-shadow: none !important;
 }
 
+.merchant-section-header,
 .merchant-products-toolbar {
   display: flex;
   align-items: center;
@@ -1936,6 +2075,7 @@
   padding: .95rem 1rem;
 }
 
+.merchant-section-header h2,
 .merchant-products-toolbar h2 {
   margin: 0;
   color: #131313;
@@ -1944,6 +2084,7 @@
   line-height: 1.2;
 }
 
+.merchant-section-header p,
 .merchant-products-toolbar p {
   margin: .22rem 0 0;
   color: rgba(19, 19, 19, .58);
@@ -1952,11 +2093,65 @@
   line-height: 1.45;
 }
 
+.merchant-section-actions,
 .merchant-products-actions {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: .5rem;
+}
+
+.merchant-section-filter,
+.merchant-rescan-form,
+.merchant-settings-form {
+  display: grid;
+  gap: .75rem;
+  border-bottom: 1px solid #e9e9e9;
+  background: #fff;
+  padding: .85rem 1rem;
+}
+
+.merchant-section-filter {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+}
+
+.merchant-section-filter .admin-data-search {
+  width: 100%;
+}
+
+.merchant-rescan-form {
+  grid-template-columns: 220px minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.merchant-rescan-form .merchant-action-button {
+  min-height: 2.75rem;
+}
+
+.merchant-settings-form {
+  border-bottom: 0;
+  padding: 1rem;
+}
+
+.merchant-settings-network-list {
+  display: grid;
+  gap: .75rem;
+  padding: 1rem;
+}
+
+.merchant-transaction-list {
+  overflow: hidden;
+  border-top: 1px solid #e9e9e9;
+}
+
+.merchant-panel-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  border-top: 1px solid #e9e9e9;
+  padding: .85rem 1rem;
 }
 
 .merchant-toolbar-badge {
@@ -2050,7 +2245,12 @@
   border-bottom: 1px solid #e9e9e9;
   background: #f9f9f9;
   padding: .5rem .65rem;
-  scrollbar-width: thin;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.merchant-products-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .merchant-products-tab {
@@ -2139,6 +2339,103 @@
   height: 2.65rem;
 }
 
+.merchant-network-panel {
+  align-self: start;
+}
+
+.merchant-network-list {
+  display: grid;
+  gap: .45rem;
+  padding: .75rem;
+}
+
+.merchant-network-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .75rem;
+  align-items: center;
+  border: 1px solid #e9e9e9;
+  border-radius: 8px;
+  background: #fff;
+  padding: .68rem .72rem;
+}
+
+.merchant-network-row:hover {
+  background: #fbfbfb;
+}
+
+.merchant-network-row.is-empty {
+  background: #fafafa;
+}
+
+.merchant-network-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .58rem;
+}
+
+.merchant-network-icon {
+  width: 1.65rem;
+  height: 1.65rem;
+  flex: 0 0 auto;
+  border: 1px solid #e9e9e9;
+  border-radius: 6px;
+  background: #fff;
+  object-fit: contain;
+  padding: .18rem;
+}
+
+.merchant-network-main span {
+  display: grid;
+  min-width: 0;
+  gap: .12rem;
+}
+
+.merchant-network-main strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #131313;
+  font-size: .8rem;
+  font-weight: 900;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-network-main small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(19, 19, 19, .52);
+  font-size: .68rem;
+  font-weight: 760;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-network-state {
+  display: inline-flex;
+  min-height: 1.55rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e2e2e2;
+  border-radius: 999px;
+  background: #f9f9f9;
+  color: rgba(19, 19, 19, .58);
+  font-size: .66rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0 .55rem;
+  white-space: nowrap;
+}
+
+.merchant-network-row:not(.is-empty) .merchant-network-state {
+  border-color: #bbf7d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
 .merchant-wallet-toolbar,
 .merchant-products-data-toolbar {
   padding: .65rem .75rem;
@@ -2151,10 +2448,51 @@
   border-radius: 0 !important;
 }
 
+.merchant-wallet-table {
+  min-width: 760px;
+  table-layout: fixed;
+}
+
 .merchant-wallet-table td,
 .merchant-products-table td,
 .merchant-links-table td {
   height: 3.05rem;
+}
+
+.merchant-wallet-table tr[data-admin-table-row] > td {
+  min-width: 0;
+}
+
+.merchant-wallet-table thead th:nth-child(1),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(1) {
+  width: 30%;
+}
+
+.merchant-wallet-table thead th:nth-child(2),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(2) {
+  width: 19%;
+}
+
+.merchant-wallet-table thead th:nth-child(3),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(3) {
+  width: 23%;
+}
+
+.merchant-wallet-table thead th:nth-child(4),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(4) {
+  width: 10%;
+}
+
+.merchant-wallet-table thead th:nth-child(5),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(5) {
+  width: 18%;
+}
+
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(1),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(2),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(3),
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(5) {
+  overflow: hidden;
 }
 
 .merchant-activity-wrap {
@@ -2272,6 +2610,42 @@
 .merchant-product-table-main,
 .merchant-link-table-main {
   gap: .52rem;
+}
+
+.merchant-wallet-asset {
+  display: grid;
+  grid-template-columns: 1.3rem minmax(0, 1fr);
+  width: 100%;
+}
+
+.merchant-wallet-user,
+.merchant-wallet-user-meta {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merchant-wallet-user {
+  font-size: .78rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.merchant-wallet-user-meta {
+  margin-top: .18rem;
+}
+
+.merchant-wallet-table .merchant-inline-code,
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(3) span,
+.merchant-wallet-table tr[data-admin-table-row] > td:nth-child(5) time {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .merchant-product-table-main .merchant-product-avatar {
@@ -2915,17 +3289,53 @@ body.merchant-modal-open {
 }
 
 @media (max-width: 700px) {
+  .merchant-header-actions,
+  .merchant-kpi-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-kpi-id {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-kpi-id button {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
+  .merchant-network-row {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-network-state {
+    justify-self: start;
+  }
+
+  .merchant-section-header,
   .merchant-products-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .merchant-section-actions,
   .merchant-products-actions {
     width: 100%;
   }
 
+  .merchant-section-actions .merchant-action-button,
   .merchant-products-actions .merchant-action-button {
     flex: 1 1 0;
+  }
+
+  .merchant-section-filter,
+  .merchant-rescan-form {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-panel-pagination {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .merchant-form-grid {
@@ -2934,12 +3344,14 @@ body.merchant-modal-open {
 }
 
 @media (max-width: 520px) {
+  .merchant-section-header,
   .merchant-products-toolbar,
   .merchant-modal-head,
   .merchant-modal-form {
     padding-inline: .75rem;
   }
 
+  .merchant-section-actions,
   .merchant-products-actions,
   .merchant-modal-actions,
   .merchant-product-actions,
@@ -3047,6 +3459,27 @@ body.merchant-modal-open {
     grid-template-columns: 1fr !important;
   }
 
+  .merchant-header-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-header-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    min-width: 0;
+  }
+
+  .merchant-kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .merchant-kpi-id {
+    grid-column: 1 / -1;
+  }
+
+  .merchant-treasury-grid {
+    grid-template-columns: 1fr;
+  }
+
   .merchant-workbench > header .mt-4.grid {
     grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
   }
@@ -3061,6 +3494,21 @@ body.merchant-modal-open {
 }
 
 @media (max-width: 640px) {
+  .merchant-header-actions,
+  .merchant-kpi-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-kpi-id {
+    grid-template-columns: 1fr;
+  }
+
+  .merchant-kpi-id button {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+
   .merchant-workbench > header > .grid > div:last-child {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
@@ -3120,5 +3568,417 @@ body.merchant-modal-open {
 
   .merchant-statusbar span:last-child {
     display: none;
+  }
+}
+
+/* Admin dashboard final polish layer. Scoped away from merchant workbench. */
+.admin-vscode-body:has(.admin-vscode-page) {
+  overflow: auto;
+  overflow-x: hidden;
+  background: #f6f6f7;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-vscode-root {
+  min-height: 100vh;
+  height: auto;
+  grid-template-rows: 35px auto 24px;
+  background: #f6f6f7;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-vscode-main,
+.admin-vscode-body:has(.admin-vscode-page) .admin-vscode-content,
+.admin-vscode-body:has(.admin-vscode-page) .admin-vscode-page,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main {
+  min-height: auto;
+  height: auto;
+  overflow: visible;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-vscode-page {
+  gap: .85rem !important;
+  background: #f6f6f7;
+  padding: .85rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header {
+  border: 1px solid #e7e7e8 !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04) !important;
+  padding: .95rem !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .9rem !important;
+  min-height: auto;
+  align-items: start !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header h1 {
+  margin-top: .45rem !important;
+  font-size: 1.35rem !important;
+  line-height: 1.1 !important;
+  letter-spacing: 0;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header p {
+  color: rgba(19, 19, 19, .58) !important;
+  font-size: .78rem !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header .rounded-full,
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header .rounded-2xl {
+  border-radius: 6px !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header .bg-wash {
+  background: #fafafa !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child {
+  display: grid !important;
+  grid-template-columns: repeat(4, minmax(5.8rem, 1fr)) auto;
+  gap: .45rem !important;
+  align-items: stretch;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child > div,
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child > a {
+  min-height: 3.25rem;
+  border-color: #e7e7e8 !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header strong {
+  font-size: 1.15rem !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-shell {
+  display: grid;
+  grid-template-columns: minmax(13.5rem, 15.25rem) minmax(0, 1fr);
+  gap: .85rem;
+  align-items: start;
+  min-height: calc(100vh - 35px - 24px - 1.7rem);
+  height: auto;
+  background: transparent;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-activitybar {
+  display: none !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-sidebar {
+  position: sticky;
+  top: .85rem;
+  max-height: calc(100vh - 1.7rem);
+  overflow: hidden;
+  border: 1px solid #e7e7e8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04);
+  padding: .65rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-sidebar-head {
+  min-height: auto;
+  margin: 0 0 .35rem;
+  border: 0;
+  padding: .25rem .3rem .55rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-sidebar-title {
+  color: rgba(19, 19, 19, .5);
+  font-size: .68rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-sidebar-current {
+  border: 1px solid #e7e7e8;
+  background: #fafafa;
+  color: rgba(19, 19, 19, .64);
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  max-height: calc(100vh - 6rem);
+  gap: .65rem;
+  overflow: auto;
+  padding: 0 .15rem .1rem 0;
+  scrollbar-width: thin;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-group {
+  display: grid;
+  gap: .12rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-group-title {
+  margin: .25rem .35rem .2rem;
+  color: rgba(19, 19, 19, .42);
+  font-size: .65rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-link {
+  min-height: 2.05rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: rgba(19, 19, 19, .74);
+  font-size: .8rem;
+  font-weight: 820;
+  padding: 0 .62rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-link:hover {
+  border-color: #e7e7e8;
+  background: #fafafa;
+  color: #131313;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-link[aria-selected="true"] {
+  border-color: #131313;
+  background: #131313;
+  color: #fff;
+  box-shadow: none;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-dot {
+  width: .36rem;
+  height: .36rem;
+  margin-left: auto;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: .24;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-nav-link[aria-selected="true"] .admin-nav-dot {
+  background: #ff37c7;
+  opacity: 1;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main {
+  display: grid;
+  gap: .85rem;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > :not(style):not(script) {
+  min-width: 0;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > :not(style):not(script) + :not(style):not(script) {
+  border-top: 0 !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .border,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .rounded-3xl,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .overflow-hidden,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .bg-white,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .grid > .border,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .grid > .rounded-3xl,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main > .grid > .overflow-hidden,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main aside.rounded-3xl,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main section.rounded-3xl {
+  border-width: 1px !important;
+  border-color: #e7e7e8 !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .04) !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .grid > .rounded-3xl:not(.bg-white) {
+  background: #fff !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .rounded-\[28px\],
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .rounded-3xl {
+  border-radius: 8px !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .rounded-2xl,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .rounded-xl,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main input,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main select,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main textarea,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main code,
+.admin-vscode-body:has(.admin-vscode-page) .pg a,
+.admin-vscode-body:has(.admin-vscode-page) .pg span {
+  border-radius: 6px !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .border-line {
+  border-color: #e7e7e8 !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .bg-wash {
+  background-color: #fafafa !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .shadow-soft,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .shadow-glow,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main .shadow-sm {
+  box-shadow: none !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main h2,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main h3 {
+  letter-spacing: 0;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main input,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main select,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main textarea {
+  background: #fff !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-main a.inline-flex,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main button.inline-flex,
+.admin-vscode-body:has(.admin-vscode-page) .admin-main button[type="submit"] {
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-wrap {
+  overflow: auto;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: #fff;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-table {
+  min-width: 760px;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-table thead tr {
+  border-bottom: 1px solid #e7e7e8;
+  background: #f4f4f5;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-table thead th {
+  height: 2.35rem;
+  color: rgba(19, 19, 19, .48);
+  font-size: .66rem;
+  font-weight: 920;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-table td {
+  border-bottom: 1px solid #ededee;
+  padding: .58rem .75rem;
+  vertical-align: middle;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .adm-table tbody tr:hover {
+  background: #fafafa;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-data-toolbar {
+  border-bottom: 1px solid #e7e7e8;
+  padding: .65rem .85rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .admin-data-search,
+.admin-vscode-body:has(.admin-vscode-page) .admin-data-count {
+  min-height: 2.15rem;
+  border-color: #e7e7e8;
+  background: #fff;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .pg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .28rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .pg a,
+.admin-vscode-body:has(.admin-vscode-page) .pg span {
+  min-height: 1.95rem;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e7e7e8;
+  background: #fff;
+  padding: 0 .65rem;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .pg .pg-active {
+  border-color: #131313;
+  background: #131313;
+  color: #fff;
+}
+
+.admin-vscode-body:has(.admin-vscode-page) .pg .pg-disabled {
+  color: rgba(19, 19, 19, .34);
+}
+
+@media (min-width: 1280px) {
+  .admin-vscode-body:has(.admin-vscode-page) .admin-vscode-main,
+  .admin-vscode-body:has(.admin-vscode-page) .admin-main {
+    overflow: visible;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-vscode-page,
+  .admin-vscode-body:has(.admin-vscode-page) .admin-shell {
+    height: auto;
+  }
+}
+
+@media (max-width: 1023px) {
+  .admin-vscode-body:has(.admin-vscode-page) .admin-vscode-page {
+    padding: .65rem;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div,
+  .admin-vscode-body:has(.admin-vscode-page) .admin-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child > a {
+    grid-column: 1 / -1;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-sidebar {
+    position: static;
+    max-height: none;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-nav-list {
+    display: flex;
+    gap: .55rem;
+    max-height: none;
+    overflow-x: auto;
+    padding-bottom: .15rem;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-nav-group {
+    min-width: 12rem;
+  }
+}
+
+@media (max-width: 560px) {
+  .admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header > div > div:last-child {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-workbench-header h1 {
+    font-size: 1.2rem !important;
+  }
+
+  .admin-vscode-body:has(.admin-vscode-page) .admin-main .flex.items-center.justify-between,
+  .admin-vscode-body:has(.admin-vscode-page) .admin-main .flex.items-start.justify-between {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

@@ -146,6 +146,26 @@ func (r *OutboundPolicyRepo) ListWhitelist(ctx context.Context, limit int) ([]mo
 	return rows, err
 }
 
+func (r *OutboundPolicyRepo) ListWhitelistPage(ctx context.Context, page int, limit int) ([]models.OutboundAddressWhitelist, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Model(&models.OutboundAddressWhitelist{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []models.OutboundAddressWhitelist
+	err := r.db.WithContext(ctx).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset((page - 1) * limit).
+		Find(&rows).Error
+	return rows, total, err
+}
+
 func (r *OutboundPolicyRepo) AddWhitelist(ctx context.Context, input OutboundWhitelistCreate) (*models.OutboundAddressWhitelist, error) {
 	scope := normalizeOutboundPolicyScope(input.Scope)
 	address := strings.ToLower(strings.TrimSpace(input.Address))

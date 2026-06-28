@@ -12,7 +12,7 @@
 
   <main class="crypto-container">
     <header class="crypto-header">
-      <a class="crypto-header-left" href="/">
+      <a class="crypto-header-left" href="{{.CheckoutURL}}">
         <span class="crypto-header-icon">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
         </span>
@@ -21,10 +21,16 @@
           <span class="crypto-header-sub">{{if .IsEnglish}}Powered by Gateway{{else}}Gateway ile güvenli ödeme{{end}}</span>
         </span>
       </a>
-      <div class="crypto-steps" aria-label="Checkout progress">
-        <span class="crypto-step-dot done"></span>
-        <span class="crypto-step-dot active"></span>
-        <span class="crypto-step-dot pending"></span>
+      <div class="crypto-header-tools">
+        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
+          <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" {{if not .IsEnglish}}aria-current="true"{{end}}>TR</a>
+          <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" {{if .IsEnglish}}aria-current="true"{{end}}>EN</a>
+        </nav>
+        <div class="crypto-steps" aria-label="Checkout progress">
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot active"></span>
+          <span class="crypto-step-dot pending"></span>
+        </div>
       </div>
     </header>
 
@@ -44,8 +50,8 @@
         <section class="crypto-section">
           <div class="crypto-flex-between crypto-align-end">
             <div>
-              <p class="crypto-label">{{if .IsDonation}}{{if .IsEnglish}}Donation amount{{else}}Bağış tutarı{{end}}{{else}}{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}{{end}}</p>
-              <div class="crypto-price">{{if .IsDonation}}{{if .IsEnglish}}Your choice{{else}}Kullanıcı belirler{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</div>
+              <p class="crypto-label">{{if .IsDonation}}{{if .IsEnglish}}Amount you want to deposit{{else}}Yatırmak istediğiniz tutar{{end}}{{else}}{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}{{end}}</p>
+              <div class="crypto-price">{{if .IsDonation}}{{if .IsEnglish}}Set in wallet{{else}}Siz belirlersiniz{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</div>
               <p class="crypto-muted">Order {{.Session.OrderID}}</p>
             </div>
             <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
@@ -63,7 +69,7 @@
         <section>
           <div class="crypto-flex-between crypto-section-title">
               <p class="crypto-label">{{if .IsEnglish}}Select network{{else}}Network seç{{end}}</p>
-            <a class="crypto-copy-btn" href="/checkout/{{.Session.SessionToken}}">
+            <a class="crypto-copy-btn" href="{{.CheckoutURL}}">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg>
               {{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}
             </a>
@@ -71,7 +77,7 @@
 
           <div class="crypto-network-list">
             {{range .Assets}}
-            <form method="post" action="/checkout/{{$.Session.SessionToken}}/select">
+            <form method="post" action="{{$.SelectURL}}">
               <input type="hidden" name="chain_id" value="{{.ChainID}}">
               <input type="hidden" name="symbol" value="{{.Symbol}}">
               <input type="hidden" name="token" value="{{.Token}}">
@@ -117,7 +123,7 @@
           <p class="crypto-label crypto-section-title">{{if .IsEnglish}}Select currency{{else}}Para birimi seç{{end}}</p>
           <div class="crypto-grid">
             {{range .AssetGroups}}
-            <a class="crypto-btn" href="{{.URL}}">
+            <a class="crypto-btn" href="{{.URL}}&lang={{$.Lang}}">
               {{if .LogoURL}}
                 <img class="crypto-circle" src="{{.LogoURL}}" alt="{{.Symbol}}" style="padding:5px;background:#f9fafb;object-fit:contain;">
               {{else}}

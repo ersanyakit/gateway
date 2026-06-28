@@ -187,7 +187,7 @@ func TestGatewayViewsRenderCriticalStates(t *testing.T) {
 				"Assets":         []handlers.CheckoutAssetOption{},
 				"ExpiresAtUnix":  time.Now().Add(time.Hour).UnixMilli(),
 			},
-			expected: []string{"Gateway pricing", "PEPPER", "1 network"},
+			expected: []string{"Gateway pricing", "PEPPER", "1 network", `href="/checkout/checkout-token"`},
 		},
 		{
 			name: "checkout selected asset with no usable networks",
