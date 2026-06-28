@@ -692,7 +692,7 @@
     </div>
     <div class="adm-wrap rounded-none border-0 border-t-0">
       <table class="adm-table">
-        <thead><tr><th>Olay</th><th>Aktör</th><th>Açıklama</th><th>IP</th><th>Durum</th><th>Tarih</th></tr></thead>
+        <thead><tr><th>Olay</th><th>Aktör</th><th>Karar</th><th>Durum geçişi</th><th>Açıklama</th><th>IP</th><th>Durum</th><th>Tarih</th></tr></thead>
         <tbody>
         {{range .AdminActivityLogs}}
         <tr class="{{if .IsFailed}}bg-red-50/40{{end}}">
@@ -702,7 +702,9 @@
               {{if .IsOIDC}}<span class="badge badge-violet">OIDC</span>{{end}}
             </div>
           </td>
-          <td class="text-muted text-xs">{{.Actor}}</td>
+          <td class="text-muted text-xs">{{.Actor}}<span class="mt-1 block">{{.ActorRole}}</span></td>
+          <td class="text-xs text-muted">{{.Decision}}</td>
+          <td class="text-xs text-muted">{{.BeforeAfter}}</td>
           <td class="text-xs {{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</td>
           <td><code>{{.IPAddress}}</code></td>
           <td><span class="badge {{if eq .Status "success"}}badge-green{{else if eq .Status "failed"}}badge-red{{else}}badge-gray{{end}}">{{.Status}}</span></td>
@@ -1168,7 +1170,7 @@
         </div>
       </div>
 
-      <form class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-[180px_180px_1fr_1fr_140px_auto]" method="post" action="/admin/security/outbound-policy">
+      <form class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-[180px_180px_1fr_1fr_140px_auto]" method="post" action="/admin/security/outbound-policy" onsubmit="return confirm('Outbound policy güncellensin mi?')">
         <label class="flex min-h-11 items-center gap-2 rounded-2xl border border-line bg-wash px-3 text-sm font-extrabold text-ink">
           <input class="h-4 w-4" type="checkbox" name="emergency_frozen" {{if .AdminOutboundPolicy.EmergencyFrozen}}checked{{end}}>
           Freeze
@@ -1207,7 +1209,7 @@
                 <td><code class="block max-w-[320px] truncate" title="{{.Address}}">{{.Address}}</code>{{if .Label}}<span class="block text-xs text-muted">{{.Label}}</span>{{end}}</td>
                 <td>{{if .IsActive}}<span class="badge badge-green">Aktif</span>{{else}}<span class="badge badge-gray">Pasif</span>{{end}}</td>
                 <td>
-                  <form method="post" action="/admin/security/outbound-whitelist/{{.ID}}/toggle">
+                  <form method="post" action="/admin/security/outbound-whitelist/{{.ID}}/toggle" onsubmit="return confirm('Whitelist durumu güncellensin mi?')">
                     <input type="hidden" name="active" value="{{if .IsActive}}false{{else}}true{{end}}">
                     <button class="inline-flex min-h-7 items-center rounded-full border border-line bg-wash px-3 text-xs font-extrabold text-ink hover:bg-white" type="submit">{{if .IsActive}}Pasif et{{else}}Aktif et{{end}}</button>
                   </form>

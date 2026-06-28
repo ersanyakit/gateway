@@ -1,10 +1,16 @@
 # Trust Wallet Core
 
-`wallet-core/` is a shallow clone of https://github.com/trustwallet/wallet-core.
+`wallet-core/` is a required git submodule of https://github.com/trustwallet/wallet-core.
+
+Initialize it after a normal clone:
+
+```bash
+git submodule update --init --recursive third_party/trustwallet/wallet-core
+```
 
 The Go integration is wired through `blockchain/walletcore`:
 
-- default build: pure-Go fallback so local tests and development do not require native WalletCore binaries;
-- `go build -tags trustwalletcore`: CGO adapter links against `third_party/trustwallet/wallet-core/build`.
+- default build: CGO adapter links against `third_party/trustwallet/wallet-core/build`;
+- `walletcorefallback` exists only for narrow local debug and is not production-capable.
 
-Before building with `-tags trustwalletcore`, build Wallet Core from `third_party/trustwallet/wallet-core` with its official `bootstrap.sh` flow so `libTrustWalletCore` and related native libraries exist.
+Before building the gateway, run `./scripts/build_wallet_core.sh` so `libTrustWalletCore` and related native libraries exist.

@@ -6,6 +6,13 @@ WALLET_CORE_DIR="$ROOT_DIR/third_party/trustwallet/wallet-core"
 
 if [ ! -d "$WALLET_CORE_DIR" ]; then
   echo "wallet-core source not found: $WALLET_CORE_DIR" >&2
+  echo "Run: git submodule update --init --recursive third_party/trustwallet/wallet-core" >&2
+  exit 1
+fi
+
+if [ ! -f "$WALLET_CORE_DIR/CMakeLists.txt" ] || [ ! -f "$WALLET_CORE_DIR/samples/go/go.mod" ]; then
+  echo "wallet-core submodule is not initialized correctly: $WALLET_CORE_DIR" >&2
+  echo "Run: git submodule update --init --recursive third_party/trustwallet/wallet-core" >&2
   exit 1
 fi
 

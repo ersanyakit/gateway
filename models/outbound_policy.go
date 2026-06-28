@@ -48,10 +48,10 @@ type OutboundAddressWhitelist struct {
 	Address    string     `gorm:"size:180;not null;index" json:"address"`
 	Label      string     `gorm:"size:160" json:"label,omitempty"`
 	IsActive   bool       `gorm:"not null;default:true;index" json:"is_active"`
-	CreatedBy string     `gorm:"size:255" json:"created_by,omitempty"`
-	UpdatedBy string     `gorm:"size:255" json:"updated_by,omitempty"`
-	CreatedAt time.Time  `gorm:"index" json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	CreatedBy  string     `gorm:"size:255" json:"created_by,omitempty"`
+	UpdatedBy  string     `gorm:"size:255" json:"updated_by,omitempty"`
+	CreatedAt  time.Time  `gorm:"index" json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 func (w *OutboundAddressWhitelist) BeforeCreate(tx *gorm.DB) error {

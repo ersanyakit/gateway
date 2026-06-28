@@ -195,10 +195,11 @@ Bu düzeltmeler durable sweep, webhook hardening, configurable backfill, reorg c
    - Risk: Bakiye doğru görünürken on-chain fon farklı olabilir.
    - Kalan kabul kriteri: Daily on-chain reconciliation job, per asset liability report, on-chain reserve proof, negative balance guard, dashboard/alert.
 
-5. Withdrawal güvenliği kurumsal seviyede değil.
-   - Kanıt: Hold ve admin approval var, ama whitelist, velocity limit, maker-checker, risk score ve nonce/UTXO reservation eksik.
+5. Withdrawal güvenliği güçlendi, ancak borsa seviyesinde tamam değil.
+   - Güncel durum: Hold ve admin approval yanında outbound policy setting/whitelist tabloları, emergency freeze, raw amount limit, rolling velocity limit, high-risk admin role guard ve append-only activity log eklendi.
+   - Kalan eksik: Risk score, nonce/UTXO reservation ve gelişmiş approval matrix hâlâ yok.
    - Risk: Yanlış/adversarial payout, double spend benzeri concurrency, stuck transaction.
-   - Kabul kriteri: Policy engine, per-tenant limits, address whitelist, dual approval, nonce/UTXO lock, stuck tx replacement.
+   - Kalan kabul kriteri: Risk scoring, nonce/UTXO lock, stuck tx replacement.
 
 6. Auto-sweep durable job'a taşındı.
    - Güncel durum: `sweep_jobs` status machine, retry, lock, idempotency, dead-letter, bounded failure category, sweep tx hash kaydı ve parent-job prefund attempt/error/category state eklendi.

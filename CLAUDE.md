@@ -8,6 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Build
 go build ./...
 
+# Initialize required Trust Wallet Core submodule after a plain clone
+git submodule update --init --recursive third_party/trustwallet/wallet-core
+
 # Build Trust Wallet Core native library when missing/stale
 ./scripts/build_wallet_core.sh
 

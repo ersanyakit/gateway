@@ -451,6 +451,65 @@ func TestAdminHighRiskActionsRequirePrivilegedRoleBeforeLookup(t *testing.T) {
 	}
 }
 
+func TestAdminOutboundSecurityGuardsAndControlsSourceContract(t *testing.T) {
+	routes := readHandlerSource(t, "../routes/routes.go")
+	for _, token := range []string{
+		"portalJWT := middleware.PortalMutationJWT()",
+		`r.fiber.Use("/dealer", portalJWT)`,
+		`r.fiber.Use("/merchant", portalJWT)`,
+		`r.fiber.Use("/admin", portalJWT)`,
+		`HandleAdminOutboundPolicyUpdate(dealerDeps)`,
+		`HandleAdminOutboundWhitelistCreate(dealerDeps)`,
+		`HandleAdminOutboundWhitelistToggle(dealerDeps)`,
+	} {
+		if !strings.Contains(routes, token) {
+			t.Fatalf("routes missing security token %q", token)
+		}
+	}
+
+	source := readHandlerSource(t, "dealer.go")
+	for _, tc := range []struct {
+		function      string
+		resourceToken string
+	}{
+		{"HandleAdminRecoverFunds", `strings.TrimSpace(c.FormValue("wallet_id"))`},
+		{"HandleAdminWithdrawalApprove", `uuid.Parse(c.Params("id"))`},
+		{"HandleAdminWithdrawalReject", `uuid.Parse(c.Params("id"))`},
+		{"HandleAdminRefundApprove", `uuid.Parse(c.Params("id"))`},
+		{"HandleAdminRefundReject", `uuid.Parse(c.Params("id"))`},
+	} {
+		body := extractHandlerFunctionBody(t, source, tc.function)
+		guardIndex := strings.Index(body, "requirePrivilegedAdmin(c, deps.AdminRepo)")
+		resourceIndex := strings.Index(body, tc.resourceToken)
+		if guardIndex == -1 {
+			t.Fatalf("%s missing role privilege guard", tc.function)
+		}
+		if resourceIndex == -1 {
+			t.Fatalf("%s missing resource token %q", tc.function, tc.resourceToken)
+		}
+		if guardIndex > resourceIndex {
+			t.Fatalf("%s must check role before resource lookup", tc.function)
+		}
+	}
+
+	templateBytes, err := os.ReadFile("../../views/dealer/admin_dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(templateBytes)
+	for _, token := range []string{
+		"{{.AdminRole}}",
+		"{{.AdminOutboundPolicy.ConfigurationSummary}}",
+		`/admin/security/outbound-policy`,
+		`/admin/security/outbound-whitelist`,
+		`name="role"`,
+	} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("admin security template missing %q", token)
+		}
+	}
+}
+
 func TestV1PayoutCreateMapsInsufficientHoldToBadRequest(t *testing.T) {
 	source := readHandlerSource(t, "v1api.go")
 	body := extractHandlerFunctionBody(t, source, "HandleV1PayoutCreate")
@@ -733,28 +792,28 @@ func TestAdminWithdrawalOperatorActionsWriteAuditLogs(t *testing.T) {
 			function: "HandleAdminWithdrawalApprove",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, &request.MerchantID, "admin", adminEmail, "withdrawal.approve", "success"`,
+				`logDealerDecisionActivity(c, deps.ActivityLogRepo, &request.MerchantID, request.DomainID, "admin", adminEmail, "withdrawal.approve", "success"`,
 			},
 		},
 		{
 			function: "HandleAdminWithdrawalReject",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "withdrawal.reject", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, &updated.MerchantID, "admin", adminEmail, "withdrawal.reject", "success"`,
+				`logDealerDecisionActivity(c, deps.ActivityLogRepo, &updated.MerchantID, updated.DomainID, "admin", adminEmail, "withdrawal.reject", "success"`,
 			},
 		},
 		{
 			function: "HandleAdminRefundApprove",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, &refund.MerchantID, "admin", adminEmail, "refund.approve", "success"`,
+				`logDealerDecisionActivity(c, deps.ActivityLogRepo, &refund.MerchantID, &refundDomainID, "admin", adminEmail, "refund.approve", "success"`,
 			},
 		},
 		{
 			function: "HandleAdminRefundReject",
 			tokens: []string{
 				`logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "failed"`,
-				`logDealerActivity(c, deps.ActivityLogRepo, merchantID, "admin", adminEmail, "refund.reject", "success"`,
+				`logDealerDecisionActivity(c, deps.ActivityLogRepo, merchantID, domainID, "admin", adminEmail, "refund.reject", "success"`,
 			},
 		},
 	} {
