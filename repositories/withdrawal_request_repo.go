@@ -5,6 +5,7 @@ import (
 	"core/models"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -213,6 +214,49 @@ func (r *WithdrawalRequestRepo) FindByDomainIdempotencyKey(ctx context.Context, 
 		return nil, err
 	}
 	return &request, nil
+}
+
+func (r *WithdrawalRequestRepo) SumActiveAmountRawByMerchantSince(ctx context.Context, merchantID uuid.UUID, chain string, token *string, symbol string, since time.Time) (*big.Int, error) {
+	type amountRow struct {
+		AmountRaw string
+	}
+	query := r.db.WithContext(ctx).
+		Model(&models.WithdrawalRequest{}).
+		Select("amount_raw").
+		Where("merchant_id = ? AND created_at >= ? AND status IN ?", merchantID, since, []string{
+			models.WithdrawalStatusPending,
+			models.WithdrawalStatusProcessing,
+			models.WithdrawalStatusApproved,
+			models.WithdrawalStatusFinalized,
+		}).
+		Where("LOWER(chain) = ?", strings.ToLower(strings.TrimSpace(chain)))
+
+	tokenValue := ""
+	if token != nil {
+		tokenValue = strings.TrimSpace(*token)
+	}
+	if tokenValue != "" {
+		query = query.Where("LOWER(COALESCE(token, '')) = ?", strings.ToLower(tokenValue))
+	} else {
+		query = query.Where("COALESCE(token, '') = ''")
+		if strings.TrimSpace(symbol) != "" {
+			query = query.Where("UPPER(symbol) = ?", strings.ToUpper(strings.TrimSpace(symbol)))
+		}
+	}
+
+	var rows []amountRow
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	total := big.NewInt(0)
+	for _, row := range rows {
+		value, ok := new(big.Int).SetString(strings.TrimSpace(row.AmountRaw), 10)
+		if !ok || value.Sign() < 0 {
+			return nil, gorm.ErrInvalidData
+		}
+		total.Add(total, value)
+	}
+	return total, nil
 }
 
 func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {

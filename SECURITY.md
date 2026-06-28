@@ -41,7 +41,7 @@ This project handles payment and wallet-provider flows. Treat production access 
 - Request logs are structured and deliberately limited to method, path without query string, matched route, status, duration, error type, and request id.
 - Do not add request body, query string, `Authorization`, API keys, signatures, webhook secrets, mnemonic, private key, or raw payload fields to operational logs.
 - Production should run with bounded `HTTP_READ_TIMEOUT`, `HTTP_WRITE_TIMEOUT`, and `HTTP_IDLE_TIMEOUT`; defaults are 15s, 30s, and 60s.
-- Configure a stable `CSRF_JWT_SECRET`, `DEALER_SESSION_SECRET`, `SESSION_SECRET`, or `MASTER_KEY` before production launch so portal CSRF tokens survive process restarts.
+- Configure a stable `PORTAL_JWT_SECRET`, `DEALER_SESSION_SECRET`, `SESSION_SECRET`, or `MASTER_KEY` before production launch so portal mutation JWTs survive process restarts.
 
 ## Launch Gate
 

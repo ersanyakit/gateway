@@ -128,7 +128,7 @@ ALLOW_AUTOMIGRATE_IN_PRODUCTION=false
 SIGNER_MODE=software
 ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=false
 METRICS_BEARER_TOKEN=
-CSRF_JWT_SECRET=32-byte-or-longer-csrf-secret
+PORTAL_JWT_SECRET=32-byte-or-longer-portal-jwt-secret
 MASTER_KEY=32-byte-or-longer-secret
 MNEMONIC_PHRASE="your bip39 mnemonic phrase"
 ADMIN_EMAIL=admin@example.com
@@ -170,7 +170,7 @@ Zorunlu veya kritik değişkenler:
 | `SIGNER_MODE` | `software`, `kms`, `hsm`, `mpc`, `vault` veya external custody modu. `software` sadece development içindir; production signing gerçek external signer adapter'ı olmadan hard-fail eder. |
 | `ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION` | Legacy risk marker. `true` olsa bile `APP_ENV=production` altında software signing'e izin vermez ve production readiness'ı geçirmez. |
 | `METRICS_BEARER_TOKEN` | `/metrics` Prometheus endpoint'i için bearer token. `APP_ENV=production` iken zorunludur; boş bırakılırsa endpoint 503 döner. |
-| `CSRF_JWT_SECRET` | Merchant/admin portal CSRF token imzalama secret'ı. Production'da stabil bir secret veya `MASTER_KEY`/session secret fallback'i gerekir. |
+| `PORTAL_JWT_SECRET` | Merchant/admin portal mutasyon JWT imzalama secret'ı. Production'da stabil bir secret veya `MASTER_KEY`/session secret fallback'i gerekir. |
 | `MASTER_KEY` | API secret, webhook secret ve credential şifreleme işlemlerinde kullanılır. |
 | `MNEMONIC_PHRASE` | Trust Wallet Core ile HD wallet üretimi için BIP39 mnemonic. |
 | `ADMIN_EMAIL` | Bootstrap admin hesabı için e-posta. |
@@ -447,7 +447,7 @@ HTTP sınırında her response `X-Request-ID` taşır. Request logları method, 
 - `/metrics` production ortamında sadece private network veya reverse proxy allowlist arkasından ve `METRICS_BEARER_TOKEN` ile açılmalıdır.
 - Production custody için process içi software signer kullanılamaz. KMS/HSM/MPC/Vault veya eşdeğer external signer entegrasyonu tamamlanmadan yüksek hacimli müşteri fonu tutulmamalıdır.
 - Admin parolası güçlü ve benzersiz olmalıdır.
-- Merchant portal/admin formları ve public API uçları production öncesinde CSRF, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
+- Merchant portal/admin formları ve public API uçları production öncesinde portal JWT, rate limit ve reverse proxy ayarlarıyla ayrıca doğrulanmalıdır.
 - Webhook imzaları `X-Gateway-Signature`, `X-Gateway-Timestamp` ve `X-Gateway-Event` header'ları üzerinden doğrulanacak şekilde tasarlanmıştır.
 - Public erişimde HTTPS, güvenli cookie ayarları ve sınırlı CORS origin listesi kullanılmalıdır.
 
@@ -513,4 +513,4 @@ Yeni token eklemek için:
 
 ## Yol Haritası
 
-Detaylı teknik audit ve öncelikli geliştirme işleri için `ROADMAP.md` dosyasına bakın. Özellikle production kullanımı öncesinde finality gate, reorg handling, CSRF, Redis tabanlı rate limit, webhook URL re-validation, structured logging ve KMS/Vault entegrasyonu gibi başlıklar ayrıca değerlendirilmelidir.
+Detaylı teknik audit ve öncelikli geliştirme işleri için `ROADMAP.md` dosyasına bakın. Özellikle production kullanımı öncesinde finality gate, reorg handling, portal JWT, Redis tabanlı rate limit, webhook URL re-validation, structured logging ve KMS/Vault entegrasyonu gibi başlıklar ayrıca değerlendirilmelidir.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
@@ -49,6 +50,36 @@ func TestWithdrawalRequestRepoCreateWithHoldRequiresLedger(t *testing.T) {
 	err := NewWithdrawalRequestRepo(db).CreateWithHold(context.Background(), request, nil)
 	if !errors.Is(err, ErrLedgerReservationRequired) {
 		t.Fatalf("CreateWithHold err = %v, want ErrLedgerReservationRequired", err)
+	}
+}
+
+func TestWithdrawalRequestRepoSumActiveAmountRawByMerchantSince(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}); err != nil {
+		t.Fatalf("automigrate withdrawal request tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	otherMerchantID, _, otherWalletID := seedWithdrawalOwner(t, db)
+	now := time.Now().UTC()
+	rows := []models.WithdrawalRequest{
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID, Chain: "ethereum", Symbol: "ETH", AmountRaw: "10", ToAddress: "0xto", Status: models.WithdrawalStatusPending, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID, Chain: "Ethereum", Symbol: "ETH", AmountRaw: "15", ToAddress: "0xto", Status: models.WithdrawalStatusProcessing, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID, Chain: "ethereum", Symbol: "ETH", AmountRaw: "50", ToAddress: "0xto", Status: models.WithdrawalStatusRejected, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID, Chain: "polygon", Symbol: "POL", AmountRaw: "20", ToAddress: "0xto", Status: models.WithdrawalStatusPending, CreatedAt: now},
+		{ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID, Chain: "ethereum", Symbol: "ETH", AmountRaw: "40", ToAddress: "0xto", Status: models.WithdrawalStatusPending, CreatedAt: now.Add(-48 * time.Hour)},
+		{ID: uuid.New(), MerchantID: otherMerchantID, WalletID: otherWalletID, Chain: "ethereum", Symbol: "ETH", AmountRaw: "60", ToAddress: "0xto", Status: models.WithdrawalStatusPending, CreatedAt: now},
+	}
+	if err := db.WithContext(ctx).Create(&rows).Error; err != nil {
+		t.Fatalf("seed withdrawals: %v", err)
+	}
+
+	total, err := NewWithdrawalRequestRepo(db).SumActiveAmountRawByMerchantSince(ctx, merchantID, " ethereum ", nil, "ETH", now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("sum withdrawals: %v", err)
+	}
+	if total.String() != "25" {
+		t.Fatalf("withdrawal active total = %s, want 25", total.String())
 	}
 }
 

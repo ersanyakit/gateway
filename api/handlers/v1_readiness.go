@@ -111,8 +111,8 @@ func v1RunReadinessChecks(ctx context.Context, deps V1APIDeps) []types.V1Readine
 	metricsOK, metricsDetails, metricsErr := v1MetricsAccessReadiness()
 	add("metrics.access", metricsOK, metricsDetails, metricsErr)
 
-	csrfOK, csrfDetails, csrfErr := v1PortalCSRFReadiness()
-	add("portal.csrf_secret", csrfOK, csrfDetails, csrfErr)
+	portalJWTOK, portalJWTDetails, portalJWTErr := v1PortalJWTReadiness()
+	add("portal.jwt_secret", portalJWTOK, portalJWTDetails, portalJWTErr)
 
 	v1AppendOperationalReadinessChecks(ctx, &checks, deps)
 
@@ -252,16 +252,16 @@ func v1MetricsAccessReadiness() (bool, string, error) {
 	return true, "production metrics bearer token is configured", nil
 }
 
-func v1PortalCSRFReadiness() (bool, string, error) {
+func v1PortalJWTReadiness() (bool, string, error) {
 	if strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV"))) != "production" {
-		return true, "non-production CSRF secret policy", nil
+		return true, "non-production portal JWT secret policy", nil
 	}
-	for _, key := range []string{"CSRF_JWT_SECRET", "DEALER_SESSION_SECRET", "SESSION_SECRET", "MASTER_KEY"} {
+	for _, key := range []string{"PORTAL_JWT_SECRET", "DEALER_SESSION_SECRET", "SESSION_SECRET", "MASTER_KEY"} {
 		if strings.TrimSpace(os.Getenv(key)) != "" {
 			return true, key + " is configured", nil
 		}
 	}
-	return false, "no stable CSRF/session secret is configured", errors.New("production portal CSRF signing requires a stable secret")
+	return false, "no stable portal JWT/session secret is configured", errors.New("production portal JWT signing requires a stable secret")
 }
 
 func v1ReadinessCountDetails(counts map[string]int64, statuses ...string) string {

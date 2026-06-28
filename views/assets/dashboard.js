@@ -1,5 +1,5 @@
 document.addEventListener('DOMContentLoaded', function () {
-  initCSRFProtection();
+  initPortalJWTProtection();
   document.addEventListener('click', handleTestWebhookClick);
   document.addEventListener('click', handleCopyClick);
   document.addEventListener('click', handleGenerateSecretClick);
@@ -275,12 +275,12 @@ function initDashboardActiveTabScroll() {
   });
 }
 
-function initCSRFProtection() {
-  attachCSRFInputs();
-  patchCSRFFetch();
+function initPortalJWTProtection() {
+  attachPortalJWTInputs();
+  patchPortalJWTFetch();
 }
 
-function csrfCookie(name) {
+function portalJWTCookie(name) {
   var prefix = name + '=';
   var cookies = document.cookie ? document.cookie.split(';') : [];
   for (var i = 0; i < cookies.length; i += 1) {
@@ -292,29 +292,29 @@ function csrfCookie(name) {
   return '';
 }
 
-function csrfToken() {
-  return csrfCookie('gateway_csrf_jwt');
+function portalJWTToken() {
+  return portalJWTCookie('gateway_portal_jwt');
 }
 
-function attachCSRFInputs() {
-  var token = csrfToken();
+function attachPortalJWTInputs() {
+  var token = portalJWTToken();
   if (!token) return;
   document.querySelectorAll('form').forEach(function (form) {
     var method = (form.getAttribute('method') || 'get').toLowerCase();
     if (method !== 'post') return;
-    var input = form.querySelector('input[name="_csrf"]');
+    var input = form.querySelector('input[name="_portal_jwt"]');
     if (!input) {
       input = document.createElement('input');
       input.type = 'hidden';
-      input.name = '_csrf';
+      input.name = '_portal_jwt';
       form.appendChild(input);
     }
     input.value = token;
   });
 }
 
-function patchCSRFFetch() {
-  if (!window.fetch || window.fetch.__csrfPatched) return;
+function patchPortalJWTFetch() {
+  if (!window.fetch || window.fetch.__portalJWTPatched) return;
   var originalFetch = window.fetch;
   window.fetch = function (input, init) {
     init = init || {};
@@ -322,11 +322,11 @@ function patchCSRFFetch() {
     if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
       var url = typeof input === 'string' ? input : (input && input.url) || '';
       var sameOrigin = !url || url.indexOf('/') === 0 || url.indexOf(window.location.origin) === 0;
-      var token = csrfToken();
+      var token = portalJWTToken();
       if (sameOrigin && token) {
         var headers = new Headers(init.headers || (input && input.headers) || {});
-        if (!headers.has('X-CSRF-Token')) {
-          headers.set('X-CSRF-Token', token);
+        if (!headers.has('X-Portal-JWT')) {
+          headers.set('X-Portal-JWT', token);
         }
         init.headers = headers;
         if (!init.credentials) {
@@ -336,7 +336,7 @@ function patchCSRFFetch() {
     }
     return originalFetch(input, init);
   };
-  window.fetch.__csrfPatched = true;
+  window.fetch.__portalJWTPatched = true;
 }
 
 function initAdminRichSelects() {
@@ -1012,9 +1012,10 @@ function updateAdminDataTableSortControls(table, sortState) {
 
 function updateAdminDataTableCount(countEl, visibleCount, totalCount, filtered) {
   if (!countEl) return;
-  var label = visibleCount + ' asset';
+  var unit = compactText(countEl.getAttribute('data-label') || 'asset');
+  var label = visibleCount + ' ' + unit;
   if (filtered && totalCount !== visibleCount) {
-    label = visibleCount + ' / ' + totalCount + ' asset';
+    label = visibleCount + ' / ' + totalCount + ' ' + unit;
   }
   countEl.textContent = label;
 }

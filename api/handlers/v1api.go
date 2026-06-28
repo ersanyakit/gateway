@@ -40,6 +40,8 @@ type V1APIDeps struct {
 	WebhookDeliveryRepo *repositories.WebhookDeliveryRepo
 	SweepJobRepo        *repositories.SweepJobRepo
 	ReconciliationRepo  *repositories.ReconciliationRepo
+	ActivityLogRepo     *repositories.ActivityLogRepo
+	OutboundPolicyRepo  *repositories.OutboundPolicyRepo
 	AssetRegistry       *asset.Registry
 	Blockchains         *blockchain.ChainFactory
 	PriceOracle         pricing.PriceOracle
@@ -1259,19 +1261,38 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 			return replayV1CreateIdempotency(c, idempotencyRecord)
 		}
 
+		amountRaw, err := types.DecimalToRaw(amount, decimals)
+		if err != nil {
+			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
+			return v1Err(c, fiber.StatusBadRequest, "invalid amount: "+err.Error())
+		}
+		requestID := uuid.New()
+		if err := enforceV1OutboundPolicy(c.Context(), deps, outboundPolicyCheck{
+			MerchantID:             domain.MerchantID,
+			DomainID:               &domain.ID,
+			ResourceType:           "payout",
+			ResourceID:             requestID.String(),
+			Action:                 "payout.create",
+			Chain:                  chain,
+			Token:                  token,
+			Symbol:                 symbol,
+			ToAddress:              toAddress,
+			AmountRaw:              amountRaw,
+			CurrentAlreadyRecorded: false,
+		}); err != nil {
+			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
+			logV1OutboundPolicyFailure(c, deps.ActivityLogRepo, *domain, "payout.create", "payout", requestID.String(), err)
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
+
 		wallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
 		if err != nil {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
 			return v1Err(c, fiber.StatusInternalServerError, "reserve wallet initialization failed: "+err.Error())
 		}
 
-		amountRaw, err := types.DecimalToRaw(amount, decimals)
-		if err != nil {
-			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
-			return v1Err(c, fiber.StatusBadRequest, "invalid amount: "+err.Error())
-		}
-
 		req := &models.WithdrawalRequest{
+			ID:             requestID,
 			MerchantID:     domain.MerchantID,
 			DomainID:       &domain.ID,
 			WalletID:       wallet.ID,
@@ -1509,14 +1530,32 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, fmt.Errorf("refund amount exceeds refundable payment amount"))
 			return v1Err(c, fiber.StatusBadRequest, "refund amount exceeds refundable payment amount")
 		}
+		chainName := constants.ChainName(*session.SelectedChainID)
+		requestID := uuid.New()
+		if err := enforceV1OutboundPolicy(c.Context(), deps, outboundPolicyCheck{
+			MerchantID:             domain.MerchantID,
+			DomainID:               &domain.ID,
+			ResourceType:           "refund",
+			ResourceID:             requestID.String(),
+			Action:                 "refund.create",
+			Chain:                  chainName,
+			Token:                  session.SelectedToken,
+			Symbol:                 session.SelectedSymbol,
+			AmountRaw:              amountRaw,
+			CurrentAlreadyRecorded: false,
+		}); err != nil {
+			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
+			logV1OutboundPolicyFailure(c, deps.ActivityLogRepo, *domain, "refund.create", "refund", requestID.String(), err)
+			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
 		sourceWallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
 		if err != nil {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
 			return v1Err(c, fiber.StatusInternalServerError, "reserve wallet initialization failed: "+err.Error())
 		}
-		chainName := constants.ChainName(*session.SelectedChainID)
 		walletID := sourceWallet.ID
 		refund := &models.Refund{
+			ID:             requestID,
 			MerchantID:     domain.MerchantID,
 			DomainID:       domain.ID,
 			WalletID:       &walletID,

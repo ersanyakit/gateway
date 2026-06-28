@@ -26,6 +26,10 @@ func NewAdminRepo(db *gorm.DB) *AdminRepo {
 func (r *AdminRepo) DB() *gorm.DB { return r.db }
 
 func (r *AdminRepo) Create(ctx context.Context, email, name, rawPassword string) (*models.Admin, error) {
+	return r.CreateWithRole(ctx, email, name, rawPassword, models.AdminRoleOperator)
+}
+
+func (r *AdminRepo) CreateWithRole(ctx context.Context, email, name, rawPassword string, role string) (*models.Admin, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
 	if email == "" || rawPassword == "" {
@@ -40,6 +44,7 @@ func (r *AdminRepo) Create(ctx context.Context, email, name, rawPassword string)
 		Email:     email,
 		Name:      name,
 		Password:  string(hash),
+		Role:      models.NormalizeAdminRole(role),
 		IsActive:  true,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -187,6 +192,7 @@ func (r *AdminRepo) EnsureBootstrapAdmin(ctx context.Context, email, name, rawPa
 			Email:     email,
 			Name:      name,
 			Password:  string(hash),
+			Role:      models.AdminRoleOwner,
 			IsActive:  true,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
