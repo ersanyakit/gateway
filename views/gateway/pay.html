@@ -41,9 +41,9 @@
         {{end}}
         <div class="crypto-flex-between crypto-align-start">
           <div>
-            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Odeme durumu{{end}}{{end}}</p>
-            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{.AmountDisplay}}{{else}}{{.StatusTitle}}{{end}}</div>
-            <p class="crypto-muted">Order {{.Session.OrderID}} · {{.Session.Amount}} {{.Session.Currency}}</p>
+            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Send any amount{{else}}Dilediğin tutarı gönder{{end}}{{else}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Odeme durumu{{end}}{{end}}</p>
+            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Any amount{{else}}Dilediğin tutar{{end}} {{.Session.SelectedSymbol}}{{else}}{{.AmountDisplay}}{{end}}{{else}}{{.StatusTitle}}{{end}}</div>
+            <p class="crypto-muted">Order {{.Session.OrderID}}{{if not .IsDonation}} · {{.Session.Amount}} {{.Session.Currency}}{{end}}</p>
           </div>
           <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
@@ -91,7 +91,7 @@
           </div>
           <ol class="crypto-payment-steps-list">
             <li>{{if .IsEnglish}}Open your wallet app and choose {{.ChainName}}.{{else}}Wallet uygulamanı aç ve {{.ChainName}} networkünü seç.{{end}}</li>
-            <li>{{if .IsEnglish}}Send exactly {{.AmountDisplay}} to the address below.{{else}}Aşağıdaki adrese tam olarak {{.AmountDisplay}} gönder.{{end}}</li>
+            <li>{{if .IsDonation}}{{if .IsEnglish}}Enter the amount you want to send and use the address below.{{else}}Göndermek istediğin tutarı gir ve aşağıdaki adresi kullan.{{end}}{{else}}{{if .IsEnglish}}Send exactly {{.AmountDisplay}} to the address below.{{else}}Aşağıdaki adrese tam olarak {{.AmountDisplay}} gönder.{{end}}{{end}}</li>
             <li>{{if .IsEnglish}}Keep this page open until the confirmation arrives.{{else}}Onay gelene kadar bu sayfayı açık tut.{{end}}</li>
           </ol>
         </section>
@@ -107,6 +107,7 @@
           <code class="crypto-copy-value" id="depositAddress">{{.Session.DepositAddress}}</code>
         </section>
 
+        {{if not .IsDonation}}
         <section class="crypto-copy-section" data-payable-action>
           <div class="crypto-copy-header">
             <p class="crypto-label">{{if .IsEnglish}}Exact amount{{else}}Tam tutar{{end}}</p>
@@ -117,6 +118,7 @@
           </div>
           <code class="crypto-copy-value no-bg">{{.AmountDisplay}}</code>
         </section>
+        {{end}}
 
         <section class="crypto-copy-section" data-payable-action>
           <div class="crypto-copy-header">
@@ -138,7 +140,7 @@
         {{else}}
         <section class="crypto-summary-card">
           <div class="crypto-summary-body">
-            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Expected amount{{else}}Beklenen tutar{{end}}</span><strong>{{.AmountDisplay}}</strong></div>
+            <div class="crypto-summary-row"><span>{{if .IsDonation}}{{if .IsEnglish}}Amount{{else}}Tutar{{end}}{{else}}{{if .IsEnglish}}Expected amount{{else}}Beklenen tutar{{end}}{{end}}</span><strong>{{if .IsDonation}}{{if .CheckoutState.Paid}}{{.AmountDisplay}}{{else}}{{if .IsEnglish}}Payer decides{{else}}Ödeyen belirler{{end}}{{end}}{{else}}{{.AmountDisplay}}{{end}}</strong></div>
             <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network{{else}}Network{{end}}</span><strong>{{.ChainName}}</strong></div>
             <div class="crypto-summary-row"><span>{{if .IsEnglish}}Order{{else}}Siparis{{end}}</span><strong>{{.Session.OrderID}}</strong></div>
           </div>
@@ -184,7 +186,7 @@
         setPaymentStatus(
           "detecting",
           "{{if .IsEnglish}}Waiting for payment{{else}}Ödeme bekleniyor{{end}}",
-          "{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}"
+          "{{if .IsDonation}}{{if .IsEnglish}}Choose the amount in your wallet and send it to the address below.{{else}}Tutarı wallet uygulamanda belirleyip aşağıdaki adrese gönder.{{end}}{{else}}{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}{{end}}"
         );
         return false;
       }
@@ -216,7 +218,7 @@
         setPaymentStatus(
           "detecting",
           "{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}",
-          "{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}"
+          "{{if .IsDonation}}{{if .IsEnglish}}Live connection is active. Send the amount you choose now.{{else}}Canlı bağlantı aktif. Seçtiğin tutarı şimdi gönder.{{end}}{{else}}{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}{{end}}"
         );
       });
 

@@ -1,10 +1,29 @@
 package models
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const (
+	PaymentLinkTypeFixed    = "fixed"
+	PaymentLinkTypeDonation = "donation"
+)
+
+func NormalizePaymentLinkType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case PaymentLinkTypeDonation:
+		return PaymentLinkTypeDonation
+	default:
+		return PaymentLinkTypeFixed
+	}
+}
+
+func IsDonationLinkType(value string) bool {
+	return NormalizePaymentLinkType(value) == PaymentLinkTypeDonation
+}
 
 type Product struct {
 	ID uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
@@ -16,6 +35,7 @@ type Product struct {
 
 	Name        string `gorm:"size:180;not null" json:"name"`
 	Description string `gorm:"size:500" json:"description,omitempty"`
+	LinkType    string `gorm:"size:32;not null;default:'fixed';index" json:"link_type"`
 	Amount      string `gorm:"size:80;not null" json:"amount"`
 	Currency    string `gorm:"size:20;not null;index" json:"currency"`
 	Language    string `gorm:"size:8;not null;default:'tr'" json:"language"`

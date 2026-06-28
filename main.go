@@ -113,7 +113,10 @@ func sweepJobInterval() time.Duration {
 	return interval
 }
 
+const sweepJobExecutionTimeout = 90 * time.Second
+
 func sweepJobLockTimeout() time.Duration {
+	minimum := sweepJobExecutionTimeout + 30*time.Second
 	raw := os.Getenv("SWEEP_JOB_LOCK_TIMEOUT")
 	if raw == "" {
 		return 2 * time.Minute
@@ -121,6 +124,9 @@ func sweepJobLockTimeout() time.Duration {
 	timeout, err := time.ParseDuration(raw)
 	if err != nil || timeout <= 0 {
 		return 2 * time.Minute
+	}
+	if timeout <= sweepJobExecutionTimeout {
+		return minimum
 	}
 	return timeout
 }
@@ -430,6 +436,10 @@ func processDepositFacts(ctx context.Context) {
 		TransactionRepo: router.TransactionRepo,
 		PaymentRepo:     router.PaymentRepo,
 		LedgerRepo:      router.LedgerRepo,
+		SweepJobRepo:    router.SweepJobRepo,
+		SweepLifecycleEnqueue: func(ctx context.Context, job models.SweepJob, txModel *models.Transaction, eventType string, errText string) {
+			enqueueSweepLifecycleWebhook(ctx, job, txModel, eventType, errText)
+		},
 	}, chainConfirmationRequirement)
 	summary, err := service.ProcessBatch(ctx, 200)
 	if err != nil {
@@ -613,10 +623,19 @@ func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transac
 }
 
 func shouldAttemptSweepPrefund(job *models.SweepJob) bool {
-	if job == nil || job.PrefundedAt == nil {
+	if job == nil {
 		return true
 	}
-	return time.Since(*job.PrefundedAt) >= sweepPrefundRetryAfter()
+	retryAfter := sweepPrefundRetryAfter()
+	now := time.Now()
+	if job.PrefundedAt != nil && now.Sub(*job.PrefundedAt) < retryAfter {
+		return false
+	}
+	lastAttemptAt := job.PrefundLastAttemptAt
+	if lastAttemptAt == nil && strings.TrimSpace(job.PrefundLastError) != "" && !job.UpdatedAt.IsZero() {
+		lastAttemptAt = &job.UpdatedAt
+	}
+	return lastAttemptAt == nil || now.Sub(*lastAttemptAt) >= retryAfter
 }
 
 func markSweepPrefunded(ctx context.Context, job *models.SweepJob) {
@@ -1030,6 +1049,7 @@ func processSweepJobs(ctx context.Context) {
 	if router.SweepJobRepo == nil || router.TransactionRepo == nil {
 		return
 	}
+	scheduleMissingFinalizedSweepJobs(ctx, router)
 	jobs, err := router.SweepJobRepo.ClaimDue(ctx, 25, sweepJobLockTimeout())
 	if err != nil {
 		log.Println("Sweep job claim error:", err)
@@ -1050,11 +1070,21 @@ func processSweepJobs(ctx context.Context) {
 			}
 			continue
 		}
-		jobCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		if job.Status == models.SweepJobStatusProcessing {
+			err := errors.New("stale sweep processing job recovered; reconciliation required before retry")
+			log.Printf("Sweep job stale processing recovered job=%s tx=%s\n", job.ID, job.TransactionUniqueHash)
+			markSweepBroadcastUncertainAndReconcile(ctx, router, job, txModel, "sweep_stale_processing_recovered", err)
+			continue
+		}
+		jobCtx, cancel := context.WithTimeout(ctx, sweepJobExecutionTimeout)
 		result, err := executeSweepJob(jobCtx, job, txModel)
 		cancel()
 		if err != nil {
 			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
+			if sweepFailureBroadcastUncertain(err) {
+				markSweepBroadcastUncertainAndReconcile(ctx, router, job, txModel, "sweep_broadcast_uncertain", err)
+				continue
+			}
 			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
 			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
 				releaseSweepHoldOnPreBroadcastDeadLetter(ctx, *updated, txModel, err)
@@ -1073,15 +1103,7 @@ func processSweepJobs(ctx context.Context) {
 		if txHash == "" {
 			err := errors.New("sweep broadcast missing transaction hash")
 			log.Printf("Sweep job missing tx hash job=%s tx=%s\n", job.ID, job.TransactionUniqueHash)
-			_ = router.SweepJobRepo.MarkFailed(ctx, job.ID, err)
-			if updated, findErr := router.SweepJobRepo.Find(ctx, job.ID); findErr == nil {
-				releaseSweepHoldOnPreBroadcastDeadLetter(ctx, *updated, txModel, err)
-				eventType := constants.WebhookEventSweepFailedV1
-				if updated.Status == models.SweepJobStatusDeadLetter {
-					eventType = constants.WebhookEventSweepDeadLetteredV1
-				}
-				enqueueSweepLifecycleWebhook(ctx, *updated, txModel, eventType, err.Error())
-			}
+			markSweepBroadcastUncertainAndReconcile(ctx, router, job, txModel, "sweep_broadcast_missing_tx_hash", err)
 			continue
 		}
 		if err := router.SweepJobRepo.MarkSucceeded(ctx, job.ID, txHash); err != nil {
@@ -1101,6 +1123,68 @@ func processSweepJobs(ctx context.Context) {
 		enqueueSweepLifecycleWebhook(ctx, job, txModel, constants.WebhookEventSweepSucceededV1, "")
 		log.Printf("Sweep job succeeded job=%s tx=%s sweep_tx=%s\n", job.ID, job.TransactionUniqueHash, txHash)
 	}
+}
+
+func scheduleMissingFinalizedSweepJobs(ctx context.Context, router *routes.Router) {
+	if router == nil || router.SweepJobRepo == nil || router.TransactionRepo == nil {
+		return
+	}
+	jobs, err := router.SweepJobRepo.EnqueueMissingFinalizedTransactions(ctx, 100)
+	if err != nil {
+		log.Println("Sweep missing finalized enqueue error:", err)
+		return
+	}
+	for _, job := range jobs {
+		log.Printf("sweep enqueue recovery: job=%s tx=%s chain=%d", job.ID, job.TransactionUniqueHash, job.ChainID)
+		txModel, findErr := router.TransactionRepo.FindByUniqueHash(ctx, job.TransactionUniqueHash)
+		if findErr != nil {
+			log.Printf("sweep enqueue recovery transaction lookup error job=%s tx=%s: %v", job.ID, job.TransactionUniqueHash, findErr)
+			continue
+		}
+		enqueueSweepLifecycleWebhook(ctx, job, txModel, constants.WebhookEventSweepRequestedV1, "")
+	}
+}
+
+func markSweepBroadcastUncertainAndReconcile(ctx context.Context, router *routes.Router, job models.SweepJob, txModel *models.Transaction, reason string, err error) {
+	markErr := router.SweepJobRepo.MarkBroadcastUncertain(ctx, job.ID, err)
+	if markErr != nil {
+		log.Printf("Sweep job mark broadcast uncertain error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, markErr)
+		openSweepLedgerReconciliation(ctx, job, txModel, "sweep_broadcast_uncertain_mark_failed", markErr)
+		return
+	}
+	updated, findErr := router.SweepJobRepo.Find(ctx, job.ID)
+	if findErr != nil {
+		log.Printf("Sweep job broadcast uncertain reload error job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, findErr)
+		fallback := job
+		fallback.Status = models.SweepJobStatusDeadLetter
+		fallback.LastError = err.Error()
+		openSweepLedgerReconciliation(ctx, fallback, txModel, reason, err)
+		enqueueSweepLifecycleWebhook(ctx, fallback, txModel, constants.WebhookEventSweepDeadLetteredV1, err.Error())
+		return
+	}
+	openSweepLedgerReconciliation(ctx, *updated, txModel, reason, err)
+	enqueueSweepLifecycleWebhook(ctx, *updated, txModel, constants.WebhookEventSweepDeadLetteredV1, err.Error())
+}
+
+func sweepFailureBroadcastUncertain(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{
+		"broadcast",
+		"sendtransaction",
+		"replacement transaction underpriced",
+		"already known",
+		"nonce too low",
+		"transaction underpriced",
+		"mempool",
+	} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func releaseSweepHoldOnPreBroadcastDeadLetter(ctx context.Context, job models.SweepJob, txModel *models.Transaction, err error) {
@@ -1320,10 +1404,15 @@ func finalizeProcessingTransfers(ctx context.Context) {
 			log.Println("Processing withdrawal query error:", err)
 		} else {
 			for _, request := range withdrawals {
+				if !outboundTransactionFinalized(ctx, router.TransactionRepo, request.Chain, request.TxHash) {
+					continue
+				}
 				if err := router.WithdrawalRepo.FinalizeProcessingWithLedger(ctx, request.ID, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing withdrawal finalize error %s: %v\n", request.ID, err)
 				} else if err == nil {
-					request.Status = models.WithdrawalStatusApproved
+					now := time.Now()
+					request.Status = models.WithdrawalStatusFinalized
+					request.FinalizedAt = &now
 					request.Error = ""
 					enqueuePayoutLifecycleWebhook(ctx, request, constants.WebhookEventPayoutFinalizedV1)
 				}
@@ -1341,15 +1430,71 @@ func finalizeProcessingTransfers(ctx context.Context) {
 					log.Printf("Processing refund payment lookup error %s: %v\n", refund.ID, err)
 					continue
 				}
+				if !outboundTransactionFinalized(ctx, router.TransactionRepo, outboundRefundChainName(refund, *session), refund.TxHash) {
+					continue
+				}
 				if err := router.RefundRepo.MarkSucceededWithLedger(ctx, refund.ID, refund.ReviewedBy, refund.TxHash, *session, router.LedgerRepo); err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 					log.Printf("Processing refund finalize error %s: %v\n", refund.ID, err)
 				} else if err == nil {
+					now := time.Now()
 					refund.Status = models.RefundStatusSucceeded
+					refund.FinalizedAt = &now
 					refund.Error = ""
 					enqueueRefundLifecycleWebhook(ctx, refund, constants.WebhookEventRefundSucceededV1)
 				}
 			}
 		}
+	}
+}
+
+func outboundTransactionFinalized(ctx context.Context, repo *repositories.TransactionRepo, chainName string, txHash string) bool {
+	if repo == nil || strings.TrimSpace(txHash) == "" {
+		return false
+	}
+	chainID, ok := outboundChainIDFromName(chainName)
+	if !ok {
+		return false
+	}
+	txModel, err := repo.FindFinalizedByHash(ctx, chainID, txHash)
+	return err == nil && txModel != nil
+}
+
+func outboundRefundChainName(refund models.Refund, session models.PaymentSession) string {
+	if strings.TrimSpace(refund.Chain) != "" {
+		return refund.Chain
+	}
+	if session.SelectedChainID != nil {
+		return constants.ChainName(*session.SelectedChainID)
+	}
+	return ""
+}
+
+func outboundChainIDFromName(name string) (constants.ChainID, bool) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "bitcoin", "btc":
+		return constants.Bitcoin, true
+	case "ethereum", "eth":
+		return constants.Ethereum, true
+	case "base":
+		return constants.Base, true
+	case "arbitrum", "arb", "arbitrum-one":
+		return constants.Arbitrum, true
+	case "bnbchain", "bsc", "binance":
+		return constants.Binance, true
+	case "unichain":
+		return constants.Unichain, true
+	case "avalanche", "avax":
+		return constants.Avalanche, true
+	case "chiliz", "chz":
+		return constants.Chiliz, true
+	case "chiliz-spicy", "spicy":
+		return constants.ChilizSpicy, true
+	case "solana", "sol":
+		return constants.Solana, true
+	case "tron", "trx":
+		return constants.TRON, true
+	default:
+		return 0, false
 	}
 }
 

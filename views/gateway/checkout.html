@@ -44,8 +44,8 @@
         <section class="crypto-section">
           <div class="crypto-flex-between crypto-align-end">
             <div>
-              <p class="crypto-label">{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}</p>
-              <div class="crypto-price">{{.Session.Amount}} {{.Session.Currency}}</div>
+              <p class="crypto-label">{{if .IsDonation}}{{if .IsEnglish}}Donation amount{{else}}Bağış tutarı{{end}}{{else}}{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}{{end}}</p>
+              <div class="crypto-price">{{if .IsDonation}}{{if .IsEnglish}}Your choice{{else}}Kullanıcı belirler{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</div>
               <p class="crypto-muted">Order {{.Session.OrderID}}</p>
             </div>
             <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
@@ -138,10 +138,10 @@
         {{end}}
 
         <section class="crypto-section">
-          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>Gateway pricing</strong></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>{{if .IsDonation}}{{if .IsEnglish}}Not used{{else}}Kullanılmaz{{end}}{{else}}Gateway pricing{{end}}</strong></div>
           <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network fee{{else}}Network ücreti{{end}}</span><strong class="green">{{if .IsEnglish}}Included{{else}}Dahil{{end}}</strong></div>
           <div class="crypto-divider"></div>
-          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Total{{else}}Toplam{{end}}</span><strong>{{.Session.Amount}} {{.Session.Currency}}</strong></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Total{{else}}Toplam{{end}}</span><strong>{{if .IsDonation}}{{if .IsEnglish}}Payer decides{{else}}Ödeyen belirler{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</strong></div>
         </section>
 
         <div class="crypto-badges">

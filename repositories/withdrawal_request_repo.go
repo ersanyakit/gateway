@@ -17,7 +17,12 @@ type WithdrawalRequestRepo struct {
 	db *gorm.DB
 }
 
-var ErrWithdrawalWalletBusy = errors.New("withdrawal wallet has an active processing transfer")
+var (
+	ErrWithdrawalWalletBusy     = errors.New("withdrawal wallet has an active processing transfer")
+	ErrTxHashRequired           = errors.New("tx hash is required")
+	ErrWithdrawalTxHashRequired = ErrTxHashRequired
+	ErrRefundTxHashRequired     = ErrTxHashRequired
+)
 
 func NewWithdrawalRequestRepo(db *gorm.DB) *WithdrawalRequestRepo {
 	return &WithdrawalRequestRepo{db: db}
@@ -32,6 +37,12 @@ func (r *WithdrawalRequestRepo) Create(ctx context.Context, request *models.With
 func (r *WithdrawalRequestRepo) CreateWithHold(ctx context.Context, request *models.WithdrawalRequest, ledger *LedgerRepo) error {
 	if ledger == nil {
 		return ErrLedgerReservationRequired
+	}
+	if request.ID == uuid.Nil {
+		request.ID = uuid.New()
+	}
+	if strings.TrimSpace(request.Status) == "" {
+		request.Status = models.WithdrawalStatusPending
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(request).Error; err != nil {
@@ -166,14 +177,19 @@ func (r *WithdrawalRequestRepo) FindByDomain(ctx context.Context, merchantID, do
 }
 
 func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrTxHashRequired
+	}
 	now := time.Now()
 	result := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
 		Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
 		Updates(map[string]any{
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"tx_hash":     txHash,
-			"error":       "finalizing ledger",
+			"reviewed_by":    reviewedBy,
+			"reviewed_at":    &now,
+			"tx_hash":        txHash,
+			"broadcasted_at": &now,
+			"error":          "",
 		})
 	if result.Error != nil {
 		return result.Error
@@ -201,9 +217,10 @@ func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context
 		result := tx.Model(&models.WithdrawalRequest{}).
 			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
 			Updates(map[string]any{
-				"status":      models.WithdrawalStatusApproved,
-				"reviewed_at": &now,
-				"error":       "",
+				"status":       models.WithdrawalStatusFinalized,
+				"reviewed_at":  &now,
+				"finalized_at": &now,
+				"error":        "",
 			})
 		if result.Error != nil {
 			return result.Error
@@ -216,16 +233,22 @@ func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context
 }
 
 func (r *WithdrawalRequestRepo) MarkApproved(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string) error {
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return ErrTxHashRequired
+	}
 	now := time.Now()
 	result := r.db.WithContext(ctx).
 		Model(&models.WithdrawalRequest{}).
 		Where("id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).
 		Updates(map[string]any{
-			"status":      models.WithdrawalStatusApproved,
-			"reviewed_by": reviewedBy,
-			"reviewed_at": &now,
-			"tx_hash":     txHash,
-			"error":       "",
+			"status":         models.WithdrawalStatusFinalized,
+			"reviewed_by":    reviewedBy,
+			"reviewed_at":    &now,
+			"tx_hash":        txHash,
+			"broadcasted_at": &now,
+			"finalized_at":   &now,
+			"error":          "",
 		})
 	if result.Error != nil {
 		return result.Error
@@ -367,45 +390,17 @@ func (r *WithdrawalRequestRepo) ApproveWithTransfer(ctx context.Context, id uuid
 		return &request, transferErr
 	}
 	if err := r.RecordBroadcast(ctx, id, reviewedBy, txHash); err != nil {
-		request.TxHash = txHash
+		request.TxHash = strings.TrimSpace(txHash)
 		request.Error = "broadcast sent but tx hash persist failed: " + err.Error()
 		return &request, err
 	}
-	request.TxHash = txHash
-
-	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		now := time.Now()
-		result := tx.Model(&models.WithdrawalRequest{}).
-			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
-			Updates(map[string]any{
-				"status":      models.WithdrawalStatusApproved,
-				"reviewed_by": reviewedBy,
-				"reviewed_at": &now,
-				"tx_hash":     txHash,
-				"error":       "",
-			})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		request.Status = models.WithdrawalStatusApproved
-		request.ReviewedBy = reviewedBy
-		request.ReviewedAt = &now
-		request.TxHash = txHash
-		request.Error = ""
-		return NewLedgerRepo(tx).PostWithdrawalDebitWithDB(ctx, tx, request, txHash)
-	})
-	if err != nil {
-		msg := "ledger/finalize failed: " + err.Error()
-		_ = r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
-			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
-			Update("error", msg).Error
-		request.Status = models.WithdrawalStatusProcessing
-		request.Error = msg
-		return &request, err
-	}
+	now := time.Now()
+	request.Status = models.WithdrawalStatusProcessing
+	request.ReviewedBy = reviewedBy
+	request.ReviewedAt = &now
+	request.BroadcastedAt = &now
+	request.TxHash = strings.TrimSpace(txHash)
+	request.Error = ""
 	return &request, nil
 }
 

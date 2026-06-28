@@ -9,6 +9,7 @@ import (
 	"core/models"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func TestRefundRepoHoldPathsRequireLedger(t *testing.T) {
@@ -101,6 +102,125 @@ func TestRefundRepoMarkFailedVoidsPreBroadcastHold(t *testing.T) {
 	requireLedgerCount(t, db, 2, "refund_id = ? AND entry_type = ? AND status = ?", refund.ID, models.LedgerEntryTypeRefundHold, models.LedgerStatusVoided)
 }
 
+func TestRefundRepoClaimPendingPersistsSourceWalletAndBroadcastMetadata(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.Refund{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate refund lifecycle tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	chainID := constants.Ethereum
+	ledgerRepo := NewLedgerRepo(db)
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, "refund-source-"+uuid.NewString()+":deposit", "100")
+	if err := ledgerRepo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post available balance: %v", err)
+	}
+	session := models.PaymentSession{
+		ID:               uuid.New(),
+		MerchantID:       merchantID,
+		DomainID:         domainID,
+		WalletID:         walletID,
+		SelectedChainID:  &chainID,
+		SelectedToken:    nil,
+		SelectedSymbol:   "ETH",
+		SelectedDecimals: 18,
+	}
+	refund := &models.Refund{
+		ID:             uuid.New(),
+		MerchantID:     merchantID,
+		DomainID:       domainID,
+		PaymentID:      session.ID,
+		AmountRaw:      "25",
+		Status:         models.RefundStatusPending,
+		IdempotencyKey: "refund-key",
+		CorrelationID:  "corr-refund",
+	}
+	repo := NewRefundRepo(db)
+	if err := repo.CreateWithHold(ctx, refund, session, ledgerRepo); err != nil {
+		t.Fatalf("create refund with hold: %v", err)
+	}
+	sourceWallet := models.Wallet{ID: walletID, MerchantID: merchantID, DomainID: domainID}
+
+	claimed, err := repo.ClaimPendingWithHoldAndSource(ctx, refund.ID, "admin@example.com", session, sourceWallet, " 0xoriginal-sender ", ledgerRepo)
+	if err != nil {
+		t.Fatalf("claim refund: %v", err)
+	}
+	if claimed.WalletID == nil || *claimed.WalletID != walletID || claimed.Chain != "ethereum" || claimed.Symbol != "ETH" || claimed.ToAddress != "0xoriginal-sender" {
+		t.Fatalf("claimed source metadata = %#v", claimed)
+	}
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", " "); !errors.Is(err, ErrRefundTxHashRequired) {
+		t.Fatalf("blank refund tx err = %v, want ErrRefundTxHashRequired", err)
+	}
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", " 0xrefund "); err != nil {
+		t.Fatalf("record refund broadcast: %v", err)
+	}
+	var after models.Refund
+	if err := db.WithContext(ctx).First(&after, "id = ?", refund.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != models.RefundStatusProcessing || after.TxHash != "0xrefund" || after.BroadcastedAt == nil || after.FinalizedAt != nil {
+		t.Fatalf("refund broadcast state = status:%s tx:%q broadcasted:%v finalized:%v", after.Status, after.TxHash, after.BroadcastedAt, after.FinalizedAt)
+	}
+}
+
+func TestRefundRepoFinalizationSetsTerminalTimestampAndIsIdempotent(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.Refund{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate refund finalization tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	chainID := constants.Ethereum
+	ledgerRepo := NewLedgerRepo(db)
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, "refund-finalize-"+uuid.NewString()+":deposit", "100")
+	if err := ledgerRepo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post available balance: %v", err)
+	}
+	session := models.PaymentSession{
+		ID:               uuid.New(),
+		MerchantID:       merchantID,
+		DomainID:         domainID,
+		WalletID:         walletID,
+		SelectedChainID:  &chainID,
+		SelectedSymbol:   "ETH",
+		SelectedDecimals: 18,
+	}
+	refund := &models.Refund{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		DomainID:   domainID,
+		PaymentID:  session.ID,
+		AmountRaw:  "25",
+		Status:     models.RefundStatusPending,
+	}
+	repo := NewRefundRepo(db)
+	if err := repo.CreateWithHold(ctx, refund, session, ledgerRepo); err != nil {
+		t.Fatalf("create refund with hold: %v", err)
+	}
+	if _, err := repo.ClaimPendingWithHoldAndSource(ctx, refund.ID, "admin@example.com", session, models.Wallet{ID: walletID, MerchantID: merchantID, DomainID: domainID}, "0xto", ledgerRepo); err != nil {
+		t.Fatalf("claim refund: %v", err)
+	}
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", "0xrefund"); err != nil {
+		t.Fatalf("record refund broadcast: %v", err)
+	}
+
+	if err := repo.MarkSucceededWithLedger(ctx, refund.ID, "admin@example.com", "0xrefund", session, ledgerRepo); err != nil {
+		t.Fatalf("mark refund succeeded: %v", err)
+	}
+	var succeeded models.Refund
+	if err := db.WithContext(ctx).First(&succeeded, "id = ?", refund.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if succeeded.Status != models.RefundStatusSucceeded || succeeded.FinalizedAt == nil || succeeded.TxHash != "0xrefund" {
+		t.Fatalf("succeeded state = status:%s tx:%q finalized:%v", succeeded.Status, succeeded.TxHash, succeeded.FinalizedAt)
+	}
+	requireLedgerCount(t, db, 2, "refund_id = ? AND entry_type = ?", refund.ID, models.LedgerEntryTypeRefundDebit)
+	if err := repo.MarkSucceededWithLedger(ctx, refund.ID, "admin@example.com", "0xrefund", session, ledgerRepo); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("duplicate refund finalization err = %v, want gorm.ErrRecordNotFound", err)
+	}
+	requireLedgerCount(t, db, 2, "refund_id = ? AND entry_type = ?", refund.ID, models.LedgerEntryTypeRefundDebit)
+}
+
 func TestRefundRepoMarkFailedPreservesHoldAfterBroadcast(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.Refund{}, &models.LedgerEntry{}); err != nil {
@@ -138,4 +258,40 @@ func TestRefundRepoMarkFailedPreservesHoldAfterBroadcast(t *testing.T) {
 		t.Fatalf("mark failed: %v", err)
 	}
 	requireLedgerCount(t, db, 2, "refund_id = ? AND entry_type = ? AND status = ?", refund.ID, models.LedgerEntryTypeRefundHold, models.LedgerStatusPending)
+}
+
+func TestRefundRepoRecordBroadcastRequiresTxHashAndStoresTimestamp(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Refund{}); err != nil {
+		t.Fatalf("automigrate refund tables: %v", err)
+	}
+	ctx := context.Background()
+	refund := models.Refund{
+		ID:         uuid.New(),
+		MerchantID: uuid.New(),
+		DomainID:   uuid.New(),
+		PaymentID:  uuid.New(),
+		AmountRaw:  "10",
+		Status:     models.RefundStatusProcessing,
+	}
+	if err := db.WithContext(ctx).Create(&refund).Error; err != nil {
+		t.Fatalf("seed refund: %v", err)
+	}
+	repo := NewRefundRepo(db)
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", ""); !errors.Is(err, ErrTxHashRequired) {
+		t.Fatalf("blank tx hash err = %v, want ErrTxHashRequired", err)
+	}
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", "0xrefund"); err != nil {
+		t.Fatalf("record broadcast: %v", err)
+	}
+	var after models.Refund
+	if err := db.WithContext(ctx).First(&after, "id = ?", refund.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.TxHash != "0xrefund" || after.BroadcastedAt == nil {
+		t.Fatalf("broadcast metadata not persisted: tx=%q broadcasted_at=%v", after.TxHash, after.BroadcastedAt)
+	}
+	if after.Status != models.RefundStatusProcessing {
+		t.Fatalf("broadcast must remain non-terminal processing, got %s", after.Status)
+	}
 }

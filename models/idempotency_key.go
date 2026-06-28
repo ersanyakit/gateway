@@ -22,6 +22,8 @@ type IdempotencyKey struct {
 	RequestHash      string     `gorm:"size:128;not null" json:"request_hash"`
 	Status           string     `gorm:"size:32;not null;index" json:"status"`
 	PaymentSessionID *uuid.UUID `gorm:"type:uuid;index" json:"payment_session_id,omitempty"`
+	ResourceType     string     `gorm:"size:40;index" json:"resource_type,omitempty"`
+	ResourceID       *uuid.UUID `gorm:"type:uuid;index" json:"resource_id,omitempty"`
 	ResponseBody     string     `gorm:"type:text" json:"response_body,omitempty"`
 	Error            string     `gorm:"type:text" json:"error,omitempty"`
 	ExpiresAt        *time.Time `gorm:"index" json:"expires_at,omitempty"`

@@ -21,6 +21,7 @@ const (
 
 const (
 	PaymentOutcomeExact               = "exact"
+	PaymentOutcomeDonation            = "donation"
 	PaymentOutcomeUnderpaid           = "underpaid"
 	PaymentOutcomeOverpaid            = "overpaid"
 	PaymentOutcomePartialUnsupported  = "partial_unsupported"
@@ -45,6 +46,7 @@ type PaymentSession struct {
 	OrderID        string `gorm:"size:128;not null;index" json:"order_id"`
 	ProductID      string `gorm:"size:128;index" json:"product_id"`
 	UserID         string `gorm:"size:128;index" json:"user_id"`
+	LinkType       string `gorm:"size:32;not null;default:'fixed';index" json:"link_type"`
 	Amount         string `gorm:"size:80;not null" json:"amount"`
 	Currency       string `gorm:"size:20;not null;index" json:"currency"`
 	SuccessURL     string `gorm:"size:500" json:"success_url,omitempty"`

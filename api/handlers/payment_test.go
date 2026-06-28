@@ -190,6 +190,24 @@ func TestCheckoutExpectedAmountRawRoundsUp(t *testing.T) {
 	}
 }
 
+func TestDonationPaymentURIOmitsAmount(t *testing.T) {
+	chainID := constants.Ethereum
+	session := models.PaymentSession{
+		LinkType:         models.PaymentLinkTypeDonation,
+		SelectedChainID:  &chainID,
+		SelectedSymbol:   "ETH",
+		SelectedDecimals: 18,
+		DepositAddress:   "0x2222222222222222222222222222222222222222",
+	}
+	uri := paymentURI(session)
+	if uri != "ethereum:0x2222222222222222222222222222222222222222@1" {
+		t.Fatalf("donation payment uri = %q", uri)
+	}
+	if strings.Contains(uri, "amount=") || strings.Contains(uri, "value=") {
+		t.Fatalf("donation payment uri should not encode an amount: %q", uri)
+	}
+}
+
 func TestPreparePaymentCreateAssetSelectionQuotesSupportedAsset(t *testing.T) {
 	registry := asset.NewRegistry()
 	token := "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
@@ -241,6 +259,48 @@ func TestPreparePaymentCreateAssetSelectionQuotesSupportedAsset(t *testing.T) {
 	}
 	if !selection.quoteExpiresAt.Equal(now.Add(15 * time.Minute)) {
 		t.Fatalf("quote expires = %s, want %s", selection.quoteExpiresAt, now.Add(15*time.Minute))
+	}
+}
+
+func TestHandleCheckoutSelectAssetDonationDoesNotQuote(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	chainID := constants.Ethereum
+	future := time.Now().Add(10 * time.Minute)
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "donation-token",
+		LinkType:     models.PaymentLinkTypeDonation,
+		Amount:       "0",
+		Status:       models.PaymentStatusPending,
+		ExpiresAt:    &future,
+		Wallet: models.Wallet{
+			EthereumAddress: "0x2222222222222222222222222222222222222222",
+		},
+	}
+	repo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	app := fiber.New()
+	app.Post("/checkout/:token/select", HandleCheckoutSelectAsset(PaymentHandlerDeps{
+		PaymentRepo:   repo,
+		AssetRegistry: registry,
+		PriceOracle:   panicPriceOracle{},
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/checkout/donation-token/select", strings.NewReader("chain_id=1&symbol=ETH"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != fiber.StatusSeeOther {
+		t.Fatalf("status = %d, want redirect", resp.StatusCode)
+	}
+	if repo.selectCalls != 1 || len(repo.quotes) != 0 {
+		t.Fatalf("select/quotes = %d/%d, want 1/0", repo.selectCalls, len(repo.quotes))
+	}
+	if session.SelectedChainID == nil || *session.SelectedChainID != chainID || session.ExpectedAmountRaw != "" || session.Status != models.PaymentStatusAwaitingPayment {
+		t.Fatalf("donation session selection = %#v", session)
 	}
 }
 
@@ -350,6 +410,9 @@ func TestPaymentCreateResponseBodyUsesV1EnvelopeAndAssetFields(t *testing.T) {
 	if data["track_id"] != "track-1" || data["session_token"] != "track-1" {
 		t.Fatalf("track/session token mismatch: %#v", data)
 	}
+	if data["link_type"] != models.PaymentLinkTypeFixed {
+		t.Fatalf("link_type = %#v, want fixed", data["link_type"])
+	}
 	if data["chain_id"] != int64(constants.Ethereum) {
 		t.Fatalf("chain_id = %#v, want %d", data["chain_id"], constants.Ethereum)
 	}
@@ -358,6 +421,11 @@ func TestPaymentCreateResponseBodyUsesV1EnvelopeAndAssetFields(t *testing.T) {
 	}
 	if data["expected_amount_raw"] != "10000000" || data["deposit_address"] == "" {
 		t.Fatalf("asset response fields missing: %#v", data)
+	}
+
+	legacy := paymentCreateResponseBody(paymentCreateModeLegacy, session, "https://pay.example/checkout/track-1", walletID, expiresAt.Add(-time.Minute))
+	if legacy["link_type"] != models.PaymentLinkTypeFixed {
+		t.Fatalf("legacy link_type = %#v, want fixed", legacy["link_type"])
 	}
 }
 
@@ -699,6 +767,55 @@ func TestPayTemplateRendersStateCopyAndContractFields(t *testing.T) {
 	for _, forbidden := range []string{"data-copy-target=\"depositAddress\"", "/checkout/checkout-token/qr.png", "Send exactly"} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("terminal pay template still looks payable through %q:\n%s", forbidden, html)
+		}
+	}
+}
+
+func TestPayTemplateRendersDonationWithoutExactAmount(t *testing.T) {
+	tmpl, err := template.ParseFiles("../../views/gateway/pay.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainID := constants.Ethereum
+	session := models.PaymentSession{
+		SessionToken:      "donation-token",
+		OrderID:           "donation-order",
+		LinkType:          models.PaymentLinkTypeDonation,
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   &chainID,
+		SelectedSymbol:    "ETH",
+		SelectedDecimals:  18,
+		DepositAddress:    "0x2222222222222222222222222222222222222222",
+		ExpectedAmountRaw: "",
+	}
+	state := checkoutPayerState(session, time.Now())
+	var rendered bytes.Buffer
+	err = tmpl.Execute(&rendered, fiber.Map{
+		"Session":       &session,
+		"Lang":          "en",
+		"IsEnglish":     true,
+		"IsDonation":    true,
+		"QRCodeURL":     "/checkout/donation-token/qr.png",
+		"PaymentURI":    paymentURI(session),
+		"ChainName":     constants.ChainName(chainID),
+		"AmountDisplay": "ETH",
+		"CheckoutState": state,
+		"StatusMode":    state.Mode,
+		"StatusTitle":   state.TitleEN,
+		"StatusBody":    state.BodyEN,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := rendered.String()
+	for _, want := range []string{"Any amount ETH", "Enter the amount you want to send", "ethereum:0x2222222222222222222222222222222222222222@1"} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("donation template missing %q in:\n%s", want, html)
+		}
+	}
+	for _, forbidden := range []string{"Exact amount", "Send exactly", "?value=", "amount=", "0 ETH"} {
+		if strings.Contains(html, forbidden) {
+			t.Fatalf("donation template contains fixed amount copy %q in:\n%s", forbidden, html)
 		}
 	}
 }

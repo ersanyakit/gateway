@@ -324,6 +324,9 @@ func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
 	if received.ExpectedAmountRaw != "25000000" || received.DepositAddress != "0xdeposit" || received.TxHash == nil || *received.TxHash != txHash {
 		t.Fatalf("payment payload mismatch: %#v", received)
 	}
+	if received.LinkType != models.PaymentLinkTypeFixed {
+		t.Fatalf("link_type = %q, want fixed", received.LinkType)
+	}
 	if received.PaymentOutcome != models.PaymentOutcomeExact || received.MatchedAmountRaw != "25000000" {
 		t.Fatalf("payment outcome fields missing: %#v", received)
 	}

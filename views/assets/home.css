@@ -14,6 +14,24 @@
   color: var(--home-ink);
 }
 
+.home-public-body header > div {
+  min-height: 60px;
+}
+
+.home-public-body header a[href="/"] > span:first-child {
+  width: 28px;
+  height: 28px;
+  border-radius: 12px;
+  font-size: 11px;
+  box-shadow: 0 6px 14px rgba(239, 45, 181, .09);
+}
+
+.home-public-body header nav a {
+  height: 34px;
+  padding-inline: 12px;
+  font-size: 12px;
+}
+
 .home-hero,
 .home-section,
 .home-api-band {
@@ -192,28 +210,28 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
-  max-width: 440px;
+  gap: 6px;
+  max-width: 390px;
 }
 
 .home-chain-rail span {
-  min-height: 34px;
+  min-height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px;
+  gap: 7px;
+  padding: 0 9px;
   border: 1px solid var(--home-line);
   border-radius: 999px;
   background: rgba(255, 255, 255, .9);
   color: var(--home-ink);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 820;
-  box-shadow: 0 8px 20px rgba(19, 19, 19, .06);
+  box-shadow: 0 6px 16px rgba(19, 19, 19, .05);
 }
 
 .home-chain-rail img {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   object-fit: contain;
 }
 
@@ -221,14 +239,14 @@
   position: absolute;
   right: 70px;
   top: 136px;
-  width: 390px;
+  width: 360px;
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 16px;
   border: 1px solid rgba(19, 19, 19, .1);
   border-radius: 8px;
   background: rgba(255, 255, 255, .94);
-  box-shadow: 0 24px 60px rgba(19, 19, 19, .12);
+  box-shadow: 0 22px 52px rgba(19, 19, 19, .1);
 }
 
 .home-board-head,
@@ -263,19 +281,19 @@
 
 .home-amount-row strong {
   color: var(--home-ink);
-  font-size: 30px;
+  font-size: 26px;
   font-weight: 920;
   line-height: 1;
 }
 
 .home-qr-mosaic {
-  width: 210px;
+  width: 176px;
   aspect-ratio: 1;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 7px;
   margin: 6px auto;
-  padding: 18px;
+  padding: 16px;
   border: 1px solid var(--home-line);
   border-radius: 8px;
   background: #ffffff;
@@ -432,7 +450,7 @@
     top: auto;
     right: 28px;
     bottom: 32px;
-    width: min(390px, calc(100% - 56px));
+    width: min(360px, calc(100% - 56px));
   }
 
   .home-flow-grid {
@@ -461,6 +479,34 @@
     gap: 18px;
     order: 1;
     padding: 34px 18px 18px;
+  }
+
+  .home-public-body header > div {
+    min-height: 54px;
+    gap: 8px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .home-public-body header a[href="/"] {
+    gap: 10px;
+  }
+
+  .home-public-body header a[href="/"] > span:first-child {
+    width: 26px;
+    height: 26px;
+    border-radius: 10px;
+    font-size: 10px;
+  }
+
+  .home-public-body header nav {
+    gap: 4px;
+  }
+
+  .home-public-body header nav a {
+    height: 32px;
+    padding-inline: 10px;
+    font-size: 12px;
   }
 
   .home-hero h1 {
@@ -526,6 +572,18 @@
 
   .home-chain-rail {
     justify-content: flex-start;
+  }
+
+  .home-chain-rail span {
+    min-height: 28px;
+    gap: 6px;
+    padding: 0 8px;
+    font-size: 10px;
+  }
+
+  .home-chain-rail img {
+    width: 13px;
+    height: 13px;
   }
 
   .home-payment-board {

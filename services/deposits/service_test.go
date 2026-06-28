@@ -136,6 +136,34 @@ func TestPendingFinalityDoesNotSettlePaymentOrAvailableLedger(t *testing.T) {
 	}
 }
 
+func TestFinalizedDepositSchedulesSweepJobBeforeSettlement(t *testing.T) {
+	source := readDepositServiceSource(t)
+	body := extractFunctionBody(t, source, "ensureDepositTransaction")
+	markIndex := strings.Index(body, "MarkFinality(ctx, uniqueHash, fact.Confirmations, fact.ConfirmationsRequired, true)")
+	sweepIndex := strings.Index(body, "enqueueFinalizedSweepJob(ctx, finalizedTx, wallet)")
+	settleIndex := strings.Index(body, "settleFinalizedTransaction(ctx, finalizedTx)")
+	if markIndex == -1 || sweepIndex == -1 || settleIndex == -1 {
+		t.Fatalf("finalized path missing mark/sweep/settle calls")
+	}
+	if !(markIndex < sweepIndex && sweepIndex < settleIndex) {
+		t.Fatal("finalized deposit must enqueue sweep job after finality and before settlement")
+	}
+}
+
+func TestDepositServiceSweepSchedulingSkipsReserveWallets(t *testing.T) {
+	source := readDepositServiceSource(t)
+	body := extractFunctionBody(t, source, "enqueueFinalizedSweepJob")
+	for _, token := range []string{
+		"wallet.HDAddressId == 0",
+		"SweepJobRepo.EnqueueForTransaction(ctx, *txModel)",
+		"WebhookEventSweepRequestedV1",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("enqueueFinalizedSweepJob missing %q", token)
+		}
+	}
+}
+
 func TestFinalizedSettlementUsesExplicitPaymentMatchResult(t *testing.T) {
 	source := readDepositServiceSource(t)
 	body := extractFunctionBody(t, source, "settleFinalizedTransaction")

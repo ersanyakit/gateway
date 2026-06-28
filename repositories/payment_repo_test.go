@@ -108,6 +108,21 @@ func TestPaymentMatchDecisionClassifiesExplicitOutcomes(t *testing.T) {
 			shouldFind: true,
 		},
 		{
+			name: "donation accepts any positive amount",
+			session: func() models.PaymentSession {
+				s := session
+				s.LinkType = models.PaymentLinkTypeDonation
+				s.ExpectedAmountRaw = ""
+				return s
+			}(),
+			tx:         paymentMatchTestTx(constants.Ethereum, "USDC", &token, "42"),
+			status:     models.PaymentStatusPaid,
+			outcome:    models.PaymentOutcomeDonation,
+			event:      constants.WebhookEventPaymentSucceeded,
+			ledger:     true,
+			shouldFind: true,
+		},
+		{
 			name:       "minor underpayment is explicit underpaid",
 			tx:         paymentMatchTestTx(constants.Ethereum, "USDC", &token, "997"),
 			status:     models.PaymentStatusUnderpaid,
@@ -275,6 +290,7 @@ func TestPaymentMatchSelectionRecordsFailureWhenNoExactCandidateExists(t *testin
 func TestPaymentMatchDecisionPriorityOrdersExactBeforeMismatchAndFailures(t *testing.T) {
 	priorities := []paymentMatchDecision{
 		{Status: models.PaymentStatusPaid, Outcome: models.PaymentOutcomeExact},
+		{Status: models.PaymentStatusPaid, Outcome: models.PaymentOutcomeDonation},
 		{Status: models.PaymentStatusUnderpaid, Outcome: models.PaymentOutcomeUnderpaid},
 		{Status: models.PaymentStatusPartialPaid, Outcome: models.PaymentOutcomePartialUnsupported},
 		{Status: models.PaymentStatusOverpaid, Outcome: models.PaymentOutcomeOverpaid},

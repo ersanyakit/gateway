@@ -41,7 +41,7 @@ func TestMainDispatcherSubscriberUsesChainIndexerEventHandler(t *testing.T) {
 		t.Fatalf("read main.go: %v", err)
 	}
 	source := string(sourceBytes)
-	if !strings.Contains(source, "handleChainIndexerEvent(mainCtx, event)") {
+	if !strings.Contains(source, "handleChainIndexerEvent(ctx, event)") {
 		t.Fatal("dispatcher subscriber must route observed transactions through handleChainIndexerEvent")
 	}
 	for _, forbidden := range []string{
@@ -61,7 +61,7 @@ func TestMainDispatcherSubscriberAcksAfterChainFactPersistence(t *testing.T) {
 		t.Fatalf("read main.go: %v", err)
 	}
 	source := string(sourceBytes)
-	callIndex := strings.Index(source, "err := handleChainIndexerEvent(mainCtx, event)")
+	callIndex := strings.Index(source, "err := handleChainIndexerEvent(ctx, event)")
 	if callIndex == -1 {
 		t.Fatal("dispatcher subscriber must call handleChainIndexerEvent")
 	}

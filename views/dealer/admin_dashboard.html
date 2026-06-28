@@ -995,7 +995,7 @@
           <th>Üye işyeri</th>
           <th>Domain</th>
           <th>Tutar</th>
-          <th>Para / Dil</th>
+          <th>Tür / Dil</th>
           <th>Link</th>
           <th>Oluşturulma</th>
         </tr></thead>
@@ -1005,8 +1005,8 @@
           <td class="font-semibold text-ink">{{.Name}}</td>
           <td class="text-xs text-muted">{{.Merchant}}</td>
           <td class="text-xs text-muted">{{.Domain}}</td>
-          <td class="font-mono font-semibold text-ink">{{.Amount}}</td>
-          <td><span class="badge badge-blue">{{.Currency}}</span> <span class="text-xs text-muted">{{.Language}}</span></td>
+          <td class="font-mono font-semibold text-ink">{{.AmountDisplay}}</td>
+          <td><span class="badge badge-blue">{{.LinkTypeLabel}}</span> <span class="text-xs text-muted">{{.Language}}</span></td>
           <td><a class="text-xs font-bold text-accent hover:underline" href="{{.PaymentURL}}" target="_blank">Aç →</a></td>
           <td class="text-xs text-muted">{{.CreatedAt}}</td>
         </tr>

@@ -19,13 +19,15 @@ import (
 type ConfirmationRequirementFunc func(constants.ChainID) uint
 
 type Dependencies struct {
-	ChainFactRepo   *repositories.ChainFactRepo
-	ChainStateRepo  *repositories.ChainStateRepo
-	DepositRepo     *repositories.DepositRepo
-	WalletRepo      *repositories.WalletRepo
-	TransactionRepo *repositories.TransactionRepo
-	PaymentRepo     *repositories.PaymentRepo
-	LedgerRepo      *repositories.LedgerRepo
+	ChainFactRepo         *repositories.ChainFactRepo
+	ChainStateRepo        *repositories.ChainStateRepo
+	DepositRepo           *repositories.DepositRepo
+	WalletRepo            *repositories.WalletRepo
+	TransactionRepo       *repositories.TransactionRepo
+	PaymentRepo           *repositories.PaymentRepo
+	LedgerRepo            *repositories.LedgerRepo
+	SweepJobRepo          *repositories.SweepJobRepo
+	SweepLifecycleEnqueue func(context.Context, models.SweepJob, *models.Transaction, string, string)
 }
 
 type Service struct {
@@ -197,12 +199,29 @@ func (s *Service) ensureDepositTransaction(ctx context.Context, fact models.Chai
 		return summary, err
 	}
 	summary.Finalized = 1
+	if err := s.enqueueFinalizedSweepJob(ctx, finalizedTx, wallet); err != nil {
+		return summary, err
+	}
 	settled, err := s.settleFinalizedTransaction(ctx, finalizedTx)
 	if err != nil {
 		return summary, err
 	}
 	summary.add(settled)
 	return summary, nil
+}
+
+func (s *Service) enqueueFinalizedSweepJob(ctx context.Context, txModel *models.Transaction, wallet *models.Wallet) error {
+	if txModel == nil || wallet == nil || wallet.HDAddressId == 0 || s.deps.SweepJobRepo == nil {
+		return nil
+	}
+	job, created, err := s.deps.SweepJobRepo.EnqueueForTransaction(ctx, *txModel)
+	if err != nil {
+		return err
+	}
+	if created && job != nil && s.deps.SweepLifecycleEnqueue != nil {
+		s.deps.SweepLifecycleEnqueue(ctx, *job, txModel, constants.WebhookEventSweepRequestedV1, "")
+	}
+	return nil
 }
 
 func (s *Service) settleFinalizedTransaction(ctx context.Context, txModel *models.Transaction) (ProcessSummary, error) {

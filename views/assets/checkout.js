@@ -92,5 +92,81 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   });
 
+  function markPressing(element) {
+    if (!element || element.classList.contains('is-disabled')) {
+      return;
+    }
+    var pressChild = element.querySelector('.crypto-circle, .crypto-network-left img');
+    element.classList.add('is-pressing');
+    if (pressChild) {
+      pressChild.classList.add('is-pressing-child');
+    }
+    window.setTimeout(function () {
+      element.classList.remove('is-pressing');
+      if (pressChild) {
+        pressChild.classList.remove('is-pressing-child');
+      }
+    }, 180);
+  }
+
+  function isPlainNavigation(event, anchor) {
+    return event.button === 0 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !anchor.target &&
+      !anchor.hasAttribute('download');
+  }
+
+  document.querySelectorAll('.crypto-flow-select .crypto-btn').forEach(function (link) {
+    link.addEventListener('pointerdown', function () {
+      markPressing(link);
+    });
+
+    link.addEventListener('click', function (event) {
+      if (!isPlainNavigation(event, link)) {
+        return;
+      }
+      var href = link.href;
+      if (!href) {
+        return;
+      }
+      event.preventDefault();
+      link.classList.add('is-pressing');
+      window.setTimeout(function () {
+        window.location.assign(href);
+      }, 105);
+    });
+  });
+
+  document.querySelectorAll('.crypto-flow-select .crypto-network-option').forEach(function (button) {
+    button.addEventListener('pointerdown', function () {
+      if (!button.disabled) {
+        markPressing(button);
+      }
+    });
+
+    button.addEventListener('click', function (event) {
+      if (button.disabled || button.dataset.pressSubmit === '1') {
+        return;
+      }
+      var form = button.form;
+      if (!form) {
+        return;
+      }
+      event.preventDefault();
+      button.dataset.pressSubmit = '1';
+      button.classList.add('is-pressing');
+      window.setTimeout(function () {
+        if (form.requestSubmit) {
+          form.requestSubmit(button);
+          return;
+        }
+        form.submit();
+      }, 105);
+    });
+  });
+
   tick();
 });

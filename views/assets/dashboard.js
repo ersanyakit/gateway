@@ -3,9 +3,11 @@ document.addEventListener('DOMContentLoaded', function () {
   document.addEventListener('click', handleTestWebhookClick);
   document.addEventListener('click', handleCopyClick);
   document.addEventListener('click', handleGenerateSecretClick);
+  initPaymentLinkTypeToggle();
   initAdminRichSelects();
   initAdminDataTables();
   initRecoverFundsBalance();
+  initDashboardActiveTabScroll();
 });
 
 function handleTestWebhookClick(event) {
@@ -95,6 +97,45 @@ function handleGenerateSecretClick(event) {
     return byte.toString(16).padStart(2, '0');
   }).join('');
   input.focus();
+}
+
+function initPaymentLinkTypeToggle() {
+  var select = document.querySelector('[data-payment-link-type]');
+  if (!select) return;
+
+  var fixedFields = document.querySelector('[data-payment-fixed-fields]');
+  var requiredInputs = Array.prototype.slice.call(document.querySelectorAll('[data-required-when-fixed]'));
+
+  function update() {
+    var donation = select.value === 'donation';
+    if (fixedFields) {
+      fixedFields.classList.toggle('hidden', donation);
+    }
+    requiredInputs.forEach(function (input) {
+      input.required = !donation;
+      input.disabled = donation;
+    });
+    var currency = document.getElementById('product_currency');
+    if (currency) {
+      currency.disabled = donation;
+    }
+  }
+
+  select.addEventListener('change', update);
+  update();
+}
+
+function initDashboardActiveTabScroll() {
+  var activeTab = document.querySelector('.dash-tab[aria-selected="true"]');
+  if (!activeTab) return;
+
+  var scroller = activeTab.closest('.overflow-x-auto') || activeTab.parentElement;
+  if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
+
+  window.requestAnimationFrame(function () {
+    var left = activeTab.offsetLeft - ((scroller.clientWidth - activeTab.offsetWidth) / 2);
+    scroller.scrollTo({ left: Math.max(0, left), behavior: 'auto' });
+  });
 }
 
 function initCSRFProtection() {

@@ -177,6 +177,7 @@ Response shape:
     "status": "pending",
     "expires_at": "2026-06-06T10:00:00Z",
     "order_id": "ORDER-1001",
+    "link_type": "fixed",
     "amount": "25.00",
     "currency": "USD",
     "chain_id": 1,
@@ -315,6 +316,8 @@ Payment info/history statuses:
 - `overpaid`
 - `partial_paid`
 
+`link_type` is `fixed` for ordinary invoices and `donation` for payment-link sessions where the payer chooses the crypto amount in their own wallet.
+
 Checkout polling uses:
 
 ```http
@@ -395,7 +398,10 @@ Use this to request a withdrawal from the merchant reserve wallet. The request i
 
 ```http
 POST /api/v1/payout/create
+Idempotency-Key: payout-ORDER-1001-v1
 ```
+
+`Idempotency-Key` is optional but recommended. Reusing the same key with the same payload returns the same payout response; reusing it with a different payload returns `409`.
 
 Request body:
 
@@ -420,7 +426,10 @@ Response:
     "symbol": "USDT",
     "to_address": "0xRecipient...",
     "amount_raw": "10500000",
-    "status": "pending"
+    "status": "pending",
+    "idempotency_key": "payout-ORDER-1001-v1",
+    "correlation_id": "req_...",
+    "created_at": "2026-06-28T12:00:00Z"
   }
 }
 ```
@@ -428,10 +437,11 @@ Response:
 Payout statuses:
 
 - `pending`: awaiting admin approval.
-- `processing`: approved and broadcast/finalization is in progress.
-- `approved`: on-chain broadcast completed and ledger finalized.
+- `processing`: approved and broadcast; awaiting finality evidence and ledger finalization.
+- `finalized`: finality evidence was observed and the ledger debit was finalized.
+- `approved`: legacy compatibility status; new terminal processing uses `finalized`.
 - `rejected`: rejected by admin.
-- `failed`: transfer failed.
+- `failed`: failed before broadcast, or requires operator reconciliation after broadcast uncertainty.
 
 Payout lifecycle events are sent as webhooks when a domain webhook is configured:
 
@@ -454,7 +464,10 @@ Use this to request refund of a paid payment. Admin approval is required before 
 
 ```http
 POST /api/v1/refund/create
+Idempotency-Key: refund-ORDER-1001-v1
 ```
+
+`Idempotency-Key` is optional but recommended. Reusing the same key with the same payload returns the same refund response; reusing it with a different payload returns `409`.
 
 Request body:
 
@@ -478,12 +491,12 @@ Alternative identifier:
 Refund statuses:
 
 - `pending`
-- `processing`
-- `succeeded`
+- `processing`: approved and broadcast/finality is in progress.
+- `succeeded`: finality evidence was observed and the ledger refund debit was finalized.
 - `rejected`
 - `failed`
 
-Creating a refund request reserves the refundable amount in the ledger. Rejected refunds or refunds that fail before broadcast release that reservation.
+Creating a refund request reserves the refundable amount in the ledger. Rejected refunds or refunds that fail before broadcast release that reservation. Broadcast success records `tx_hash`, source wallet, destination, asset metadata, and `broadcasted_at`; terminal success is queued only after finality evidence.
 
 Refund lifecycle events are sent as webhooks when a domain webhook is configured:
 
@@ -634,6 +647,7 @@ Event examples:
   "wallet_id": "uuid",
   "amount": "25.00",
   "currency": "USD",
+  "link_type": "fixed",
   "chain_id": 1,
   "symbol": "USDT",
   "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
@@ -665,8 +679,14 @@ Event examples:
   "event_id": "entity_uuid:payout.finalized.v1",
   "event_type": "payout.finalized.v1",
   "event_version": "v1",
+  "occurred_at": "2026-06-26T10:05:00Z",
   "entity_type": "payout",
   "entity_id": "uuid",
+  "resource_type": "payout",
+  "resource_id": "uuid",
+  "resource_status": "finalized",
+  "idempotency_key": "entity_uuid:payout.finalized.v1",
+  "correlation_id": "payout:uuid",
   "merchant_id": "uuid",
   "domain_id": "uuid",
   "wallet_id": "uuid",
@@ -676,8 +696,10 @@ Event examples:
   "decimals": 6,
   "amount_raw": "10500000",
   "to_address": "0xRecipient",
-  "status": "approved",
+  "status": "finalized",
   "tx_hash": "0xhash",
+  "broadcasted_at": "2026-06-26T10:03:00Z",
+  "finalized_at": "2026-06-26T10:05:00Z",
   "created_at": "2026-06-26T10:00:00Z",
   "updated_at": "2026-06-26T10:05:00Z"
 }
@@ -708,15 +730,17 @@ Event examples:
 
 1. Merchant backend creates payout request with `POST /api/v1/payout/create`.
 2. Admin approves or rejects in the admin panel.
-3. Merchant polls `GET /api/v1/payout/info`.
-4. Merchant treats `approved`, `rejected`, and `failed` as terminal states.
+3. Broadcasted payouts remain `processing` until finality evidence is observed.
+4. Merchant polls `GET /api/v1/payout/info`.
+5. Merchant treats `finalized`, `rejected`, and pre-broadcast `failed` as terminal states. Post-broadcast uncertainty stays operator-recoverable.
 
 ### Refund Flow
 
 1. Merchant backend creates refund request with `POST /api/v1/refund/create`.
 2. Admin approves or rejects in the admin panel.
-3. Merchant polls `GET /api/v1/refund/info`.
-4. Merchant treats `succeeded`, `rejected`, and `failed` as terminal states.
+3. Broadcasted refunds remain `processing` until finality evidence is observed.
+4. Merchant polls `GET /api/v1/refund/info`.
+5. Merchant treats `succeeded`, `rejected`, and pre-broadcast `failed` as terminal states. Post-broadcast uncertainty stays operator-recoverable.
 
 ## Idempotency Rules
 
@@ -725,7 +749,7 @@ Merchant systems should store and deduplicate:
 - Payment webhook: `event_id`
 - Transaction webhook: `event_id`
 - Payment create: use `Idempotency-Key` header, or rely on `order_id` fallback.
-- Payout/refund create: store returned `payout_id` / `refund_id`.
+- Payout/refund create: use `Idempotency-Key` for replay-safe request creation, and store returned `payout_id` / `refund_id`.
 
 Never fulfill an order based only on frontend return URLs. Always use webhook verification or server-side payment status query.
 

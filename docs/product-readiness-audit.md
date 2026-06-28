@@ -78,11 +78,11 @@ The project is not empty or fake. It has a real payment-gateway skeleton:
 5. Single-process architecture is a scaling ceiling.
    Dispatcher, address index, rate limiter, retry workers, finality worker, and listener workers all run in one app process. There is no durable event queue, partitioning, leader election, or multi-consumer model.
 
-6. Sweeps are not durable jobs.
-   `autoSweepDeposit` runs from goroutines and logs errors. There is no persistent sweep job table with retry count, dead-letter state, nonce coordination, and reconciliation.
+6. Sweep execution is durable but not yet exchange-grade.
+   Deposits enqueue persistent sweep jobs with retry count, bounded failure category, dead-letter state, ledger holds, parent-job prefund attempt state, tx-hash-required success handling, and reconciliation on uncertain broadcast outcomes. Chain resource reservation is still process-local, so multi-replica nonce/UTXO/resource ownership needs durable storage before high-volume production.
 
 7. Fee and gas strategy is too simple.
-   EVM signing uses legacy gas mode, ERC-20 gas limit is fixed, Bitcoin fee is fixed at 10 sat/vbyte, Solana compute/rent handling is minimal, and TRON energy/bandwidth handling uses fixed assumptions.
+   EVM signing still uses legacy gas mode and named caps, ERC-20 gas limit remains a bounded fallback, Bitcoin fee policy is env-bounded rather than estimator-driven, Solana compute/rent handling is minimal, and TRON energy/bandwidth handling is bounded but still approximate.
 
 8. RPC strategy is not exchange-grade.
    The code can iterate configured RPC URLs in places, but it has no quorum reads, provider scoring, archive-node guarantees, fallback consistency checks, or per-provider health metrics.
@@ -101,8 +101,8 @@ The project is not empty or fake. It has a real payment-gateway skeleton:
 2. Partitioned address lookup.
    The current in-memory address index loads all wallet addresses. For millions of addresses, use DB/Redis partitioned lookup and incremental index refresh.
 
-3. Nonce and UTXO concurrency controls.
-   Add per-chain/per-wallet locks, reservation rows, UTXO reservation, nonce manager, and stuck transaction replacement.
+3. Durable nonce and UTXO concurrency controls.
+   Current in-process nonce, UTXO, and sequence/resource reservation blocks same-process duplicate signing and routes uncertain sweep broadcasts to reconciliation. Add durable reservation rows and replacement evidence before running multiple gateway replicas or high-volume outbound flows.
 
 4. Full reconciliation jobs.
    Scheduled chain-vs-ledger reconciliation must compare address balances, tx history, webhook state, sweep state, and ledger balances.
@@ -144,7 +144,7 @@ The project is not empty or fake. It has a real payment-gateway skeleton:
 | Payment finality | Fields and worker exist | Needs chain-specific verification and reorg handling |
 | Webhooks | Delivery, retry, replay, HMAC signing exist | Needs SLO/dead-letter/versioning |
 | Ledger | Models and flows exist | Needs invariants, reconciliation, and reorg reversals |
-| Withdrawals/transfers | Implemented for supported families | Needs signer isolation, fee policy, nonce/UTXO locking |
+| Withdrawals/transfers | Implemented for supported families with signer guard and process-local resource reservation | Needs external signer and durable nonce/UTXO locking |
 | Wallet provider custody | Partial software signer | Not production-ready |
 | Binance-level tracking | Single-process listeners | Not suitable |
 
@@ -157,7 +157,7 @@ Includes Ethereum, Avalanche, BNB Chain, Base, Arbitrum, Unichain, Chiliz, and C
 - Uses Trust Wallet Core signing for native and ERC-20 transfers.
 - Uses legacy gas mode only; EIP-1559 fields are not used.
 - ERC-20 gas limit is fixed at 65,000.
-- No centralized nonce reservation for concurrent withdrawals/sweeps.
+- Process-local nonce reservation prevents duplicate same-process signing, but there is no durable multi-replica nonce table.
 - Listener catch-up is slow and starts from safe latest on first boot.
 - Internal transfer tracing is best-effort and can be unavailable depending on RPC provider.
 
@@ -166,8 +166,8 @@ Includes Ethereum, Avalanche, BNB Chain, Base, Arbitrum, Unichain, Chiliz, and C
 - Address generation is Taproot through Trust Wallet Core.
 - P2WPKH signing uses Trust Wallet Core.
 - Taproot signing uses manual `txscript` fallback.
-- Fee is fixed at 10 sat/vbyte; no mempool fee estimator, RBF, CPFP, batching policy, or UTXO consolidation.
-- No UTXO reservation table for concurrent spends.
+- Fee rate is env-bounded but not estimator-driven; no mempool fee estimator, RBF, CPFP, batching policy, or UTXO consolidation.
+- Process-local UTXO reservation blocks same-process duplicate spends; no durable UTXO reservation table exists for multi-replica operation.
 - Listener starts from safe latest on first boot and only processes two blocks per poll.
 
 ### Solana
@@ -190,10 +190,10 @@ Includes Ethereum, Avalanche, BNB Chain, Base, Arbitrum, Unichain, Chiliz, and C
 ### Phase 0 - Stabilize Money Safety
 
 - Implement actual KMS/HSM/MPC signer interface and remove production env mnemonic dependency.
-- Add durable sweep/withdrawal job table with retries, locks, and dead-letter state.
+- Harden sweep/withdrawal durable jobs with multi-replica resource ownership, replacement evidence, and operator recovery workflows.
 - Add listener backfill configuration: explicit start block/slot, full historical backfill mode, and safe manual rescan per chain.
 - Add reorg detector and reversible ledger postings.
-- Add per-wallet nonce/UTXO locking.
+- Add durable per-wallet nonce/UTXO/resource locking.
 - Replace fixed fee/gas logic with policy-driven estimators.
 - Add chain/provider health checks with failover and metrics.
 
@@ -216,10 +216,12 @@ Includes Ethereum, Avalanche, BNB Chain, Base, Arbitrum, Unichain, Chiliz, and C
 
 ## Verification Run
 
-The following checks were run after the current transfer changes:
+The following checks were run after the Story 4.4 durable sweep recovery changes:
 
-- `go test ./blockchain/chains -run 'TestBitcoinSign|TestEVMSign' -v`
-- `go test ./...`
-- `go vet ./...`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./repositories ./services/database`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 .`
+- `GOCACHE=/tmp/gateway-gocache-bmad go test -p=1 -count=1 ./...`
+- `GOCACHE=/tmp/gateway-gocache-bmad go vet -p=1 ./...`
+- `git diff --check && git diff --cached --check`
 
 All passed in this local environment.

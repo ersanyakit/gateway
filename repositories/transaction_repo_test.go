@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +78,54 @@ func TestTransactionUniqueHashRequiresHash(t *testing.T) {
 	}
 	if _, err := repo.UniqueHash(types.TransactionParam{ChainID: constants.Ethereum, Hash: helpers.StrPtr("   ")}); err == nil {
 		t.Fatal("blank hash should fail")
+	}
+}
+
+func TestTransactionRepoFindFinalizedByHashRequiresFinality(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}); err != nil {
+		t.Fatalf("automigrate transactions: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now()
+	pending := models.Transaction{
+		ID:                    uuid.New(),
+		ChainID:               constants.Ethereum,
+		UniqueHash:            "1-0xoutbound-pending-",
+		Hash:                  "0xoutbound",
+		BlockNumber:           "100",
+		BlockHash:             "0xblock",
+		Symbol:                "ETH",
+		FromAddress:           "0xfrom",
+		ToAddress:             "0xto",
+		Amount:                "10",
+		Status:                models.TransactionStatusPendingConfirmation,
+		Confirmations:         1,
+		ConfirmationsRequired: 12,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+	finalizedAt := now.Add(time.Minute)
+	finalized := pending
+	finalized.ID = uuid.New()
+	finalized.UniqueHash = "1-0xoutbound-final-"
+	finalized.Hash = "0xfinalized"
+	finalized.Status = models.TransactionStatusConfirmed
+	finalized.Confirmations = 12
+	finalized.FinalizedAt = &finalizedAt
+	if err := db.WithContext(ctx).Create(&[]models.Transaction{pending, finalized}).Error; err != nil {
+		t.Fatalf("seed transactions: %v", err)
+	}
+	repo := NewTransactionRepo(db)
+	if _, err := repo.FindFinalizedByHash(ctx, constants.Ethereum, "0xoutbound"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("pending hash lookup err = %v, want gorm.ErrRecordNotFound", err)
+	}
+	got, err := repo.FindFinalizedByHash(ctx, constants.Ethereum, " 0xFINALIZED ")
+	if err != nil {
+		t.Fatalf("find finalized by hash: %v", err)
+	}
+	if got.UniqueHash != finalized.UniqueHash {
+		t.Fatalf("finalized lookup = %s, want %s", got.UniqueHash, finalized.UniqueHash)
 	}
 }
 

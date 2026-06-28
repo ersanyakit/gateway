@@ -608,6 +608,28 @@ func (r *TransactionRepo) FindByUniqueHash(ctx context.Context, uniqueHash strin
 	return &txModel, nil
 }
 
+func (r *TransactionRepo) FindFinalizedByHash(ctx context.Context, chainID constants.ChainID, txHash string) (*models.Transaction, error) {
+	hash := normalizeTransactionHash(&txHash)
+	if hash == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+	var txModel models.Transaction
+	query := r.DB().WithContext(ctx).
+		Where("chain_id = ?", chainID).
+		Where("status = ?", models.TransactionStatusConfirmed).
+		Where("finalized_at IS NOT NULL")
+	if hasHexPrefix(hash) {
+		query = query.Where("LOWER(hash) = ?", strings.ToLower(hash))
+	} else {
+		query = query.Where("hash = ?", hash)
+	}
+	err := query.Order("finalized_at DESC").First(&txModel).Error
+	if err != nil {
+		return nil, err
+	}
+	return &txModel, nil
+}
+
 func (r *TransactionRepo) FindByID(ctx context.Context, id uuid.UUID) (*models.Transaction, error) {
 	var txModel models.Transaction
 	err := r.DB().WithContext(ctx).First(&txModel, "id = ?", id).Error
