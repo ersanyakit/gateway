@@ -968,7 +968,7 @@ func bootstrapAdminAccount(ctx context.Context) {
 		return
 	}
 	if created != nil {
-		log.Printf("Bootstrap admin created: %s (2FA not yet configured — login to set up)\n", email)
+		log.Printf("Bootstrap admin ready: %s role=%s\n", created.Email, models.EffectiveAdminRole(created.Role))
 	}
 }
 

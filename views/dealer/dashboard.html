@@ -194,43 +194,75 @@
         {{if .WalletSearch}}<a class="inline-flex min-h-10 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink hover:bg-wash" href="/merchant/dashboard/users">Temizle</a>{{end}}
       </form>
       {{if .Wallets}}
-      <div class="grid gap-3">
-        {{range .Wallets}}
-        <article class="overflow-hidden rounded-3xl border border-line bg-wash">
-          <div class="flex items-center justify-between gap-3 px-4 py-3">
-            <div class="min-w-0">
-              <strong class="block text-sm font-black text-ink">{{.Label}}</strong>
-              <small class="block text-xs font-semibold text-muted">{{if .UserID}}User: {{.UserID}}{{else}}Genel wallet{{end}}</small>
-            </div>
-            <code class="shrink-0 rounded-lg bg-white px-2 py-0.5 text-xs text-muted">{{.ShortID}}</code>
-          </div>
-          {{if .Addresses}}
-          <div class="grid gap-px border-t border-line sm:grid-cols-2 xl:grid-cols-3">
-            {{range .Addresses}}
-            <div class="flex items-center gap-2 bg-white px-4 py-2.5">
-              <span class="w-16 shrink-0 text-xs font-black text-muted">{{.Chain}}</span>
-              <code class="min-w-0 flex-1 truncate text-xs text-ink">{{.Address}}</code>
-            </div>
-            {{end}}
-          </div>
+      <div class="admin-data-toolbar merchant-wallet-toolbar">
+        <input class="admin-data-search" type="search" placeholder="Bu sayfada user, wallet veya domain ara" aria-label="Wallet tablosunda ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-wallet-table">
+        <span class="admin-data-count" data-admin-table-count="merchant-wallet-table" data-total="{{len .Wallets}}" data-label="wallet">{{len .Wallets}} wallet</span>
+      </div>
+      <div class="adm-wrap merchant-wallet-wrap">
+        <table class="adm-table admin-data-table merchant-wallet-table" id="merchant-wallet-table" data-admin-table>
+          <thead>
+            <tr>
+              <th><button class="admin-sort-button" type="button" data-admin-sort="text">User <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="admin-sort-button" type="button" data-admin-sort="text">Wallet <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="admin-sort-button" type="button" data-admin-sort="text">Domain <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="admin-sort-button" type="button" data-admin-sort="number">Adres <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+              <th><button class="admin-sort-button" type="button" data-admin-sort="text">Oluşturma <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+            </tr>
+          </thead>
+          <tbody>
+          {{range .Wallets}}
+            <tr data-admin-table-row data-admin-table-key="{{.ID}}" data-search="{{.Label}} {{.UserID}} {{.OwnerRef}} {{.Domain}} {{.WalletKind}} {{.ID}}">
+              <td data-sort-value="{{.UserID}}">
+                <span class="adm-asset merchant-wallet-asset">
+                  <button class="admin-expand-button" type="button" aria-label="{{.Label}} wallet detayını aç" aria-expanded="false" aria-controls="wallet-{{.ID}}-details" data-admin-table-toggle="{{.ID}}">
+                    <span aria-hidden="true"></span>
+                  </button>
+                  <strong class="text-ink">{{.Label}}</strong>
+                </span>
+                <span class="admin-vault-meta">{{if .UserID}}User: {{.UserID}}{{else}}{{.OwnerRef}}{{end}}</span>
+              </td>
+              <td data-sort-value="{{.ID}}">
+                <code class="merchant-inline-code">{{.ShortID}}</code>
+                <span class="admin-vault-meta">{{.WalletKind}}</span>
+              </td>
+              <td data-sort-value="{{.Domain}}"><span class="text-xs font-semibold text-ink">{{.Domain}}</span></td>
+              <td data-sort-value="{{len .Addresses}}"><span class="text-xs font-bold text-muted">{{len .Addresses}} adres</span></td>
+              <td data-sort-value="{{.CreatedAt}}"><time class="text-xs font-semibold text-muted">{{.CreatedAt}}</time></td>
+            </tr>
+            <tr class="admin-vault-detail-row merchant-wallet-detail-row" id="wallet-{{.ID}}-details" data-admin-table-detail-for="{{.ID}}" hidden>
+              <td colspan="5">
+                <div class="admin-vault-detail merchant-wallet-detail">
+                  <table class="admin-vault-detail-table">
+                    <thead><tr><th>Network</th><th>Adres</th></tr></thead>
+                    <tbody>
+                      {{range .Addresses}}
+                      <tr>
+                        <td class="whitespace-nowrap"><strong>{{.Chain}}</strong></td>
+                        <td><code class="block truncate" title="{{.Address}}">{{.Address}}</code></td>
+                      </tr>
+                      {{else}}
+                      <tr><td colspan="2" class="text-sm text-muted">Bu wallet için adres yok.</td></tr>
+                      {{end}}
+                    </tbody>
+                  </table>
+                  {{if .MissingChains}}
+                  <div class="merchant-wallet-missing">
+                    <span>Türetilmeyi bekleyen adresler:</span>
+                    {{range .MissingChains}}
+                    <form method="post" action="/merchant/wallets/{{.WalletID}}/fill-address">
+                      <input type="hidden" name="chain" value="{{.ChainName}}">
+                      <button type="submit" class="merchant-row-button">+ {{.ChainLabel}}</button>
+                    </form>
+                    {{end}}
+                  </div>
+                  {{end}}
+                </div>
+              </td>
+            </tr>
           {{end}}
-          {{if .MissingChains}}
-          <div class="border-t border-dashed border-amber-200 bg-amber-50/60 px-4 py-2.5">
-            <p class="mb-2 text-xs font-bold text-amber-700">Türetilmeyi bekleyen adresler — sunucu yeniden başlatıldığında otomatik oluşturulur:</p>
-            <div class="flex flex-wrap gap-1.5">
-              {{range .MissingChains}}
-              <form method="post" action="/merchant/wallets/{{.WalletID}}/fill-address">
-                <input type="hidden" name="chain" value="{{.ChainName}}">
-                <button type="submit" class="inline-flex min-h-7 items-center gap-1.5 rounded-full border border-amber-300 bg-white px-3 text-xs font-extrabold text-amber-700 hover:bg-amber-50">
-                  <span>+ {{.ChainLabel}}</span>
-                </button>
-              </form>
-              {{end}}
-            </div>
-          </div>
-          {{end}}
-        </article>
-        {{end}}
+            <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+          </tbody>
+        </table>
       </div>
       {{if or .WalletPage.HasPrev .WalletPage.HasNext}}
       <div class="mt-4 flex items-center justify-between gap-3">
@@ -280,140 +312,181 @@
   </section>
 
   <section class="grid{{if ne .ActivePanel "activity"}} hidden{{end}} gap-4">
-    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Audit logger</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Üye işyeri panelindeki kritik aksiyonlar IP, user-agent, path ve kesin timestamp ile kaydedilir.</p>
+    <section class="merchant-products-panel" data-products-workspace>
+      <div class="merchant-products-toolbar">
+        <div class="min-w-0">
+          <h2>Activity</h2>
+          <p>Audit logger, ödeme sessionları ve blockchain deposit akışları tek kontrollü tabloda izlenir.</p>
         </div>
-        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.ActivityCount}} kayıt</span>
+        <div class="merchant-products-actions">
+          <span class="merchant-toolbar-badge">{{.ActivityCount}} kayıt</span>
+          <span class="merchant-toolbar-badge">{{.PaymentCount}} session</span>
+        </div>
       </div>
 
-      {{if .AuditLogs}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          <div class="hidden grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-            <span>Event</span><span>Actor</span><span>Network</span><span>Request</span><span>Timestamp</span>
-          </div>
-          {{range .AuditLogs}}
-            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 {{if .IsFailed}}bg-red-50/40{{end}} lg:grid-cols-[1.05fr_0.62fr_0.72fr_0.72fr_0.82fr] lg:items-start">
-              <div class="min-w-0">
-                <div class="flex flex-wrap items-center gap-2">
-                  <strong class="text-sm font-black text-ink">{{.Event}}</strong>
-                  <span class="rounded-full {{if eq .Status "success"}}bg-emerald-50 text-emerald-700{{else}}bg-red-50 text-red-700{{end}} px-2 py-1 text-xs font-extrabold">{{.Status}}</span>
-                  {{if .IsOIDC}}<span class="rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-violet-700">OIDC</span>{{end}}
-                </div>
-                <small class="mt-2 block text-xs font-semibold leading-5 {{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</small>
-                <code class="mt-2 block truncate text-xs text-muted">{{.Subject}}</code>
-              </div>
-              <div class="min-w-0"><span class="block truncate text-sm font-bold text-ink">{{.Actor}}</span><small class="mt-1 block text-xs font-semibold text-muted">merchant</small></div>
-              <div class="min-w-0"><span class="block truncate text-sm font-bold text-ink">{{.IPAddress}}</span><code class="mt-1 block truncate text-xs text-muted">{{.UserAgent}}</code></div>
-              <div class="min-w-0"><span class="block text-sm font-bold text-ink">{{.Method}}</span><code class="mt-1 block truncate text-xs text-muted">{{.Path}}</code></div>
-              <time class="text-xs font-bold leading-5 text-muted" datetime="{{.CreatedISO}}">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz audit kaydı yok.</div>
-      {{end}}
-    </section>
+      <div class="merchant-products-tabs" role="tablist" aria-label="Activity views">
+        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if or (eq .ActivityTab "") (eq .ActivityTab "audit")}}true{{else}}false{{end}}" data-products-tab="audit">Audit logger <span>{{len .AuditLogs}}</span></button>
+        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if eq .ActivityTab "payments"}}true{{else}}false{{end}}" data-products-tab="payments">Ödeme aktiviteleri <span>{{.PaymentCount}}</span></button>
+        <button class="merchant-products-tab" type="button" role="tab" aria-selected="{{if eq .ActivityTab "deposits"}}true{{else}}false{{end}}" data-products-tab="deposits">Blockchain deposits <span>{{len .Activities}}</span></button>
+      </div>
 
-    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Ödeme aktiviteleri</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Checkout sessionları, ödeme durumları ve deposit eşleşmeleri.</p>
+      <div class="merchant-products-view" data-products-panel="audit" {{if and .ActivityTab (ne .ActivityTab "audit")}}hidden{{end}}>
+        <div class="admin-data-toolbar">
+          <input class="admin-data-search" type="search" placeholder="Event, actor, IP veya path ara" aria-label="Audit logger ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-audit-table">
+          <span class="admin-data-count" data-admin-table-count="merchant-audit-table" data-total="{{len .AuditLogs}}" data-label="audit">{{len .AuditLogs}} audit</span>
         </div>
-        <span class="w-fit rounded-full border border-line bg-wash px-3 py-2 text-xs font-extrabold text-muted">{{.PaymentCount}} session</span>
+        <div class="adm-wrap rounded-none border-0">
+          <table class="adm-table admin-data-table" id="merchant-audit-table" data-admin-table>
+            <thead>
+              <tr>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Event <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Actor <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Network <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Request <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Timestamp <span class="admin-sort-indicator"></span></button></th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .AuditLogs}}
+              <tr data-admin-table-row data-search="{{.Event}} {{.Status}} {{.Actor}} {{.IPAddress}} {{.Method}} {{.Path}} {{.Subject}} {{.Description}}" class="{{if .IsFailed}}bg-red-50/40{{end}}">
+                <td>
+                  <div class="grid gap-1">
+                    <span class="font-black text-ink">{{.Event}}</span>
+                    <span class="merchant-status-pill {{if eq .Status "success"}}is-success{{else}}is-danger{{end}}">{{.Status}}</span>
+                    {{if .IsOIDC}}<span class="w-fit rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-violet-700">OIDC</span>{{end}}
+                    <small class="{{if .IsFailed}}text-red-600{{else}}text-muted{{end}}">{{.Description}}</small>
+                    <code>{{.Subject}}</code>
+                  </div>
+                </td>
+                <td><strong class="block text-sm text-ink">{{.Actor}}</strong><small class="text-muted">merchant</small></td>
+                <td><strong class="block text-sm text-ink">{{.IPAddress}}</strong><code class="block max-w-[220px] truncate">{{.UserAgent}}</code></td>
+                <td><strong class="block text-sm text-ink">{{.Method}}</strong><code class="block max-w-[220px] truncate">{{.Path}}</code></td>
+                <td><time class="text-xs font-bold text-muted" datetime="{{.CreatedISO}}">{{.CreatedAt}}</time></td>
+              </tr>
+              {{else}}
+              <tr><td colspan="5" class="py-8 text-center text-sm text-muted">Henüz audit kaydı yok.</td></tr>
+              {{end}}
+              <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        {{if gt .AuditPage.TotalPages 1}}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3 text-xs font-semibold text-muted">
+          <span>{{.AuditPage.From}}–{{.AuditPage.To}} / {{.AuditPage.Total}} kayıt · sayfa {{.AuditPage.Page}}/{{.AuditPage.TotalPages}}</span>
+          <div class="pg">
+            {{if .AuditPage.HasPrev}}<a href="{{.AuditPage.PrevURL}}">‹ Önceki</a>{{else}}<span class="pg-disabled">‹ Önceki</span>{{end}}
+            {{range .AuditPage.PageURLs}}{{if .Active}}<span class="pg-active">{{.Page}}</span>{{else}}<a href="{{.URL}}">{{.Page}}</a>{{end}}{{end}}
+            {{if .AuditPage.HasNext}}<a href="{{.AuditPage.NextURL}}">Sonraki ›</a>{{else}}<span class="pg-disabled">Sonraki ›</span>{{end}}
+          </div>
+        </div>
+        {{end}}
       </div>
-      {{if .PaymentStats}}
-        <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div class="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-center">
-            <strong class="block text-lg font-black text-emerald-700">{{index .PaymentStats "paid"}}</strong>
-            <span class="text-xs font-bold text-emerald-600">Ödendi</span>
-          </div>
-          <div class="rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-center">
-            <strong class="block text-lg font-black text-amber-700">{{index .PaymentStats "pending"}}</strong>
-            <span class="text-xs font-bold text-amber-600">Bekliyor</span>
-          </div>
-          <div class="rounded-2xl border border-blue-100 bg-blue-50 px-3 py-2 text-center">
-            <strong class="block text-lg font-black text-blue-700">{{index .PaymentStats "awaiting_payment"}}</strong>
-            <span class="text-xs font-bold text-blue-600">Bekleniyor</span>
-          </div>
-          <div class="rounded-2xl border border-red-100 bg-red-50 px-3 py-2 text-center">
-            <strong class="block text-lg font-black text-red-700">{{index .PaymentStats "expired"}}</strong>
-            <span class="text-xs font-bold text-red-600">Süresi doldu</span>
-          </div>
-        </div>
-      {{end}}
-      <div class="mb-4 flex flex-wrap gap-2">
-        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter ""}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}">Tümü</a>
-        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "paid"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=paid">Ödendi</a>
-        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "pending"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=pending">Bekliyor</a>
-        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "awaiting_payment"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=awaiting_payment">Bekleniyor</a>
-        <a class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-extrabold transition-colors {{if eq .PaymentStatusFilter "expired"}}border-accent bg-accent text-white{{else}}border-line bg-wash text-muted hover:bg-white{{end}}" href="{{.ActivityURL}}?status=expired">Süresi doldu</a>
-      </div>
-      {{if .Payments}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          <div class="hidden grid-cols-[1fr_0.7fr_0.6fr_auto] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-            <span>Order</span><span>Tutar</span><span>Durum</span><span>Tarih</span>
-          </div>
-          {{range .Payments}}
-            <article class="grid gap-3 border-b border-line px-4 py-3 last:border-b-0 transition-colors hover:bg-wash lg:grid-cols-[1fr_0.7fr_0.6fr_auto] lg:items-center">
-              <div class="min-w-0">
-                <strong class="block text-sm font-black text-ink">{{if .OrderID}}{{.OrderID}}{{else}}—{{end}}</strong>
-                <small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}} · {{.ProductID}}</small>
-              </div>
-              <div><strong class="block text-sm font-black text-ink">{{.Amount}} {{.Currency}}</strong><small class="mt-1 block text-xs font-semibold text-muted">{{.SelectedAsset}}</small></div>
-              <div><span class="rounded-full px-3 py-1 text-xs font-extrabold {{if eq .Status "paid"}}bg-emerald-50 text-emerald-700{{else if eq .Status "pending"}}bg-amber-50 text-amber-700{{else if eq .Status "awaiting_payment"}}bg-blue-50 text-blue-700{{else}}bg-red-50 text-red-700{{end}}">{{.Status}}</span></div>
-              <time class="text-xs font-semibold text-muted">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
-        </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz ödeme aktivitesi yok.</div>
-      {{end}}
-    </section>
 
-    <section class="rounded-[28px] border border-line bg-white/90 p-5 shadow-soft">
-      <div class="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-        <div>
-          <h2 class="m-0 text-xl font-black text-ink">Blockchain deposits</h2>
-          <p class="m-0 mt-1 text-sm leading-6 text-muted">Zincir üzerinde tespit edilen deposit, transfer ve webhook durumları.</p>
-        </div>
-      </div>
-      {{if .Activities}}
-        <div class="overflow-hidden rounded-3xl border border-line">
-          <div class="hidden grid-cols-[1.35fr_0.7fr_0.6fr_0.7fr] gap-4 bg-wash px-4 py-3 text-xs font-black uppercase tracking-[0.04em] text-muted lg:grid">
-            <span>Transaction</span><span>Customer</span><span>Webhook</span><span>Timestamp</span>
+      <div class="merchant-products-view" data-products-panel="payments" {{if ne .ActivityTab "payments"}}hidden{{end}}>
+        {{if .PaymentStats}}
+          <div class="grid grid-cols-2 gap-3 border-b border-line bg-white p-3 sm:grid-cols-4">
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "paid"}}border-emerald-500 bg-emerald-50{{else}}border-emerald-100 bg-emerald-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=paid"><strong class="block text-lg font-black text-emerald-700">{{index .PaymentStats "paid"}}</strong><span class="text-xs font-bold text-emerald-600">Ödendi</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "pending"}}border-amber-500 bg-amber-50{{else}}border-amber-100 bg-amber-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=pending"><strong class="block text-lg font-black text-amber-700">{{index .PaymentStats "pending"}}</strong><span class="text-xs font-bold text-amber-600">Bekliyor</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "awaiting_payment"}}border-blue-500 bg-blue-50{{else}}border-blue-100 bg-blue-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=awaiting_payment"><strong class="block text-lg font-black text-blue-700">{{index .PaymentStats "awaiting_payment"}}</strong><span class="text-xs font-bold text-blue-600">Bekleniyor</span></a>
+            <a class="rounded-lg border px-3 py-2 text-center no-underline {{if eq .PaymentStatusFilter "expired"}}border-red-500 bg-red-50{{else}}border-red-100 bg-red-50/70{{end}}" href="{{.ActivityURL}}?tab=payments&status=expired"><strong class="block text-lg font-black text-red-700">{{index .PaymentStats "expired"}}</strong><span class="text-xs font-bold text-red-600">Süresi doldu</span></a>
           </div>
-          {{range .Activities}}
-            <article class="grid gap-3 border-b border-line px-4 py-4 last:border-b-0 transition-colors hover:bg-wash lg:grid-cols-[1.35fr_0.7fr_0.6fr_0.7fr] lg:items-center">
-              <div class="flex min-w-0 items-start gap-2">
-                <div class="relative mt-0.5 h-8 w-8 shrink-0">
-                  {{if .LogoURL}}
-                    <img class="absolute left-0 top-0 h-7 w-7 rounded-full border border-line bg-white p-1 object-contain" src="{{.LogoURL}}" alt="{{.Symbol}}">
-                  {{end}}
-                  {{if .ChainLogoURL}}
-                    <div class="absolute bottom-0 right-0 flex items-center justify-center border-2 border-white bg-white shadow-sm" style="width:14px;height:14px;border-radius:50%;">
-                      <img src="{{.ChainLogoURL}}" alt="{{.Chain}}" style="width:10px;height:10px;object-fit:contain;">
+        {{end}}
+        <div class="admin-data-toolbar">
+          <div class="flex flex-wrap gap-2">
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter ""}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments">Tümü</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "paid"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=paid">Ödendi</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "pending"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=pending">Bekliyor</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "awaiting_payment"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=awaiting_payment">Bekleniyor</a>
+            <a class="merchant-row-button {{if eq .PaymentStatusFilter "expired"}}is-active{{end}}" href="{{.ActivityURL}}?tab=payments&status=expired">Süresi doldu</a>
+          </div>
+          <span class="admin-data-count">{{.PaymentCount}} session</span>
+        </div>
+        <div class="admin-data-toolbar">
+          <input class="admin-data-search" type="search" placeholder="Order, user, asset veya durum ara" aria-label="Ödeme aktivitesi ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-activity-payments-table">
+          <span class="admin-data-count" data-admin-table-count="merchant-activity-payments-table" data-total="{{len .Payments}}" data-label="session">{{len .Payments}} session</span>
+        </div>
+        <div class="adm-wrap rounded-none border-0">
+          <table class="adm-table admin-data-table" id="merchant-activity-payments-table" data-admin-table>
+            <thead>
+              <tr>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Order <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="number">Tutar <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Durum <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Asset <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Tarih <span class="admin-sort-indicator"></span></button></th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Payments}}
+              <tr data-admin-table-row data-search="{{.OrderID}} {{.UserID}} {{.ProductID}} {{.AmountDisplay}} {{.Amount}} {{.Currency}} {{.Status}} {{.SelectedAsset}} {{.SelectedChain}}">
+                <td><strong class="block text-sm text-ink">{{if .OrderID}}{{.OrderID}}{{else}}—{{end}}</strong><small class="block text-muted">{{.UserID}} · {{.ProductID}}</small><code class="block max-w-[240px] truncate">{{.CheckoutURL}}</code></td>
+                <td><strong class="block text-sm text-ink">{{if .AmountDisplay}}{{.AmountDisplay}}{{else}}{{.Amount}} {{.Currency}}{{end}}</strong></td>
+                <td><span class="merchant-status-pill {{if eq .Status "paid"}}is-success{{else if eq .Status "pending"}}is-warning{{else if eq .Status "awaiting_payment"}}is-info{{else}}is-danger{{end}}">{{.Status}}</span></td>
+                <td><strong class="block text-sm text-ink">{{if .SelectedAsset}}{{.SelectedAsset}}{{else}}—{{end}}</strong><small class="block text-muted">{{.SelectedChain}}</small></td>
+                <td><time class="text-xs font-bold text-muted">{{.CreatedAt}}</time></td>
+              </tr>
+              {{else}}
+              <tr><td colspan="5" class="py-8 text-center text-sm text-muted">Henüz ödeme aktivitesi yok.</td></tr>
+              {{end}}
+              <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        {{if gt .ActivityPaymentPage.TotalPages 1}}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3 text-xs font-semibold text-muted">
+          <span>{{.ActivityPaymentPage.From}}–{{.ActivityPaymentPage.To}} / {{.ActivityPaymentPage.Total}} kayıt · sayfa {{.ActivityPaymentPage.Page}}/{{.ActivityPaymentPage.TotalPages}}</span>
+          <div class="pg">
+            {{if .ActivityPaymentPage.HasPrev}}<a href="{{.ActivityPaymentPage.PrevURL}}">‹ Önceki</a>{{else}}<span class="pg-disabled">‹ Önceki</span>{{end}}
+            {{range .ActivityPaymentPage.PageURLs}}{{if .Active}}<span class="pg-active">{{.Page}}</span>{{else}}<a href="{{.URL}}">{{.Page}}</a>{{end}}{{end}}
+            {{if .ActivityPaymentPage.HasNext}}<a href="{{.ActivityPaymentPage.NextURL}}">Sonraki ›</a>{{else}}<span class="pg-disabled">Sonraki ›</span>{{end}}
+          </div>
+        </div>
+        {{end}}
+      </div>
+
+      <div class="merchant-products-view" data-products-panel="deposits" {{if ne .ActivityTab "deposits"}}hidden{{end}}>
+        <div class="admin-data-toolbar">
+          <input class="admin-data-search" type="search" placeholder="Tx, customer, chain veya webhook ara" aria-label="Blockchain deposit ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-activity-deposits-table">
+          <span class="admin-data-count" data-admin-table-count="merchant-activity-deposits-table" data-total="{{len .Activities}}" data-label="deposit">{{len .Activities}} deposit</span>
+        </div>
+        <div class="adm-wrap rounded-none border-0">
+          <table class="adm-table admin-data-table" id="merchant-activity-deposits-table" data-admin-table>
+            <thead>
+              <tr>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Transaction <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Customer <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Status <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Webhook <span class="admin-sort-indicator"></span></button></th>
+                <th><button class="admin-sort-button" type="button" data-admin-sort="text">Timestamp <span class="admin-sort-indicator"></span></button></th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Activities}}
+              <tr data-admin-table-row data-search="{{.Chain}} {{.Symbol}} {{.AmountDisplay}} {{.Hash}} {{.Type}} {{.Status}} {{.ProductID}} {{.UserID}} {{.WebhookStatus}}">
+                <td>
+                  <div class="adm-asset">
+                    {{if .LogoURL}}<img class="adm-coin-icon" src="{{.LogoURL}}" alt="{{.Symbol}}">{{end}}
+                    {{if .ChainLogoURL}}<img class="adm-chain-icon" src="{{.ChainLogoURL}}" alt="{{.Chain}}">{{end}}
+                    <div class="min-w-0">
+                      <strong class="block text-sm text-ink">{{.Chain}} · {{.Symbol}} · {{.AmountDisplay}}</strong>
+                      <code class="block max-w-[260px] truncate">{{.Hash}}</code>
+                      <small class="block text-muted">{{.Type}}</small>
                     </div>
-                  {{end}}
-                </div>
-                <div class="min-w-0">
-                  <strong class="block text-sm font-black text-ink">{{.Chain}} · {{.Symbol}} · {{.AmountDisplay}}</strong>
-                  <code class="mt-1 block truncate text-xs text-muted">{{.Hash}}</code>
-                  <small class="mt-1 block text-xs font-semibold text-muted">{{.Type}} · {{.Status}}</small>
-                </div>
-              </div>
-              <div><span class="block truncate text-sm font-bold text-ink">{{.ProductID}}</span><small class="mt-1 block truncate text-xs font-semibold text-muted">{{.UserID}}</small></div>
-              <div><span class="block text-sm font-bold text-ink">{{.WebhookStatus}}</span><small class="mt-1 block text-xs font-semibold text-muted">{{.WebhookAttempts}} deneme</small></div>
-              <time class="text-xs font-bold leading-5 text-muted">{{.CreatedAt}}</time>
-            </article>
-          {{end}}
+                  </div>
+                </td>
+                <td><strong class="block text-sm text-ink">{{.ProductID}}</strong><small class="block text-muted">{{.UserID}}</small></td>
+                <td><span class="merchant-status-pill {{if eq .Status "confirmed"}}is-success{{else if eq .Status "pending_confirmation"}}is-info{{else if eq .Status "pending"}}is-warning{{else}}is-danger{{end}}">{{.Status}}</span></td>
+                <td><strong class="block text-sm text-ink">{{.WebhookStatus}}</strong><small class="block text-muted">{{.WebhookAttempts}} deneme</small></td>
+                <td><time class="text-xs font-bold text-muted">{{.CreatedAt}}</time></td>
+              </tr>
+              {{else}}
+              <tr><td colspan="5" class="py-8 text-center text-sm text-muted">Henüz zincir işlemi yok.</td></tr>
+              {{end}}
+              <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+            </tbody>
+          </table>
         </div>
-      {{else}}
-        <div class="rounded-3xl border border-dashed border-line bg-wash px-5 py-8 text-center text-sm font-semibold text-muted">Henüz zincir işlemi yok.</div>
-      {{end}}
+      </div>
     </section>
   </section>
 
@@ -479,34 +552,66 @@
       {{end}}
 
       <div class="merchant-products-tabs" role="tablist" aria-label="Products views">
-        <button class="merchant-products-tab" type="button" role="tab" aria-selected="true" data-products-tab="products">Ürünler <span>{{.ProductCount}}</span></button>
-        <button class="merchant-products-tab" type="button" role="tab" aria-selected="false" data-products-tab="links">Linkler <span>{{.PaymentCount}}</span></button>
+        <a class="merchant-products-tab" href="{{.ProductsPanelURL}}" role="tab" aria-selected="{{if or (eq .ProductsTab "") (eq .ProductsTab "products")}}true{{else}}false{{end}}" data-products-tab="products">Ürünler <span>{{.ProductCount}}</span></a>
+        <a class="merchant-products-tab" href="{{.ProductsLinksURL}}" role="tab" aria-selected="{{if eq .ProductsTab "links"}}true{{else}}false{{end}}" data-products-tab="links">Linkler <span>{{.PaymentCount}}</span></a>
       </div>
 
-      <div class="merchant-products-view" data-products-panel="products">
+      <div class="merchant-products-view" data-products-panel="products" {{if eq .ProductsTab "links"}}hidden{{end}}>
         {{if .Products}}
-          <div class="merchant-table-shell">
-            <div class="merchant-product-row merchant-product-head" aria-hidden="true">
-              <span>Ürün</span><span>Tip</span><span>Domain</span><span>Link</span>
-            </div>
-            {{range .Products}}
-              <article class="merchant-product-row">
-                <div class="merchant-product-main">
-                  <div class="merchant-product-avatar">{{.LogoText}}</div>
-                  <div class="min-w-0">
-                    <strong>{{.Name}}</strong>
-                    <small>{{.AmountDisplay}} · {{.Language}}</small>
-                  </div>
-                </div>
-                <div class="merchant-product-meta"><span>{{.LinkTypeLabel}}</span><small>{{.CreatedAt}}</small></div>
-                <div class="merchant-product-meta"><span>{{.Domain}}</span><small>{{if .Description}}{{.Description}}{{else}}Açıklama yok{{end}}</small></div>
-                <div class="merchant-product-actions">
-                  <code id="productLink{{.ID}}">{{.PaymentURL}}</code>
-                  <button class="merchant-row-button" type="button" data-copy-target="productLink{{.ID}}">Kopyala</button>
-                  <button class="merchant-row-button" type="button" data-open-dashboard-modal="payment-link-edit-{{.ID}}">Düzenle</button>
-                </div>
-              </article>
-            {{end}}
+          <div class="admin-data-toolbar merchant-products-data-toolbar">
+            <input class="admin-data-search" type="search" placeholder="Ürün, domain veya tutar ara" aria-label="Payment links ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-products-table">
+            <span class="admin-data-count" data-admin-table-count="merchant-products-table" data-total="{{len .Products}}" data-label="link">{{len .Products}} link</span>
+          </div>
+          <div class="adm-wrap merchant-products-table-wrap">
+            <table class="adm-table admin-data-table merchant-products-table" id="merchant-products-table" data-admin-table>
+              <thead>
+                <tr>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Ürün <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Tip <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Domain <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Tutar <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th>Aksiyon</th>
+                </tr>
+              </thead>
+              <tbody>
+              {{range .Products}}
+                <tr data-admin-table-row data-admin-table-key="{{.ID}}" data-search="{{.Name}} {{.Description}} {{.Domain}} {{.AmountDisplay}} {{.Language}} {{.LinkTypeLabel}} {{.PaymentURL}}">
+                  <td data-sort-value="{{.Name}}">
+                    <span class="adm-asset merchant-product-table-main">
+                      <button class="admin-expand-button" type="button" aria-label="{{.Name}} detayını aç" aria-expanded="false" aria-controls="product-{{.ID}}-details" data-admin-table-toggle="{{.ID}}">
+                        <span aria-hidden="true"></span>
+                      </button>
+                      <span class="merchant-product-avatar">{{.LogoText}}</span>
+                      <strong>{{.Name}}</strong>
+                    </span>
+                    <span class="admin-vault-meta">{{.Language}} · {{.CreatedAt}}</span>
+                  </td>
+                  <td data-sort-value="{{.LinkTypeLabel}}"><span class="merchant-status-pill">{{.LinkTypeLabel}}</span></td>
+                  <td data-sort-value="{{.Domain}}"><span class="text-xs font-semibold text-ink">{{.Domain}}</span></td>
+                  <td data-sort-value="{{.Amount}}"><strong class="text-sm text-ink">{{.AmountDisplay}}</strong></td>
+                  <td>
+                    <div class="merchant-row-actions">
+                      <button class="merchant-row-button" type="button" data-copy-value="{{.PaymentURL}}">Kopyala</button>
+                      <button class="merchant-row-button" type="button" data-open-dashboard-modal="payment-link-edit-{{.ID}}">Düzenle</button>
+                    </div>
+                  </td>
+                </tr>
+                <tr class="admin-vault-detail-row merchant-product-detail-row" id="product-{{.ID}}-details" data-admin-table-detail-for="{{.ID}}" hidden>
+                  <td colspan="5">
+                    <div class="admin-vault-detail merchant-product-detail">
+                      <dl>
+                        <div><dt>Payment URL</dt><dd><code id="productLink{{.ID}}">{{.PaymentURL}}</code></dd></div>
+                        <div><dt>Açıklama</dt><dd>{{if .Description}}{{.Description}}{{else}}Açıklama yok{{end}}</dd></div>
+                        <div><dt>Success URL</dt><dd>{{if .SuccessURL}}<code>{{.SuccessURL}}</code>{{else}}-{{end}}</dd></div>
+                        <div><dt>Cancel URL</dt><dd>{{if .CancelURL}}<code>{{.CancelURL}}</code>{{else}}-{{end}}</dd></div>
+                      </dl>
+                    </div>
+                  </td>
+                </tr>
+              {{end}}
+                <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+              </tbody>
+            </table>
           </div>
         {{else}}
           <div class="merchant-empty-state">
@@ -516,31 +621,72 @@
         {{end}}
       </div>
 
-      <div class="merchant-products-view" data-products-panel="links" hidden>
+      <div class="merchant-products-view" data-products-panel="links" {{if ne .ProductsTab "links"}}hidden{{end}}>
         {{if .Payments}}
-          <div class="merchant-table-shell">
-            <div class="merchant-link-row merchant-product-head" aria-hidden="true">
-              <span>Order</span><span>Tutar</span><span>Durum</span><span>Aksiyon</span>
-            </div>
-            {{range .Payments}}
-              <article class="merchant-link-row">
-                <div class="merchant-product-meta">
-                  <span>{{.OrderID}}</span>
-                  <small>{{.ProductID}} · {{.UserID}}</small>
-                  <code>{{.CheckoutURL}}</code>
-                </div>
-                <div class="merchant-product-meta"><span>{{.AmountDisplay}}</span><small>{{.SelectedAsset}} / {{.SelectedChain}}</small></div>
-                <div class="merchant-product-meta">
-                  <span class="merchant-status-pill {{if eq .Status "paid"}}is-success{{else if eq .Status "pending"}}is-warning{{else if eq .Status "awaiting_payment"}}is-info{{else}}is-danger{{end}}">{{.Status}}</span>
-                  <small>{{.CreatedAt}}</small>
-                </div>
-                <div class="merchant-row-actions">
-                  <button class="merchant-row-button" type="button" data-copy-value="{{.CheckoutURL}}">Linki kopyala</button>
-                  <a class="merchant-row-button" href="{{.InvoiceURL}}" target="_blank">Fatura</a>
-                </div>
-              </article>
-            {{end}}
+          <div class="admin-data-toolbar merchant-products-data-toolbar">
+            <input class="admin-data-search" type="search" placeholder="Order, customer veya status ara" aria-label="Checkout links ara" autocomplete="off" spellcheck="false" data-admin-table-search="merchant-links-table">
+            <span class="admin-data-count" data-admin-table-count="merchant-links-table" data-total="{{len .Payments}}" data-label="link">{{len .Payments}} link</span>
           </div>
+          <div class="adm-wrap merchant-links-table-wrap">
+            <table class="adm-table admin-data-table merchant-links-table" id="merchant-links-table" data-admin-table>
+              <thead>
+                <tr>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Order <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Tutar <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Durum <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th><button class="admin-sort-button" type="button" data-admin-sort="text">Tarih <span class="admin-sort-indicator" aria-hidden="true"></span></button></th>
+                  <th>Aksiyon</th>
+                </tr>
+              </thead>
+              <tbody>
+              {{range .Payments}}
+                <tr data-admin-table-row data-admin-table-key="{{.ID}}" data-search="{{.OrderID}} {{.ProductID}} {{.UserID}} {{.AmountDisplay}} {{.SelectedAsset}} {{.SelectedChain}} {{.Status}} {{.CheckoutURL}} {{.InvoiceURL}}">
+                  <td data-sort-value="{{.OrderID}}">
+                    <span class="adm-asset merchant-link-table-main">
+                      <button class="admin-expand-button" type="button" aria-label="{{.OrderID}} checkout detayını aç" aria-expanded="false" aria-controls="link-{{.ID}}-details" data-admin-table-toggle="{{.ID}}">
+                        <span aria-hidden="true"></span>
+                      </button>
+                      <strong>{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</strong>
+                    </span>
+                    <span class="admin-vault-meta">{{.ProductID}} · {{.UserID}}</span>
+                  </td>
+                  <td data-sort-value="{{.Amount}}"><strong class="text-sm text-ink">{{.AmountDisplay}}</strong><span class="admin-vault-meta">{{.SelectedAsset}} / {{.SelectedChain}}</span></td>
+                  <td data-sort-value="{{.Status}}"><span class="merchant-status-pill {{if eq .Status "paid"}}is-success{{else if eq .Status "pending"}}is-warning{{else if eq .Status "awaiting_payment"}}is-info{{else}}is-danger{{end}}">{{.Status}}</span></td>
+                  <td data-sort-value="{{.CreatedAt}}"><time class="text-xs font-semibold text-muted">{{.CreatedAt}}</time></td>
+                  <td>
+                    <div class="merchant-row-actions">
+                      <button class="merchant-row-button" type="button" data-copy-value="{{.CheckoutURL}}">Checkout</button>
+                      <a class="merchant-row-button" href="{{.InvoiceURL}}" target="_blank">Fatura</a>
+                    </div>
+                  </td>
+                </tr>
+                <tr class="admin-vault-detail-row merchant-link-detail-row" id="link-{{.ID}}-details" data-admin-table-detail-for="{{.ID}}" hidden>
+                  <td colspan="5">
+                    <div class="admin-vault-detail merchant-link-detail">
+                      <dl>
+                        <div><dt>Checkout URL</dt><dd><code>{{.CheckoutURL}}</code></dd></div>
+                        <div><dt>Invoice URL</dt><dd><code>{{.InvoiceURL}}</code></dd></div>
+                        <div><dt>Deposit</dt><dd>{{.DepositAddress}}</dd></div>
+                        <div><dt>Customer</dt><dd>{{.UserID}}</dd></div>
+                      </dl>
+                    </div>
+                  </td>
+                </tr>
+              {{end}}
+                <tr data-admin-table-empty hidden><td colspan="5" class="py-8 text-center text-sm text-muted">Sonuç bulunamadı.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          {{if or .PaymentPage.HasPrev .PaymentPage.HasNext}}
+          <div class="mt-4 flex items-center justify-between gap-3">
+            <span class="text-xs font-semibold text-muted">{{.PaymentPage.From}}-{{.PaymentPage.To}} / {{.PaymentPage.Total}}</span>
+            <div class="flex items-center gap-1">
+              {{if .PaymentPage.HasPrev}}<a href="{{.PaymentPage.PrevURL}}" class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash">Önceki</a>{{end}}
+              {{range .PaymentPage.PageURLs}}<a href="{{.URL}}" class="inline-flex min-h-9 min-w-9 items-center justify-center rounded-full border text-sm font-extrabold {{if .Active}}border-accent bg-accent text-white{{else}}border-line bg-white text-ink hover:bg-wash{{end}}">{{.Page}}</a>{{end}}
+              {{if .PaymentPage.HasNext}}<a href="{{.PaymentPage.NextURL}}" class="inline-flex min-h-9 items-center justify-center rounded-full border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-sm hover:bg-wash">Sonraki</a>{{end}}
+            </div>
+          </div>
+          {{end}}
         {{else}}
           <div class="merchant-empty-state">
             <strong>Henüz invoice veya checkout yok.</strong>
@@ -812,34 +958,68 @@
           <button class="merchant-modal-close" type="button" data-close-dashboard-modal aria-label="Kapat">×</button>
         </div>
         {{if .WithdrawalWallets}}
-        <form class="merchant-modal-form" method="post" action="/merchant/withdrawals">
+        <form class="merchant-modal-form" method="post" action="/merchant/withdrawals" data-withdrawal-form>
           <label>Reserve cüzdan
-            <select name="wallet_id" required>
+            <select name="wallet_id" required data-withdrawal-wallet>
               <option value="">Seçin</option>
               {{range .WithdrawalWallets}}
-                <option value="{{.ID}}">Reserve — {{.Domain}}</option>
+                <option value="{{.ID}}" data-primary="Reserve — {{.Domain}}" data-meta="{{.ShortID}}" data-detail-wallet="{{.ShortID}}" data-detail-domain="{{.Domain}}">Reserve — {{.Domain}}</option>
               {{end}}
             </select>
           </label>
+          <label>Asset
+            {{if .WithdrawalAssets}}
+            <select name="asset" required data-withdrawal-asset>
+              <option value="">Seçin</option>
+              {{range .WithdrawalAssets}}
+                <option value="{{.Value}}"
+                  data-balance-key="{{.AssetKey}}"
+                  data-chain="{{.Chain}}"
+                  data-symbol="{{.Symbol}}"
+                  data-token-address="{{.Token}}"
+                  data-available-raw="{{.AvailableRaw}}"
+                  data-available-input="{{.AvailableInput}}"
+                  data-available-display="{{.AvailableDisplay}}"
+                  data-primary="{{.Symbol}} on {{.ChainLabel}}"
+                  data-meta="{{.AvailableDisplay}} kullanılabilir"
+                  data-chip="{{.DisplayToken}}"
+                  data-search="{{.Symbol}} {{.ChainLabel}} {{.Token}} {{.AvailableDisplay}}">
+                  {{.Label}}
+                </option>
+              {{end}}
+            </select>
+            {{else}}
+            <select disabled data-withdrawal-asset>
+              <option>Bakiyesi olan asset yok</option>
+            </select>
+            {{end}}
+          </label>
+          <input type="hidden" name="chain" data-withdrawal-chain>
+          <input type="hidden" name="symbol" data-withdrawal-symbol>
+          <input type="hidden" name="token_address" data-withdrawal-token-address>
+          <div class="merchant-withdrawal-available">
+            <span>Kullanılabilir</span>
+            <strong data-withdrawal-available-display>Reserve cüzdan ve asset seçin</strong>
+          </div>
+          <div hidden>
+            {{range .WithdrawalWallets}}
+              {{$walletID := .ID}}
+              {{range .Balances}}
+                <span data-withdrawal-balance
+                  data-wallet-id="{{$walletID}}"
+                  data-asset-key="{{.AssetKey}}"
+                  data-symbol="{{.Symbol}}"
+                  data-available-raw="{{.AvailableRaw}}"
+                  data-available-input="{{.Available}}"
+                  data-available-display="{{.Available}} {{.Symbol}}"></span>
+              {{end}}
+            {{end}}
+          </div>
           <div class="merchant-form-grid">
-            <label>Ağ
-              <select name="chain" required>
-                <option value="">Seçin</option>
-                <option value="bitcoin">Bitcoin</option>
-                <option value="ethereum">Ethereum</option>
-                <option value="bnbchain">BNB Chain</option>
-                <option value="base">Base</option>
-                <option value="arbitrum">Arbitrum</option>
-                <option value="avalanche">Avalanche</option>
-                <option value="unichain">Unichain</option>
-                <option value="solana">Solana</option>
-                <option value="tron">TRON</option>
-                <option value="chiliz">Chiliz</option>
-              </select>
-            </label>
             <label>Miktar
-              <input name="amount" type="text" inputmode="decimal" placeholder="0.05" required>
+              <input name="amount" type="text" inputmode="decimal" placeholder="0.05" required data-withdrawal-amount>
             </label>
+            <button class="merchant-row-button merchant-withdrawal-max" type="button" data-withdrawal-max disabled>Max</button>
           </div>
           <label>Alıcı adres
             <input name="to_address" type="text" placeholder="0x... / bc1... / T..." required>
@@ -849,7 +1029,7 @@
           </label>
           <div class="merchant-modal-actions">
             <button class="merchant-row-button" type="button" data-close-dashboard-modal>Vazgeç</button>
-            <button class="merchant-action-button is-primary" type="submit">Talep oluştur</button>
+            <button class="merchant-action-button is-primary" type="submit" {{if not .WithdrawalAssets}}disabled{{end}}>Talep oluştur</button>
           </div>
         </form>
         {{else}}

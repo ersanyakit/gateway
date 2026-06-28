@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function () {
   initAdminRichSelects();
   initAdminDataTables();
   initRecoverFundsBalance();
+  initMerchantWithdrawalBalance();
   initDashboardActiveTabScroll();
 });
 
@@ -272,6 +273,82 @@ function initDashboardActiveTabScroll() {
   window.requestAnimationFrame(function () {
     var left = activeTab.offsetLeft - ((scroller.clientWidth - activeTab.offsetWidth) / 2);
     scroller.scrollTo({ left: Math.max(0, left), behavior: 'auto' });
+  });
+}
+
+function initMerchantWithdrawalBalance() {
+  document.querySelectorAll('[data-withdrawal-form]').forEach(function (form) {
+    var walletSelect = form.querySelector('[data-withdrawal-wallet]');
+    var assetSelect = form.querySelector('[data-withdrawal-asset]');
+    var amountInput = form.querySelector('[data-withdrawal-amount]');
+    var chainInput = form.querySelector('[data-withdrawal-chain]');
+    var symbolInput = form.querySelector('[data-withdrawal-symbol]');
+    var tokenInput = form.querySelector('[data-withdrawal-token-address]');
+    var availableDisplay = form.querySelector('[data-withdrawal-available-display]');
+    var maxButton = form.querySelector('[data-withdrawal-max]');
+    if (!walletSelect || !assetSelect || !amountInput || !availableDisplay || !maxButton) return;
+
+    var balances = {};
+    Array.prototype.slice.call(form.querySelectorAll('[data-withdrawal-balance]')).forEach(function (node) {
+      var walletID = compactText(node.getAttribute('data-wallet-id') || '');
+      var assetKey = normalizeAssetKey(node.getAttribute('data-asset-key') || '');
+      if (!walletID || !assetKey) return;
+      balances[walletID + '::' + assetKey] = {
+        availableRaw: compactText(node.getAttribute('data-available-raw') || ''),
+        availableInput: compactText(node.getAttribute('data-available-input') || ''),
+        availableDisplay: compactText(node.getAttribute('data-available-display') || ''),
+        symbol: compactText(node.getAttribute('data-symbol') || ''),
+      };
+    });
+
+    function selectedOption(select) {
+      if (!select || select.selectedIndex < 0) return null;
+      return select.options[select.selectedIndex] || null;
+    }
+
+    function updateWithdrawalBalance() {
+      var assetOption = selectedOption(assetSelect);
+      var walletID = compactText(walletSelect.value || '');
+      var assetKey = assetOption ? normalizeAssetKey(assetOption.getAttribute('data-balance-key') || '') : '';
+
+      if (chainInput) chainInput.value = assetOption ? compactText(assetOption.getAttribute('data-chain') || '') : '';
+      if (symbolInput) symbolInput.value = assetOption ? compactText(assetOption.getAttribute('data-symbol') || '') : '';
+      if (tokenInput) tokenInput.value = assetOption ? compactText(assetOption.getAttribute('data-token-address') || '') : '';
+
+      var balance = walletID && assetKey ? balances[walletID + '::' + assetKey] : null;
+      maxButton.disabled = true;
+      maxButton.removeAttribute('data-max-amount');
+      maxButton.removeAttribute('data-max-raw');
+
+      if (!walletID || !assetOption || !assetOption.value) {
+        availableDisplay.textContent = 'Reserve cüzdan ve asset seçin';
+        return;
+      }
+      if (!balance) {
+        availableDisplay.textContent = 'Bu reserve cüzdanda seçili asset için kullanılabilir bakiye yok';
+        return;
+      }
+
+      availableDisplay.textContent = balance.availableDisplay || '0 ' + (balance.symbol || '');
+      if (isPositiveIntegerString(balance.availableRaw) && isPositiveDecimalString(balance.availableInput)) {
+        maxButton.disabled = false;
+        maxButton.setAttribute('data-max-amount', balance.availableInput);
+        maxButton.setAttribute('data-max-raw', balance.availableRaw);
+      }
+    }
+
+    walletSelect.addEventListener('change', updateWithdrawalBalance);
+    assetSelect.addEventListener('change', updateWithdrawalBalance);
+    maxButton.addEventListener('click', function () {
+      var maxAmount = maxButton.getAttribute('data-max-amount') || '';
+      if (!maxAmount) return;
+      amountInput.value = maxAmount;
+      amountInput.dispatchEvent(new Event('input', { bubbles: true }));
+      amountInput.dispatchEvent(new Event('change', { bubbles: true }));
+      amountInput.focus();
+    });
+
+    updateWithdrawalBalance();
   });
 }
 
@@ -1080,6 +1157,12 @@ function normalizeAssetKey(value) {
 function isPositiveIntegerString(value) {
   var raw = compactText(value);
   return /^[0-9]+$/.test(raw) && raw.replace(/^0+/, '') !== '';
+}
+
+function isPositiveDecimalString(value) {
+  var raw = compactText(value);
+  if (!/^(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)$/.test(raw)) return false;
+  return raw.replace(/[.0]/g, '') !== '';
 }
 
 function readOption(option) {

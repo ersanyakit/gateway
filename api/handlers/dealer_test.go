@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"html/template"
 	"math/big"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"core/asset"
+	"core/blockchain"
 	"core/constants"
 	"core/models"
 	"core/repositories"
@@ -128,6 +130,7 @@ func TestAdminRoleCanMutateHighRiskActions(t *testing.T) {
 		{"", true},
 		{"owner", true},
 		{"admin", true},
+		{"security", true},
 		{"operator", false},
 		{"viewer", false},
 	} {
@@ -856,13 +859,35 @@ func TestAdminSweepLiveBalanceSourceContract(t *testing.T) {
 		`parseAdminAssetSelection(deps.AssetRegistry, c.Query("asset"))`,
 		"repositories.WalletAddressForChainID(*wallet, chainID)",
 		"deps.Blockchains.GetChainByID(chainID)",
-		"chain.BatchBalances(ctx, []string{address}, 1)",
-		"adminLiveBalanceRaw(result.Balance, selectedAsset)",
+		"adminLiveBalanceRawForAsset(ctx, chain, address, selectedAsset)",
 		`"result":      "success"`,
 		`"balance_raw": raw`,
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("live balance contract missing %q", token)
+		}
+	}
+
+	helperBody := extractHandlerFunctionBody(t, source, "adminLiveBalanceRawForAsset")
+	for _, token := range []string{
+		"selected.GetChainType() == asset.ChainEVM",
+		"adminLiveEVMTokenBalanceRaw(ctx, chain, address, selected)",
+		"chain.BatchBalances(ctx, []string{address}, 1)",
+		"adminLiveBalanceRaw(result.Balance, selected)",
+	} {
+		if !strings.Contains(helperBody, token) {
+			t.Fatalf("live balance helper contract missing %q", token)
+		}
+	}
+
+	evmBody := extractHandlerFunctionBody(t, source, "adminLiveEVMTokenBalanceRaw")
+	for _, token := range []string{
+		"asset.TokenAddress(selected)",
+		"erc20.NewERC20Caller",
+		"caller.BalanceOf",
+	} {
+		if !strings.Contains(evmBody, token) {
+			t.Fatalf("EVM token live balance helper missing %q", token)
 		}
 	}
 }
@@ -886,6 +911,88 @@ func TestAdminLiveBalanceRawSelectsNativeAndTokenComponents(t *testing.T) {
 		t.Fatal("expected over-precision token balance to be rejected")
 	}
 }
+
+func TestAdminLiveBalanceRawForAssetUsesBatchBalancesForNative(t *testing.T) {
+	chain := &adminLiveBalanceTestChain{
+		id:      constants.Ethereum,
+		name:    "ethereum",
+		results: []models.BalanceResult{{Address: "0x1111111111111111111111111111111111111111", Balance: "ETH:1.25 | WETH:0"}},
+	}
+	raw, err := adminLiveBalanceRawForAsset(context.Background(), chain, "0x1111111111111111111111111111111111111111", asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw != "1250000000000000000" {
+		t.Fatalf("raw = %q, want 1250000000000000000", raw)
+	}
+	if chain.batchCalls != 1 {
+		t.Fatalf("BatchBalances calls = %d, want 1", chain.batchCalls)
+	}
+}
+
+func TestAdminLiveBalanceRawForAssetRejectsInvalidEVMTokenContractBeforeRPC(t *testing.T) {
+	chain := &adminLiveBalanceTestChain{id: constants.Arbitrum, name: "arbitrum"}
+	_, err := adminLiveBalanceRawForAsset(context.Background(), chain, "0x1111111111111111111111111111111111111111", asset.NewERC20(constants.Arbitrum, "not-a-contract", "USDC", "USD Coin", 6))
+	if err == nil {
+		t.Fatal("expected invalid token contract error")
+	}
+	if chain.batchCalls != 0 {
+		t.Fatalf("BatchBalances calls = %d, want 0", chain.batchCalls)
+	}
+}
+
+type adminLiveBalanceTestChain struct {
+	id         constants.ChainID
+	name       string
+	results    []models.BalanceResult
+	batchCalls int
+}
+
+func (c *adminLiveBalanceTestChain) ChainID() constants.ChainID { return c.id }
+func (c *adminLiveBalanceTestChain) Name() string               { return c.name }
+func (c *adminLiveBalanceTestChain) WSS() []string              { return nil }
+func (c *adminLiveBalanceTestChain) RPCs() []string             { return nil }
+func (c *adminLiveBalanceTestChain) Create(context.Context) (*blockchain.WalletDetails, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) CreateHDWallet(context.Context, int, int) (*blockchain.WalletDetails, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) Deposit(context.Context, blockchain.WalletDetails, string, string) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) Withdraw(context.Context, blockchain.WalletDetails, string, string) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) WithdrawToken(context.Context, blockchain.WalletDetails, string, string, string) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) Sweep(context.Context, blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) SweepTo(context.Context, blockchain.WalletDetails, string) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) SweepERC20To(context.Context, blockchain.WalletDetails, string, string) (*blockchain.TransactionResult, error) {
+	return nil, nil
+}
+func (c *adminLiveBalanceTestChain) PrefundGas(context.Context, blockchain.WalletDetails, string) (bool, error) {
+	return false, nil
+}
+func (c *adminLiveBalanceTestChain) ValidateAddress(string) bool { return true }
+func (c *adminLiveBalanceTestChain) AddWorker(blockchain.Worker) error {
+	return nil
+}
+func (c *adminLiveBalanceTestChain) RemoveWorker(blockchain.Worker) error {
+	return nil
+}
+func (c *adminLiveBalanceTestChain) WorkerCount() int { return 0 }
+func (c *adminLiveBalanceTestChain) BatchBalances(context.Context, []string, int) []models.BalanceResult {
+	c.batchCalls++
+	return c.results
+}
+func (c *adminLiveBalanceTestChain) StartWorkers(context.Context) error { return nil }
+func (c *adminLiveBalanceTestChain) StopWorkers() error                 { return nil }
 
 func TestAdminRecoverNetAmountRawDeductsNativeFees(t *testing.T) {
 	t.Setenv("TRON_NATIVE_SWEEP_FEE_SUN", "1100000")

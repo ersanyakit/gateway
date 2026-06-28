@@ -103,7 +103,7 @@ func TestDealerViewsRender(t *testing.T) {
 		}
 		if view == "dealer/dashboard" {
 			output := buf.String()
-			for _, expected := range []string{"Bitcoin", "TRON", "Coin bazında konsolide treasury", "Solana", "SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan"} {
+			for _, expected := range []string{"Bitcoin", "TRON", "Coin bazında konsolide treasury", "Solana", "SOL", "50", "dealer.login", "127.0.0.1", "2026-06-02 12:00:00.000 UTC", "/merchant/dashboard/rescan", "/merchant/rescan", `aria-label="Activity views"`, `data-products-tab="audit"`, `data-products-tab="payments"`, `data-products-tab="deposits"`, `merchant-audit-table`, `merchant-activity-payments-table`, `merchant-activity-deposits-table`} {
 				if !strings.Contains(output, expected) {
 					t.Fatalf("%s output missing %q", view, expected)
 				}

@@ -227,6 +227,7 @@ func NewRouter(db *gorm.DB) *Router {
 		r.fiber.Post(prefix+"/register", handlers.HandleDealerRegisterSubmit(dealerDeps))
 		r.fiber.Get(prefix, handlers.HandleDealerDashboard(dealerDeps))
 		r.fiber.Get(prefix+"/dashboard", handlers.HandleDealerDashboard(dealerDeps))
+		r.fiber.Get(prefix+"/dashboard/:section/:subsection", handlers.HandleDealerDashboard(dealerDeps))
 		r.fiber.Get(prefix+"/dashboard/:section", handlers.HandleDealerDashboard(dealerDeps))
 		r.fiber.Get(prefix+"/domains", handlers.HandleDealerDashboard(dealerDeps))
 		r.fiber.Post(prefix+"/domains", handlers.HandleDealerDomainCreate(r.MerchantService, r.DomainService, r.ActivityLogRepo))

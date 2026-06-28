@@ -174,13 +174,38 @@ func (r *AdminRepo) EnsureOIDCAdmin(ctx context.Context, email, name string) (*m
 func (r *AdminRepo) EnsureBootstrapAdmin(ctx context.Context, email, name, rawPassword string) (*models.Admin, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	name = strings.TrimSpace(name)
-	var created *models.Admin
+	var changed *models.Admin
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Model(&models.Admin{}).Count(&count).Error; err != nil {
 			return err
 		}
 		if count > 0 {
+			var privilegedCount int64
+			if err := tx.Model(&models.Admin{}).
+				Where("is_active = ? AND lower(role) IN ?", true, []string{"", "admin", models.AdminRoleOwner, models.AdminRoleSecurity}).
+				Count(&privilegedCount).Error; err != nil {
+				return err
+			}
+			if privilegedCount > 0 || email == "" {
+				return nil
+			}
+			var existing models.Admin
+			if err := tx.Where("email = ? AND is_active = ?", email, true).First(&existing).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			now := time.Now()
+			if err := tx.Model(&models.Admin{}).
+				Where("id = ?", existing.ID).
+				Updates(map[string]any{"role": models.AdminRoleOwner, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			existing.Role = models.AdminRoleOwner
+			existing.UpdatedAt = now
+			changed = &existing
 			return nil
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(rawPassword), bcrypt.DefaultCost)
@@ -200,10 +225,10 @@ func (r *AdminRepo) EnsureBootstrapAdmin(ctx context.Context, email, name, rawPa
 		if err := tx.Create(admin).Error; err != nil {
 			return err
 		}
-		created = admin
+		changed = admin
 		return nil
 	})
-	return created, err
+	return changed, err
 }
 
 func decryptAdminTOTPSecret(admin *models.Admin) {
