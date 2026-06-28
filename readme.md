@@ -87,84 +87,126 @@ Desteklenen ağlar:
 - Go `1.25.4`
 - PostgreSQL
 - Node.js ve npm (Tailwind CSS çıktısını üretmek için)
+- Git submodule desteği ve Trust Wallet Core kaynak kodu
 - Trust Wallet Core native library build'i (CGo, clang/cmake ve `scripts/build_wallet_core.sh`)
 - Chain listener'ların sağlıklı çalışması için ilgili ağlara RPC erişimi
 
 ## Kurulum
 
-Repoyu submodule'lerle birlikte çekin ya da mevcut clone içinde Trust Wallet Core submodule'ünü başlatın:
+Repoyu Trust Wallet Core submodule'üyle birlikte çekin:
 
 ```bash
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules <repo-url> gateway
 cd gateway
+```
 
-# Repo daha önce normal git clone ile çekildiyse:
+Repo daha önce normal `git clone` ile çekildiyse veya submodule klasörü boş geldiyse şu komutu çalıştırın:
+
+```bash
 git submodule update --init --recursive third_party/trustwallet/wallet-core
 ```
 
-Go bağımlılıklarını indirin:
+Mevcut clone içinde submodule URL bilgisini yenilemek gerekirse:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive third_party/trustwallet/wallet-core
+```
+
+Submodule hazır olduğunda şu dosya mevcut olmalıdır:
+
+```bash
+test -f third_party/trustwallet/wallet-core/samples/go/go.mod
+```
+
+`go.mod` içinde `replace tw => ./third_party/trustwallet/wallet-core/samples/go` bulunduğu için submodule başlatılmadan `go mod download`, `go test` veya `go run .` çalıştırıldığında şu hata alınır:
+
+```text
+tw@v0.0.0: replacement directory ./third_party/trustwallet/wallet-core/samples/go does not exist
+```
+
+Bu durumda çözüm fallback kullanmak değil, submodule'ü başlatmaktır:
+
+```bash
+git submodule update --init --recursive third_party/trustwallet/wallet-core
+```
+
+Trust Wallet Core bu projede zorunludur. Mnemonic doğrulama, HD private key türetme, zincir adresi üretimi ve para hareketi imzalama yolları Trust Wallet Core üzerinden yürür. `walletcorefallback` build tag'i sadece dar kapsamlı lokal debug içindir; ödeme, withdrawal, refund, sweep veya production çalıştırma için kullanılmamalıdır.
+
+Bağımlılıkları kurun ve native Trust Wallet Core library dosyalarını üretin:
 
 ```bash
 go mod download
 npm install
-```
-
-Trust Wallet Core native library dosyalarını üretin. Cüzdan mnemonic doğrulama, HD private key türetme, adres üretimi ve ilgili signing yolları Trust Wallet Core'a bağlıdır:
-
-```bash
 ./scripts/build_wallet_core.sh
-```
-
-Tailwind CSS dosyasını üretin:
-
-```bash
 npm run build:css
 ```
 
-Minimum `.env` örneği:
+`./scripts/build_wallet_core.sh` macOS'ta `tools/install-sys-dependencies-mac`, Linux'ta `tools/install-sys-dependencies-linux` çalıştırır; ardından Trust Wallet dependency, Rust dependency, native generated file ve CMake build adımlarını yürütür. Build tamamlanmadan wallet üretimi veya transfer signing beklenmemelidir.
+
+`.env` dosyasını hazırlayın:
+
+```bash
+cp .env.sample .env
+```
+
+Lokal minimum `.env` örneği:
 
 ```env
-DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
-PORT=:4001
+DATABASE_URL="host=127.0.0.1 port=5432 user=postgres password=postgres dbname=gateway sslmode=disable"
+PORT=":3001"
 APP_ENV=development
 GATEWAY_LOG_FORMAT=text
 GATEWAY_LOG_LEVEL=info
 HTTP_READ_TIMEOUT=15s
 HTTP_WRITE_TIMEOUT=30s
 HTTP_IDLE_TIMEOUT=60s
-CORS_ALLOWED_ORIGINS=http://localhost:4001
+CORS_ALLOWED_ORIGINS=http://localhost:3001
 ALLOW_PRIVATE_WEBHOOK_URLS=true
 ALLOW_AUTOMIGRATE_IN_PRODUCTION=false
 SIGNER_MODE=software
 ALLOW_SOFTWARE_SIGNER_IN_PRODUCTION=false
 METRICS_BEARER_TOKEN=
-PORTAL_JWT_SECRET=32-byte-or-longer-portal-jwt-secret
 MASTER_KEY=32-byte-or-longer-secret
+PORTAL_JWT_SECRET=32-byte-or-longer-portal-jwt-secret
 MNEMONIC_PHRASE="your bip39 mnemonic phrase"
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=change-this-password
 ADMIN_NAME=Gateway Admin
+TRON_GRPC_ENDPOINTS=grpc.trongrid.io:50051
 ```
 
-Veritabanı migration'larını çalıştırın:
+Veritabanını migrate edin:
 
 ```bash
-go run main.go -migrate
+go run . -migrate
+```
+
+Seed datalarını eklemek için:
+
+```bash
+go run . -seed
 ```
 
 Migration ve seed işlemini birlikte çalıştırmak için:
 
 ```bash
-go run main.go -install
+go run . -install
 ```
 
 Uygulamayı başlatın:
 
 ```bash
-go run main.go
+go run .
 ```
 
-`PORT` değeri Fiber formatında verilmelidir. Örnek: `:4001`.
+Geçici port override örneği:
+
+```bash
+PORT=:3001 go run .
+```
+
+`go run .` uygulama başlangıcında `.env` dosyasını yükler. Shell içinde daha önce set edilmiş environment değerleri `.env` değerlerinin önüne geçer. `PORT` değeri Fiber formatında verilmelidir; örnek: `:3001`.
 
 ## Ortam Değişkenleri
 
