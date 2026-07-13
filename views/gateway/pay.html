@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gateway Pay</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/checkout.js" defer></script>
+</head>
+<body class="crypto-page crypto-payment-flow crypto-pay-page">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="{{.CheckoutURL}}">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Gateway Pay</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Secure checkout{{else}}Güvenli ödeme{{end}}</span>
+        </span>
+      </a>
+      <div class="crypto-header-tools">
+        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
+          <span class="crypto-lang-options">
+            <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" lang="tr" hreflang="tr" aria-label="Türkçe" {{if not .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/tr.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">Türkçe</span></a>
+            <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" lang="en" hreflang="en" aria-label="English" {{if .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/gb.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">English</span></a>
+          </span>
+        </nav>
+        <div class="crypto-steps" aria-label="Checkout progress">
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot active"></span>
+        </div>
+      </div>
+    </header>
+
+    <section class="crypto-card">
+      <div class="crypto-stack">
+        {{if .ProductName}}
+        <div class="crypto-product-strip compact">
+          {{if .ProductLogoURL}}<img class="crypto-product-logo compact" src="{{.ProductLogoURL}}" alt="">{{else}}<div class="crypto-product-avatar compact">{{printf "%.1s" .ProductName}}</div>{{end}}
+          <div class="crypto-product-copy">
+            <strong class="crypto-product-title">{{.ProductName}}</strong>
+            {{if .ProductDescription}}<p class="crypto-product-description">{{.ProductDescription}}</p>{{end}}
+          </div>
+        </div>
+        {{end}}
+        <div class="crypto-flex-between crypto-align-start crypto-payment-summary-bar">
+          <div>
+            <p class="crypto-label">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Send your chosen amount{{else}}İstediğiniz tutarı gönderin{{end}}{{else}}{{if .IsEnglish}}Send exactly{{else}}Tam olarak gönder{{end}}{{end}}{{else}}{{if .IsEnglish}}Payment status{{else}}Ödeme durumu{{end}}{{end}}</p>
+            <div class="crypto-send-amount">{{if .CheckoutState.Payable}}{{if .IsDonation}}{{if .IsEnglish}}Chosen amount{{else}}İstediğiniz tutar{{end}} {{.Session.SelectedSymbol}}{{else}}{{.AmountDisplay}}{{end}}{{else}}{{.StatusTitle}}{{end}}</div>
+            <p class="crypto-muted">{{if .IsEnglish}}Order{{else}}Sipariş{{end}} {{.Session.OrderID}}{{if not .IsDonation}} · {{.Session.Amount}} {{.Session.Currency}}{{end}}</p>
+          </div>
+          {{if .IsDonation}}
+          <div class="crypto-timer crypto-no-expiry">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 12c1.4-2 2.7-3 4-3s2.6 1 4 3c-1.4 2-2.7 3-4 3s-2.6-1-4-3z"></path></svg>
+            <span>{{if .IsEnglish}}No expiry{{else}}Süresiz{{end}}</span>
+          </div>
+          {{else}}
+          <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+            <span>--:--</span>
+          </div>
+          {{end}}
+        </div>
+
+        <section class="crypto-status-box {{.StatusMode}}" id="statusLabel" data-checkout-status="{{.CheckoutState.Status}}">
+          <span class="crypto-status-orb" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"></path><path d="M1.42 9a16 16 0 0 1 21.16 0"></path><path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path><path d="M12 20h.01"></path></svg>
+          </span>
+          <span>
+            <strong id="statusTitle">{{.StatusTitle}}</strong>
+            <small id="statusBody">{{.StatusBody}}</small>
+          </span>
+          {{if not .CheckoutState.Terminal}}<span class="crypto-bouncing-dots"><i></i><i></i><i></i></span>{{end}}
+        </section>
+
+        {{if and (not .CheckoutState.Terminal) (not .IsDonation)}}
+        <div class="crypto-progress-bar" data-payable-action><span data-progress-fill data-countdown-unix="{{.ExpiresAtUnix}}"></span></div>
+        {{end}}
+
+        {{if not .CheckoutState.Terminal}}
+        <section class="crypto-payment-board" data-payable-action>
+          <div class="crypto-payment-qr-pane">
+            <section class="crypto-qr-wrap">
+              <div class="crypto-qr-outer">
+                <img src="{{.QRCodeURL}}" alt="Payment QR">
+                {{if .SelectedAssetLogoURL}}
+                  <span class="crypto-qr-logo" style="background:#fff;padding:4px;">
+                    <img src="{{.SelectedAssetLogoURL}}" alt="{{.Session.SelectedSymbol}}" style="width:26px;height:26px;object-fit:contain;">
+                  </span>
+                {{else}}
+                  <span class="crypto-qr-logo">{{.Session.SelectedSymbol}}</span>
+                {{end}}
+              </div>
+              <span class="crypto-net-pill">
+                {{if .ChainLogoURL}}<img src="{{.ChainLogoURL}}" alt="{{.ChainName}}" style="width:14px;height:14px;object-fit:contain;border-radius:3px;margin-right:4px;">{{else}}<i></i>{{end}}
+                {{.ChainName}}
+              </span>
+            </section>
+          </div>
+
+          <div class="crypto-payment-detail-pane">
+            <section class="crypto-copy-section">
+              <div class="crypto-copy-header">
+                <p class="crypto-label">{{if .IsEnglish}}Wallet address{{else}}Wallet adresi{{end}}</p>
+                <button class="crypto-copy-btn" type="button" data-copy-target="depositAddress">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+                </button>
+              </div>
+              <code class="crypto-copy-value" id="depositAddress">{{.Session.DepositAddress}}</code>
+            </section>
+
+            {{if not .IsDonation}}
+            <section class="crypto-copy-section">
+              <div class="crypto-copy-header">
+                <p class="crypto-label">{{if .IsEnglish}}Exact amount{{else}}Tam tutar{{end}}</p>
+                <button class="crypto-copy-btn" type="button" data-copy-value="{{.AmountDisplay}}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+                </button>
+              </div>
+              <code class="crypto-copy-value no-bg">{{.AmountDisplay}}</code>
+            </section>
+            {{end}}
+
+            <details class="crypto-uri-details">
+              <summary>Payment URI</summary>
+              <div class="crypto-copy-header">
+                <span></span>
+                <button class="crypto-copy-btn" type="button" data-copy-value="{{.PaymentURI}}">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  {{if .IsEnglish}}Copy{{else}}Kopyala{{end}}
+                </button>
+              </div>
+              <code class="crypto-copy-value">{{.PaymentURI}}</code>
+            </details>
+          </div>
+        </section>
+
+        <section class="crypto-warning" data-payable-action>
+          <span>!</span>
+          <p>{{if .IsEnglish}}Send only{{else}}Sadece{{end}} <strong>{{.Session.SelectedSymbol}}</strong> {{if .IsEnglish}}on the{{else}}assetini{{end}} <strong>{{.ChainName}}</strong> {{if .IsEnglish}}network. Sending other assets may result in permanent loss.{{else}}network üzerinde gönder. Farklı asset göndermek kalıcı kayba yol açabilir.{{end}}</p>
+        </section>
+
+        <div class="crypto-actions" data-payable-action>
+          <button class="crypto-primary-btn" type="button" data-copy-target="depositAddress">{{if .IsEnglish}}Copy address{{else}}Adresi kopyala{{end}}</button>
+          <form method="post" action="{{.ChangeAssetURL}}">
+            <button class="crypto-ghost-btn" type="submit">{{if .IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</button>
+          </form>
+          <form method="post" action="{{.CancelURL}}">
+            <button class="crypto-ghost-btn" type="submit">{{if .IsEnglish}}Cancel{{else}}İptal{{end}}</button>
+          </form>
+        </div>
+        {{else}}
+        <section class="crypto-summary-card">
+          <div class="crypto-summary-body">
+            <div class="crypto-summary-row"><span>{{if .IsDonation}}{{if .IsEnglish}}Amount{{else}}Tutar{{end}}{{else}}{{if .IsEnglish}}Expected amount{{else}}Beklenen tutar{{end}}{{end}}</span><strong>{{if .IsDonation}}{{if .CheckoutState.Paid}}{{.AmountDisplay}}{{else}}{{if .IsEnglish}}Payer decides{{else}}Ödeyen belirler{{end}}{{end}}{{else}}{{.AmountDisplay}}{{end}}</strong></div>
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Network{{else}}Network{{end}}</span><strong>{{.ChainName}}</strong></div>
+            <div class="crypto-summary-row"><span>{{if .IsEnglish}}Order{{else}}Siparis{{end}}</span><strong>{{.Session.OrderID}}</strong></div>
+          </div>
+        </section>
+        {{end}}
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function setPaymentStatus(mode, title, body, isTerminalMode) {
+      var status = document.getElementById("statusLabel");
+      var statusTitle = document.getElementById("statusTitle");
+      var statusBody = document.getElementById("statusBody");
+      if (!status || !statusTitle || !statusBody) return;
+      var waitIndicator = status.querySelector(".crypto-bouncing-dots");
+      isTerminalMode = isTerminalMode === true;
+      status.className = "crypto-status-box " + mode;
+      status.setAttribute("data-checkout-status", mode);
+      status.classList.toggle("is-terminal", isTerminalMode);
+      statusTitle.textContent = title;
+      statusBody.textContent = body;
+      if (waitIndicator) {
+        waitIndicator.hidden = isTerminalMode;
+      }
+    }
+
+    function setPaymentAvailability(isPayable, isTerminal) {
+      isPayable = isPayable === true;
+      isTerminal = isTerminal === true;
+      document.body.classList.toggle("checkout-terminal", isTerminal);
+      document.querySelectorAll("[data-payable-action]").forEach(function (action) {
+        action.hidden = !isPayable || isTerminal;
+      });
+    }
+
+    function handlePaymentPayload(data) {
+      if (!data) return false;
+      var isTerminal = data.terminal === true;
+      var isPayable = data.payable === true;
+      setPaymentAvailability(isPayable, isTerminal);
+      if (data.paid) {
+        setPaymentStatus(
+          "paid",
+          "{{if .IsEnglish}}Payment confirmed{{else}}Ödeme onaylandı{{end}}",
+          "{{if .IsEnglish}}Redirecting to the success page.{{else}}Başarı sayfasına yönlendiriliyorsun.{{end}}",
+          true
+        );
+        window.location.href = data.success_path || "/checkout/{{.Session.SessionToken}}/return/success";
+        return true;
+      }
+      if (data.status === "confirming") {
+        setPaymentStatus(
+          "confirming",
+          "{{if .IsEnglish}}Payment confirming{{else}}Ödeme onaylanıyor{{end}}",
+          "{{if .IsEnglish}}A transaction was detected and is waiting for final settlement.{{else}}İşlem algılandı ve final onay bekleniyor.{{end}}",
+          false
+        );
+        return false;
+      }
+      if (data.status === "active" || data.status === "pending") {
+        setPaymentStatus(
+          "detecting",
+          "{{if .IsEnglish}}Waiting for payment{{else}}Ödeme bekleniyor{{end}}",
+          "{{if .IsDonation}}{{if .IsEnglish}}Choose the amount in your wallet and send it to the address below.{{else}}Tutarı wallet uygulamanızda belirleyip aşağıdaki adrese gönderin.{{end}}{{else}}{{if .IsEnglish}}Send the exact amount to the address below.{{else}}Tam tutarı aşağıdaki adrese gönder.{{end}}{{end}}",
+          false
+        );
+        return false;
+      }
+      if (data.status === "partial_paid" && isPayable && !isTerminal) {
+        setPaymentStatus(
+          "partial_paid",
+          "{{if .IsEnglish}}Partial payment received{{else}}Kısmi ödeme alındı{{end}}",
+          "{{if .IsEnglish}}The received amount is being added to this checkout. Send the remaining amount to complete the payment.{{else}}Alınan tutar bu checkout'a ekleniyor. Ödemeyi tamamlamak için kalan tutarı gönderin.{{end}}",
+          false
+        );
+        return false;
+      }
+      if (isTerminal) {
+        var terminalTitle = data.status === "underpaid"
+          ? "{{if .IsEnglish}}Underpaid{{else}}Eksik ödeme{{end}}"
+          : data.status === "overpaid"
+          ? "{{if .IsEnglish}}Overpaid{{else}}Fazla ödeme{{end}}"
+          : data.status === "partial_paid"
+          ? "{{if .IsEnglish}}Partial payment{{else}}Kısmi ödeme{{end}}"
+          : "{{if .IsEnglish}}Payment {{else}}Ödeme {{end}}" + data.status;
+        var terminalBody = data.status === "underpaid"
+          ? "{{if .IsEnglish}}The received amount is below the expected amount.{{else}}Alınan tutar beklenen tutarın altında.{{end}}"
+          : data.status === "overpaid"
+          ? "{{if .IsEnglish}}The received amount is above the expected amount. The merchant may need to review it.{{else}}Alınan tutar beklenen tutarın üstünde. Üye işyeri incelemesi gerekebilir.{{end}}"
+          : data.status === "partial_paid"
+          ? "{{if .IsEnglish}}Only part of the expected amount was received.{{else}}Beklenen tutarın yalnızca bir kısmı alındı.{{end}}"
+          : "{{if .IsEnglish}}This checkout can no longer receive a payment.{{else}}Bu checkout artık ödeme alamaz.{{end}}";
+        setPaymentStatus(
+          data.status,
+          terminalTitle,
+          terminalBody,
+          true
+        );
+        if (data.result_path) {
+          window.location.href = data.result_path;
+        }
+        return true;
+      }
+      return false;
+    }
+
+    (function connectPaymentSocket() {
+      if (!("WebSocket" in window)) return;
+      var closedByPage = false;
+      var wsURL = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/checkout/{{.Session.SessionToken}}/ws";
+      var socket = new WebSocket(wsURL);
+
+      socket.addEventListener("open", function () {
+        setPaymentStatus(
+          "detecting",
+          "{{if .IsEnglish}}Waiting for payment...{{else}}Ödeme bekleniyor...{{end}}",
+          "{{if .IsDonation}}{{if .IsEnglish}}Live connection is active. Send the amount you choose now.{{else}}Canlı bağlantı aktif. Seçtiğiniz tutarı şimdi gönderin.{{end}}{{else}}{{if .IsEnglish}}Live connection is active. Send the exact amount now.{{else}}Canlı bağlantı aktif. Tam tutarı şimdi gönder.{{end}}{{end}}",
+          false
+        );
+      });
+
+      socket.addEventListener("message", function (event) {
+        try {
+          var data = JSON.parse(event.data);
+          if (handlePaymentPayload(data)) {
+            closedByPage = true;
+            socket.close();
+          }
+        } catch (e) {}
+      });
+
+      socket.addEventListener("close", function () {
+        if (closedByPage) return;
+        setPaymentStatus(
+          "offline",
+          "{{if .IsEnglish}}Live connection reconnecting{{else}}Canlı bağlantı yeniden kuruluyor{{end}}",
+          "{{if .IsEnglish}}Polling fallback is still checking this payment.{{else}}Yedek kontrol bu ödemeyi takip etmeye devam ediyor.{{end}}",
+          false
+        );
+        window.setTimeout(connectPaymentSocket, 3000);
+      });
+    })();
+
+    async function pollStatus() {
+      try {
+        var response = await fetch("/checkout/{{.Session.SessionToken}}/status.json", { cache: "no-store" });
+        var data = await response.json();
+        if (handlePaymentPayload(data)) {
+          return;
+        }
+      } catch (e) {}
+      window.setTimeout(pollStatus, 5000);
+    }
+    pollStatus();
+  </script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+groups:
+  - name: gateway-money-path
+    rules:
+      - alert: GatewayChainStateStale
+        expr: max by (chain, chain_id) (gateway_chain_state_age_seconds) > 600
+        for: 5m
+        labels:
+          severity: page
+          domain: money-path
+        annotations:
+          summary: "Gateway chain scanner state is stale"
+          runbook_url: "docs/money-path-observability-runbook.md#chain-lag-or-provider-outage"
+
+      - alert: GatewayProviderLag
+        expr: max by (chain, chain_id, provider_hash) (gateway_provider_lag_blocks) > 25
+        for: 5m
+        labels:
+          severity: page
+          domain: money-path
+        annotations:
+          summary: "Gateway provider lag is above threshold"
+          runbook_url: "docs/money-path-observability-runbook.md#chain-lag-or-provider-outage"
+
+      - alert: GatewayWebhookBacklog
+        expr: sum by (status) (gateway_webhook_delivery_backlog{status=~"pending|failed"}) > 100
+        for: 10m
+        labels:
+          severity: ticket
+          domain: webhook
+        annotations:
+          summary: "Gateway webhook delivery backlog is growing"
+          runbook_url: "docs/money-path-observability-runbook.md#webhook-backlog-or-dead-letter"
+
+      - alert: GatewayWebhookDeadLetters
+        expr: sum(gateway_webhook_delivery_backlog{status="dead_letter"}) > 0
+        for: 1m
+        labels:
+          severity: page
+          domain: webhook
+        annotations:
+          summary: "Gateway webhook delivery has dead-letter rows"
+          runbook_url: "docs/money-path-observability-runbook.md#webhook-backlog-or-dead-letter"
+
+      - alert: GatewaySignerNotReady
+        expr: gateway_production_signer_ready == 0 or gateway_signer_adapter_ready == 0
+        for: 2m
+        labels:
+          severity: page
+          domain: signer
+        annotations:
+          summary: "Gateway signer readiness is failing"
+          runbook_url: "docs/money-path-observability-runbook.md#signer-readiness-failure"
+
+      - alert: GatewaySweepDeadLetters
+        expr: sum(gateway_sweep_job_backlog{status="dead_letter"}) > 0
+        for: 1m
+        labels:
+          severity: page
+          domain: sweep
+        annotations:
+          summary: "Gateway sweep jobs need operator recovery"
+          runbook_url: "docs/money-path-observability-runbook.md#sweep-dead-letter-or-broadcast-uncertain"
+
+      - alert: GatewayReconciliationDrift
+        expr: sum(gateway_reconciliation_jobs{status=~"open|processing|needs_operator_action|retry_scheduled|failed"}) > 0
+        for: 30m
+        labels:
+          severity: page
+          domain: reconciliation
+        annotations:
+          summary: "Gateway reconciliation drift remains unresolved"
+          runbook_url: "docs/money-path-observability-runbook.md#reconciliation-drift"

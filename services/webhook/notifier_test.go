@@ -1,0 +1,634 @@
+package webhook
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"core/constants"
+	"core/helpers"
+	"core/models"
+
+	"github.com/google/uuid"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type fakeNATSConnection struct {
+	server       string
+	subject      string
+	body         []byte
+	flushTimeout time.Duration
+	closed       bool
+}
+
+func (f *fakeNATSConnection) Publish(subject string, body []byte) error {
+	f.subject = subject
+	f.body = append([]byte(nil), body...)
+	return nil
+}
+
+func (f *fakeNATSConnection) FlushTimeout(timeout time.Duration) error {
+	f.flushTimeout = timeout
+	return nil
+}
+
+func (f *fakeNATSConnection) Close() {
+	f.closed = true
+}
+
+func TestNotifierDeliverSignsAndPostsTransaction(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	var signature string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s", r.Method)
+		}
+		signature = r.Header.Get("X-Gateway-Signature")
+		if !strings.HasPrefix(signature, "sha256=") {
+			t.Fatalf("signature header = %q", signature)
+		}
+		if r.Header.Get("X-Gateway-Event") != "native_transfer" {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	tx := models.Transaction{
+		ID:          uuid.New(),
+		UniqueHash:  "1-0xabc-tx:1",
+		EventType:   "native_transfer",
+		MerchantID:  &merchantID,
+		DomainID:    &domainID,
+		WalletID:    &walletID,
+		ProductID:   "product",
+		UserID:      "user",
+		ChainID:     constants.Ethereum,
+		Hash:        "0xabc",
+		BlockNumber: "123",
+		BlockHash:   "0xblock",
+		Symbol:      "ETH",
+		Decimals:    18,
+		FromAddress: "0xfrom",
+		ToAddress:   "0xto",
+		Amount:      "100",
+		Status:      models.TransactionStatusConfirmed,
+		CreatedAt:   time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.Deliver(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.EventID != TransactionEventID(tx) {
+		t.Fatalf("event id = %q", received.EventID)
+	}
+	if received.MerchantID != merchantID.String() || received.DomainID != domainID.String() || received.WalletID != walletID.String() {
+		t.Fatalf("identity fields not populated: %#v", received)
+	}
+}
+
+func TestNotifierDeliverWithMetadataIncludesConsumerIdempotencyContract(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	var sequenceHeader string
+	var idempotencyHeader string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		sequenceHeader = r.Header.Get("X-Gateway-Sequence")
+		idempotencyHeader = r.Header.Get("X-Gateway-Idempotency-Key")
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	tx := models.Transaction{
+		ID:          uuid.New(),
+		UniqueHash:  "1-0xabc-tx:1",
+		EventType:   "native_transfer",
+		MerchantID:  &merchantID,
+		DomainID:    &domainID,
+		ChainID:     constants.Ethereum,
+		Hash:        "0xabc",
+		BlockNumber: "123",
+		Symbol:      "ETH",
+		Decimals:    18,
+		Amount:      "100",
+		Status:      models.TransactionStatusConfirmed,
+		CreatedAt:   time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+	metadata := DeliveryMetadata{
+		DeliveryID:     uuid.NewString(),
+		ResourceType:   "transaction",
+		ResourceID:     tx.ID.String(),
+		Sequence:       4,
+		IdempotencyKey: "idem-transaction",
+	}
+
+	notifier := &Notifier{client: client}
+	if err := notifier.DeliverWithMetadata(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if received.DeliveryID != metadata.DeliveryID ||
+		received.ResourceType != metadata.ResourceType ||
+		received.ResourceID != metadata.ResourceID ||
+		received.Sequence != metadata.Sequence ||
+		received.IdempotencyKey != metadata.IdempotencyKey {
+		t.Fatalf("metadata payload = %#v, want %#v", received, metadata)
+	}
+	if sequenceHeader != "4" || idempotencyHeader != "idem-transaction" {
+		t.Fatalf("metadata headers sequence=%q idempotency=%q", sequenceHeader, idempotencyHeader)
+	}
+}
+
+func TestNotifierDeliverIncludesTransactionCorrectionRelation(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventTransactionReorged {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	tx := models.Transaction{
+		ID:                 uuid.New(),
+		UniqueHash:         "1-0xreorg-log:1",
+		EventType:          constants.WebhookEventTransactionReorged,
+		MerchantID:         &merchantID,
+		DomainID:           &domainID,
+		ChainID:            constants.Ethereum,
+		Hash:               "0xreorg",
+		BlockNumber:        "123",
+		BlockHash:          "0xblock",
+		Symbol:             "ETH",
+		Decimals:           18,
+		FromAddress:        "0xfrom",
+		ToAddress:          "0xto",
+		Amount:             "100",
+		Status:             models.TransactionStatusReorged,
+		OriginalEventID:    "1-0xreorg-log:1:native_transfer",
+		OriginalResourceID: "1-0xreorg-log:1",
+		CorrectionReason:   "reorg_detected:1:123",
+		CreatedAt:          time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.Deliver(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.OriginalEventID != tx.OriginalEventID || received.OriginalResourceID != tx.OriginalResourceID || received.CorrectionReason != tx.CorrectionReason {
+		t.Fatalf("correction relation fields not populated: %#v", received)
+	}
+}
+
+func TestNotifierDeliverRejectsMissingWebhookConfig(t *testing.T) {
+	notifier := NewNotifier()
+	domain := models.Domain{ID: uuid.New()}
+	if err := notifier.Deliver(context.Background(), domain, models.Transaction{}); err == nil {
+		t.Fatal("empty webhook url should fail")
+	} else if !IsPermanent(err) {
+		t.Fatalf("empty webhook url error should be permanent: %v", err)
+	}
+	domain.WebhookURL = "https://example.com/webhook"
+	if err := notifier.Deliver(context.Background(), domain, models.Transaction{}); err == nil {
+		t.Fatal("empty webhook secret should fail")
+	} else if !IsPermanent(err) {
+		t.Fatalf("empty webhook secret error should be permanent: %v", err)
+	}
+}
+
+func TestNotifierDeliverIncludesTransactionCorrectionMetadata(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received Payload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventTransactionReorged {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusAccepted,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	tx := models.Transaction{
+		ID:                 uuid.New(),
+		UniqueHash:         "1-0xabc-log:1",
+		EventType:          constants.WebhookEventTransactionReorged,
+		ChainID:            constants.Ethereum,
+		Hash:               "0xabc",
+		BlockNumber:        "123",
+		BlockHash:          "0xblock",
+		Symbol:             "ETH",
+		Decimals:           18,
+		FromAddress:        "0xfrom",
+		ToAddress:          "0xto",
+		Amount:             "100",
+		Status:             models.TransactionStatusReorged,
+		OriginalEventID:    "1-0xabc-log:1:native_transfer",
+		OriginalResourceID: "1-0xabc-log:1",
+		CorrectionReason:   "reorg_detected:1:123",
+		CreatedAt:          time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	if err := notifier.Deliver(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, tx); err != nil {
+		t.Fatal(err)
+	}
+	if received.EventType != constants.WebhookEventTransactionReorged || received.Status != models.TransactionStatusReorged {
+		t.Fatalf("received correction identity = %#v", received)
+	}
+	if received.OriginalEventID != tx.OriginalEventID || received.OriginalResourceID != tx.OriginalResourceID || received.CorrectionReason != tx.CorrectionReason {
+		t.Fatalf("received correction metadata = %#v", received)
+	}
+}
+
+func TestNotifierDeliverPaymentSignsAndPostsPaymentMetadata(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received PaymentPayload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != constants.WebhookEventPaymentSucceeded {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if r.Header.Get("X-Gateway-Event-Version") != constants.WebhookEventVersionV1 {
+			t.Fatalf("version header = %q", r.Header.Get("X-Gateway-Event-Version"))
+		}
+		if r.Header.Get("X-Gateway-Event-Id") == "" {
+			t.Fatal("event id header is empty")
+		}
+		if r.Header.Get("X-Gateway-Timestamp") == "" {
+			t.Fatal("timestamp header is empty")
+		}
+		if !strings.HasPrefix(r.Header.Get("X-Gateway-Signature"), "sha256=") {
+			t.Fatalf("signature header = %q", r.Header.Get("X-Gateway-Signature"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	chainID := constants.Ethereum
+	token := "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+	txHash := "0xpayment"
+	txUniqueHash := "1-0xpayment-log:0"
+	paidAt := time.Date(2026, 6, 6, 12, 5, 0, 0, time.UTC)
+	session := models.PaymentSession{
+		ID:                uuid.New(),
+		SessionToken:      "sess_token",
+		MerchantID:        merchantID,
+		DomainID:          domainID,
+		WalletID:          walletID,
+		OrderID:           "order-1",
+		ProductID:         "product",
+		UserID:            "user",
+		Amount:            "25.00",
+		Currency:          "USDT",
+		SelectedChainID:   &chainID,
+		SelectedToken:     &token,
+		SelectedSymbol:    "USDT",
+		SelectedDecimals:  6,
+		ExpectedAmountRaw: "25000000",
+		DepositAddress:    "0xdeposit",
+		Status:            models.PaymentStatusPaid,
+		PaidAt:            &paidAt,
+		TxHash:            &txHash,
+		TxUniqueHash:      &txUniqueHash,
+		PaymentOutcome:    models.PaymentOutcomeExact,
+		MatchedAmountRaw:  "25000000",
+		WebhookEvent:      constants.WebhookEventPaymentSucceeded,
+		CreatedAt:         time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverPayment(context.Background(), models.Domain{
+		ID:            domainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.EventID != PaymentEventID(session) || received.EventType != constants.WebhookEventPaymentSucceeded || received.EventVersion != constants.WebhookEventVersionV1 {
+		t.Fatalf("event metadata = %#v", received)
+	}
+	if received.PaymentID != session.ID.String() || received.MerchantID != merchantID.String() || received.DomainID != domainID.String() || received.WalletID != walletID.String() {
+		t.Fatalf("identity fields not populated: %#v", received)
+	}
+	if received.ExpectedAmountRaw != "25000000" || received.DepositAddress != "0xdeposit" || received.TxHash == nil || *received.TxHash != txHash {
+		t.Fatalf("payment payload mismatch: %#v", received)
+	}
+	if received.LinkType != models.PaymentLinkTypeFixed {
+		t.Fatalf("link_type = %q, want fixed", received.LinkType)
+	}
+	if received.PaymentOutcome != models.PaymentOutcomeExact || received.MatchedAmountRaw != "25000000" {
+		t.Fatalf("payment outcome fields missing: %#v", received)
+	}
+}
+
+func TestNotifierDeliverPaymentPublishesProductSnapshotToNATS(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	productID := uuid.New()
+	chainID := int64(constants.TRON)
+	token := "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+	productSnapshot, err := models.MarshalPaymentProductSnapshot(models.Product{
+		ID:             productID,
+		LinkToken:      "link-token",
+		Name:           "TRON checkout",
+		Description:    "USDT payment",
+		LinkType:       models.PaymentLinkTypeFixed,
+		Amount:         "25.00",
+		Currency:       "USD",
+		Language:       "tr",
+		DefaultChainID: &chainID,
+		DefaultSymbol:  "usdt",
+		DefaultToken:   &token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	connection := &fakeNATSConnection{}
+	notifier := &Notifier{
+		natsConnect: func(server string) (natsConnection, error) {
+			connection.server = server
+			return connection, nil
+		},
+	}
+	session := models.PaymentSession{
+		ID:              uuid.New(),
+		SessionToken:    "session-token",
+		MerchantID:      uuid.New(),
+		DomainID:        uuid.New(),
+		WalletID:        uuid.New(),
+		OrderID:         "order-1",
+		Amount:          "25.00",
+		Currency:        "USD",
+		ProductSnapshot: productSnapshot,
+		Status:          models.PaymentStatusPaid,
+		WebhookEvent:    constants.WebhookEventPaymentSucceeded,
+		CreatedAt:       time.Now().UTC(),
+	}
+
+	domain := models.Domain{
+		ID:               session.DomainID,
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "nats://127.0.0.1:4222",
+		NATSSubject:      "merchant.payments",
+	}
+	if err := notifier.DeliverPayment(context.Background(), domain, session); err != nil {
+		t.Fatal(err)
+	}
+	if connection.server != domain.NATSURL || connection.subject != domain.NATSSubject || !connection.closed {
+		t.Fatalf("nats delivery target = server %q subject %q closed=%v", connection.server, connection.subject, connection.closed)
+	}
+	var payload PaymentPayload
+	if err := json.Unmarshal(connection.body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Product == nil || payload.Product.ID != productID.String() || payload.Product.Name != "TRON checkout" || payload.Product.DefaultAsset == nil || payload.Product.DefaultAsset.Token != token {
+		t.Fatalf("product snapshot = %#v", payload.Product)
+	}
+}
+
+func TestNotifierDeliverNATSRejectsInvalidTargetPermanently(t *testing.T) {
+	notifier := NewNotifier()
+	err := notifier.DeliverRaw(context.Background(), models.Domain{
+		ID:               uuid.New(),
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "https://example.com/events",
+	}, "test", "event-1", "v1", []byte(`{"ok":true}`))
+	if err == nil || !IsPermanent(err) {
+		t.Fatalf("invalid nats target error = %v, permanent=%v", err, IsPermanent(err))
+	}
+}
+
+func TestNotifierDeliverPaymentIncludesReorgCorrectionRelation(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var received PaymentPayload
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	session := models.PaymentSession{
+		ID:                   uuid.New(),
+		SessionToken:         "sess_reorg",
+		MerchantID:           uuid.New(),
+		DomainID:             uuid.New(),
+		WalletID:             uuid.New(),
+		OrderID:              "order-reorg",
+		Amount:               "25.00",
+		Currency:             "USDT",
+		Status:               models.PaymentStatusFailed,
+		PaymentOutcome:       models.PaymentOutcomeExact,
+		PaymentOutcomeReason: models.PaymentOutcomeReasonReorged,
+		WebhookEvent:         constants.WebhookEventPaymentFailed,
+		CreatedAt:            time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+	}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverPayment(context.Background(), models.Domain{
+		ID:            session.DomainID,
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.OriginalEventID != session.ID.String()+":"+constants.WebhookEventPaymentSucceeded ||
+		received.OriginalResourceID != session.ID.String() ||
+		received.CorrectionReason != models.PaymentOutcomeReasonReorged {
+		t.Fatalf("payment correction relation fields = %#v", received)
+	}
+}
+
+func TestNotifierDeliveryErrorRedactsCallbackBody(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusInternalServerError,
+			Body:       io.NopCloser(strings.NewReader(`{"webhook_secret":"plain","raw_signature":"abc"}`)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverRaw(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, "evt", "evt-1", "v1", []byte(`{"ok":true}`))
+	if err == nil {
+		t.Fatal("non-2xx should fail")
+	}
+	if strings.Contains(err.Error(), "webhook_secret") || strings.Contains(err.Error(), "raw_signature") {
+		t.Fatalf("error leaked sensitive body: %v", err)
+	}
+}
+
+func TestNotifierDeliverRawSignsAndPostsLifecycle(t *testing.T) {
+	t.Setenv("MASTER_KEY", "webhook-test-master-key")
+	t.Setenv("APP_ENV", "test")
+	encryptedSecret, err := helpers.EncryptSecret("plain-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := []byte(`{"event_id":"evt-1","event_type":"payout.finalized.v1"}`)
+	var receivedBody []byte
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get("X-Gateway-Event") != "payout.finalized.v1" {
+			t.Fatalf("event header = %q", r.Header.Get("X-Gateway-Event"))
+		}
+		if r.Header.Get("X-Gateway-Event-Version") != "v1" {
+			t.Fatalf("version header = %q", r.Header.Get("X-Gateway-Event-Version"))
+		}
+		if r.Header.Get("X-Gateway-Event-Id") != "evt-1" {
+			t.Fatalf("event id header = %q", r.Header.Get("X-Gateway-Event-Id"))
+		}
+		if !strings.HasPrefix(r.Header.Get("X-Gateway-Signature"), "sha256=") {
+			t.Fatalf("signature header = %q", r.Header.Get("X-Gateway-Signature"))
+		}
+		receivedBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewBuffer(nil)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})}
+
+	notifier := &Notifier{client: client}
+	err = notifier.DeliverRaw(context.Background(), models.Domain{
+		ID:            uuid.New(),
+		WebhookURL:    "http://127.0.0.1/webhook",
+		WebhookSecret: encryptedSecret,
+	}, "payout.finalized.v1", "evt-1", "v1", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(receivedBody) != string(body) {
+		t.Fatalf("body = %s, want %s", string(receivedBody), string(body))
+	}
+}

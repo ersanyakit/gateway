@@ -1,0 +1,221 @@
+<div class="home-shell">
+  <section class="home-hero" aria-labelledby="homeTitle">
+    <div class="home-hero-panel">
+      <div class="home-hero-copy">
+        <p class="home-product-name">
+          <span>G</span>
+          Gateway Checkout
+        </p>
+        <h1 id="homeTitle">Crypto payments that settle cleanly.</h1>
+        <p class="home-lead">Hosted checkout, payment links, donation links, owned deposit addresses and signed webhooks in one merchant-ready flow.</p>
+
+        <div class="home-actions" aria-label="Başlangıç aksiyonları">
+          <a class="home-button home-button-light" href="{{if .HasSession}}{{.DashboardURL}}{{else}}{{.RegisterURL}}{{end}}">{{if .HasSession}}Dashboard{{else}}Create payment link{{end}}</a>
+          <a class="home-button" href="{{.LoginURL}}">Merchant dashboard</a>
+          <a class="home-button" href="/swagger/index.html">API docs</a>
+        </div>
+      </div>
+
+      <div class="home-device-stage" aria-label="Gateway checkout preview">
+        <div class="home-device home-device-side is-left" aria-hidden="true">
+          <div class="home-device-bar"></div>
+          <div class="home-device-screen">
+            <span class="home-device-label">Payment link</span>
+            <strong>$49.00</strong>
+            <div class="home-pay-option"><span><img src="/static/coins/usdt.svg" alt=""> USDT</span><small>TRON</small></div>
+            <div class="home-pay-option"><span><img src="/static/coins/usdc.svg" alt=""> USDC</span><small>Base</small></div>
+            <button type="button">Pay now</button>
+          </div>
+        </div>
+
+        <div class="home-device home-device-main">
+          <div class="home-device-bar"></div>
+          <div class="home-device-screen">
+            <div class="home-device-head">
+              <span>Gateway</span>
+              <small>live</small>
+            </div>
+            <strong class="home-device-total">$43,251.56</strong>
+            <div class="home-network-pills">
+              <span><img src="/static/chains/basechain.svg" alt=""> Base</span>
+              <span><img src="/static/chains/tronchain.svg" alt=""> TRON</span>
+            </div>
+            <div class="home-session-card">
+              <span>Checkout session</span>
+              <strong>0x2e71...f1bd</strong>
+              <small>12 confirmations</small>
+            </div>
+            <div class="home-event-list">
+              <span><i></i>payment.created<small>now</small></span>
+              <span><i></i>deposit.detected<small>2m</small></span>
+              <span><i></i>payment.confirmed<small>8m</small></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="home-device home-device-side is-right" aria-hidden="true">
+          <div class="home-device-bar"></div>
+          <div class="home-device-screen">
+            <span class="home-device-label">Donation</span>
+            <strong>1.00 CHZ</strong>
+            <div class="home-qr" aria-hidden="true">
+              <span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <button type="button">Confirmed</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-strip" aria-label="Gateway payment capabilities">
+    <div>
+      <strong>Payment links</strong>
+      <span>Product, invoice and donation URLs</span>
+    </div>
+    <div>
+      <strong>Owned addresses</strong>
+      <span>Deposits tied to your wallet pool</span>
+    </div>
+    <div>
+      <strong>Finality aware</strong>
+      <span>Pending until confirmations pass</span>
+    </div>
+    <div>
+      <strong>Signed webhooks</strong>
+      <span>Backend-safe status delivery</span>
+    </div>
+  </section>
+
+  <section class="home-section home-checkout-section" aria-labelledby="homeCheckoutTitle">
+    <div class="home-section-head">
+      <h2 id="homeCheckoutTitle">A checkout page customers understand instantly.</h2>
+      <p>Amount, network, wallet address and payment state stay visible without turning the flow into a technical dashboard.</p>
+    </div>
+
+    <div class="home-showcase-grid">
+      <article class="home-checkout-preview" aria-label="Hosted checkout preview">
+        <div class="home-preview-top">
+          <span>Hosted checkout</span>
+          <strong>15:00</strong>
+        </div>
+        <div class="home-preview-amount">
+          <span>Total due</span>
+          <strong>$125.00</strong>
+        </div>
+        <div class="home-preview-options">
+          <div><img src="/static/coins/usdc.svg" alt=""> USDC <small>Base</small></div>
+          <div><img src="/static/coins/usdt.svg" alt=""> USDT <small>TRON</small></div>
+          <div><img src="/static/coins/chz.svg" alt=""> CHZ <small>Chiliz</small></div>
+        </div>
+        <div class="home-preview-address">
+          <span>Deposit address</span>
+          <strong>0x8e69...1a25</strong>
+        </div>
+      </article>
+
+      <div class="home-feature-list">
+        <article>
+          <span>01</span>
+          <h3>Create fast</h3>
+          <p>Generate a hosted checkout or payment link with amount, asset options and return URLs.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h3>Match correctly</h3>
+          <p>Connect deposits to the intended customer, selected chain and expected asset.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h3>Notify safely</h3>
+          <p>Send the final state to merchant systems with signed webhook payloads.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="home-assets-band" aria-labelledby="homeAssetsTitle">
+    <div class="home-assets-copy">
+      <h2 id="homeAssetsTitle">Multi-chain checkout without a messy customer screen.</h2>
+      <p>Offer familiar assets and networks while keeping the payment page calm and directed.</p>
+    </div>
+    <div class="home-asset-grid" aria-hidden="true">
+      <img src="/static/chains/basechain.svg" alt="">
+      <img src="/static/chains/ethereumchain.svg" alt="">
+      <img src="/static/chains/tronchain.svg" alt="">
+      <img src="/static/chains/arbitrumchain.svg" alt="">
+      <img src="/static/chains/solanachain.svg" alt="">
+      <img src="/static/chains/bnbchain.svg" alt="">
+      <img src="/static/chains/avalanchechain.svg" alt="">
+      <img src="/static/chains/chilizchain.svg" alt="">
+      <img src="/static/coins/usdc.svg" alt="">
+      <img src="/static/coins/usdt.svg" alt="">
+      <img src="/static/coins/btc.svg" alt="">
+      <img src="/static/coins/chz.svg" alt="">
+    </div>
+  </section>
+
+  <section class="home-section home-pipeline-section" aria-labelledby="homePipelineTitle">
+    <div class="home-section-head">
+      <h2 id="homePipelineTitle">From payment creation to settled event.</h2>
+      <p>The product surface stays simple, while the payment pipeline keeps the critical states explicit.</p>
+    </div>
+
+    <div class="home-pipeline">
+      <article>
+        <span>1</span>
+        <h3>Create session</h3>
+        <p>Merchant API or dashboard creates the checkout URL.</p>
+      </article>
+      <article>
+        <span>2</span>
+        <h3>Collect deposit</h3>
+        <p>Customer pays the generated address on the selected network.</p>
+      </article>
+      <article>
+        <span>3</span>
+        <h3>Confirm finality</h3>
+        <p>Payment remains pending until the confirmation gate passes.</p>
+      </article>
+      <article>
+        <span>4</span>
+        <h3>Deliver webhook</h3>
+        <p>Backend receives a final signed event for reconciliation.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="home-security-band" aria-labelledby="homeSecurityTitle">
+    <h2 id="homeSecurityTitle">Built for payment operations, not marketing noise.</h2>
+    <p>Owned addresses, clear payment state, confirmation-aware status and signed callbacks keep the merchant flow auditable.</p>
+  </section>
+
+  <section class="home-faq-section" aria-labelledby="homeFaqTitle">
+    <h2 id="homeFaqTitle">Frequently asked questions</h2>
+    <div class="home-faq-list">
+      <details open>
+        <summary>Can Gateway create hosted checkout pages?</summary>
+        <p>Yes. Merchants can create payment sessions and share hosted checkout URLs with customers.</p>
+      </details>
+      <details>
+        <summary>Can it be used for payment and donation links?</summary>
+        <p>Yes. The interface supports fixed payment links and flexible donation links.</p>
+      </details>
+      <details>
+        <summary>How does my backend receive status?</summary>
+        <p>Final payment state is delivered through signed webhook payloads.</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="home-cta-band" aria-labelledby="homeCtaTitle">
+    <h2 id="homeCtaTitle">Launch a cleaner crypto checkout.</h2>
+    <div class="home-actions home-actions-center">
+      <a class="home-button home-button-light" href="{{if .HasSession}}{{.DashboardURL}}{{else}}{{.RegisterURL}}{{end}}">{{if .HasSession}}Dashboard{{else}}Create payment link{{end}}</a>
+      <a class="home-button" href="/swagger/index.html">API docs</a>
+    </div>
+  </section>
+</div>

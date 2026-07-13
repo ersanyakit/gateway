@@ -1,0 +1,397 @@
+package chains
+
+import (
+	"bytes"
+	"context"
+	blockchain "core/blockchain"
+	"core/blockchain/walletcore"
+	"core/constants"
+	"core/helpers"
+	"core/models"
+	"core/services/chainresource"
+	"core/services/signer"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/system"
+	"github.com/gagliardetto/solana-go/rpc"
+)
+
+type SolanaChain struct {
+	blockchain.BaseChain
+}
+
+func NewSolanaChain() *SolanaChain {
+	return &SolanaChain{
+
+		blockchain.BaseChain{
+			ID:          constants.Solana,
+			ChainName:   "solana",
+			ExplorerURL: "https://explorer.solana.com/",
+			RPCHttp:     []string{"https://api.mainnet-beta.solana.com"},
+			WebSockets:  []string{"wss://api.mainnet-beta.solana.com"},
+		},
+	}
+}
+
+func (e *SolanaChain) Name() string {
+	return e.ChainName
+}
+
+func (e *SolanaChain) ChainID() constants.ChainID {
+	return e.ID
+}
+
+func (s *SolanaChain) NewAddress(privateKeyHex string) (string, error) {
+	return walletcore.AddressFromPrivateKey(privateKeyHex, s.ChainID())
+}
+
+func (s *SolanaChain) ValidateAddress(address string) bool {
+	address = strings.TrimSpace(address)
+	if address == "11111111111111111111111111111111" {
+		return false
+	}
+
+	return validateAddressWithWalletCore(s.ChainID(), address)
+}
+
+func (s *SolanaChain) Create(ctx context.Context) (*blockchain.WalletDetails, error) {
+	mnemonic, err := s.BaseChain.GenerateMnemonicPhrase()
+	if err != nil {
+		return nil, err
+	}
+
+	wallet, err := s.BaseChain.GetDerivedWallet(mnemonic, "m/44'/501'/0'/1'")
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, errors.New("invalid solana address format")
+	}
+
+	return wallet, nil
+}
+
+func (s *SolanaChain) CreateHDWallet(ctx context.Context, hdAccountId, hdWalletId int) (*blockchain.WalletDetails, error) {
+	hdPath := fmt.Sprintf("m/44'/501'/%d'/%d'", hdAccountId, hdWalletId)
+	wallet, err := s.BaseChain.CreateHDWalletFromPath(ctx, hdPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if !s.ValidateAddress(wallet.Address) {
+		return nil, errors.New("invalid solana address format")
+	}
+
+	return wallet, nil
+}
+
+func (s *SolanaChain) Deposit(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return s.sendLamports(ctx, wallet, amountRaw, toAddress)
+}
+
+func (s *SolanaChain) Withdraw(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return s.sendLamports(ctx, wallet, amountRaw, toAddress)
+}
+
+func (s *SolanaChain) WithdrawToken(ctx context.Context, wallet blockchain.WalletDetails, tokenAddr string, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	return s.sendSPL(ctx, wallet, tokenAddr, amountRaw, toAddress)
+}
+
+func (s *SolanaChain) Sweep(ctx context.Context, wallet blockchain.WalletDetails) (*blockchain.TransactionResult, error) {
+	toAddress, err := solanaSweepDestination()
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "sweep.native", "max", toAddress); err != nil {
+		return nil, err
+	}
+
+	rpcClient, err := s.solanaRPCClient()
+	if err != nil {
+		return nil, err
+	}
+
+	from, err := solanaWalletAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	balance, err := rpcClient.GetBalance(ctx, from, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("%s balance fetch failed: %w", s.Name(), err)
+	}
+
+	feeLamports, err := solanaTransferFeeLamports()
+	if err != nil {
+		return nil, err
+	}
+	if balance.Value <= feeLamports {
+		return nil, fmt.Errorf("%s sweep balance is not enough for fee: balance=%d fee=%d", s.Name(), balance.Value, feeLamports)
+	}
+
+	return s.sendLamportsWithClient(ctx, rpcClient, wallet, from, balance.Value-feeLamports, toAddress, "sweep.native")
+}
+
+func (s *SolanaChain) sendLamports(ctx context.Context, wallet blockchain.WalletDetails, amountRaw string, toAddress string) (*blockchain.TransactionResult, error) {
+	amount, err := nativeAmountRaw(amountRaw)
+	if err != nil {
+		return nil, err
+	}
+	if !amount.IsUint64() {
+		return nil, errors.New("amount_raw exceeds uint64 lamports")
+	}
+	if err := authorizeWalletSigning(ctx, s.Name(), s.ChainID(), wallet, "transfer.native", amount.String(), toAddress); err != nil {
+		return nil, err
+	}
+
+	rpcClient, err := s.solanaRPCClient()
+	if err != nil {
+		return nil, err
+	}
+
+	from, err := solanaWalletAddress(wallet)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.sendLamportsWithClient(ctx, rpcClient, wallet, from, amount.Uint64(), toAddress, "transfer.native")
+}
+
+func (s *SolanaChain) sendLamportsWithClient(ctx context.Context, rpcClient *rpc.Client, wallet blockchain.WalletDetails, from solana.PublicKey, lamports uint64, toAddress string, intent string) (*blockchain.TransactionResult, error) {
+	if lamports == 0 {
+		return nil, errors.New("amount_raw must be greater than zero")
+	}
+	if err := requireDatabaseResourceReservation(ctx, s.Name(), intent); err != nil {
+		return nil, err
+	}
+
+	to, err := solana.PublicKeyFromBase58(strings.TrimSpace(toAddress))
+	if err != nil {
+		return nil, fmt.Errorf("invalid solana recipient address: %w", err)
+	}
+	feeLamports, err := solanaTransferFeeLamports()
+	if err != nil {
+		return nil, err
+	}
+	if lamports > ^uint64(0)-feeLamports {
+		return nil, errors.New("solana amount_raw plus fee exceeds uint64")
+	}
+	balance, err := rpcClient.GetBalance(ctx, from, rpc.CommitmentFinalized)
+	if err != nil {
+		return nil, fmt.Errorf("%s balance fetch failed: %w", s.Name(), err)
+	}
+	required := lamports + feeLamports
+	if balance.Value < required {
+		return nil, fmt.Errorf("%s balance is not enough: balance=%d required=%d", s.Name(), balance.Value, required)
+	}
+
+	lease, err := chainResourceSequenceLease(ctx, s.Name(), wallet, intent)
+	if err != nil {
+		return nil, fmt.Errorf("%s resource reservation failed: %w", s.Name(), err)
+	}
+
+	recent, err := rpcClient.GetLatestBlockhash(ctx, rpc.CommitmentFinalized)
+	if err != nil {
+		_ = lease.Release()
+		return nil, fmt.Errorf("%s blockhash fetch failed: %w", s.Name(), err)
+	}
+	if recent == nil || recent.Value == nil {
+		_ = lease.Release()
+		return nil, fmt.Errorf("%s empty latest blockhash", s.Name())
+	}
+
+	tx, err := solana.NewTransaction(
+		[]solana.Instruction{
+			system.NewTransferInstruction(lamports, from, to).Build(),
+		},
+		recent.Value.Blockhash,
+		solana.TransactionPayer(from),
+	)
+	if err != nil {
+		_ = lease.Release()
+		return nil, fmt.Errorf("%s tx build failed: %w", s.Name(), err)
+	}
+
+	signature, err := s.signAndSendSolanaTransaction(ctx, rpcClient, tx, wallet, from, intent, fmt.Sprintf("%d", lamports), toAddress, lease)
+	if err != nil {
+		return nil, err
+	}
+	_ = lease.Consume(signature.String())
+
+	return &blockchain.TransactionResult{
+		TxHash:  signature.String(),
+		Success: true,
+	}, nil
+}
+
+func solanaTransferFeeLamports() (uint64, error) {
+	return chainresource.SolanaTransferFeeLamports()
+}
+
+func (s *SolanaChain) solanaRPCClient() (*rpc.Client, error) {
+	for _, rpcURL := range s.RPCs() {
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL != "" {
+			return rpc.New(rpcURL), nil
+		}
+	}
+	return nil, errors.New("no solana RPC endpoint configured")
+}
+
+func solanaWalletAddress(wallet blockchain.WalletDetails) (solana.PublicKey, error) {
+	address := strings.TrimSpace(wallet.Address)
+	if address == "" {
+		return solana.PublicKey{}, errors.New("solana wallet address is required for chain resource reservation")
+	}
+	return solana.PublicKeyFromBase58(address)
+}
+
+func solanaPrivateKeyAndAddress(wallet blockchain.WalletDetails) (solana.PrivateKey, solana.PublicKey, error) {
+	if signer.IsProduction() {
+		return nil, solana.PublicKey{}, signer.ErrProductionSecretMaterialAccessDisabled
+	}
+	privateKey, err := solana.PrivateKeyFromBase58(strings.TrimSpace(wallet.PrivateKey))
+	if err != nil {
+		return nil, solana.PublicKey{}, fmt.Errorf("invalid solana private key: %w", err)
+	}
+
+	from := privateKey.PublicKey()
+	if wallet.Address != "" && wallet.Address != from.String() {
+		return nil, solana.PublicKey{}, fmt.Errorf("private key does not match wallet address: expected %s got %s", wallet.Address, from.String())
+	}
+
+	return privateKey, from, nil
+}
+
+func solanaSweepDestination() (string, error) {
+	for _, key := range []string{"SOLANA_SWEEP_ADDRESS", "SWEEP_ADDRESS"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value, nil
+		}
+	}
+	return "", errors.New("sweep destination is required: set SOLANA_SWEEP_ADDRESS or SWEEP_ADDRESS")
+}
+
+func (e *SolanaChain) BatchBalances(ctx context.Context, addresses []string, workers int) []models.BalanceResult {
+	if len(addresses) == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(addresses) {
+		workers = len(addresses)
+	}
+	jobs := make(chan string, len(addresses))
+	results := make(chan models.BalanceResult, len(addresses))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+
+	var wg sync.WaitGroup
+
+	workerFunc := func() {
+		defer wg.Done()
+		for addr := range jobs {
+			balance, err := e.getBalance(ctx, client, addr)
+			results <- models.BalanceResult{
+				Address: addr,
+				Balance: balance,
+				Error:   err,
+			}
+		}
+	}
+
+	// worker başlat
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		helpers.GoSafely("balance.solana", workerFunc)
+	}
+
+	// iş kuyruğuna adresleri koy
+enqueueSolana:
+	for _, addr := range addresses {
+		select {
+		case jobs <- addr:
+		case <-ctx.Done():
+			break enqueueSolana
+		}
+	}
+	close(jobs)
+
+	wg.Wait()
+	close(results)
+
+	var out []models.BalanceResult
+	for r := range results {
+		out = append(out, r)
+	}
+	return out
+}
+
+func (e *SolanaChain) getBalance(ctx context.Context, client *http.Client, address string) (string, error) {
+	reqBody := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "getBalance",
+		"params":  []interface{}{address, map[string]interface{}{"commitment": "confirmed"}},
+	}
+
+	data, _ := json.Marshal(reqBody)
+
+	var lastErr error
+	for _, rpc := range e.RPCHttp {
+		rpc = strings.TrimSpace(rpc)
+		if rpc == "" {
+			continue
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, rpc, bytes.NewReader(data))
+		if err != nil {
+			lastErr = fmt.Errorf("%s %s request build failed: %w", e.Name(), rpc, err)
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("%s %s request failed: %w", e.Name(), rpc, err)
+			continue
+		}
+
+		var res struct {
+			Result struct {
+				Value uint64 `json:"value"`
+			} `json:"result"`
+			Error json.RawMessage `json:"error"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", e.Name(), rpc, err)
+			continue
+		}
+		_ = resp.Body.Close()
+		if res.Error != nil {
+			lastErr = fmt.Errorf("%s %s rpc error", e.Name(), rpc)
+			continue
+		}
+
+		return fmt.Sprintf("%d", res.Result.Value), nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no solana RPC endpoint configured")
+	}
+	return "", lastErr
+}

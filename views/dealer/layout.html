@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} | Gateway Üye İşyeri Portalı</title>
+  <link rel="stylesheet" href="/assets/tailwind.css">
+  {{if or (eq .Active "home") (eq .Active "login") (eq .Active "register")}}<link rel="stylesheet" href="/assets/home.css">{{end}}
+  {{if or .AdminPanel (and .HasSession (ne .Active "home"))}}<link rel="stylesheet" href="/assets/admin.css">{{end}}
+  <script src="/assets/dashboard.js" defer></script>
+</head>
+<body class="min-h-screen bg-[#f8f8fa] text-ink antialiased {{if .AdminPanel}}admin-vscode-body{{else if eq .Active "home"}}home-public-body{{else if .HasSession}}admin-vscode-body merchant-shell-body{{else if or (eq .Active "login") (eq .Active "register")}}merchant-public-body{{end}}">
+  <div class="{{if or .AdminPanel (and .HasSession (ne .Active "home"))}}admin-vscode-root{{else if or (eq .Active "admin-login") (eq .Active "admin-2fa-setup") (eq .Active "admin-2fa-verify")}}grid min-h-screen grid-rows-[auto_1fr_auto] bg-[radial-gradient(circle_at_50%_-15%,rgba(239,45,181,0.08),transparent_34%),linear-gradient(180deg,#ffffff_0%,#f8f8fa_56%,#ffffff_100%)]{{else}}grid min-h-screen grid-rows-[auto_1fr_auto] bg-[radial-gradient(circle_at_50%_-15%,rgba(0,49,83,0.08),transparent_34%),linear-gradient(180deg,#ffffff_0%,#f4f7f9_56%,#ffffff_100%)]{{end}}">
+    {{template "dealer/partials/header" .}}
+    <main class="{{if or .AdminPanel (and .HasSession (ne .Active "home"))}}admin-vscode-main{{else}}py-8 sm:py-10 lg:py-12{{end}}">
+      <div class="{{if or .AdminPanel (and .HasSession (ne .Active "home"))}}admin-vscode-content{{else}}mx-auto w-full max-w-[1180px] px-4{{end}}">
+        {{embed}}
+      </div>
+    </main>
+    {{template "dealer/partials/footer" .}}
+  </div>
+</body>
+</html>

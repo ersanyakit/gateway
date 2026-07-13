@@ -1,0 +1,47 @@
+root = "."
+tmp_dir = "tmp"
+
+[build]
+cmd = "go build -o ./tmp/gateway ."
+entrypoint = ["./tmp/gateway"]
+include_ext = ["go", "html", "css", "js", "svg"]
+include_file = [".env"]
+exclude_dir = [
+  ".cache",
+  ".claude",
+  ".codex",
+  ".git",
+  "_bmad",
+  "_bmad-output",
+  "docs",
+  "node_modules",
+  "skills",
+  "third_party",
+  "tmp"
+]
+exclude_regex = ["_test.go", ".*\\.fiber\\.br$"]
+exclude_unchanged = false
+follow_symlink = false
+delay = 1000
+stop_on_error = true
+send_interrupt = true
+kill_delay = "1s"
+
+[log]
+time = true
+
+[color]
+app = "green"
+build = "yellow"
+main = "magenta"
+runner = "cyan"
+watcher = "blue"
+
+[proxy]
+enabled = true
+proxy_port = 3000
+app_port = 3001
+app_start_timeout = 10000
+
+[misc]
+clean_on_exit = true

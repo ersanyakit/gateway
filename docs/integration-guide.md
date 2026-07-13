@@ -1,0 +1,913 @@
+# Gateway Integration Guide
+
+This document is written for developers and AI coding agents integrating merchant systems with this payment gateway.
+
+## Quick Summary
+
+```yaml
+base_url: "https://your-gateway.example.com"
+auth_read_endpoints:
+  required_headers:
+    X-API-Key: "<domain_api_key>"
+auth_write_endpoints:
+  required_headers:
+    X-API-Key: "<domain_api_key>"
+    X-API-Secret: "<domain_api_secret>"
+    X-Gateway-Timestamp: "<unix_seconds>"
+    X-Gateway-Signature: "sha256=<hmac_sha256_hex(method + path/query + timestamp + raw body)>"
+  request_signature_payload: "METHOD\npath?query\ntimestamp\nraw_body"
+webhook:
+  callback_model: "one selected notification target per domain"
+  targets: ["webhook", "nats"]
+  configured_in: "merchant portal domain settings or domain creation API"
+  signature_header: "X-Gateway-Signature"
+  signature_payload: "timestamp + raw_body"
+  current_events:
+    - native_transfer
+    - transaction.reorged.v1
+    - payment_succeeded
+    - payment_failed
+    - payment_expired
+    - payment.underpaid.v1
+    - payment.overpaid.v1
+    - payment.partial_paid.v1
+    - payout.requested.v1
+    - payout.broadcast.v1
+    - payout.finalized.v1
+    - payout.rejected.v1
+    - payout.failed.v1
+    - refund.requested.v1
+    - refund.broadcast.v1
+    - refund.succeeded.v1
+    - refund.rejected.v1
+    - refund.failed.v1
+    - sweep.requested.v1
+    - sweep.succeeded.v1
+    - sweep.failed.v1
+    - sweep.dead_lettered.v1
+```
+
+## Credentials
+
+A merchant domain has:
+
+- `api_key`: public API identifier.
+- `api_secret`: secret used for HMAC request signing. It is returned only when the domain is created or when the API secret is rotated.
+- `api_scopes`: comma-separated permission list. New credentials default to `read,payment:create,wallet:create,payout:create,refund:create,webhook:manage,transaction:rescan`; older empty-scope credentials are treated as legacy full access until explicitly narrowed.
+- `api_ip_allowlist`: optional comma-separated IP/CIDR allowlist for merchant API requests.
+- `webhook_secret`: secret used by the gateway to sign webhook callbacks.
+- `webhook_url`: single callback URL used for all currently supported webhook events.
+- `notification_mode`: `webhook` or `nats`; exactly one target is active for delivery.
+- `nats_url` / `nats_subject`: NATS server and subject used when `notification_mode` is `nats`.
+
+If the `api_secret` is lost, rotate it from the merchant portal endpoint:
+
+```http
+POST /merchant/domains/{domain_id}/rotate-api-secret
+```
+
+The rotated secret is returned once in the response.
+
+Rotation policy is immediate revoke: the previous API secret stops authenticating as soon as the new secret hash is stored. A credential with `api_secret_revoked_at` set is rejected before request signing or business logic.
+
+### Permission Scopes
+
+Signed mutating endpoints require the matching scope before business logic runs:
+
+| Scope | Typical endpoint family |
+| --- | --- |
+| `read` | Status, balance, history, info and readiness reads. |
+| `payment:create` | Hosted payment and payment link creation. |
+| `wallet:create` | Static deposit address creation. |
+| `payout:create` | Payout creation. |
+| `refund:create` | Refund creation. |
+| `transaction:rescan` | Transaction rescan/replay. |
+| `webhook:manage` | Webhook configuration and replay management surfaces. |
+
+IP allowlists are checked from the request source IP. Authentication failures are logged with category-level evidence such as `api_scope_denied` or `api_ip_not_allowed`; logs must not include API secrets, raw signatures, or full secret-bearing headers.
+
+### Rate Limits
+
+`/api/v1` traffic is rate-limited by API key or bearer token. In distributed/production scale mode the limiter must use the shared database-backed counter table, not process memory. If the shared store is unavailable in that mode, the API fails closed with a rate-limit store error.
+
+## Request Signing
+
+Write endpoints require HMAC signing.
+
+Signed endpoints include:
+
+- `POST /payments/create`
+- `POST /api/v1/payment/create`
+- `POST /api/v1/payment/white-label`
+- `POST /api/v1/payment/static-address`
+- `POST /api/v1/wallet/create`
+- `POST /api/v1/payout/create`
+- `POST /api/v1/refund/create`
+- `POST /api/v1/transaction/rescan`
+
+Read endpoints generally require only `X-API-Key` or `Authorization: Bearer <api_key>`.
+
+Before sending production traffic, call `GET /api/v1/common/readiness` with the domain API key. It returns `200` only when the database, production gates, configured chains, listener workers, Trust Wallet Core HD wallet derivation, and latest RPC/provider health snapshots are ready; otherwise it returns `503` with the failing checks. Provider health snapshots are collected by the background worker and redact raw RPC URLs.
+
+### Signature Algorithm
+
+V1 request signing binds method, original path/query target, timestamp, and raw body.
+
+```text
+timestamp = current unix timestamp in seconds
+METHOD = uppercase HTTP method, for example POST
+path_and_query = request path plus query string, for example /api/v1/payment/create
+body = exact raw JSON request body bytes
+message = METHOD + "\n" + path_and_query + "\n" + timestamp + "\n" + body
+signature = hex(HMAC_SHA256(api_secret, message))
+header = "sha256=" + signature
+```
+
+For `POST /api/v1/payment/create`, the canonical prefix is `POST\n/api/v1/payment/create\n<timestamp>\n<body>`. If a signed endpoint includes query parameters, include them exactly as sent in `path_and_query`.
+
+The gateway accepts `X-Gateway-Signature` as either `sha256=<hex>` or `<hex>`.
+
+### Node.js Signing Example
+
+```js
+import crypto from "crypto";
+
+function sign(apiSecret, method, pathAndQuery, body) {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = crypto
+    .createHmac("sha256", apiSecret)
+    .update(method.trim().toUpperCase())
+    .update("\n")
+    .update(pathAndQuery.trim())
+    .update("\n")
+    .update(timestamp)
+    .update("\n")
+    .update(body)
+    .digest("hex");
+
+  return {
+    "X-Gateway-Timestamp": timestamp,
+    "X-Gateway-Signature": `sha256=${signature}`,
+  };
+}
+```
+
+## Create Hosted Payment
+
+Use this when your customer should pay through the hosted checkout page.
+
+```http
+POST /api/v1/payment/create
+```
+
+Request body:
+
+```json
+{
+  "order_id": "ORDER-1001",
+  "amount": "25.00",
+  "currency": "USD",
+  "description": "Order #1001",
+  "user_id": "customer_42",
+  "settlement_policy": "single",
+  "required_memo": "ORDER-1001",
+  "success_url": "https://merchant.example.com/success",
+  "cancel_url": "https://merchant.example.com/cancel"
+}
+```
+
+`settlement_policy` is optional and accepts `single` or `aggregate`. `required_memo` is optional; when present, finalized deposits must carry the normalized memo/tag/payment id to match this payment.
+
+Example:
+
+```bash
+BODY='{"order_id":"ORDER-1001","amount":"25.00","currency":"USD","description":"Order #1001","user_id":"customer_42","success_url":"https://merchant.example.com/success","cancel_url":"https://merchant.example.com/cancel"}'
+TS="$(date +%s)"
+SIG="$(printf "POST\n/api/v1/payment/create\n%s\n%s" "$TS" "$BODY" | openssl dgst -sha256 -hmac "$API_SECRET" -hex | awk '{print $2}')"
+
+curl -X POST "$BASE_URL/api/v1/payment/create" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -H "X-API-Secret: $API_SECRET" \
+  -H "X-Gateway-Timestamp: $TS" \
+  -H "X-Gateway-Signature: sha256=$SIG" \
+  -H "Idempotency-Key: ORDER-1001-create-v1" \
+  --data "$BODY"
+```
+
+Response shape:
+
+```json
+{
+  "result": "ok",
+  "data": {
+    "payment_id": "uuid",
+    "track_id": "uuid",
+    "session_token": "token",
+    "checkout_url": "https://gateway.example.com/checkout/token",
+    "status": "pending",
+    "expires_at": "2026-06-06T10:00:00Z",
+    "order_id": "ORDER-1001",
+    "link_type": "fixed",
+    "amount": "25.00",
+    "currency": "USD",
+    "chain_id": 1,
+    "symbol": "USDT",
+    "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "decimals": 6,
+    "expected_amount_raw": "25000000",
+    "deposit_address": "0xDepositAddress"
+  }
+}
+```
+
+Send `Idempotency-Key` on create requests. If older client code still names this header `X-Idempotency-Key`, migrate it to `Idempotency-Key`; do not send both. A fresh create returns `201`; a retry with the same key and identical payload returns the cached create response with `200`.
+
+Idempotency conflict example: reusing the same key with a different payload returns `409`:
+
+```json
+{
+  "result": "error",
+  "message": "idempotency key was already used with a different request"
+}
+```
+
+Customer completes payment at `checkout_url`.
+
+## Create a Reusable Payment Link
+
+Use this when the merchant wants a reusable URL backed by a product definition:
+
+```http
+POST /api/v1/payment/link/create
+```
+
+The request body is the payment-link product itself. `chain_id`, `symbol`, and optional `token` are an optional default asset. If they are omitted, the hosted checkout presents every available asset; for example, `chain_id=99999998`, `symbol=USDT`, and the TRON USDT token address starts checkout with TRON/USDT selected while still allowing the payer to change asset.
+
+```json
+{
+  "name": "Order 1001",
+  "description": "Product purchase",
+  "link_type": "fixed",
+  "amount": "25.00",
+  "currency": "USD",
+  "chain_id": 99999998,
+  "symbol": "USDT",
+  "token": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+}
+```
+
+The payment webhook contains the original product definition under `product`. It is a session snapshot, so later edits to the reusable link do not change historical payment events. Direct one-off invoices created with `/api/v1/payment/create` do not have a reusable product resource and therefore omit this field.
+
+## Create Static Deposit Address
+
+Use this when your system wants a permanent deposit address per user and asset.
+
+```http
+POST /api/v1/payment/static-address
+```
+
+Request body:
+
+```json
+{
+  "user_id": "customer_42",
+  "product_id": "checkout",
+  "chain_id": 1,
+  "symbol": "USDT",
+  "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "label": "Main wallet"
+}
+```
+
+Response:
+
+```json
+{
+  "result": "ok",
+  "data": {
+    "wallet_id": "uuid",
+    "user_id": "customer_42",
+    "product_id": "static:1:USDT:token:0xdac17f958d2ee523a2206206994597c13d831ec7:product:checkout",
+    "chain": "ethereum",
+    "chain_id": 1,
+    "symbol": "USDT",
+    "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    "address": "0x...",
+    "label": "Main wallet",
+    "created_at": "2026-06-26T12:00:00Z"
+  }
+}
+```
+
+Static addresses are deterministic inside the authenticated domain/product/user/asset scope. The asset scope is `chain_id`, `symbol`, and optional `token`; repeated calls for the same domain/product/user/asset return the existing address. Unsupported chains or assets return the V1 error envelope before wallet creation.
+
+Deposits to this address are detected by blockchain listeners and can generate transaction/payment webhooks depending on the matching flow.
+
+## Create Wallet Provider Wallet
+
+Use this when your product needs Gateway to act as a wallet provider. The endpoint creates or returns one deterministic multi-chain wallet for a merchant user and product scope.
+
+```http
+POST /api/v1/wallet/create
+```
+
+Request body:
+
+```json
+{
+  "user_id": "customer_42",
+  "product_id": "wallet"
+}
+```
+
+Response:
+
+```json
+{
+  "result": "ok",
+  "data": {
+    "wallet_id": "uuid",
+    "user_id": "customer_42",
+    "product_id": "wallet",
+    "addresses": {
+      "ethereum": "0x...",
+      "bitcoin": "bc1...",
+      "solana": "So...",
+      "tron": "T..."
+    },
+    "created_at": "2026-06-26T12:00:00Z"
+  }
+}
+```
+
+Read wallet data:
+
+```http
+GET /api/v1/wallet/info?wallet_id=<uuid>
+GET /api/v1/wallet/info?user_id=customer_42&product_id=wallet
+GET /api/v1/wallet/addresses?wallet_id=<uuid>
+GET /api/v1/wallet/list?user_id=customer_42
+GET /api/v1/wallet/balance?wallet_id=<uuid>
+```
+
+Wallet-provider deposits are matched by address and posted to the ledger for that wallet. Use `GET /api/v1/wallet/balance` for wallet-scoped balances and `GET /api/v1/common/balance` for domain aggregate balances.
+
+## Query Payment
+
+```http
+GET /api/v1/payment/info?order_id=ORDER-1001
+GET /api/v1/payment/info?track_id=<session_token>
+```
+
+Payment info/history statuses:
+
+- `pending`
+- `awaiting_payment`
+- `paid`
+- `expired`
+- `canceled`
+- `failed`
+- `underpaid`
+- `overpaid`
+- `partial_paid`
+
+`link_type` is `fixed` for ordinary invoices and `donation` for payment-link sessions where the payer chooses the crypto amount in their own wallet.
+
+Checkout polling uses:
+
+```http
+GET /checkout/{token}/status.json
+```
+
+Example checkout status response:
+
+```json
+{
+  "success": true,
+  "status": "confirming",
+  "paid": false,
+  "payment_id": "uuid",
+  "tx_hash": "0xhash",
+  "success_path": "/checkout/token/return/success",
+  "cancel_path": "/checkout/token/cancel",
+  "payable": true,
+  "terminal": false,
+  "payment_outcome": "partial_unsupported",
+  "payment_outcome_reason": "partial deposits are not automatically aggregated for checkout settlement",
+  "matched_amount_raw": "12500000",
+  "shortfall_amount_raw": "12500000",
+  "excess_amount_raw": ""
+}
+```
+
+Documented checkout status values:
+
+- `active`
+- `pending`
+- `confirming`
+- `paid`
+- `expired`
+- `canceled`
+- `failed`
+- `underpaid`
+- `overpaid`
+- `partial_paid`
+
+```json
+["active", "pending", "confirming", "paid", "expired", "canceled", "failed", "underpaid", "overpaid", "partial_paid"]
+```
+
+`payable` is false for terminal states or sessions that should not accept a new payment attempt. `terminal` is true for final payer-facing states such as `paid`, `expired`, `canceled`, `failed`, `underpaid`, `overpaid`, and non-aggregate `partial_paid`. Aggregate `partial_aggregating` sessions remain payable until the payment window expires or cumulative finalized amount reaches a terminal outcome.
+
+Payment outcome metadata appears when a finalized deposit creates an exception outcome:
+
+- `payment_outcome`: `exact`, `aggregate_complete`, `partial_aggregating`, `underpaid`, `overpaid`, `partial_unsupported`, `expired_after_deposit`, `wrong_asset`, `wrong_chain`, `missing_memo`, or `wrong_memo`.
+- `payment_outcome_reason`: safe explanation for merchant/operator follow-up.
+- `matched_amount_raw`: raw integer amount received on-chain.
+- `shortfall_amount_raw`: raw integer shortfall for `underpaid` and `partial_paid`.
+- `excess_amount_raw`: raw integer excess for `overpaid`.
+
+Exact single-deposit matches and policy-enabled aggregate matches can become `paid`. For aggregate-enabled sessions, finalized deposits are accumulated by raw amount, chain, token identity, decimals, address, and required memo/tag; `partial_aggregating` remains payable until the payment window expires, the cumulative finalized amount reaches the expected raw amount, or the session becomes overpaid. For non-aggregate sessions, a low partial deposit remains `partial_unsupported` according to the existing checkout policy. Any amount above expected becomes `overpaid`. Wrong asset, wrong chain, missing memo/tag, wrong memo/tag, and finalized-after-expiry deposits do not become paid.
+
+Terminal checkout example:
+
+```json
+{
+  "success": true,
+  "status": "paid",
+  "paid": true,
+  "payment_id": "uuid",
+  "tx_hash": "0xhash",
+  "success_path": "/checkout/token/return/success",
+  "cancel_path": "/checkout/token/cancel",
+  "payable": false,
+  "terminal": true
+}
+```
+
+Detected deposits are held behind a confirmation gate before a payment becomes `paid`. If a finalized deposit is later invalidated by a reorg, the gateway reverses the ledger entries, marks the transaction `reorged`, and emits correction webhooks when callback settings are configured.
+
+## Create Payout Request
+
+Use this to request a withdrawal from the merchant reserve wallet. The request is not broadcast immediately; admin approval is required.
+
+```http
+POST /api/v1/payout/create
+Idempotency-Key: payout-ORDER-1001-v1
+```
+
+`Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same payout response with `200`; reusing it with a different payload returns `409`.
+
+Outbound security policy is enforced before the payout request is persisted. When configured by the platform operator, emergency freeze, address whitelist, per-transfer raw amount limit, and rolling velocity limit can reject the request with `400` and an `outbound policy rejects transfer: ...` message. Policy rejections are audit logged and do not create a ledger hold.
+
+Request body:
+
+```json
+{
+  "chain": "ethereum",
+  "symbol": "USDT",
+  "to_address": "0xRecipient...",
+  "amount": "10.50",
+  "note": "User withdrawal"
+}
+```
+
+Response:
+
+```json
+{
+  "result": "ok",
+  "data": {
+    "payout_id": "uuid",
+    "chain": "ethereum",
+    "symbol": "USDT",
+    "to_address": "0xRecipient...",
+    "amount_raw": "10500000",
+    "status": "pending",
+    "idempotency_key": "payout-ORDER-1001-v1",
+    "correlation_id": "req_...",
+    "created_at": "2026-06-28T12:00:00Z"
+  }
+}
+```
+
+Payout statuses:
+
+- `pending`: awaiting admin approval.
+- `processing`: approved and broadcast; awaiting finality evidence and ledger finalization.
+- `finalized`: finality evidence was observed and the ledger debit was finalized.
+- `approved`: legacy compatibility status; new terminal processing uses `finalized`.
+- `rejected`: rejected by admin.
+- `failed`: failed before broadcast, or requires operator reconciliation after broadcast uncertainty.
+
+Payout lifecycle events are sent as webhooks when a domain webhook is configured:
+
+- `payout.requested.v1`
+- `payout.broadcast.v1`
+- `payout.finalized.v1`
+- `payout.rejected.v1`
+- `payout.failed.v1`
+
+Polling remains supported:
+
+```http
+GET /api/v1/payout/info?payout_id=<uuid>
+GET /api/v1/payout/history
+```
+
+## Create Refund Request
+
+Use this to request refund of a paid payment. Admin approval is required before on-chain transfer.
+
+```http
+POST /api/v1/refund/create
+Idempotency-Key: refund-ORDER-1001-v1
+```
+
+`Idempotency-Key` is optional but recommended. A fresh create returns `201`. Reusing the same key with the same payload returns the same refund response with `200`; reusing it with a different payload returns `409`.
+
+Refund requests are also checked against the configured outbound policy before the refund hold is created. Destination whitelist checks run again during admin approval when the original sender address is known.
+
+Request body:
+
+```json
+{
+  "payment_id": "payment_uuid",
+  "amount_raw": "25000000",
+  "reason": "Customer requested refund"
+}
+```
+
+Alternative identifier:
+
+```json
+{
+  "order_id": "ORDER-1001",
+  "reason": "Customer requested refund"
+}
+```
+
+Refund statuses:
+
+- `pending`
+- `processing`: approved and broadcast/finality is in progress.
+- `succeeded`: finality evidence was observed and the ledger refund debit was finalized.
+- `rejected`
+- `failed`
+
+Creating a refund request reserves the refundable amount in the ledger. Rejected refunds or refunds that fail before broadcast release that reservation. Broadcast success records `tx_hash`, source wallet, destination, asset metadata, and `broadcasted_at`; terminal success is queued only after finality evidence.
+
+Refund lifecycle events are sent as webhooks when a domain webhook is configured:
+
+- `refund.requested.v1`
+- `refund.broadcast.v1`
+- `refund.succeeded.v1`
+- `refund.rejected.v1`
+- `refund.failed.v1`
+
+Polling remains supported:
+
+```http
+GET /api/v1/refund/info?refund_id=<uuid>
+GET /api/v1/refund/history
+```
+
+## Transaction Rescan
+
+Use this when a blockchain transaction exists but was not processed or needs replay.
+
+```http
+POST /api/v1/transaction/rescan
+```
+
+Request body:
+
+```json
+{
+  "chain": "ethereum",
+  "tx_hash": "0x..."
+}
+```
+
+The gateway re-fetches the transaction and replays wallet matching, payment matching, ledger posting, and webhook processing.
+
+## Webhooks
+
+The gateway uses one callback URL per domain. The merchant integration should route by `event_type` in the JSON body or by `X-Gateway-Event` header.
+
+For NATS delivery, create or update the domain with `notification_mode: "nats"`, `nats_url`, and an optional `nats_subject` (default: `gateway.events`). The same JSON event body is published to that subject; webhook HMAC headers are used only in `webhook` mode.
+
+The versioned money event catalog is maintained in `docs/money-event-catalog.md`. It maps current emitted names, legacy underscore aliases, and canonical dotted event names without replacing the examples below.
+
+Canonical dotted event examples include `deposit.detected.v1`, `payment.succeeded.v1`, `payment.failed.v1`, `refund.succeeded.v1`, and `webhook.delivery.failed.v1`. Existing emitted names such as `native_transfer`, `payment_succeeded`, and `payment_failed` remain compatibility aliases where the catalog marks them as legacy or current aliases.
+
+Headers:
+
+```text
+X-Gateway-Event: payment_succeeded
+X-Gateway-Event-Id: <event_id>
+X-Gateway-Event-Version: v1
+X-Gateway-Delivery-Id: <delivery_id>
+X-Gateway-Resource-Type: payment
+X-Gateway-Resource-Id: <payment_id>
+X-Gateway-Sequence: <per-resource-sequence>
+X-Gateway-Idempotency-Key: <idempotency_key>
+X-Gateway-Timestamp: <unix_seconds>
+X-Gateway-Signature: sha256=<hmac_sha256_hex(timestamp + raw_body)>
+```
+
+Verify webhooks with the domain `webhook_secret`, not the API secret.
+
+### Webhook Verification Example
+
+```js
+import crypto from "crypto";
+
+function verifyWebhook(webhookSecret, timestamp, rawBody, receivedSignature) {
+  const sig = receivedSignature.replace(/^sha256=/, "");
+  const expected = crypto
+    .createHmac("sha256", webhookSecret)
+    .update(timestamp)
+    .update(rawBody)
+    .digest("hex");
+
+  return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+}
+```
+
+Reject webhooks when:
+
+- Timestamp is too old or too far in the future.
+- Signature is invalid.
+- `event_id` was already processed.
+
+### Delivery, Replay, and Deduplication
+
+Webhook delivery is at-least-once. Retries and operator replay can deliver the same event more than once. A replay preserves the original event id, event type, event version, merchant/domain scope, and payload idempotency fields so consumers can safely deduplicate.
+
+For a single `domain_id` + `resource_type` + `resource_id`, deliveries include a monotonic `sequence`. The gateway will not claim a later active delivery for that resource while an earlier pending, failed, or processing delivery is still active. Consumers should still store the sequence and process lower sequence values first for the same resource because HTTP delivery is at-least-once and client-side recovery may retry.
+
+Use these fields as the consumer dedupe key:
+
+- `X-Gateway-Event-Id` header and `event_id` payload field.
+- `X-Gateway-Idempotency-Key` header and `idempotency_key` payload field.
+- `X-Gateway-Event` / `event_type`.
+- `X-Gateway-Event-Version` / `event_version`.
+- `merchant_id` and `domain_id` scope.
+
+Use `delivery_id` for attempt/replay audit only. A replay can have a new `delivery_id` while preserving the original business `event_id` and idempotency key.
+
+Persist the dedupe decision before fulfilling an order, crediting an account, or triggering irreversible downstream work. A replay should be treated as recovery of the same event, not as a new business event.
+
+### Transaction Webhook Payload
+
+Event example: `native_transfer`
+
+```json
+{
+  "event_id": "1-0xhash-log:0:native_transfer",
+  "event_type": "native_transfer",
+  "transaction_id": "uuid",
+  "merchant_id": "uuid",
+  "domain_id": "uuid",
+  "product_id": "static:1:ETH",
+  "user_id": "customer_42",
+  "wallet_id": "uuid",
+  "chain_id": 1,
+  "hash": "0xhash",
+  "log_index": "log:0",
+  "block_number": "123456",
+  "block_hash": "0xblock",
+  "token": null,
+  "symbol": "ETH",
+  "decimals": 18,
+  "from": "0xSender",
+  "to": "0xDepositAddress",
+  "amount_raw": "1000000000000000000",
+  "status": "confirmed",
+  "created_at": "2026-06-06T10:00:00Z"
+}
+```
+
+Transaction webhook `event_id` is `<transaction_unique_hash>:<event_type>`, so a later `transaction.reorged.v1` correction for the same transaction has a distinct idempotency key. Reorg corrections include `original_event_id`, `original_resource_id`, and `correction_reason` so consumers can relate the correction to the prior transaction event without deleting prior history. When the reorg also corrects a payment lifecycle, the resulting `payment.failed.v1` payload includes those relation fields and references the prior payment lifecycle event when it can be derived from the preserved payment outcome.
+
+The existing underscore webhook event names remain compatibility aliases until a versioned event catalog migration explicitly retires them.
+
+The full versioned money lifecycle catalog is documented in `docs/money-event-catalog.md`.
+
+### Payment Webhook Payload
+
+Event examples:
+
+- `payment_succeeded`
+- `payment_failed`
+- `payment_expired`
+- `payment.underpaid.v1`
+- `payment.overpaid.v1`
+- `payment.partial_paid.v1`
+
+```json
+{
+  "event_id": "payment_uuid:payment_succeeded",
+  "event_type": "payment_succeeded",
+  "payment_id": "uuid",
+  "session_token": "token",
+  "order_id": "ORDER-1001",
+  "status": "paid",
+  "merchant_id": "uuid",
+  "domain_id": "uuid",
+  "product_id": "ORDER-1001",
+  "user_id": "customer_42",
+  "wallet_id": "uuid",
+  "amount": "25.00",
+  "currency": "USD",
+  "link_type": "fixed",
+  "chain_id": 1,
+  "symbol": "USDT",
+  "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "decimals": 6,
+  "expected_amount_raw": "25000000",
+  "deposit_address": "0xDepositAddress",
+  "payment_outcome": "exact",
+  "payment_outcome_reason": "deposit amount exactly matches expected amount",
+  "matched_amount_raw": "25000000",
+  "shortfall_amount_raw": "",
+  "excess_amount_raw": "",
+  "product": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "link_token": "b7d9f4b1c6a8e0d2f3a5b6c7d8e9f0a1b2c3",
+    "name": "Order 1001",
+    "description": "Product purchase",
+    "link_type": "fixed",
+    "amount": "25.00",
+    "currency": "USD",
+    "language": "tr",
+    "default_asset": {
+      "chain_id": 99999998,
+      "symbol": "USDT",
+      "token": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+    }
+  },
+  "tx_hash": "0xhash",
+  "tx_unique_hash": "1-0xhash-log:0",
+  "created_at": "2026-06-06T09:55:00Z",
+  "paid_at": "2026-06-06T10:00:00Z"
+}
+```
+
+### Lifecycle Webhook Payload
+
+Event examples:
+
+- `payout.finalized.v1`
+- `refund.succeeded.v1`
+- `sweep.succeeded.v1`
+
+```json
+{
+  "event_id": "entity_uuid:payout.finalized.v1",
+  "event_type": "payout.finalized.v1",
+  "event_version": "v1",
+  "occurred_at": "2026-06-26T10:05:00Z",
+  "entity_type": "payout",
+  "entity_id": "uuid",
+  "resource_type": "payout",
+  "resource_id": "uuid",
+  "resource_status": "finalized",
+  "idempotency_key": "entity_uuid:payout.finalized.v1",
+  "correlation_id": "payout:uuid",
+  "merchant_id": "uuid",
+  "domain_id": "uuid",
+  "wallet_id": "uuid",
+  "chain": "ethereum",
+  "symbol": "USDT",
+  "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+  "decimals": 6,
+  "amount_raw": "10500000",
+  "to_address": "0xRecipient",
+  "status": "finalized",
+  "tx_hash": "0xhash",
+  "broadcasted_at": "2026-06-26T10:03:00Z",
+  "finalized_at": "2026-06-26T10:05:00Z",
+  "created_at": "2026-06-26T10:00:00Z",
+  "updated_at": "2026-06-26T10:05:00Z"
+}
+```
+
+## Recommended Merchant-Side Flow
+
+### Hosted Checkout Flow
+
+1. Merchant backend creates a payment with `POST /api/v1/payment/create`.
+2. Merchant redirects customer to `checkout_url`.
+3. Customer selects chain/asset and pays.
+4. Gateway detects blockchain transaction.
+5. Gateway marks payment `paid`.
+6. Gateway sends `payment_succeeded` webhook to the domain callback URL.
+7. Merchant verifies webhook signature.
+8. Merchant idempotently fulfills `order_id`.
+
+### Static Address Flow
+
+1. Merchant backend creates/reuses address with `POST /api/v1/payment/static-address`.
+2. Merchant shows the address to the customer.
+3. Gateway detects deposits to the address.
+4. Gateway sends transaction webhook events to the domain callback URL.
+5. Merchant verifies signature and credits the user based on `event_id`.
+
+### Payout Flow
+
+1. Merchant backend creates payout request with `POST /api/v1/payout/create`.
+2. Admin approves or rejects in the admin panel.
+3. Broadcasted payouts remain `processing` until finality evidence is observed.
+4. Merchant polls `GET /api/v1/payout/info`.
+5. Merchant treats `finalized`, `rejected`, and pre-broadcast `failed` as terminal states. Post-broadcast uncertainty stays operator-recoverable.
+
+### Refund Flow
+
+1. Merchant backend creates refund request with `POST /api/v1/refund/create`.
+2. Admin approves or rejects in the admin panel.
+3. Broadcasted refunds remain `processing` until finality evidence is observed.
+4. Merchant polls `GET /api/v1/refund/info`.
+5. Merchant treats `succeeded`, `rejected`, and pre-broadcast `failed` as terminal states. Post-broadcast uncertainty stays operator-recoverable.
+
+## Idempotency Rules
+
+Merchant systems should store and deduplicate:
+
+- Payment webhook: `event_id`
+- Transaction webhook: `event_id`
+- Ordered webhook processing: `domain_id`, `resource_type`, `resource_id`, and `sequence`.
+- Replay-safe webhook audit: `delivery_id` plus `original_delivery_id` when present.
+- Payment create: use `Idempotency-Key` header, or rely on `order_id` fallback.
+- Payout/refund create: use `Idempotency-Key` for replay-safe request creation, and store returned `payout_id` / `refund_id`.
+
+Never fulfill an order based only on frontend return URLs. Always use webhook verification or server-side payment status query.
+
+## Contract Evidence - Epic 1
+
+Partner API Contract Evidence is in `docs/epic-1-integration-evidence.md`. It lists covered endpoints, auth modes, idempotency behavior, static wallet domain/product/user/asset scope, checkout state semantics, and known limitations for merchant/domain and tenant/domain isolation. Known production limitations are summarized below and expanded in the evidence file.
+
+## Error Handling
+
+Common API errors:
+
+```json
+{
+  "result": "error",
+  "message": "invalid request signature"
+}
+```
+
+HMAC failure example: if the `X-Gateway-Signature` was calculated over a different method, path/query, timestamp, or raw body, the API returns the same V1 error envelope with `invalid request signature`.
+
+Timestamp and replay failure examples:
+
+```json
+{
+  "result": "error",
+  "message": "timestamp expired"
+}
+```
+
+```json
+{
+  "result": "error",
+  "message": "request signature replayed"
+}
+```
+
+The same V1 envelope is used for validation failures, idempotency conflicts, unsupported assets, expired or unavailable sessions, and authorization failures. Error messages are category-level and must not expose API secrets, raw signatures, stack traces, or whether another tenant/domain owns a resource.
+
+Webhook delivery behavior:
+
+- Gateway retries failed webhook deliveries.
+- Gateway may replay a failed or dead-lettered webhook with the same event id/type/version.
+- Gateway preserves per-resource ordering for active delivery lanes.
+- Merchant endpoint should return any `2xx` status after successfully persisting the event.
+- Merchant endpoint should be idempotent because retries can happen.
+
+## Security Checklist
+
+- Keep `api_secret` server-side only.
+- Keep `webhook_secret` server-side only.
+- Verify request/webhook signatures using raw request body bytes.
+- Reject old timestamps.
+- Deduplicate webhook `event_id`.
+- Do not process unsigned callbacks.
+- Do not expose API secret in frontend code.
+
+## Known Production Limitations
+
+Epic 1 hardens partner intake, hosted checkout state, static address scope, idempotency, and integration evidence. It is controlled-launch evidence, not a claim of production custody or exchange-grade readiness.
+
+Production custody remains gated.
+
+Provider health metrics and readiness checks expose stale/unhealthy RPC signals and health-aware failover decisions, but they are not full archive/quorum exchange infrastructure.
+
+Production migration discipline is GORM-based and versioned through `services/dbmigrations`; raw SQL migration files are not the source of truth in this repo. Production readiness requires `GATEWAY_DB_MIGRATION_VERSION` to match the latest artifact and `services/database.VerifySchema` to pass.
+
+Money-path observability and launch evidence are documented in `docs/money-path-observability-runbook.md` and `docs/controlled-launch-readiness.md`.
+
+Do not treat the gateway as production custody/exchange-ready until the external signer boundary, reconciliation jobs, ledger-derived balances, versioned GORM migrations, observability/SLOs, backup/restore, compliance controls, archive/quorum provider strategy, and controlled launch gates are complete.

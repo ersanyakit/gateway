@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html { min-height: 100%; background: #f3f6fa; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      background: #f3f6fa;
+      color: #111827;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+      padding: 12px;
+    }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    .invoice-shell {
+      width: min(100%, 430px);
+      display: grid;
+      gap: 10px;
+    }
+    .invoice-header {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 2px;
+    }
+    .invoice-brand {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: #111827;
+      text-decoration: none;
+    }
+    .invoice-brand-icon {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #d0d7e2;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0070ba;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .05);
+    }
+    .invoice-brand-icon svg {
+      width: 17px;
+      height: 17px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .invoice-brand-copy {
+      min-width: 0;
+      display: grid;
+      gap: 1px;
+    }
+    .invoice-brand-title {
+      overflow: hidden;
+      color: #111827;
+      font-size: 14px;
+      font-weight: 900;
+      line-height: 1.15;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-brand-sub {
+      overflow: hidden;
+      color: #667085;
+      font-size: 11px;
+      font-weight: 760;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-status {
+      display: inline-flex;
+      min-height: 28px;
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      border: 1px solid #e4e8f0;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #667085;
+      font-size: 11px;
+      font-weight: 900;
+      line-height: 1;
+      padding: 0 10px;
+      white-space: nowrap;
+    }
+    .invoice-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+    .invoice-status.paid {
+      border-color: #abefc6;
+      background: #ecfdf3;
+      color: #079455;
+    }
+    .invoice-status.pending {
+      border-color: #fedf89;
+      background: #fffaeb;
+      color: #b54708;
+    }
+    .invoice-status.canceled,
+    .invoice-status.failed {
+      border-color: #fecdca;
+      background: #fff1f3;
+      color: #b42318;
+    }
+    .invoice-card {
+      overflow: hidden;
+      border: 1px solid #e4e8f0;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .10), 0 1px 2px rgba(15, 23, 42, .05);
+    }
+    .invoice-section {
+      padding: 12px;
+      border-bottom: 1px solid #edf0f5;
+    }
+    .invoice-section:last-child { border-bottom: 0; }
+    .invoice-product-strip {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(180deg, #ffffff 0%, #fbfcfe 100%);
+    }
+    .invoice-product-logo,
+    .invoice-product-avatar {
+      width: 64px;
+      height: 64px;
+      display: grid;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid #e4e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #0070ba;
+      object-fit: contain;
+      font-size: 16px;
+      font-weight: 950;
+      box-shadow: inset 0 -1px 0 rgba(16, 24, 40, .04);
+    }
+    .invoice-product-avatar {
+      background: #ffffff;
+      color: #0070ba;
+    }
+    .invoice-product-avatar svg {
+      width: 27px;
+      height: 27px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .invoice-product-copy {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+    }
+    .invoice-label {
+      margin: 0;
+      color: #667085;
+      font-size: 10px;
+      font-weight: 850;
+      letter-spacing: 0;
+      line-height: 1.2;
+      text-transform: uppercase;
+    }
+    .invoice-title {
+      margin: 0;
+      overflow: hidden;
+      color: #111827;
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 1.18;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-muted {
+      margin: 0;
+      overflow: hidden;
+      color: #667085;
+      font-size: 12px;
+      font-weight: 720;
+      line-height: 1.35;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-amount-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #f8fbff 0%, #eff6ff 100%);
+      padding: 12px;
+    }
+    .invoice-amount-copy {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+    .invoice-amount {
+      color: #111827;
+      font-size: 28px;
+      font-weight: 950;
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .invoice-coin-mark {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      border: 1px solid #d0d7e2;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #0070ba;
+      font-size: 10px;
+      font-weight: 950;
+      box-shadow: inset 0 -1px 0 rgba(16, 24, 40, .04);
+    }
+    .invoice-coin-mark img {
+      width: 28px;
+      height: 28px;
+      object-fit: contain;
+    }
+    .invoice-detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .invoice-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      border: 1px solid #edf0f5;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #ffffff;
+    }
+    .invoice-detail-item {
+      min-width: 0;
+      min-height: 58px;
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      border-right: 1px solid #edf0f5;
+      border-bottom: 1px solid #edf0f5;
+      padding: 10px;
+    }
+    .invoice-detail-item:nth-child(2n) { border-right: 0; }
+    .invoice-detail-item:nth-last-child(-n+2) { border-bottom: 0; }
+    .invoice-detail-item span {
+      overflow: hidden;
+      color: #667085;
+      font-size: 10px;
+      font-weight: 850;
+      line-height: 1.2;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .invoice-detail-item strong {
+      overflow: hidden;
+      color: #111827;
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.28;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .invoice-full {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+    .invoice-code {
+      display: block;
+      max-height: 72px;
+      overflow: auto;
+      overflow-wrap: anywhere;
+      border: 1px solid #edf0f5;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #475467;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      padding: 9px 10px;
+      text-decoration: none;
+    }
+    .invoice-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px;
+      background: #ffffff;
+    }
+    .invoice-button {
+      min-width: 0;
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #d0d5dd;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #111827;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1;
+      padding: 0 10px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .invoice-button.primary {
+      border-color: #0070ba;
+      background: #0070ba;
+      color: #ffffff;
+      box-shadow: 0 12px 24px rgba(0, 112, 186, .18);
+    }
+    .invoice-button:focus-visible {
+      outline: 0;
+      box-shadow: 0 0 0 3px rgba(0, 112, 186, .16);
+    }
+    .invoice-button:active { transform: translateY(1px) scale(.99); }
+    @media (max-width: 390px) {
+      body { padding: 8px; }
+      .invoice-status { display: none; }
+      .invoice-amount-panel { grid-template-columns: 1fr; }
+      .invoice-coin-mark { justify-self: start; }
+      .invoice-detail-grid { grid-template-columns: 1fr; }
+      .invoice-detail-item,
+      .invoice-detail-item:nth-child(2n),
+      .invoice-detail-item:nth-last-child(-n+2) {
+        border-right: 0;
+        border-bottom: 1px solid #edf0f5;
+      }
+      .invoice-detail-item:last-child { border-bottom: 0; }
+    }
+    @media print {
+      html, body { background: #ffffff !important; }
+      body { min-height: auto; padding: 0; }
+      .invoice-shell { width: 100%; }
+      .invoice-header,
+      .invoice-actions { display: none !important; }
+      .invoice-card {
+        border: 1px solid #d0d5dd !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+      }
+      .invoice-code { max-height: none; overflow: visible; }
+    }
+  </style>
+</head>
+<body>
+  <main class="invoice-shell">
+    <header class="invoice-header">
+      <a class="invoice-brand" href="/" aria-label="Gateway Pay">
+        <span class="invoice-brand-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span class="invoice-brand-copy">
+          <span class="invoice-brand-title">Gateway Pay</span>
+          <span class="invoice-brand-sub">Güvenli fatura</span>
+        </span>
+      </a>
+      <span class="invoice-status {{.StatusClass}}">{{.StatusLabel}}</span>
+    </header>
+
+    <section class="invoice-card" aria-label="Fatura">
+      <section class="invoice-section invoice-product-strip">
+        {{if .ProductLogoURL}}
+          <img class="invoice-product-logo" src="{{.ProductLogoURL}}" alt="{{.ProductName}}">
+        {{else}}
+          <div class="invoice-product-avatar" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+          </div>
+        {{end}}
+        <div class="invoice-product-copy">
+          <p class="invoice-label">{{if .IsPaid}}Makbuz{{else}}Fatura{{end}}</p>
+          <h1 class="invoice-title">{{.ProductName}}</h1>
+          <p class="invoice-muted">{{if .ProductDescription}}{{.ProductDescription}}{{else}}{{.DomainURL}}{{end}}</p>
+        </div>
+      </section>
+
+      <section class="invoice-section">
+        <div class="invoice-amount-panel" aria-label="Tutar">
+          <div class="invoice-amount-copy">
+            <p class="invoice-label">Toplam tutar</p>
+            <strong class="invoice-amount">{{if .AmountDisplay}}{{.AmountDisplay}}{{else}}{{.Amount}} {{.Currency}}{{end}}</strong>
+            {{if .Symbol}}<p class="invoice-muted">Ödenen asset {{.Symbol}}{{if .ChainName}} · {{.ChainName}}{{end}}</p>{{end}}
+          </div>
+          {{if .Symbol}}
+          <div class="invoice-coin-mark">
+            {{if .SelectedAssetLogoURL}}<img src="{{.SelectedAssetLogoURL}}" alt="{{.Symbol}}">{{else}}<span>{{.Symbol}}</span>{{end}}
+          </div>
+          {{end}}
+        </div>
+      </section>
+
+      <section class="invoice-section">
+        <div class="invoice-detail-head">
+          <p class="invoice-label">Fatura detayları</p>
+        </div>
+        <div class="invoice-detail-grid">
+          <div class="invoice-detail-item"><span>Durum</span><strong>{{.StatusLabel}}</strong></div>
+          <div class="invoice-detail-item"><span>Sipariş</span><strong title="{{.OrderID}}">{{if .OrderID}}{{.OrderID}}{{else}}-{{end}}</strong></div>
+          <div class="invoice-detail-item"><span>Oluşturma</span><strong>{{.CreatedAt}}</strong></div>
+          <div class="invoice-detail-item"><span>Ödeme tarihi</span><strong>{{if .PaidAt}}{{.PaidAt}}{{else}}-{{end}}</strong></div>
+          <div class="invoice-detail-item"><span>Domain</span><strong title="{{.DomainURL}}">{{.DomainURL}}</strong></div>
+          <div class="invoice-detail-item"><span>Gateway</span><strong>Gateway Pay</strong></div>
+        </div>
+
+        {{if .TxHash}}
+        <div class="invoice-full">
+          <p class="invoice-label">Zincir işlem hash</p>
+          <code class="invoice-code">{{.TxHash}}</code>
+        </div>
+        {{end}}
+
+        <div class="invoice-full">
+          <p class="invoice-label">Fatura linki</p>
+          <a class="invoice-code" href="#" id="invoice-self-link">{{.CheckoutURL}}</a>
+        </div>
+      </section>
+
+      <div class="invoice-actions">
+        {{if not .IsPaid}}<a class="invoice-button primary" href="{{.CheckoutURL}}">Ödeme sayfasına git</a>{{end}}
+        <button class="invoice-button" type="button" onclick="window.print()">Yazdır / PDF</button>
+        <button class="invoice-button" type="button" id="copy-invoice-link">Linki kopyala</button>
+        {{if .IsPaid}}<a class="invoice-button primary" href="{{.CheckoutURL}}">Checkout'u aç</a>{{end}}
+      </div>
+    </section>
+  </main>
+
+  <script>
+    var selfLink = document.getElementById("invoice-self-link");
+    var copyButton = document.getElementById("copy-invoice-link");
+    if (selfLink) {
+      selfLink.href = window.location.href;
+      selfLink.textContent = window.location.href;
+    }
+    if (copyButton) {
+      copyButton.addEventListener("click", function () {
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(window.location.href);
+        }
+        var text = copyButton.textContent;
+        copyButton.textContent = "Kopyalandı";
+        window.setTimeout(function () {
+          copyButton.textContent = text;
+        }, 1200);
+      });
+    }
+  </script>
+</body>
+</html>

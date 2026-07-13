@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gateway Pay</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/checkout.js" defer></script>
+</head>
+<body class="crypto-page crypto-payment-flow crypto-checkout-page crypto-flow-select">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="{{.CheckoutURL}}">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Gateway Pay</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Secure checkout{{else}}Güvenli ödeme{{end}}</span>
+        </span>
+      </a>
+      <div class="crypto-header-tools">
+        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
+          <span class="crypto-lang-options">
+            <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" lang="tr" hreflang="tr" aria-label="Türkçe" {{if not .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/tr.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">Türkçe</span></a>
+            <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" lang="en" hreflang="en" aria-label="English" {{if .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/gb.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">English</span></a>
+          </span>
+        </nav>
+        <div class="crypto-steps" aria-label="Checkout progress">
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot active"></span>
+          <span class="crypto-step-dot pending"></span>
+        </div>
+      </div>
+    </header>
+
+    <section class="crypto-card">
+      <div class="crypto-stack">
+        {{if .ProductName}}
+        <section class="crypto-section crypto-merchant-panel">
+          <div class="crypto-product-strip">
+            {{if .ProductLogoURL}}<img class="crypto-product-logo" src="{{.ProductLogoURL}}" alt="">{{else}}<div class="crypto-product-avatar">{{printf "%.1s" .ProductName}}</div>{{end}}
+            <div class="crypto-product-copy">
+              <strong class="crypto-product-title">{{.ProductName}}</strong>
+              {{if .ProductDescription}}<p class="crypto-product-description">{{.ProductDescription}}</p>{{end}}
+            </div>
+          </div>
+        </section>
+        {{end}}
+        <section class="crypto-section crypto-order-panel">
+          <div class="crypto-flex-between crypto-align-end">
+            <div>
+              <p class="crypto-label">{{if .IsDonation}}{{if .IsEnglish}}Amount you want to deposit{{else}}Yatırmak istediğiniz tutar{{end}}{{else}}{{if .IsEnglish}}You pay{{else}}Ödenecek tutar{{end}}{{end}}</p>
+              <div class="crypto-price">{{if .IsDonation}}{{if .IsEnglish}}Set in wallet{{else}}Siz belirlersiniz{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</div>
+              <p class="crypto-muted">{{if .IsEnglish}}Order{{else}}Sipariş{{end}} {{.Session.OrderID}}</p>
+            </div>
+            {{if .IsDonation}}
+            <div class="crypto-timer crypto-no-expiry">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M8 12c1.4-2 2.7-3 4-3s2.6 1 4 3c-1.4 2-2.7 3-4 3s-2.6-1-4-3z"></path></svg>
+              <span>{{if .IsEnglish}}No expiry{{else}}Süresiz{{end}}</span>
+            </div>
+            {{else}}
+            <div class="crypto-timer" data-countdown-unix="{{.ExpiresAtUnix}}">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></svg>
+              <span>--:--</span>
+            </div>
+            {{end}}
+          </div>
+        </section>
+
+        {{if .Error}}
+        <div class="crypto-alert">{{.Error}}</div>
+        {{end}}
+
+        <section class="crypto-selection-panel">
+          <div class="crypto-flex-between crypto-section-title">
+            <div>
+              <p class="crypto-label">{{if .IsEnglish}}Payment method{{else}}Ödeme yöntemi{{end}}</p>
+              <p class="crypto-choice-context" data-selected-token-title hidden>{{if .IsEnglish}}Choose coin{{else}}Coin seç{{end}}</p>
+            </div>
+          </div>
+
+          <div class="crypto-picker-shell{{if .SelectedSymbol}} has-token{{end}}" data-asset-picker data-selected-symbol="{{.SelectedSymbol}}">
+            <div class="crypto-picker-column crypto-token-picker">
+              <div class="crypto-picker-heading">
+                <span class="crypto-picker-step">1</span>
+                <span>
+                  <p class="crypto-picker-label">{{if .IsEnglish}}Token{{else}}Token{{end}}</p>
+                  <strong data-token-stage-title>{{if .SelectedSymbol}}{{.SelectedSymbol}}{{else}}{{if .IsEnglish}}Choose coin{{else}}Coin seç{{end}}{{end}}</strong>
+                </span>
+                <button class="crypto-change-token" type="button" data-clear-token {{if not .SelectedSymbol}}hidden{{end}}>
+                  {{if .IsEnglish}}Change{{else}}Değiştir{{end}}
+                </button>
+              </div>
+              <label class="crypto-token-search">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M16.5 16.5 21 21"></path></svg>
+                <input type="search" data-token-search placeholder="{{if .IsEnglish}}Search coin{{else}}Coin ara{{end}}" autocomplete="off">
+              </label>
+              <div class="crypto-token-list" role="listbox" aria-label="{{if .IsEnglish}}Token{{else}}Token{{end}}">
+                {{range .AssetGroups}}
+                <button class="crypto-token-option" type="button" role="option" data-symbol="{{.Symbol}}" data-token-search-text="{{.Symbol}} {{.Name}}" aria-selected="false">
+                  {{if .LogoURL}}
+                    <img class="crypto-token-icon" src="{{.LogoURL}}" alt="{{.Symbol}}">
+                  {{else}}
+                    <span class="crypto-token-icon">{{.Symbol}}</span>
+                  {{end}}
+                  <span class="crypto-token-meta">
+                    <strong>{{.Symbol}}</strong>
+                    <small>{{.Name}}</small>
+                  </span>
+                  <span class="crypto-token-action">
+                    <span class="crypto-token-count">{{.ChainCount}} {{if $.IsEnglish}}{{if eq .ChainCount 1}}network{{else}}networks{{end}}{{else}}ağ{{end}}</span>
+                    <span class="crypto-token-check">✓</span>
+                  </span>
+                </button>
+                {{else}}
+                <div class="crypto-alert">
+                  {{if $.IsEnglish}}No payment assets are available for this checkout. Please try again shortly.{{else}}Bu ödeme için kullanılabilir asset bulunamadı. Lütfen biraz sonra tekrar deneyin.{{end}}
+                </div>
+                {{end}}
+              </div>
+            </div>
+
+            <div class="crypto-picker-column crypto-network-picker{{if .SelectedSymbol}} has-token{{end}}" data-network-panel>
+              <div class="crypto-picker-heading">
+                <span class="crypto-picker-step">2</span>
+                <span>
+                  <p class="crypto-picker-label">{{if .IsEnglish}}Network{{else}}Ağ{{end}}</p>
+                  <strong data-selected-token-label>{{if .SelectedSymbol}}{{if .IsEnglish}}Select network{{else}}Ağ seç{{end}}{{else}}{{if .IsEnglish}}Waiting for token{{else}}Token bekleniyor{{end}}{{end}}</strong>
+                </span>
+              </div>
+              <div class="crypto-picker-prompt" data-network-prompt {{if .SelectedSymbol}}hidden{{end}}>
+                {{if .IsEnglish}}Waiting for coin{{else}}Coin bekleniyor{{end}}
+              </div>
+              <div class="crypto-network-list crypto-combo-list" data-network-list>
+                {{range .Assets}}
+                <form method="post" action="{{$.SelectURL}}" data-symbol="{{.GroupSymbol}}" data-network-row {{if or (not $.SelectedSymbol) (ne .GroupSymbol $.SelectedSymbol)}}hidden{{end}}>
+                  <input type="hidden" name="chain_id" value="{{.ChainID}}">
+                  <input type="hidden" name="symbol" value="{{.Symbol}}">
+                  <input type="hidden" name="token" value="{{.Token}}">
+                  <button class="crypto-network-option" type="submit" {{if not .Available}}disabled{{end}}>
+                    <span class="crypto-network-left">
+                      {{if .ChainLogoURL}}
+                        <img src="{{.ChainLogoURL}}" alt="{{.ChainName}}" style="width:20px;height:20px;object-fit:contain;flex-shrink:0;border-radius:4px;">
+                      {{else if .LogoURL}}
+                        <img src="{{.LogoURL}}" alt="{{.Symbol}}" style="width:20px;height:20px;object-fit:contain;flex-shrink:0;">
+                      {{else}}
+                        <span class="crypto-network-dot"></span>
+                      {{end}}
+                      <span>
+                        <strong>{{.ChainName}}</strong>
+                        <small>{{.Symbol}} · {{if .Native}}Native{{else}}Token{{end}}</small>
+                      </span>
+                    </span>
+                    <span class="crypto-network-right">
+                      {{if .LogoURL}}<img class="crypto-chain-chip" src="{{.LogoURL}}" alt="{{.Symbol}}">{{end}}
+                      <strong>{{if .QuoteAvailable}}{{.AmountDisplay}}{{else}}{{if $.IsEnglish}}Continue{{else}}Devam et{{end}}{{end}}</strong>
+                      <small>
+                        {{if .Available}}
+                          {{if $.IsEnglish}}Select{{else}}Seç{{end}}
+                        {{else if eq .UnavailableReason "quote"}}
+                          {{if $.IsEnglish}}Try again{{else}}Tekrar dene{{end}}
+                        {{else if eq .UnavailableReason "address"}}
+                          {{if $.IsEnglish}}Address unavailable{{else}}Adres yok{{end}}
+                        {{else}}
+                          {{if $.IsEnglish}}Unavailable{{else}}Uygun değil{{end}}
+                        {{end}}
+                      </small>
+                    </span>
+                  </button>
+                </form>
+                {{else}}
+                <div class="crypto-alert">
+                  {{if $.IsEnglish}}No payment networks are available for this checkout. Please try again shortly.{{else}}Bu ödeme için kullanılabilir network bulunamadı. Lütfen biraz sonra tekrar deneyin.{{end}}
+                  {{if and $.SelectedSymbol $.Session}}
+                  <a class="crypto-ghost-btn" href="/checkout/{{$.Session.SessionToken}}">{{if $.IsEnglish}}Change asset{{else}}Asset değiştir{{end}}</a>
+                  {{end}}
+                </div>
+                {{end}}
+                <div class="crypto-alert crypto-network-empty" data-network-empty hidden>
+                  {{if .IsEnglish}}No network is available for this token.{{else}}Bu token için kullanılabilir network yok.{{end}}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="crypto-section crypto-checkout-summary">
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Price source{{else}}Fiyat kaynağı{{end}}</span><strong>{{if .IsDonation}}{{if .IsEnglish}}Not used{{else}}Kullanılmaz{{end}}{{else}}Gateway pricing{{end}}</strong></div>
+          <div class="crypto-divider"></div>
+          <div class="crypto-summary-row"><span>{{if .IsEnglish}}Total{{else}}Toplam{{end}}</span><strong>{{if .IsDonation}}{{if .IsEnglish}}Payer decides{{else}}Ödeyen belirler{{end}}{{else}}{{.Session.Amount}} {{.Session.Currency}}{{end}}</strong></div>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

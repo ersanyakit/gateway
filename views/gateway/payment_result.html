@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="{{if .IsEnglish}}en{{else}}tr{{end}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="crypto-page crypto-payment-flow crypto-payment-result-page crypto-flow-select crypto-result-{{.ResultKind}}">
+  <div class="crypto-bg"><div class="crypto-bg-one"></div><div class="crypto-bg-two"></div></div>
+
+  <main class="crypto-container">
+    <header class="crypto-header">
+      <a class="crypto-header-left" href="{{.CheckoutURL}}" aria-label="Gateway Pay">
+        <span class="crypto-header-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        </span>
+        <span>
+          <span class="crypto-header-title">Gateway Pay</span>
+          <span class="crypto-header-sub">{{if .IsEnglish}}Secure checkout{{else}}Güvenli ödeme{{end}}</span>
+        </span>
+      </a>
+      <div class="crypto-header-tools">
+        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
+          <span class="crypto-lang-options">
+            <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" lang="tr" hreflang="tr" aria-label="Türkçe" {{if not .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/tr.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">Türkçe</span></a>
+            <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" lang="en" hreflang="en" aria-label="English" {{if .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/gb.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">English</span></a>
+          </span>
+        </nav>
+        <div class="crypto-steps" aria-label="Checkout progress">
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot done"></span>
+          <span class="crypto-step-dot done"></span>
+        </div>
+      </div>
+    </header>
+
+    <section class="crypto-card crypto-result-card">
+      <div class="crypto-result-wrap visible">
+        <section class="crypto-section crypto-result-panel" aria-labelledby="paymentResultTitle">
+          {{if or .ProductLogoURL .ProductName}}
+          <div class="crypto-product-strip compact crypto-result-product-strip">
+            {{if .ProductLogoURL}}
+              <img class="crypto-product-logo compact" src="{{.ProductLogoURL}}" alt="{{.ProductName}}">
+            {{else}}
+              <div class="crypto-product-avatar compact">{{printf "%.1s" .ProductName}}</div>
+            {{end}}
+            <div class="crypto-product-copy">
+              <strong class="crypto-product-title">{{if .ProductName}}{{.ProductName}}{{else}}Gateway Pay{{end}}</strong>
+              <span class="crypto-product-description">{{if .IsEnglish}}Secure checkout{{else}}Güvenli ödeme{{end}}</span>
+            </div>
+          </div>
+          {{end}}
+          <div class="crypto-result-status-row">
+            <div class="crypto-success-icon {{.ResultKind}}">
+              <span class="crypto-success-ring one"></span>
+              <span class="crypto-success-ring two"></span>
+              <span class="crypto-success-circle">
+                {{if eq .ResultKind "success"}}
+                <svg class="crypto-checkmark" viewBox="0 0 24 24" aria-hidden="true"><circle class="crypto-checkmark-ring" cx="12" cy="12" r="9"></circle><path class="crypto-checkmark-path" d="M7.5 12.2l3 3 6.3-6.4"></path></svg>
+                {{else if eq .ResultKind "canceled"}}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18"></path><path d="M6 6l12 12"></path></svg>
+                {{else}}
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 9v4"></path><path d="M12 17h.01"></path><circle cx="12" cy="12" r="10"></circle></svg>
+                {{end}}
+              </span>
+            </div>
+            <div class="crypto-result-copy">
+              <div class="crypto-result-titlebar">
+                <p class="crypto-result-kicker">{{if .IsEnglish}}Payment status{{else}}Ödeme durumu{{end}}</p>
+                <span class="crypto-result-state-pill {{.ResultKind}}">
+                  {{if eq .ResultKind "success"}}
+                    {{if .IsEnglish}}Completed{{else}}Tamamlandı{{end}}
+                  {{else if eq .ResultKind "canceled"}}
+                    {{if .IsEnglish}}Canceled{{else}}İptal edildi{{end}}
+                  {{else}}
+                    {{if .IsEnglish}}Action required{{else}}İşlem tamamlanamadı{{end}}
+                  {{end}}
+                </span>
+              </div>
+              <h1 class="crypto-success-title" id="paymentResultTitle">{{.Title}}</h1>
+              <p class="crypto-success-sub">{{.Message}}</p>
+            </div>
+          </div>
+          {{if .AmountDisplay}}
+          <div class="crypto-result-amount-panel">
+            <div class="crypto-result-asset-mark">
+              {{if .SelectedAssetLogoURL}}<img src="{{.SelectedAssetLogoURL}}" alt="{{.SelectedSymbol}}">{{else if .SelectedSymbol}}<span>{{.SelectedSymbol}}</span>{{end}}
+            </div>
+            <div class="crypto-result-amount-copy">
+              <span>{{if .IsEnglish}}Paid amount{{else}}Yatırılan tutar{{end}}</span>
+              <strong>{{.AmountDisplay}}</strong>
+              {{if .SelectedSymbol}}<small>{{if .IsEnglish}}Settled with{{else}}Kullanılan asset{{end}} {{.SelectedSymbol}}{{if .ChainName}} · {{.ChainName}}{{end}}</small>{{end}}
+            </div>
+          </div>
+          {{end}}
+        </section>
+
+        <section class="crypto-section crypto-result-summary">
+          <div class="crypto-result-section-head">
+            <p class="crypto-label">{{if .IsEnglish}}Transaction details{{else}}İşlem detayları{{end}}</p>
+          </div>
+          <div class="crypto-result-meta-grid">
+            <div class="crypto-result-meta-item"><span>{{if .IsEnglish}}Status{{else}}Durum{{end}}</span><strong>{{.StatusLabel}}</strong></div>
+            {{if .OrderID}}<div class="crypto-result-meta-item"><span>{{if .IsEnglish}}Order{{else}}Sipariş{{end}}</span><strong>{{.OrderID}}</strong></div>{{end}}
+            {{if .SelectedSymbol}}<div class="crypto-result-meta-item"><span>Asset</span><strong>{{.SelectedSymbol}}</strong></div>{{end}}
+            {{if .ChainName}}<div class="crypto-result-meta-item"><span>{{if .IsEnglish}}Network{{else}}Ağ{{end}}</span><strong>{{.ChainName}}</strong></div>{{end}}
+            <div class="crypto-result-meta-item"><span>Gateway</span><strong>Gateway Pay</strong></div>
+          </div>
+        </section>
+
+        {{if .ReceiptRefs}}
+        <details class="crypto-section crypto-receipt-card" aria-labelledby="receiptReferencesTitle">
+          <summary class="crypto-receipt-summary">
+            <span class="crypto-label" id="receiptReferencesTitle">{{if .IsEnglish}}Receipt references{{else}}Makbuz referansları{{end}}</span>
+            <span>{{if .IsEnglish}}Show{{else}}Göster{{end}}</span>
+          </summary>
+          <div class="crypto-summary-body">
+            {{range .ReceiptRefs}}
+            <div class="crypto-summary-row crypto-receipt-row">
+              <span>{{.Label}}</span>
+              <strong id="{{.ID}}">{{.Value}}</strong>
+              <button class="crypto-copy-btn" type="button" data-copy-target="{{.ID}}">{{if $.IsEnglish}}Copy{{else}}Kopyala{{end}}</button>
+            </div>
+            {{end}}
+          </div>
+        </details>
+        {{end}}
+
+        <div class="crypto-actions crypto-result-actions">
+          <button class="crypto-ghost-btn crypto-print-btn" type="button" data-print-receipt>{{if .IsEnglish}}Print receipt{{else}}Dekont yazdır{{end}}</button>
+          <a class="crypto-primary-btn" href="{{.CheckoutURL}}">{{if .IsEnglish}}Back to checkout{{else}}Checkout'a dön{{end}}</a>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script>
+    document.querySelectorAll("[data-copy-target]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        var target = document.getElementById(button.getAttribute("data-copy-target"));
+        var value = target ? target.innerText : "";
+        if (!value) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(value).then(function () {
+            button.innerText = document.documentElement.lang === "tr" ? "Kopyalandı" : "Copied";
+          }).catch(function () {});
+        }
+      });
+    });
+    document.querySelectorAll("[data-print-receipt]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        document.querySelectorAll(".crypto-receipt-card").forEach(function (receipt) {
+          receipt.open = true;
+        });
+        window.print();
+      });
+    });
+  </script>
+</body>
+</html>

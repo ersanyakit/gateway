@@ -1,0 +1,65 @@
+package models
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+const (
+	WebhookDeliveryStatusPending    = "pending"
+	WebhookDeliveryStatusProcessing = "processing"
+	WebhookDeliveryStatusSucceeded  = "succeeded"
+	WebhookDeliveryStatusFailed     = "failed"
+	WebhookDeliveryStatusDeadLetter = "dead_letter"
+)
+
+type WebhookDelivery struct {
+	ID uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+
+	MerchantID    uuid.UUID  `gorm:"type:uuid;not null;index" json:"merchant_id"`
+	DomainID      uuid.UUID  `gorm:"type:uuid;not null;index" json:"domain_id"`
+	PaymentID     *uuid.UUID `gorm:"type:uuid;index" json:"payment_id,omitempty"`
+	TransactionID *uuid.UUID `gorm:"type:uuid;index" json:"transaction_id,omitempty"`
+
+	EventID        string     `gorm:"size:256;not null;index" json:"event_id"`
+	EventType      string     `gorm:"size:80;not null;index" json:"event_type"`
+	EventVersion   string     `gorm:"size:16;not null;default:v1" json:"event_version"`
+	EntityType     string     `gorm:"size:40;index" json:"entity_type,omitempty"`
+	EntityID       *uuid.UUID `gorm:"type:uuid;index" json:"entity_id,omitempty"`
+	ResourceType   string     `gorm:"size:40;index:idx_webhook_delivery_resource_order" json:"resource_type,omitempty"`
+	ResourceID     string     `gorm:"size:128;index:idx_webhook_delivery_resource_order" json:"resource_id,omitempty"`
+	Sequence       int64      `gorm:"not null;default:0;index:idx_webhook_delivery_resource_order" json:"sequence"`
+	IdempotencyKey string     `gorm:"size:256;index" json:"idempotency_key,omitempty"`
+	PayloadJSON    string     `gorm:"type:text" json:"payload_json,omitempty"`
+	TargetURL      string     `gorm:"size:500;not null" json:"target_url"`
+	Status         string     `gorm:"size:24;not null;index" json:"status"`
+
+	Attempts        uint       `gorm:"not null;default:0" json:"attempts"`
+	LastError       string     `gorm:"type:text" json:"last_error,omitempty"`
+	FailureCategory string     `gorm:"size:40;index" json:"failure_category,omitempty"`
+	NextRetryAt     *time.Time `gorm:"index" json:"next_retry_at,omitempty"`
+	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
+
+	OriginalDeliveryID *uuid.UUID `gorm:"type:uuid;index" json:"original_delivery_id,omitempty"`
+	ReplayCount        uint       `gorm:"not null;default:0" json:"replay_count"`
+	ReplayRequestedBy  string     `gorm:"size:255;index" json:"replay_requested_by,omitempty"`
+	ReplayRequestedAt  *time.Time `gorm:"index" json:"replay_requested_at,omitempty"`
+	OperatorAction     string     `gorm:"size:80;index" json:"operator_action,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type WebhookResourceSequence struct {
+	ID uuid.UUID `gorm:"type:uuid;default:uuid_generate_v4();primaryKey" json:"id"`
+
+	MerchantID   uuid.UUID `gorm:"type:uuid;not null;index" json:"merchant_id"`
+	DomainID     uuid.UUID `gorm:"type:uuid;not null;index:ux_webhook_resource_sequence,unique" json:"domain_id"`
+	ResourceType string    `gorm:"size:40;not null;index:ux_webhook_resource_sequence,unique" json:"resource_type"`
+	ResourceID   string    `gorm:"size:128;not null;index:ux_webhook_resource_sequence,unique" json:"resource_id"`
+	LastSequence int64     `gorm:"not null;default:0" json:"last_sequence"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
