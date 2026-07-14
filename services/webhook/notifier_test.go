@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"core/models"
 
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -24,22 +26,20 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 type fakeNATSConnection struct {
-	server       string
-	subject      string
-	body         []byte
-	flushTimeout time.Duration
-	closed       bool
+	server     string
+	subject    string
+	body       []byte
+	messageID  string
+	ack        *nats.PubAck
+	publishErr error
+	closed     bool
 }
 
-func (f *fakeNATSConnection) Publish(subject string, body []byte) error {
+func (f *fakeNATSConnection) Publish(_ context.Context, subject string, body []byte, messageID string) (*nats.PubAck, error) {
 	f.subject = subject
 	f.body = append([]byte(nil), body...)
-	return nil
-}
-
-func (f *fakeNATSConnection) FlushTimeout(timeout time.Duration) error {
-	f.flushTimeout = timeout
-	return nil
+	f.messageID = messageID
+	return f.ack, f.publishErr
 }
 
 func (f *fakeNATSConnection) Close() {
@@ -447,7 +447,7 @@ func TestNotifierDeliverPaymentPublishesProductSnapshotToNATS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	connection := &fakeNATSConnection{}
+	connection := &fakeNATSConnection{ack: &nats.PubAck{Stream: "merchant-events", Sequence: 42}}
 	notifier := &Notifier{
 		natsConnect: func(server string) (natsConnection, error) {
 			connection.server = server
@@ -481,12 +481,123 @@ func TestNotifierDeliverPaymentPublishesProductSnapshotToNATS(t *testing.T) {
 	if connection.server != domain.NATSURL || connection.subject != domain.NATSSubject || !connection.closed {
 		t.Fatalf("nats delivery target = server %q subject %q closed=%v", connection.server, connection.subject, connection.closed)
 	}
+	if connection.messageID != PaymentEventID(session) {
+		t.Fatalf("Nats-Msg-Id = %q, want event fallback %q", connection.messageID, PaymentEventID(session))
+	}
 	var payload PaymentPayload
 	if err := json.Unmarshal(connection.body, &payload); err != nil {
 		t.Fatal(err)
 	}
 	if payload.Product == nil || payload.Product.ID != productID.String() || payload.Product.Name != "TRON checkout" || payload.Product.DefaultAsset == nil || payload.Product.DefaultAsset.Token != token {
 		t.Fatalf("product snapshot = %#v", payload.Product)
+	}
+}
+
+func TestNotifierDeliverNATSUsesDeliveryIDAndAcceptsDuplicatePubAck(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	connection := &fakeNATSConnection{ack: &nats.PubAck{
+		Stream:    "merchant-events",
+		Sequence:  42,
+		Duplicate: true,
+	}}
+	notifier := &Notifier{
+		natsConnect: func(server string) (natsConnection, error) {
+			connection.server = server
+			return connection, nil
+		},
+	}
+	domain := models.Domain{
+		ID:               uuid.New(),
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "nats://127.0.0.1:4222",
+		NATSSubject:      "merchant.payments",
+	}
+	metadata := DeliveryMetadata{
+		DeliveryID:     "delivery-1",
+		IdempotencyKey: "idempotency-1",
+	}
+	if err := notifier.DeliverRawWithMetadata(
+		context.Background(),
+		domain,
+		"payment_succeeded",
+		"event-1",
+		"v1",
+		[]byte(`{"event_id":"event-1"}`),
+		metadata,
+	); err != nil {
+		t.Fatalf("duplicate PubAck should be a durable success: %v", err)
+	}
+	if connection.messageID != metadata.DeliveryID {
+		t.Fatalf("Nats-Msg-Id = %q, want delivery id %q", connection.messageID, metadata.DeliveryID)
+	}
+	if !connection.closed {
+		t.Fatal("nats connection was not closed")
+	}
+}
+
+func TestNotifierDeliverNATSUsesMetadataIdempotencyAsLastMessageIDFallback(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	connection := &fakeNATSConnection{ack: &nats.PubAck{Stream: "merchant-events", Sequence: 1}}
+	notifier := &Notifier{
+		natsConnect: func(string) (natsConnection, error) {
+			return connection, nil
+		},
+	}
+	metadata := DeliveryMetadata{IdempotencyKey: "idempotency-fallback"}
+	err := notifier.DeliverRawWithMetadata(context.Background(), models.Domain{
+		ID:               uuid.New(),
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "nats://127.0.0.1:4222",
+		NATSSubject:      "merchant.payments",
+	}, "payment_succeeded", "", "v1", []byte(`{"ok":true}`), metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if connection.messageID != metadata.IdempotencyKey {
+		t.Fatalf("Nats-Msg-Id = %q, want idempotency fallback %q", connection.messageID, metadata.IdempotencyKey)
+	}
+}
+
+func TestNotifierDeliverNATSRequiresSuccessfulPubAck(t *testing.T) {
+	t.Setenv("APP_ENV", "test")
+	domain := models.Domain{
+		ID:               uuid.New(),
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "nats://127.0.0.1:4222",
+		NATSSubject:      "merchant.payments",
+	}
+	publishFailure := errors.New("publish unavailable")
+	tests := []struct {
+		name       string
+		connection *fakeNATSConnection
+	}{
+		{name: "nil PubAck", connection: &fakeNATSConnection{}},
+		{
+			name: "publish error even with ack",
+			connection: &fakeNATSConnection{
+				ack:        &nats.PubAck{Stream: "merchant-events", Sequence: 1},
+				publishErr: publishFailure,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			notifier := &Notifier{
+				natsConnect: func(string) (natsConnection, error) {
+					return test.connection, nil
+				},
+			}
+			err := notifier.DeliverRaw(context.Background(), domain, "payment_succeeded", "event-1", "v1", []byte(`{"ok":true}`))
+			if err == nil {
+				t.Fatal("publish without a successful PubAck must fail")
+			}
+			if !test.connection.closed {
+				t.Fatal("nats connection was not closed after publish failure")
+			}
+			if test.connection.publishErr != nil && !errors.Is(err, publishFailure) {
+				t.Fatalf("publish error = %v, want wrapped %v", err, publishFailure)
+			}
+		})
 	}
 }
 

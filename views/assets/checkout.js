@@ -161,6 +161,88 @@ document.addEventListener('DOMContentLoaded', function () {
     }, delay || 120);
   }
 
+  function setupLanguageDialogs() {
+    document.querySelectorAll('[data-language-dialog]').forEach(function (dialog) {
+      var dialogID = dialog.id;
+      var trigger = dialogID
+        ? document.querySelector('[data-language-open][aria-controls="' + dialogID + '"]')
+        : null;
+      var closeButtons = dialog.querySelectorAll('[data-language-close]');
+      var returnFocus = null;
+
+      if (!trigger) {
+        return;
+      }
+
+      function finishClose(restoreFocus) {
+        trigger.setAttribute('aria-expanded', 'false');
+        document.body.classList.remove('crypto-dialog-open');
+        if (restoreFocus && returnFocus && document.contains(returnFocus)) {
+          returnFocus.focus();
+        }
+        returnFocus = null;
+      }
+
+      function closeDialog(restoreFocus) {
+        if (dialog.open && typeof dialog.close === 'function') {
+          dialog.close();
+        } else {
+          dialog.removeAttribute('open');
+        }
+        finishClose(restoreFocus);
+      }
+
+      trigger.addEventListener('click', function () {
+        if (dialog.open) {
+          return;
+        }
+        returnFocus = trigger;
+        trigger.setAttribute('aria-expanded', 'true');
+        document.body.classList.add('crypto-dialog-open');
+        if (typeof dialog.showModal === 'function') {
+          dialog.showModal();
+        } else {
+          dialog.setAttribute('open', '');
+          var firstOption = dialog.querySelector('.crypto-lang-option');
+          if (firstOption) {
+            firstOption.focus();
+          }
+        }
+      });
+
+      closeButtons.forEach(function (button) {
+        button.addEventListener('click', function () {
+          closeDialog(true);
+        });
+      });
+
+      dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) {
+          closeDialog(true);
+        }
+      });
+
+      dialog.addEventListener('close', function () {
+        finishClose(true);
+      });
+
+      dialog.addEventListener('cancel', function () {
+        window.setTimeout(function () {
+          finishClose(true);
+        }, 0);
+      });
+
+      dialog.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && typeof dialog.showModal !== 'function') {
+          event.preventDefault();
+          closeDialog(true);
+        }
+      });
+    });
+  }
+
+  setupLanguageDialogs();
+
   document.querySelectorAll('.crypto-lang-option, .crypto-header-left[href], a.crypto-ghost-btn[href], a.crypto-copy-btn[href]').forEach(function (link) {
     link.addEventListener('click', function (event) {
       navigateWithTransition(event, link, 120);

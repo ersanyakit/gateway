@@ -2614,6 +2614,56 @@ func TestDashboardRichSelectMenuUsesViewportPlacement(t *testing.T) {
 	}
 }
 
+func TestMerchantX402ToggleIsSelectableForFixedLinksAndExplainsDonationState(t *testing.T) {
+	dashboard, err := os.ReadFile("../../views/dealer/dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(dashboard)
+	for _, token := range []string{
+		`class="merchant-x402-toggle" data-x402-toggle`,
+		`id="product_x402_enabled" name="x402_enabled" value="true" type="checkbox" aria-describedby="product_x402_help"`,
+		`id="product_edit_x402_enabled" name="x402_enabled" value="true" type="checkbox" aria-describedby="product_edit_x402_help"`,
+		`data-x402-help`,
+		`data-fixed-copy="Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır."`,
+		`data-donation-copy="x402 yalnızca sabit tutarlı payment link'lerde kullanılabilir."`,
+	} {
+		if !strings.Contains(html, token) {
+			t.Fatalf("merchant x402 toggle missing accessibility token %q", token)
+		}
+	}
+	if strings.Count(html, `class="merchant-x402-toggle" data-x402-toggle`) != 2 {
+		t.Fatal("create and edit forms must each render one visible x402 toggle")
+	}
+	if strings.Contains(html, `class="merchant-x402-toggle" data-payment-fixed-fields`) ||
+		strings.Contains(html, `data-payment-fixed-fields data-x402-toggle`) {
+		t.Fatal("donation mode must keep the disabled x402 toggle visible so its explanation remains readable")
+	}
+	if strings.Contains(html, `id="product_x402_enabled" name="x402_enabled" value="true" type="checkbox" disabled`) ||
+		strings.Contains(html, `id="product_edit_x402_enabled" name="x402_enabled" value="true" type="checkbox" disabled`) {
+		t.Fatal("fixed-link x402 checkbox must be enabled in the rendered form")
+	}
+
+	dashboardJS, err := os.ReadFile("../../views/assets/dashboard.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(dashboardJS)
+	for _, token := range []string{
+		`var x402Toggle = form.querySelector('[data-x402-toggle]')`,
+		`var x402Help = form.querySelector('[data-x402-help]')`,
+		`x402Input.disabled = donation`,
+		`x402Input.setAttribute('aria-disabled', donation ? 'true' : 'false')`,
+		`x402Input.checked = false`,
+		`x402Toggle.setAttribute('data-disabled', donation ? 'true' : 'false')`,
+		`var copyAttribute = donation ? 'data-donation-copy' : 'data-fixed-copy'`,
+	} {
+		if !strings.Contains(js, token) {
+			t.Fatalf("dashboard x402 toggle behavior missing %q", token)
+		}
+	}
+}
+
 func TestMerchantRescanFormShowsSubmitFeedback(t *testing.T) {
 	dashboard, err := os.ReadFile("../../views/dealer/dashboard.html")
 	if err != nil {

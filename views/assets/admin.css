@@ -5350,6 +5350,16 @@ body.merchant-modal-open {
   background: #fff;
 }
 
+.merchant-modal-form .merchant-x402-toggle:focus-within {
+  border-color: var(--merchant-primary, #0070ba);
+  box-shadow: 0 0 0 3px var(--merchant-focus, rgba(0, 112, 186, .14));
+}
+
+.merchant-modal-form .merchant-x402-toggle[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: .62;
+}
+
 .merchant-modal-form .merchant-x402-toggle input[type="checkbox"] {
   width: 1rem !important;
   min-height: 1rem !important;

@@ -596,7 +596,22 @@ The gateway re-fetches the transaction and replays wallet matching, payment matc
 
 The gateway uses one callback URL per domain. The merchant integration should route by `event_type` in the JSON body or by `X-Gateway-Event` header.
 
-For NATS delivery, create or update the domain with `notification_mode: "nats"`, `nats_url`, and an optional `nats_subject` (default: `gateway.events`). The same JSON event body is published to that subject; webhook HMAC headers are used only in `webhook` mode.
+For NATS delivery, create or update the domain with `notification_mode: "nats"`, `nats_url`, and an optional `nats_subject` (default: `gateway.events`). The same JSON event body is published to that subject through JetStream; webhook HMAC headers are used only in `webhook` mode.
+
+### JetStream provisioning and delivery durability
+
+The NATS account owner must provision the JetStream stream before enabling the domain. The gateway is publish-only: it does not create or update merchant-owned streams or consumers. The stream subject (or a stream wildcard) must match the domain's configured `nats_subject`; otherwise publishing fails and the delivery remains eligible for retry.
+
+Use the following production baseline:
+
+- `FileStorage`, so acknowledged messages survive a server restart.
+- `LimitsPolicy` retention with `MaxAge` of 7 days recommended and never less than 24 hours. Size and message-count limits must also be high enough not to evict events earlier than that operating window.
+- A `DuplicateWindow` of 24 hours. The gateway sets `Nats-Msg-Id` to `delivery_id`, falling back to `event_id` and then the delivery idempotency key when older/direct calls have no delivery ID.
+- A named durable consumer with explicit acknowledgements. A consumer should acknowledge only after its own processing commit and should remain idempotent by `delivery_id` because a retry outside the duplicate window can be delivered again.
+
+Both HTTP and NATS notifications use the same Postgres `webhook_deliveries` queue/outbox boundary. An HTTP delivery closes only after a 2xx response. A NATS delivery closes only after synchronous JetStream publish returns a non-nil `PubAck`; a duplicate `PubAck` is also success because JetStream already persisted that message ID. Connection, publish, timeout, error-ack, and missing-ack outcomes leave the row in the normal retry/dead-letter flow. Once a `PubAck` is received, the row is marked delivered and the gateway does not publish it again during ordinary retries; JetStream owns retention from that point.
+
+This is an at-least-once boundary. If JetStream persists a message but the acknowledgement is lost, the gateway retries the same `Nats-Msg-Id`; the 24-hour duplicate window collapses that ambiguity. Consumers must still enforce idempotency for replays and retries beyond that window.
 
 The versioned money event catalog is maintained in `docs/money-event-catalog.md`. It maps current emitted names, legacy underscore aliases, and canonical dotted event names without replacing the examples below.
 

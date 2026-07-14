@@ -1065,11 +1065,11 @@
 	              </select>
 	              <small>Seçersen checkout bu asset ile açılır; müşteri yine asset değiştirebilir.</small>
 	            </label>
-	            <label class="merchant-x402-toggle" data-payment-fixed-fields for="product_x402_enabled">
-	              <input id="product_x402_enabled" name="x402_enabled" value="true" type="checkbox">
+	            <label class="merchant-x402-toggle" data-x402-toggle for="product_x402_enabled">
+	              <input id="product_x402_enabled" name="x402_enabled" value="true" type="checkbox" aria-describedby="product_x402_help">
 	              <span class="merchant-x402-toggle-copy">
 	                <strong>x402 ile ödeme kabul et</strong>
-	                <small>Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır.</small>
+	                <small id="product_x402_help" data-x402-help data-fixed-copy="Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır." data-donation-copy="x402 yalnızca sabit tutarlı payment link'lerde kullanılabilir.">Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır.</small>
 	              </span>
 	            </label>
 	          </div>
@@ -1158,11 +1158,11 @@
 	          </select>
 	          <small>Boş bırakılırsa checkout tüm kullanılabilir asset'leri gösterir.</small>
 	        </label>
-          <label class="merchant-x402-toggle" data-payment-fixed-fields for="product_edit_x402_enabled">
-            <input id="product_edit_x402_enabled" name="x402_enabled" value="true" type="checkbox">
+          <label class="merchant-x402-toggle" data-x402-toggle for="product_edit_x402_enabled">
+            <input id="product_edit_x402_enabled" name="x402_enabled" value="true" type="checkbox" aria-describedby="product_edit_x402_help">
             <span class="merchant-x402-toggle-copy">
               <strong>x402 ile ödeme kabul et</strong>
-              <small>Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır.</small>
+              <small id="product_edit_x402_help" data-x402-help data-fixed-copy="Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır." data-donation-copy="x402 yalnızca sabit tutarlı payment link'lerde kullanılabilir.">Network ve asset checkout'ta seçilir; alıcı adresi ve tutar session'dan otomatik alınır.</small>
             </span>
           </label>
           <label for="product_edit_success_url">Success URL
@@ -1605,6 +1605,7 @@
             </label>
             <label for="nats_subject">NATS subject
               <input id="nats_subject" name="nats_subject" type="text" placeholder="gateway.events" value="gateway.events">
+              <small class="merchant-field-help">Bu subject'i kapsayan FileStorage JetStream stream'i önceden oluşturun; MaxAge için 7 gün (en az 24 saat), DuplicateWindow için 24 saat önerilir.</small>
             </label>
           </div>
           <div class="merchant-modal-actions">
@@ -1656,6 +1657,7 @@
             </label>
             <label for="nats_subject_{{.ID}}">NATS subject
               <input id="nats_subject_{{.ID}}" name="nats_subject" type="text" placeholder="gateway.events" value="{{.NATSSubject}}">
+              <small class="merchant-field-help">Subject, önceden oluşturulmuş kalıcı JetStream stream'iyle eşleşmeli; önerilen MaxAge 7 gün, minimum 24 saattir.</small>
             </label>
           </div>
           <div class="merchant-modal-actions">

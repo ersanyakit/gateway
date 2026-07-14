@@ -20,9 +20,39 @@ import (
 )
 
 type natsConnection interface {
-	Publish(subject string, data []byte) error
-	FlushTimeout(timeout time.Duration) error
+	Publish(ctx context.Context, subject string, data []byte, messageID string) (*nats.PubAck, error)
 	Close()
+}
+
+type jetStreamConnection struct {
+	connection *nats.Conn
+	stream     nats.JetStreamContext
+}
+
+func connectJetStream(server string) (natsConnection, error) {
+	connection, err := nats.Connect(server, nats.Timeout(10*time.Second))
+	if err != nil {
+		return nil, err
+	}
+	stream, err := connection.JetStream()
+	if err != nil {
+		connection.Close()
+		return nil, err
+	}
+	return &jetStreamConnection{connection: connection, stream: stream}, nil
+}
+
+func (c *jetStreamConnection) Publish(ctx context.Context, subject string, data []byte, messageID string) (*nats.PubAck, error) {
+	message := nats.NewMsg(subject)
+	message.Data = data
+	if messageID != "" {
+		message.Header.Set(nats.MsgIdHdr, messageID)
+	}
+	return c.stream.PublishMsg(message, nats.Context(ctx))
+}
+
+func (c *jetStreamConnection) Close() {
+	c.connection.Close()
 }
 
 type Notifier struct {
@@ -149,10 +179,8 @@ type DeliveryMetadata struct {
 
 func NewNotifier() *Notifier {
 	return &Notifier{
-		client: &http.Client{Timeout: 15 * time.Second},
-		natsConnect: func(server string) (natsConnection, error) {
-			return nats.Connect(server, nats.Timeout(10*time.Second))
-		},
+		client:      &http.Client{Timeout: 15 * time.Second},
+		natsConnect: connectJetStream,
 	}
 }
 
@@ -337,7 +365,7 @@ func (n *Notifier) DeliverRawWithMetadata(ctx context.Context, domain models.Dom
 
 func (n *Notifier) deliverPayload(ctx context.Context, domain models.Domain, eventType, eventID, eventVersion string, body []byte, metadata DeliveryMetadata) error {
 	if domain.UsesNATS() {
-		return n.deliverNATS(ctx, domain, body)
+		return n.deliverNATS(ctx, domain, eventID, body, metadata)
 	}
 	return n.deliverWebhook(ctx, domain, eventType, eventID, eventVersion, body, metadata)
 }
@@ -388,7 +416,7 @@ func (n *Notifier) deliverWebhook(ctx context.Context, domain models.Domain, eve
 	return nil
 }
 
-func (n *Notifier) deliverNATS(ctx context.Context, domain models.Domain, body []byte) error {
+func (n *Notifier) deliverNATS(ctx context.Context, domain models.Domain, eventID string, body []byte, metadata DeliveryMetadata) error {
 	if err := helpers.ValidateNATSURL(domain.NATSURL); err != nil {
 		return permanent(fmt.Errorf("nats url validation failed for domain %s: %w", domain.ID.String(), err))
 	}
@@ -401,31 +429,25 @@ func (n *Notifier) deliverNATS(ctx context.Context, domain models.Domain, body [
 	}
 	connector := n.natsConnect
 	if connector == nil {
-		connector = func(server string) (natsConnection, error) {
-			return nats.Connect(server, nats.Timeout(10*time.Second))
-		}
+		connector = connectJetStream
 	}
 	connection, err := connector(domain.NATSURL)
 	if err != nil {
-		return fmt.Errorf("nats connection failed: %w", err)
+		return fmt.Errorf("nats jetstream connection failed: %w", err)
 	}
 	defer connection.Close()
-	if err := connection.Publish(subject, body); err != nil {
-		return fmt.Errorf("nats publish failed: %w", err)
+	publishCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	messageID := firstNonEmpty(metadata.DeliveryID, eventID, metadata.IdempotencyKey)
+	ack, err := connection.Publish(publishCtx, subject, body, messageID)
+	if err != nil {
+		return fmt.Errorf("nats jetstream publish failed: %w", err)
 	}
-	flushTimeout := 10 * time.Second
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return ctx.Err()
-		}
-		if remaining < flushTimeout {
-			flushTimeout = remaining
-		}
+	if ack == nil {
+		return errors.New("nats jetstream publish failed: missing PubAck")
 	}
-	if err := connection.FlushTimeout(flushTimeout); err != nil {
-		return fmt.Errorf("nats flush failed: %w", err)
-	}
+	// Duplicate acknowledgements mean JetStream already persisted this message ID.
+	// They are a durable success and allow the shared delivery outbox row to close.
 	return nil
 }
 

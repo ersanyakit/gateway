@@ -22,6 +22,7 @@ import (
 	"core/services/pricing"
 	"core/services/realtime"
 	webhooksvc "core/services/webhook"
+	x402svc "core/services/x402"
 	"core/types"
 
 	"github.com/fasthttp/websocket"
@@ -851,6 +852,7 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 		}
 
 		selectedSymbol := strings.ToUpper(strings.TrimSpace(c.Query("asset")))
+		session = ensureCheckoutPickerWalletAddresses(c.Context(), deps, session)
 		options := checkoutAssetOptions(c.Context(), deps, *session, "")
 		productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
 		return c.Render("gateway/checkout", fiber.Map{
@@ -933,6 +935,9 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		assetInfo, err := findCheckoutAsset(deps.AssetRegistry, constants.ChainID(chainID), symbol, token)
 		if err != nil {
 			return renderCheckoutWithError(c, deps, session, err.Error())
+		}
+		if !checkoutAssetAllowedForSession(*session, assetInfo) {
+			return renderCheckoutWithError(c, deps, session, "Selected asset is not supported by x402.")
 		}
 		available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, assetInfo.GetChainID())
 		if availabilityErr != nil {
@@ -1369,6 +1374,21 @@ func ensureCheckoutWalletAddresses(ctx context.Context, deps PaymentHandlerDeps,
 	return refreshed
 }
 
+func ensureCheckoutPickerWalletAddresses(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession) *models.PaymentSession {
+	if session == nil || deps.AssetRegistry == nil {
+		return session
+	}
+	for _, assetInfo := range deps.AssetRegistry.ListAll() {
+		if !checkoutAssetAllowedForSession(*session, assetInfo) {
+			continue
+		}
+		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
+			return ensureCheckoutWalletAddresses(ctx, deps, session)
+		}
+	}
+	return session
+}
+
 func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session models.PaymentSession) []CheckoutAssetGroup {
 	if deps.AssetRegistry == nil {
 		return nil
@@ -1378,6 +1398,9 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 	seenChains := make(map[string]map[constants.ChainID]struct{})
 	availabilityByChain := make(map[constants.ChainID]paymentNetworkDepositAvailabilityResult)
 	for _, assetInfo := range assets {
+		if !checkoutAssetAllowedForSession(session, assetInfo) {
+			continue
+		}
 		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
 			continue
 		}
@@ -1420,6 +1443,9 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 	options := make([]CheckoutAssetOption, 0, len(assets))
 	availabilityByChain := make(map[constants.ChainID]paymentNetworkDepositAvailabilityResult)
 	for _, assetInfo := range assets {
+		if !checkoutAssetAllowedForSession(session, assetInfo) {
+			continue
+		}
 		groupSymbol := canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol())
 		if selectedSymbol != "" && !strings.EqualFold(groupSymbol, selectedSymbol) {
 			continue
@@ -1463,6 +1489,26 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 		return options[i].ChainName < options[j].ChainName
 	})
 	return options
+}
+
+// checkoutAssetAllowedForSession keeps the hosted picker and the selection
+// mutation on the same x402 exact compatibility boundary. Normal checkout
+// sessions retain the complete asset catalog. x402 sessions require a token
+// contract/mint on a network supported by the exact EVM or SVM mechanisms;
+// native assets cannot be represented by the current session-driven seller
+// payment requirement.
+func checkoutAssetAllowedForSession(session models.PaymentSession, assetInfo asset.Asset) bool {
+	if !session.X402Enabled {
+		return true
+	}
+	if assetInfo == nil || assetInfo.IsNative() || strings.TrimSpace(assetInfo.GetIdentifier()) == "" {
+		return false
+	}
+	if assetInfo.GetChainType() != asset.ChainEVM && assetInfo.GetChainType() != asset.ChainSolana {
+		return false
+	}
+	_, supported := x402svc.CheckoutNetworkForChain(assetInfo.GetChainID())
+	return supported
 }
 
 func findCheckoutAsset(registry *asset.Registry, chainID constants.ChainID, symbol string, token string) (asset.Asset, error) {
@@ -1668,6 +1714,7 @@ func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *mode
 }
 
 func renderCheckoutWithErrorStatus(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, status int, message string) error {
+	session = ensureCheckoutPickerWalletAddresses(c.Context(), deps, session)
 	lang := checkoutLanguage(c)
 	selectedSymbol := strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))
 	productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)

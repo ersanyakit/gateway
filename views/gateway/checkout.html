@@ -22,12 +22,13 @@
         </span>
       </a>
       <div class="crypto-header-tools">
-        <nav class="crypto-lang-switch" aria-label="{{if .IsEnglish}}Language{{else}}Dil{{end}}">
-          <span class="crypto-lang-options">
-            <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" lang="tr" hreflang="tr" aria-label="Türkçe" {{if not .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/tr.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">Türkçe</span></a>
-            <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" lang="en" hreflang="en" aria-label="English" {{if .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/gb.svg" width="16" height="16" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">English</span></a>
-          </span>
-        </nav>
+        <div class="crypto-lang-switch">
+          <button class="crypto-lang-trigger" type="button" data-language-open aria-label="{{if .IsEnglish}}Change language, current language English{{else}}Dili değiştir, geçerli dil Türkçe{{end}}" aria-haspopup="dialog" aria-expanded="false" aria-controls="checkoutLanguageDialog">
+            <img class="crypto-lang-flag" src="{{if .IsEnglish}}/static/icons/flags/gb.svg{{else}}/static/icons/flags/tr.svg{{end}}" width="18" height="18" alt="" decoding="async" aria-hidden="true">
+            <span class="crypto-lang-current">{{if .IsEnglish}}English{{else}}Türkçe{{end}}</span>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4"></path></svg>
+          </button>
+        </div>
         <div class="crypto-steps" aria-label="Checkout progress">
           <span class="crypto-step-dot done"></span>
           <span class="crypto-step-dot active"></span>
@@ -35,6 +36,24 @@
         </div>
       </div>
     </header>
+
+    <dialog class="crypto-lang-dialog" id="checkoutLanguageDialog" data-language-dialog aria-modal="true" aria-labelledby="checkoutLanguageTitle">
+      <div class="crypto-lang-dialog-surface">
+        <div class="crypto-lang-dialog-header">
+          <div>
+            <p>{{if .IsEnglish}}Checkout language{{else}}Ödeme dili{{end}}</p>
+            <h2 id="checkoutLanguageTitle">{{if .IsEnglish}}Choose a language{{else}}Dil seçin{{end}}</h2>
+          </div>
+          <button class="crypto-lang-close" type="button" data-language-close aria-label="{{if .IsEnglish}}Close language selection{{else}}Dil seçimini kapat{{end}}">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"></path></svg>
+          </button>
+        </div>
+        <nav class="crypto-lang-options" aria-label="{{if .IsEnglish}}Available languages{{else}}Kullanılabilir diller{{end}}">
+          <a class="crypto-lang-option {{if not .IsEnglish}}active{{end}}" href="{{.LangTRURL}}" lang="tr" hreflang="tr" aria-label="Türkçe" {{if not .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/tr.svg" width="22" height="22" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">Türkçe</span></a>
+          <a class="crypto-lang-option {{if .IsEnglish}}active{{end}}" href="{{.LangENURL}}" lang="en" hreflang="en" aria-label="English" {{if .IsEnglish}}aria-current="page"{{end}}><img class="crypto-lang-flag" src="/static/icons/flags/gb.svg" width="22" height="22" alt="" decoding="async" aria-hidden="true"><span class="crypto-lang-name">English</span></a>
+        </nav>
+      </div>
+    </dialog>
 
     <section class="crypto-card">
       <div class="crypto-stack">

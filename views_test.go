@@ -71,7 +71,7 @@ func TestCheckoutAssetsKeepCopyFallbackAndReadableStatuses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"function copyWithTextarea()", ".catch(copyWithTextarea)"} {
+	for _, expected := range []string{"function copyWithTextarea()", ".catch(copyWithTextarea)", "function setupLanguageDialogs()", "dialog.showModal()"} {
 		if !strings.Contains(string(checkoutJS), expected) {
 			t.Fatalf("checkout.js missing clipboard fallback %q", expected)
 		}
@@ -84,6 +84,8 @@ func TestCheckoutAssetsKeepCopyFallbackAndReadableStatuses(t *testing.T) {
 	for _, expected := range []string{
 		".crypto-status-box.overpaid",
 		".crypto-status-box.partial_paid",
+		"--uni-accent-1: #003153",
+		".crypto-lang-dialog::backdrop",
 		"overflow-wrap: anywhere",
 		"white-space: normal",
 	} {
@@ -340,7 +342,7 @@ func TestGatewayViewsRenderCriticalStates(t *testing.T) {
 				"LangTRURL":   "/checkout/result-token?lang=tr",
 				"LangENURL":   "/checkout/result-token?lang=en",
 			},
-			expected: []string{"Payment complete", "Payment received successfully.", "Gateway Pay", "crypto-flow-select", "crypto-lang-switch"},
+			expected: []string{"Payment complete", "Payment received successfully.", "Gateway Pay", "crypto-flow-select", "crypto-lang-switch", "crypto-lang-dialog", "/assets/checkout.js"},
 		},
 	}
 

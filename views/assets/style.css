@@ -9318,3 +9318,326 @@ body.crypto-payment-flow.crypto-pay-page .crypto-summary-card {
     grid-column: auto;
   }
 }
+
+/* Checkout brand accent and scalable language picker. */
+body.crypto-payment-flow.crypto-flow-select,
+body.crypto-payment-flow.crypto-pay-page {
+  --uni-accent-1: #003153;
+  --uni-accent-1-hovered: #002640;
+  --uni-accent-2: rgba(0, 49, 83, .08);
+  --uni-accent-2-hovered: rgba(0, 49, 83, .13);
+  --uni-accent-2-solid: #eef3f6;
+  --pay-accent: #003153;
+  --pay-accent-strong: #003153;
+  --pay-accent-soft: rgba(0, 49, 83, .08);
+  --pay-focus: rgba(0, 49, 83, .20);
+  --pay-blue: #003153;
+  --pay-blue-soft: rgba(0, 49, 83, .08);
+  --wallet-blue: #003153;
+  --wallet-blue-soft: rgba(0, 49, 83, .08);
+  --shadow-accent: 0 12px 28px rgba(0, 49, 83, .18);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-header-left:hover .crypto-header-icon,
+body.crypto-payment-flow.crypto-pay-page .crypto-header-left:hover .crypto-header-icon {
+  border-color: rgba(0, 49, 83, .24);
+  box-shadow: 0 8px 18px rgba(0, 49, 83, .12);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-lang-option.active,
+body.crypto-payment-flow.crypto-pay-page .crypto-lang-option.active {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, .10), 0 0 0 1px rgba(0, 49, 83, .18);
+}
+
+.crypto-token-option.is-active {
+  box-shadow: 0 0 0 2px var(--wallet-blue-soft), inset 0 0 0 1px rgba(0, 49, 83, .28);
+}
+
+.crypto-payment-flow.crypto-flow-select .crypto-network-right,
+body.crypto-payment-flow.crypto-payment-result-page.crypto-flow-select .crypto-receipt-row .crypto-copy-btn {
+  border-color: rgba(0, 49, 83, .18);
+}
+
+body.crypto-payment-flow.crypto-payment-result-page.crypto-flow-select .crypto-result-actions .crypto-primary-btn:hover,
+body.crypto-payment-flow.crypto-pay-page .crypto-primary-btn:hover {
+  box-shadow: 0 16px 32px rgba(0, 49, 83, .24);
+}
+
+body.crypto-payment-flow.crypto-flow-select .crypto-lang-switch,
+body.crypto-payment-flow.crypto-pay-page .crypto-lang-switch {
+  min-height: 34px;
+  padding: 0;
+  overflow: hidden;
+  border-color: rgba(0, 49, 83, .16);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.crypto-lang-trigger {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 9px;
+  border: 0;
+  background: transparent;
+  color: #25364a;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, transform .16s cubic-bezier(.2, .8, .2, 1);
+}
+
+.crypto-lang-trigger:hover {
+  background: var(--uni-accent-2-solid);
+  color: var(--wallet-blue);
+}
+
+.crypto-lang-trigger:active {
+  transform: translateY(1px);
+}
+
+.crypto-lang-trigger:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--wallet-blue), inset 0 0 0 5px #ffffff;
+}
+
+.crypto-lang-trigger .crypto-lang-flag {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+}
+
+.crypto-lang-current {
+  white-space: nowrap;
+}
+
+.crypto-lang-trigger > svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.crypto-dialog-open {
+  overflow: hidden;
+}
+
+.crypto-lang-dialog {
+  width: min(calc(100vw - 32px), 390px);
+  max-width: 390px;
+  max-height: min(640px, calc(100svh - 32px));
+  margin: auto;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: #111827;
+  font-family: var(--pay-font);
+}
+
+.crypto-lang-dialog::backdrop {
+  background: rgba(8, 20, 31, .58);
+  backdrop-filter: blur(3px);
+}
+
+.crypto-lang-dialog[open] {
+  animation: crypto-lang-dialog-in .18s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.crypto-lang-dialog-surface {
+  max-height: min(640px, calc(100svh - 32px));
+  overflow: hidden;
+  padding: 18px;
+  border: 1px solid rgba(0, 49, 83, .13);
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(8, 20, 31, .28);
+}
+
+.crypto-lang-dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.crypto-lang-dialog-header p,
+.crypto-lang-dialog-header h2 {
+  margin: 0;
+}
+
+.crypto-lang-dialog-header p {
+  color: #667085;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.crypto-lang-dialog-header h2 {
+  margin-top: 4px;
+  color: #111827;
+  font-size: 19px;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.crypto-lang-close {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 34px;
+  padding: 0;
+  border: 1px solid #e1e6ed;
+  border-radius: 10px;
+  background: #f7f9fb;
+  color: #475467;
+  cursor: pointer;
+}
+
+.crypto-lang-close:hover {
+  border-color: rgba(0, 49, 83, .18);
+  background: var(--uni-accent-2-solid);
+  color: var(--wallet-blue);
+}
+
+.crypto-lang-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--pay-focus), 0 0 0 1px var(--wallet-blue);
+}
+
+.crypto-lang-close svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.8;
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-options {
+  max-height: min(420px, calc(100svh - 150px));
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option {
+  min-width: 0;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 22px;
+  align-items: center;
+  justify-content: stretch;
+  gap: 11px;
+  padding: 0 13px;
+  border: 1px solid #e1e6ed;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #25364a;
+  font-size: 14px;
+  text-align: left;
+  box-shadow: none;
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option::after {
+  content: "";
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option:hover {
+  border-color: rgba(0, 49, 83, .24);
+  background: var(--uni-accent-2-solid);
+  color: var(--wallet-blue);
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option.active {
+  border-color: rgba(0, 49, 83, .38);
+  background: var(--uni-accent-2-solid);
+  color: var(--wallet-blue);
+  box-shadow: inset 0 0 0 1px rgba(0, 49, 83, .06);
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option.active::after {
+  content: "✓";
+  background: var(--wallet-blue);
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px var(--pay-focus), 0 0 0 1px var(--wallet-blue);
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-flag {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+}
+
+body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-name {
+  display: block !important;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+@keyframes crypto-lang-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 560px) {
+  .crypto-lang-dialog {
+    width: 100%;
+    max-width: none;
+    max-height: min(80svh, 640px);
+    margin: auto 0 0;
+    border-radius: 20px 20px 0 0;
+  }
+
+  .crypto-lang-dialog-surface {
+    max-height: min(80svh, 640px);
+    padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
+    border-width: 1px 0 0;
+    border-radius: 20px 20px 0 0;
+  }
+}
+
+@media (max-width: 360px) {
+  .crypto-lang-current {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crypto-lang-dialog[open] {
+    animation: none;
+  }
+}

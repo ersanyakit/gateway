@@ -110,6 +110,18 @@ func TestCheckoutLanguageSwitcherMarkupContract(t *testing.T) {
 		html := string(body)
 		for _, want := range []string{
 			`class="crypto-lang-switch"`,
+			`class="crypto-lang-trigger"`,
+			`data-language-open`,
+			`Change language, current language English`,
+			`Dili değiştir, geçerli dil Türkçe`,
+			`aria-haspopup="dialog"`,
+			`aria-expanded="false"`,
+			`aria-controls="checkoutLanguageDialog"`,
+			`<dialog class="crypto-lang-dialog"`,
+			`data-language-dialog`,
+			`aria-modal="true"`,
+			`aria-labelledby="checkoutLanguageTitle"`,
+			`data-language-close`,
 			`class="crypto-lang-options"`,
 			`class="crypto-lang-flag" src="/static/icons/flags/tr.svg"`,
 			`class="crypto-lang-flag" src="/static/icons/flags/gb.svg"`,
@@ -150,14 +162,33 @@ func TestCheckoutLanguageSwitcherMarkupContract(t *testing.T) {
 	for _, want := range []string{
 		`--pay-font: GoogleSans, "Google Sans", "Google Sans Text"`,
 		`font-family: var(--pay-font);`,
+		`--uni-accent-1: #003153;`,
+		`--pay-accent: #003153;`,
+		`--wallet-blue: #003153;`,
+		`.crypto-lang-trigger`,
+		`.crypto-lang-dialog::backdrop`,
 		`.crypto-lang-options`,
 		`.crypto-lang-flag`,
-		`grid-template-columns: repeat(2, minmax(70px, 1fr));`,
-		`grid-template-columns: repeat(2, minmax(48px, 1fr));`,
-		`body.crypto-payment-flow.crypto-pay-page .crypto-lang-options`,
+		`body.crypto-payment-flow .crypto-lang-dialog .crypto-lang-options`,
+		`grid-template-columns: 1fr;`,
 	} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("checkout language switcher CSS missing %q", want)
+		}
+	}
+
+	jsBody, err := os.ReadFile("../../views/assets/checkout.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`function setupLanguageDialogs()`,
+		`dialog.showModal()`,
+		`dialog.addEventListener('cancel'`,
+		`finishClose(true)`,
+	} {
+		if !strings.Contains(string(jsBody), want) {
+			t.Fatalf("checkout language dialog JS missing %q", want)
 		}
 	}
 }
@@ -275,6 +306,102 @@ func TestCheckoutAssetListsRespectNetworkDepositModes(t *testing.T) {
 	}
 }
 
+func TestX402CheckoutAssetListsOnlyIncludeExactTokenNetworks(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	registry.Register(asset.NewERC20(constants.Ethereum, "0x1111111111111111111111111111111111111111", "USDC", "USD Coin", 6))
+	registry.Register(asset.NewSPL(constants.Solana, "So11111111111111111111111111111111111111112", "PYUSD", "PayPal USD", 6))
+	registry.Register(asset.NewTRC20(constants.TRON, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT", "Tether USD", 6))
+
+	session := models.PaymentSession{
+		SessionToken: "x402-checkout-token",
+		X402Enabled:  true,
+		Wallet: models.Wallet{
+			EthereumAddress: "0x2222222222222222222222222222222222222222",
+			SolanaAddress:   "11111111111111111111111111111111",
+			TronAddress:     "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7",
+		},
+	}
+	deps := PaymentHandlerDeps{AssetRegistry: registry}
+
+	options := checkoutAssetOptions(context.Background(), deps, session, "")
+	if len(options) != 2 {
+		t.Fatalf("x402 options = %#v, want the EVM and Solana tokens only", options)
+	}
+	for _, option := range options {
+		if option.Native || (constants.ChainID(option.ChainID) != constants.Ethereum && constants.ChainID(option.ChainID) != constants.Solana) {
+			t.Fatalf("incompatible x402 option leaked into checkout: %#v", option)
+		}
+	}
+
+	groups := checkoutAssetGroups(context.Background(), deps, session)
+	if len(groups) != 2 || groups[0].Symbol != "PYUSD" || groups[1].Symbol != "USDC" {
+		t.Fatalf("x402 groups = %#v, want PYUSD and USDC", groups)
+	}
+
+	session.X402Enabled = false
+	if got := len(checkoutAssetOptions(context.Background(), deps, session, "")); got != 4 {
+		t.Fatalf("normal checkout options = %d, want the complete catalog", got)
+	}
+}
+
+func TestHandleCheckoutSelectAssetRejectsNonX402AssetsBeforeMutation(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	registry.Register(asset.NewTRC20(constants.TRON, "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t", "USDT", "Tether USD", 6))
+	future := time.Now().Add(10 * time.Minute)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "native EVM asset", body: "chain_id=1&symbol=ETH"},
+		{name: "unsupported token network", body: "chain_id=99999998&symbol=USDT&token=TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &models.PaymentSession{
+				ID:           uuid.New(),
+				SessionToken: "x402-selection-token",
+				X402Enabled:  true,
+				Amount:       "10",
+				Currency:     "USD",
+				Status:       models.PaymentStatusPending,
+				ExpiresAt:    &future,
+				Wallet: models.Wallet{
+					EthereumAddress: "0x2222222222222222222222222222222222222222",
+					TronAddress:     "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7",
+				},
+			}
+			repo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+			app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
+			app.Post("/checkout/:token/select", HandleCheckoutSelectAsset(PaymentHandlerDeps{
+				PaymentRepo:   repo,
+				AssetRegistry: registry,
+				PriceOracle:   panicPriceOracle{},
+			}))
+
+			req := httptest.NewRequest(http.MethodPost, "/checkout/x402-selection-token/select?lang=en", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			resp, err := app.Test(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != fiber.StatusBadRequest || !strings.Contains(string(body), "not supported by x402") {
+				t.Fatalf("status/body = %d/%s, want x402 compatibility rejection", resp.StatusCode, body)
+			}
+			if repo.selectCalls != 0 || len(repo.quotes) != 0 {
+				t.Fatalf("incompatible x402 selection mutated payment/quotes = %d/%d", repo.selectCalls, len(repo.quotes))
+			}
+		})
+	}
+}
+
 func TestPaymentNetworkDepositAvailabilityUsesModeFallbackReason(t *testing.T) {
 	repo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
 		constants.Ethereum: {
@@ -341,6 +468,64 @@ func TestHandleCheckoutRendersCombinedAssetNetworkSelection(t *testing.T) {
 	}
 	if strings.Contains(html, `?asset=ETH`) || strings.Contains(html, `?asset=USDT`) {
 		t.Fatalf("checkout still renders intermediate asset links: %s", html)
+	}
+}
+
+func TestHandleCheckoutEnsuresWalletAddressesBeforeBuildingX402Picker(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewERC20(constants.Ethereum, "0x1111111111111111111111111111111111111111", "USDC", "USD Coin", 6))
+	future := time.Now().Add(10 * time.Minute)
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		WalletID:     uuid.New(),
+		SessionToken: "x402-address-backfill-token",
+		X402Enabled:  true,
+		Status:       models.PaymentStatusPending,
+		Amount:       "10",
+		Currency:     "USD",
+		ExpiresAt:    &future,
+	}
+	paymentRepo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	walletRepo := &fakePaymentWalletRepo{
+		ensureHook: func() {
+			session.Wallet.EthereumAddress = "0x2222222222222222222222222222222222222222"
+		},
+	}
+
+	app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
+	app.Get("/checkout/:token", HandleCheckout(PaymentHandlerDeps{
+		PaymentRepo:   paymentRepo,
+		WalletRepo:    walletRepo,
+		AssetRegistry: registry,
+		Blockchains:   &blockchain.ChainFactory{},
+	}))
+
+	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout/x402-address-backfill-token?lang=en", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusOK {
+		t.Fatalf("status = %d body=%s", resp.StatusCode, body)
+	}
+	if walletRepo.ensureCalls != 1 {
+		t.Fatalf("wallet address ensure calls = %d, want 1", walletRepo.ensureCalls)
+	}
+	if !strings.Contains(string(body), `name="symbol" value="USDC"`) {
+		t.Fatalf("x402 token stayed hidden after address backfill: %s", body)
+	}
+
+	refreshedResp, err := app.Test(httptest.NewRequest(http.MethodGet, "/checkout/x402-address-backfill-token?lang=en", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshedResp.Body.Close()
+	if walletRepo.ensureCalls != 1 {
+		t.Fatalf("complete wallet triggered redundant address ensure; calls = %d", walletRepo.ensureCalls)
 	}
 }
 
@@ -1193,7 +1378,7 @@ func TestHandleCheckoutRendersTerminalStateWithoutPayLoop(t *testing.T) {
 			t.Fatalf("terminal checkout missing %q in:\n%s", want, html)
 		}
 	}
-	if strings.Contains(html, "/checkout/checkout-token/pay") || strings.Contains(html, "checkout.js") || strings.Contains(html, "Crypto Checkout") {
+	if strings.Contains(html, "/checkout/checkout-token/pay") || strings.Contains(html, "Crypto Checkout") {
 		t.Fatalf("terminal checkout rendered unexpected page:\n%s", html)
 	}
 
@@ -1589,6 +1774,8 @@ func TestCheckoutSuccessReturnUsesCheckoutResultDesign(t *testing.T) {
 		"Gateway Pay",
 		"crypto-payment-result-page crypto-flow-select",
 		"crypto-lang-switch",
+		"crypto-lang-dialog",
+		`src="/assets/checkout.js"`,
 		"crypto-product-strip compact crypto-result-product-strip",
 		"crypto-product-logo compact",
 		"/uploads/product-logo.svg",
@@ -1604,7 +1791,7 @@ func TestCheckoutSuccessReturnUsesCheckoutResultDesign(t *testing.T) {
 			t.Fatalf("success result page missing %q in:\n%s", want, html)
 		}
 	}
-	for _, forbidden := range []string{"Crypto Checkout", "checkout.js", "status.json", "crypto-result-chip"} {
+	for _, forbidden := range []string{"Crypto Checkout", "status.json", "crypto-result-chip"} {
 		if strings.Contains(html, forbidden) {
 			t.Fatalf("success result page contains legacy/polling token %q in:\n%s", forbidden, html)
 		}
@@ -1937,7 +2124,9 @@ func TestPaymentResultTemplateRendersCopyableReceiptReferences(t *testing.T) {
 		`window.print()`,
 		`id="receiptSessionToken"`,
 		`data-copy-target="receiptTxHash"`,
-		`document.querySelectorAll("[data-copy-target]")`,
+		`src="/assets/checkout.js"`,
+		`data-language-open`,
+		`data-language-dialog`,
 		"/checkout/result-token?lang=tr",
 		"order-1",
 		"10 ETH",
@@ -1948,7 +2137,7 @@ func TestPaymentResultTemplateRendersCopyableReceiptReferences(t *testing.T) {
 			t.Fatalf("payment result template missing %q in:\n%s", want, html)
 		}
 	}
-	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "diagnostics", "Crypto Checkout", "checkout.js", "crypto-result-chip"} {
+	for _, forbidden := range []string{"api_secret", "webhook_secret", "private_key", "mnemonic", "diagnostics", "Crypto Checkout", "crypto-result-chip"} {
 		if strings.Contains(strings.ToLower(html), strings.ToLower(forbidden)) {
 			t.Fatalf("payment result template leaked forbidden string %q", forbidden)
 		}
@@ -2209,6 +2398,9 @@ func (o *countingPriceOracle) Price(_ context.Context, symbol string, currency s
 
 type fakePaymentWalletRepo struct {
 	createCalls int
+	ensureCalls int
+	ensureErr   error
+	ensureHook  func()
 	wallets     []*models.Wallet
 }
 
@@ -2234,7 +2426,11 @@ func (r *fakePaymentWalletRepo) Create(params types.WalletParams) (*models.Walle
 }
 
 func (r *fakePaymentWalletRepo) EnsureAllAddresses(context.Context, uuid.UUID, *blockchain.ChainFactory) error {
-	return nil
+	r.ensureCalls++
+	if r.ensureHook != nil {
+		r.ensureHook()
+	}
+	return r.ensureErr
 }
 
 type fakePaymentProductRepo struct {

@@ -356,6 +356,8 @@ function initPaymentLinkTypeToggle() {
     var fixedFields = Array.prototype.slice.call(form.querySelectorAll('[data-payment-fixed-fields]'));
     var requiredInputs = Array.prototype.slice.call(form.querySelectorAll('[data-required-when-fixed]'));
     var x402Input = form.querySelector('[name="x402_enabled"]');
+    var x402Toggle = form.querySelector('[data-x402-toggle]');
+    var x402Help = form.querySelector('[data-x402-help]');
 
     function update() {
       var donation = select.value === 'donation';
@@ -372,6 +374,17 @@ function initPaymentLinkTypeToggle() {
       }
       if (x402Input) {
         x402Input.disabled = donation;
+        x402Input.setAttribute('aria-disabled', donation ? 'true' : 'false');
+        if (donation) {
+          x402Input.checked = false;
+        }
+      }
+      if (x402Toggle) {
+        x402Toggle.setAttribute('data-disabled', donation ? 'true' : 'false');
+      }
+      if (x402Help) {
+        var copyAttribute = donation ? 'data-donation-copy' : 'data-fixed-copy';
+        x402Help.textContent = x402Help.getAttribute(copyAttribute) || '';
       }
     }
 
