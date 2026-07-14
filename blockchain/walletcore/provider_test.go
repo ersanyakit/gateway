@@ -14,12 +14,20 @@ func TestTrustWalletCoreProviderIsDefaultBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trustWalletSource := string(trustWalletProvider)
 	fallbackProvider, err := os.ReadFile("provider_fallback.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(trustWalletProvider), "//go:build !walletcorefallback") {
+	if !strings.Contains(trustWalletSource, "//go:build !walletcorefallback") {
 		t.Fatal("Trust Wallet Core provider must remain the default build; do not gate it behind an opt-in tag")
+	}
+	featureFallback := strings.Index(trustWalletSource, "#ifndef __has_feature")
+	firstTrustWalletInclude := strings.Index(trustWalletSource, "#include <TrustWalletCore/")
+	if featureFallback < 0 ||
+		!strings.Contains(trustWalletSource, "#define __has_feature(feature) 0") ||
+		firstTrustWalletInclude < 0 || featureFallback > firstTrustWalletInclude {
+		t.Fatal("Trust Wallet Core cgo preamble must keep the GCC-compatible __has_feature fallback")
 	}
 	if !strings.Contains(string(fallbackProvider), "//go:build walletcorefallback") {
 		t.Fatal("fallback provider must remain opt-in only; money and wallet flows require Trust Wallet Core by default")

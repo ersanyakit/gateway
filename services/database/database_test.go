@@ -1336,8 +1336,8 @@ func TestEmbeddedMigrationArtifactsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest migration id: %v", err)
 	}
-	if latest != "202607130012_wallet_chiliz_spicy_partial_unique" {
-		t.Fatalf("latest migration id = %q, want wallet Chiliz Spicy partial-index migration", latest)
+	if latest != "202607130013_network_operational_states" {
+		t.Fatalf("latest migration id = %q, want network operational states migration", latest)
 	}
 }
 

@@ -5,6 +5,15 @@ package walletcore
 /*
 #cgo CFLAGS: -I../../third_party/trustwallet/wallet-core/include
 #cgo LDFLAGS: -L../../third_party/trustwallet/wallet-core/build -L../../third_party/trustwallet/wallet-core/build/local/lib -L../../third_party/trustwallet/wallet-core/build/trezor-crypto -lTrustWalletCore -lwallet_core_rs -lprotobuf -lTrezorCrypto -lstdc++ -lm
+
+// Trust Wallet Core's public TWBase.h uses Clang's function-like
+// __has_feature operator without defining the conventional fallback. cgo uses
+// the platform C compiler (GCC on Ubuntu), so provide the no-feature fallback
+// before any TrustWalletCore header is parsed. Clang keeps its builtin.
+#ifndef __has_feature
+#define __has_feature(feature) 0
+#endif
+
 #include <stdlib.h>
 #include <TrustWalletCore/TWAnyAddress.h>
 #include <TrustWalletCore/TWAnySigner.h>

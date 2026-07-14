@@ -61,7 +61,7 @@ func enforceV1OutboundPolicy(ctx context.Context, deps V1APIDeps, check outbound
 }
 
 func enforceOutboundPolicy(ctx context.Context, repos outboundPolicyRepos, check outboundPolicyCheck) error {
-	if chainID := chainSlugToID(check.Chain); constants.IsSupportedChainID(chainID) {
+	if chainID := chainSlugToID(check.Chain); repos.NetworkStateRepo != nil && constants.IsSupportedChainID(chainID) {
 		if err := networkops.RequireWithdrawals(ctx, repos.NetworkStateRepo, chainID); err != nil {
 			return err
 		}

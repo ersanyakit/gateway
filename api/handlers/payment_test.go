@@ -741,18 +741,19 @@ func TestSelectedCheckoutGETRejectsDepositBlockedNetwork(t *testing.T) {
 
 	tests := []struct {
 		name    string
+		route   string
 		path    string
 		handler func(PaymentHandlerDeps) fiber.Handler
 	}{
-		{name: "checkout", path: "/checkout/selected-maintenance-token", handler: HandleCheckout},
-		{name: "payment instructions", path: "/checkout/selected-maintenance-token/pay", handler: HandleCheckoutPay},
-		{name: "QR code", path: "/checkout/selected-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
-		{name: "invoice", path: "/invoice/selected-maintenance-token", handler: HandlePaymentInvoice},
+		{name: "checkout", route: "/checkout/:token", path: "/checkout/selected-maintenance-token", handler: HandleCheckout},
+		{name: "payment instructions", route: "/checkout/:token/pay", path: "/checkout/selected-maintenance-token/pay", handler: HandleCheckoutPay},
+		{name: "QR code", route: "/checkout/:token/qr.png", path: "/checkout/selected-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
+		{name: "invoice", route: "/invoice/:token", path: "/invoice/selected-maintenance-token", handler: HandlePaymentInvoice},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
-			app.Get(tt.path, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
+			app.Get(tt.route, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
 			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tt.path+"?lang=en", nil))
 			if err != nil {
 				t.Fatal(err)
@@ -802,18 +803,19 @@ func TestPaidCheckoutSurfacesRemainReadableDuringNetworkMaintenance(t *testing.T
 
 	tests := []struct {
 		name    string
+		route   string
 		path    string
 		handler func(PaymentHandlerDeps) fiber.Handler
 	}{
-		{name: "checkout", path: "/checkout/paid-maintenance-token", handler: HandleCheckout},
-		{name: "payment result", path: "/checkout/paid-maintenance-token/pay", handler: HandleCheckoutPay},
-		{name: "QR code", path: "/checkout/paid-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
-		{name: "invoice", path: "/invoice/paid-maintenance-token", handler: HandlePaymentInvoice},
+		{name: "checkout", route: "/checkout/:token", path: "/checkout/paid-maintenance-token", handler: HandleCheckout},
+		{name: "payment result", route: "/checkout/:token/return/success", path: "/checkout/paid-maintenance-token/return/success", handler: HandleCheckoutSuccessReturn},
+		{name: "QR code", route: "/checkout/:token/qr.png", path: "/checkout/paid-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
+		{name: "invoice", route: "/invoice/:token", path: "/invoice/paid-maintenance-token", handler: HandlePaymentInvoice},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
-			app.Get(tt.path, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
+			app.Get(tt.route, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
 			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tt.path+"?lang=en", nil))
 			if err != nil {
 				t.Fatal(err)

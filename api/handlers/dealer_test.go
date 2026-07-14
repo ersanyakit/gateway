@@ -879,11 +879,12 @@ func TestAdminReadinessRouteSurfaceUsesV1ReadinessSemantics(t *testing.T) {
 	if !strings.Contains(routes, `r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))`) {
 		t.Fatal("admin readiness must remain reachable through admin section route")
 	}
+	normalizedRoutes := strings.Join(strings.Fields(routes), " ")
 	for _, token := range []string{
-		`DomainRepo:              r.DomainRepo`,
-		`ProviderHealthRepo:      r.ProviderHealthRepo`,
+		`DomainRepo: r.DomainRepo`,
+		`ProviderHealthRepo: r.ProviderHealthRepo`,
 	} {
-		if !strings.Contains(routes, token) {
+		if !strings.Contains(normalizedRoutes, token) {
 			t.Fatalf("admin readiness deps wiring missing %q", token)
 		}
 	}
