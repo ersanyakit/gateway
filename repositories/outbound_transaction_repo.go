@@ -295,6 +295,24 @@ func (r *OutboundTransactionRepo) MarkFailed(ctx context.Context, id uuid.UUID, 
 	})
 }
 
+// DeferForNetworkState releases a claimed transaction without consuming a
+// broadcast attempt. It is used while an administrator has outbound activity
+// disabled for the transaction's network.
+func (r *OutboundTransactionRepo) DeferForNetworkState(ctx context.Context, id uuid.UUID, detail string, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		retryAfter = 30 * time.Second
+	}
+	now := time.Now()
+	next := now.Add(retryAfter)
+	return r.updateState(ctx, id, []string{models.OutboundStatusPrepared, models.OutboundStatusSigned, models.OutboundStatusFailed}, map[string]any{
+		"error_category": "network_maintenance",
+		"error_detail":   boundedOutboundText(detail, 1000),
+		"locked_until":   nil,
+		"next_run_at":    &next,
+		"updated_at":     now,
+	})
+}
+
 func (r *OutboundTransactionRepo) MarkFinalized(ctx context.Context, id uuid.UUID) error {
 	now := time.Now()
 	return r.updateState(ctx, id, []string{models.OutboundStatusBroadcasted, models.OutboundStatusConfirming}, map[string]any{

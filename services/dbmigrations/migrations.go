@@ -195,6 +195,19 @@ func Artifacts() []Artifact {
 			VerificationQuery: "database.VerifySchema must report idx_wallets_chiliz_spicy_address as unique with predicate chiliz_spicy_address <> ''.",
 			Verify:            "Run the wallet Chiliz Spicy partial-index migration regression and create multiple wallets with empty optional addresses.",
 		},
+		{
+			ID: "202607130013_network_operational_states",
+			Models: []any{
+				&models.NetworkOperationalState{},
+			},
+			Summary:           "Registers the persisted per-network operational mode used to disable deposits, withdrawals, or both during maintenance.",
+			ForwardPlan:       "Forward-only additive GORM migration for network_operational_states with one unique row per supported chain.",
+			LockImpact:        "GORM creates one small additive table, its unique chain index, mode index, and mode check constraint without changing active transaction tables.",
+			Backfill:          "No row backfill is required; absent supported-chain rows are interpreted as active until an administrator persists an explicit mode.",
+			Rollback:          "Rollback application readers and leave the additive table in place, or drop it after all maintenance-mode readers and writers are disabled.",
+			VerificationQuery: "database.VerifySchema must report network_operational_states columns, chain uniqueness, mode index, and mode check constraint present.",
+			Verify:            "Run database.VerifySchema plus network operational state model and repository default, validation, and upsert tests after applying.",
+		},
 	}
 }
 

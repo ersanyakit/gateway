@@ -19,6 +19,7 @@ import (
 	"core/helpers"
 	"core/models"
 	"core/repositories"
+	"core/services/networkops"
 	"core/services/pricing"
 	"core/services/realtime"
 	"core/services/txrescan"
@@ -33,29 +34,30 @@ import (
 
 // V1APIDeps holds all dependencies used by the v1 REST API endpoints.
 type V1APIDeps struct {
-	DomainRepo              *repositories.DomainRepo
-	WalletRepo              *repositories.WalletRepo
-	PaymentRepo             *repositories.PaymentRepo
-	ProductRepo             *repositories.ProductRepo
-	WithdrawalRepo          *repositories.WithdrawalRequestRepo
-	RefundRepo              *repositories.RefundRepo
-	LedgerRepo              *repositories.LedgerRepo
-	TransactionRepo         *repositories.TransactionRepo
-	WebhookDeliveryRepo     *repositories.WebhookDeliveryRepo
-	SweepJobRepo            *repositories.SweepJobRepo
-	OutboundRepo            *repositories.OutboundTransactionRepo
-	ReconciliationRepo      *repositories.ReconciliationRepo
-	ActivityLogRepo         *repositories.ActivityLogRepo
-	OutboundPolicyRepo      *repositories.OutboundPolicyRepo
-	ProviderHealthRepo      *repositories.ProviderHealthRepo
-	WalletAddressLookupRepo *repositories.WalletAddressLookupRepo
-	AssetRegistry           *asset.Registry
-	Blockchains             *blockchain.ChainFactory
-	PriceOracle             pricing.PriceOracle
-	Notifier                *webhooksvc.Notifier
-	PaymentHub              *realtime.PaymentHub
-	IdempotencyRepo         *repositories.IdempotencyRepo
-	TxRescanService         func() *txrescan.Service
+	DomainRepo                  *repositories.DomainRepo
+	WalletRepo                  *repositories.WalletRepo
+	PaymentRepo                 *repositories.PaymentRepo
+	ProductRepo                 *repositories.ProductRepo
+	WithdrawalRepo              *repositories.WithdrawalRequestRepo
+	RefundRepo                  *repositories.RefundRepo
+	LedgerRepo                  *repositories.LedgerRepo
+	TransactionRepo             *repositories.TransactionRepo
+	WebhookDeliveryRepo         *repositories.WebhookDeliveryRepo
+	SweepJobRepo                *repositories.SweepJobRepo
+	OutboundRepo                *repositories.OutboundTransactionRepo
+	ReconciliationRepo          *repositories.ReconciliationRepo
+	ActivityLogRepo             *repositories.ActivityLogRepo
+	OutboundPolicyRepo          *repositories.OutboundPolicyRepo
+	NetworkOperationalStateRepo *repositories.NetworkOperationalStateRepo
+	ProviderHealthRepo          *repositories.ProviderHealthRepo
+	WalletAddressLookupRepo     *repositories.WalletAddressLookupRepo
+	AssetRegistry               *asset.Registry
+	Blockchains                 *blockchain.ChainFactory
+	PriceOracle                 pricing.PriceOracle
+	Notifier                    *webhooksvc.Notifier
+	PaymentHub                  *realtime.PaymentHub
+	IdempotencyRepo             *repositories.IdempotencyRepo
+	TxRescanService             func() *txrescan.Service
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -529,6 +531,16 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 		if _, err := v1ResolveDomain(c, deps.DomainRepo); err != nil {
 			return v1Err(c, fiber.StatusUnauthorized, err.Error())
 		}
+		states := make(map[constants.ChainID]models.NetworkOperationalState)
+		if deps.NetworkOperationalStateRepo != nil {
+			rows, err := deps.NetworkOperationalStateRepo.ListAll(c.Context())
+			if err != nil {
+				return v1Err(c, fiber.StatusInternalServerError, "failed to load network operational states")
+			}
+			for _, state := range rows {
+				states[state.ChainID] = state
+			}
+		}
 
 		allChains := []constants.ChainID{
 			constants.Bitcoin,
@@ -546,19 +558,33 @@ func HandleV1CommonNetworks(deps V1APIDeps) fiber.Handler {
 		}
 
 		type networkItem struct {
-			ChainID int64  `json:"chain_id"`
-			Name    string `json:"name"`
-			LogoURL string `json:"logo_url,omitempty"`
-			IsEVM   bool   `json:"is_evm"`
+			ChainID            int64  `json:"chain_id"`
+			Name               string `json:"name"`
+			Slug               string `json:"slug"`
+			LogoURL            string `json:"logo_url,omitempty"`
+			IsEVM              bool   `json:"is_evm"`
+			Mode               string `json:"mode"`
+			DepositsEnabled    bool   `json:"deposits_enabled"`
+			WithdrawalsEnabled bool   `json:"withdrawals_enabled"`
+			MaintenanceReason  string `json:"maintenance_reason,omitempty"`
 		}
 
 		var networks []networkItem
 		for _, id := range allChains {
+			state, ok := states[id]
+			if !ok {
+				state = models.NetworkOperationalState{ChainID: id, Mode: models.NetworkOperationalModeActive}
+			}
 			networks = append(networks, networkItem{
-				ChainID: int64(id),
-				Name:    chainLabel(id),
-				LogoURL: asset.ChainLogoURL(id),
-				IsEVM:   id != constants.Bitcoin && id != constants.Solana && !constants.IsTRONChain(id),
+				ChainID:            int64(id),
+				Name:               chainLabel(id),
+				Slug:               constants.ChainName(id),
+				LogoURL:            asset.ChainLogoURL(id),
+				IsEVM:              id != constants.Bitcoin && id != constants.Solana && !constants.IsTRONChain(id),
+				Mode:               string(state.Mode),
+				DepositsEnabled:    !state.BlocksDeposits(),
+				WithdrawalsEnabled: !state.BlocksWithdrawals(),
+				MaintenanceReason:  state.Reason,
 			})
 		}
 		return v1OK(c, fiber.Map{"networks": networks})
@@ -777,16 +803,17 @@ func HandleV1WalletBalance(deps V1APIDeps) fiber.Handler {
 // @Router /api/v1/payment/create [post]
 func HandleV1PaymentCreate(deps V1APIDeps) fiber.Handler {
 	return handlePaymentCreate(PaymentHandlerDeps{
-		DomainRepo:       deps.DomainRepo,
-		WalletRepo:       deps.WalletRepo,
-		PaymentRepo:      deps.PaymentRepo,
-		AssetRegistry:    deps.AssetRegistry,
-		Blockchains:      deps.Blockchains,
-		PriceOracle:      deps.PriceOracle,
-		Notifier:         deps.Notifier,
-		PaymentHub:       deps.PaymentHub,
-		IdempotencyRepo:  deps.IdempotencyRepo,
-		RequireSignature: true,
+		DomainRepo:                  deps.DomainRepo,
+		WalletRepo:                  deps.WalletRepo,
+		PaymentRepo:                 deps.PaymentRepo,
+		AssetRegistry:               deps.AssetRegistry,
+		Blockchains:                 deps.Blockchains,
+		PriceOracle:                 deps.PriceOracle,
+		Notifier:                    deps.Notifier,
+		PaymentHub:                  deps.PaymentHub,
+		IdempotencyRepo:             deps.IdempotencyRepo,
+		NetworkOperationalStateRepo: deps.NetworkOperationalStateRepo,
+		RequireSignature:            true,
 	}, paymentCreateModeV1)
 }
 
@@ -847,6 +874,16 @@ func HandleV1PaymentLinkCreate(deps V1APIDeps) fiber.Handler {
 		if err := normalizePaymentLinkDefaultAsset(deps.AssetRegistry, product); err != nil {
 			return v1Err(c, fiber.StatusBadRequest, err.Error())
 		}
+		if product.DefaultChainID != nil {
+			chainID := constants.ChainID(*product.DefaultChainID)
+			if err := networkops.RequireDeposits(c.Context(), deps.NetworkOperationalStateRepo, chainID); err != nil {
+				status := fiber.StatusInternalServerError
+				if networkops.IsUnavailable(err) {
+					status = fiber.StatusServiceUnavailable
+				}
+				return v1Err(c, status, err.Error())
+			}
+		}
 		if err := deps.ProductRepo.Create(c.Context(), product); err != nil {
 			return v1Err(c, fiber.StatusInternalServerError, "payment link creation failed: "+err.Error())
 		}
@@ -897,6 +934,13 @@ func HandleV1PaymentStaticAddressCreate(deps V1APIDeps) fiber.Handler {
 		scope, err := v1ResolveStaticAddressScope(deps.AssetRegistry, body)
 		if err != nil {
 			return v1Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		if err := networkops.RequireDeposits(c.Context(), deps.NetworkOperationalStateRepo, scope.ChainID); err != nil {
+			status := fiber.StatusInternalServerError
+			if networkops.IsUnavailable(err) {
+				status = fiber.StatusServiceUnavailable
+			}
+			return v1Err(c, status, err.Error())
 		}
 		if err := v1ValidateStaticAddressChainReady(deps.Blockchains, scope.ChainID); err != nil {
 			status := fiber.StatusBadRequest
@@ -1419,7 +1463,11 @@ func HandleV1PayoutCreate(deps V1APIDeps) fiber.Handler {
 		}); err != nil {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
 			logV1OutboundPolicyFailure(c, deps.ActivityLogRepo, *domain, "payout.create", "payout", requestID.String(), err)
-			return v1Err(c, fiber.StatusBadRequest, err.Error())
+			status := fiber.StatusBadRequest
+			if networkops.IsUnavailable(err) {
+				status = fiber.StatusServiceUnavailable
+			}
+			return v1Err(c, status, err.Error())
 		}
 
 		wallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
@@ -1683,7 +1731,11 @@ func HandleV1RefundCreate(deps V1APIDeps) fiber.Handler {
 		}); err != nil {
 			failV1CreateIdempotency(c.Context(), deps.IdempotencyRepo, idempotencyRecord, err)
 			logV1OutboundPolicyFailure(c, deps.ActivityLogRepo, *domain, "refund.create", "refund", requestID.String(), err)
-			return v1Err(c, fiber.StatusBadRequest, err.Error())
+			status := fiber.StatusBadRequest
+			if networkops.IsUnavailable(err) {
+				status = fiber.StatusServiceUnavailable
+			}
+			return v1Err(c, status, err.Error())
 		}
 		sourceWallet, err := ensureV1ReserveWallet(c.Context(), deps, domain.MerchantID)
 		if err != nil {

@@ -310,6 +310,37 @@ func (r *SweepJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error) 
 	return nil
 }
 
+// DeferForNetworkState returns a claimed sweep to the pending queue without
+// consuming an attempt. Listener ingestion remains live while outbound chain
+// activity is paused, so these jobs can resume after an admin re-enables the
+// network.
+func (r *SweepJobRepo) DeferForNetworkState(ctx context.Context, id uuid.UUID, detail string, retryAfter time.Duration) error {
+	if retryAfter <= 0 {
+		retryAfter = 30 * time.Second
+	}
+	now := time.Now()
+	next := now.Add(retryAfter)
+	result := r.db.WithContext(ctx).
+		Model(&models.SweepJob{}).
+		Where("id = ?", id).
+		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
+		Updates(map[string]any{
+			"status":           models.SweepJobStatusPending,
+			"last_error":       sweepJobErrorText(nil, detail),
+			"failure_category": models.SweepFailureCategoryNetworkMaintenance,
+			"locked_until":     nil,
+			"next_run_at":      &next,
+			"updated_at":       now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrSweepJobStateConflict
+	}
+	return nil
+}
+
 func (r *SweepJobRepo) MarkBroadcastUncertain(ctx context.Context, id uuid.UUID, err error) error {
 	now := time.Now()
 	result := r.db.WithContext(ctx).

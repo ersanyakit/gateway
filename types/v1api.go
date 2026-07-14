@@ -194,11 +194,16 @@ type V1FiatCurrenciesResponse struct {
 
 // V1NetworkItem represents a supported blockchain network.
 type V1NetworkItem struct {
-	ChainID  int64  `json:"chain_id"   example:"1"`
-	Name     string `json:"name"       example:"Ethereum"`
-	Slug     string `json:"slug"       example:"ethereum"`
-	LogoURL  string `json:"logo_url"   example:"https://assets.coingecko.com/coins/images/279/large/ethereum.png"`
-	Explorer string `json:"explorer"   example:"https://etherscan.io"`
+	ChainID            int64  `json:"chain_id"             example:"1"`
+	Name               string `json:"name"                 example:"Ethereum"`
+	Slug               string `json:"slug"                 example:"ethereum"`
+	LogoURL            string `json:"logo_url"             example:"/static/chains/ethereumchain.svg"`
+	Explorer           string `json:"explorer,omitempty"   example:"https://etherscan.io"`
+	IsEVM              bool   `json:"is_evm"               example:"true"`
+	Mode               string `json:"mode"                 example:"active"`
+	DepositsEnabled    bool   `json:"deposits_enabled"     example:"true"`
+	WithdrawalsEnabled bool   `json:"withdrawals_enabled"  example:"true"`
+	MaintenanceReason  string `json:"maintenance_reason,omitempty" example:"Provider upgrade"`
 }
 
 // V1NetworksResponse is returned by GET /api/v1/common/networks.

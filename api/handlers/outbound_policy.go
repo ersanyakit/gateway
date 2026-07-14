@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"core/constants"
 	"core/models"
 	"core/repositories"
+	"core/services/networkops"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -34,28 +36,36 @@ type outboundPolicyCheck struct {
 }
 
 type outboundPolicyRepos struct {
-	PolicyRepo     *repositories.OutboundPolicyRepo
-	WithdrawalRepo *repositories.WithdrawalRequestRepo
-	RefundRepo     *repositories.RefundRepo
+	PolicyRepo       *repositories.OutboundPolicyRepo
+	WithdrawalRepo   *repositories.WithdrawalRequestRepo
+	RefundRepo       *repositories.RefundRepo
+	NetworkStateRepo *repositories.NetworkOperationalStateRepo
 }
 
 func enforceDealerOutboundPolicy(ctx context.Context, deps DealerDeps, check outboundPolicyCheck) error {
 	return enforceOutboundPolicy(ctx, outboundPolicyRepos{
-		PolicyRepo:     deps.OutboundPolicyRepo,
-		WithdrawalRepo: deps.WithdrawalRepo,
-		RefundRepo:     deps.RefundRepo,
+		PolicyRepo:       deps.OutboundPolicyRepo,
+		WithdrawalRepo:   deps.WithdrawalRepo,
+		RefundRepo:       deps.RefundRepo,
+		NetworkStateRepo: deps.NetworkOperationalStateRepo,
 	}, check)
 }
 
 func enforceV1OutboundPolicy(ctx context.Context, deps V1APIDeps, check outboundPolicyCheck) error {
 	return enforceOutboundPolicy(ctx, outboundPolicyRepos{
-		PolicyRepo:     deps.OutboundPolicyRepo,
-		WithdrawalRepo: deps.WithdrawalRepo,
-		RefundRepo:     deps.RefundRepo,
+		PolicyRepo:       deps.OutboundPolicyRepo,
+		WithdrawalRepo:   deps.WithdrawalRepo,
+		RefundRepo:       deps.RefundRepo,
+		NetworkStateRepo: deps.NetworkOperationalStateRepo,
 	}, check)
 }
 
 func enforceOutboundPolicy(ctx context.Context, repos outboundPolicyRepos, check outboundPolicyCheck) error {
+	if chainID := chainSlugToID(check.Chain); constants.IsSupportedChainID(chainID) {
+		if err := networkops.RequireWithdrawals(ctx, repos.NetworkStateRepo, chainID); err != nil {
+			return err
+		}
+	}
 	amountRaw, err := outboundPolicyAmount(check.AmountRaw)
 	if err != nil {
 		return err

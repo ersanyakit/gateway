@@ -32,18 +32,23 @@ import (
 )
 
 type PaymentHandlerDeps struct {
-	DomainRepo          paymentDomainLookup
-	WalletRepo          paymentWalletRepository
-	PaymentRepo         paymentSessionRepository
-	WebhookDeliveryRepo paymentWebhookDeliveryRepository
-	ProductRepo         paymentProductRepository
-	IdempotencyRepo     paymentIdempotencyRepository
-	AssetRegistry       *asset.Registry
-	Blockchains         *blockchain.ChainFactory
-	PriceOracle         pricing.PriceOracle
-	Notifier            *webhooksvc.Notifier
-	PaymentHub          *realtime.PaymentHub
-	RequireSignature    bool
+	DomainRepo                  paymentDomainLookup
+	WalletRepo                  paymentWalletRepository
+	PaymentRepo                 paymentSessionRepository
+	NetworkOperationalStateRepo paymentNetworkOperationalStateRepository
+	WebhookDeliveryRepo         paymentWebhookDeliveryRepository
+	ProductRepo                 paymentProductRepository
+	IdempotencyRepo             paymentIdempotencyRepository
+	AssetRegistry               *asset.Registry
+	Blockchains                 *blockchain.ChainFactory
+	PriceOracle                 pricing.PriceOracle
+	Notifier                    *webhooksvc.Notifier
+	PaymentHub                  *realtime.PaymentHub
+	RequireSignature            bool
+}
+
+type paymentNetworkOperationalStateRepository interface {
+	GetByChain(context.Context, constants.ChainID) (*models.NetworkOperationalState, error)
 }
 
 type paymentDomainLookup interface {
@@ -149,6 +154,49 @@ type CheckoutAssetGroup struct {
 	QuoteAvailable bool
 }
 
+const checkoutNetworkAvailabilityError = "Network availability could not be verified. Please try again shortly."
+
+type paymentNetworkDepositAvailabilityResult struct {
+	available bool
+	reason    string
+	err       error
+}
+
+func paymentNetworkDepositAvailability(ctx context.Context, repo paymentNetworkOperationalStateRepository, chainID constants.ChainID) (bool, string, error) {
+	if repo == nil {
+		return true, "", nil
+	}
+	state, err := repo.GetByChain(ctx, chainID)
+	if err != nil {
+		return false, checkoutNetworkAvailabilityError, err
+	}
+	if state == nil {
+		return false, checkoutNetworkAvailabilityError, errors.New("network operational state is nil")
+	}
+	if !state.BlocksDeposits() {
+		return true, "", nil
+	}
+	reason := strings.TrimSpace(state.Reason)
+	if reason != "" {
+		return false, reason, nil
+	}
+	switch state.Mode {
+	case models.NetworkOperationalModeMaintenance:
+		return false, "This network is temporarily under maintenance.", nil
+	default:
+		return false, "Deposits are temporarily disabled for this network.", nil
+	}
+}
+
+func cachedPaymentNetworkDepositAvailability(ctx context.Context, repo paymentNetworkOperationalStateRepository, cache map[constants.ChainID]paymentNetworkDepositAvailabilityResult, chainID constants.ChainID) (bool, string, error) {
+	if result, ok := cache[chainID]; ok {
+		return result.available, result.reason, result.err
+	}
+	available, reason, err := paymentNetworkDepositAvailability(ctx, repo, chainID)
+	cache[chainID] = paymentNetworkDepositAvailabilityResult{available: available, reason: reason, err: err}
+	return available, reason, err
+}
+
 // HandlePaymentCreate creates a merchant payment checkout session.
 // @Summary Create payment session
 // @Description Creates a checkout session for a merchant order and returns a hosted checkout URL.
@@ -167,6 +215,7 @@ type CheckoutAssetGroup struct {
 // @Failure 401 {object} types.ErrorResponse
 // @Failure 409 {object} types.ErrorResponse
 // @Failure 500 {object} types.ErrorResponse
+// @Failure 503 {object} types.ErrorResponse
 // @Router /payments/create [post]
 func HandlePaymentCreate(deps PaymentHandlerDeps) fiber.Handler {
 	return handlePaymentCreate(deps, paymentCreateModeLegacy)
@@ -192,6 +241,18 @@ func handlePaymentCreate(deps PaymentHandlerDeps, mode paymentCreateMode) fiber.
 		domain, err := resolvePaymentDomain(c, deps.DomainRepo, params)
 		if err != nil {
 			return paymentCreateError(c, mode, fiber.StatusUnauthorized, err.Error())
+		}
+		if params.ChainID != nil {
+			chainID := constants.ChainID(*params.ChainID)
+			if constants.IsSupportedChainID(chainID) {
+				available, reason, availabilityErr := paymentNetworkDepositAvailability(params.Context, deps.NetworkOperationalStateRepo, chainID)
+				if availabilityErr != nil {
+					return paymentCreateError(c, mode, fiber.StatusServiceUnavailable, checkoutNetworkAvailabilityError)
+				}
+				if !available {
+					return paymentCreateError(c, mode, fiber.StatusServiceUnavailable, reason)
+				}
+			}
 		}
 
 		idempotencyKey := paymentIdempotencyKey(c, params)
@@ -763,7 +824,19 @@ func HandleCheckout(deps PaymentHandlerDeps) fiber.Handler {
 			return renderCheckoutStateResultWithDeps(c, fiber.StatusOK, checkoutState, deps, session)
 		}
 		effectiveStatus := paymentSessionResponseStatus(*session, time.Now())
-		if effectiveStatus == models.PaymentStatusAwaitingPayment || effectiveStatus == models.PaymentStatusPaid || paymentSessionAggregatePartial(*session) {
+		if effectiveStatus == models.PaymentStatusPaid {
+			return c.Redirect().To(checkoutLocalizedURL(session.SessionToken, "/pay", lang, ""))
+		}
+		if effectiveStatus == models.PaymentStatusAwaitingPayment || paymentSessionAggregatePartial(*session) {
+			if session.SelectedChainID != nil {
+				available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, *session.SelectedChainID)
+				if availabilityErr != nil {
+					return renderPaymentError(c, fiber.StatusServiceUnavailable, checkoutNetworkAvailabilityError)
+				}
+				if !available {
+					return renderPaymentError(c, fiber.StatusServiceUnavailable, reason)
+				}
+			}
 			return c.Redirect().To(checkoutLocalizedURL(session.SessionToken, "/pay", lang, ""))
 		}
 		if isSessionExpired(session) {
@@ -860,6 +933,13 @@ func HandleCheckoutSelectAsset(deps PaymentHandlerDeps) fiber.Handler {
 		assetInfo, err := findCheckoutAsset(deps.AssetRegistry, constants.ChainID(chainID), symbol, token)
 		if err != nil {
 			return renderCheckoutWithError(c, deps, session, err.Error())
+		}
+		available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, assetInfo.GetChainID())
+		if availabilityErr != nil {
+			return renderCheckoutWithErrorStatus(c, deps, session, fiber.StatusServiceUnavailable, checkoutNetworkAvailabilityError)
+		}
+		if !available {
+			return renderCheckoutWithErrorStatus(c, deps, session, fiber.StatusServiceUnavailable, reason)
 		}
 
 		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
@@ -1008,6 +1088,15 @@ func HandleCheckoutPay(deps PaymentHandlerDeps) fiber.Handler {
 		if checkoutState.Terminal {
 			return renderCheckoutStateResultWithDeps(c, fiber.StatusOK, checkoutState, deps, session)
 		}
+		if session.SelectedChainID != nil {
+			available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, *session.SelectedChainID)
+			if availabilityErr != nil {
+				return renderPaymentError(c, fiber.StatusServiceUnavailable, checkoutNetworkAvailabilityError)
+			}
+			if !available {
+				return renderPaymentError(c, fiber.StatusServiceUnavailable, reason)
+			}
+		}
 		if session.Status == models.PaymentStatusPending {
 			return c.Redirect().To(checkoutLocalizedURL(session.SessionToken, "", lang, ""))
 		}
@@ -1110,6 +1199,15 @@ func HandleCheckoutQRCode(deps PaymentHandlerDeps) fiber.Handler {
 		session, err := deps.PaymentRepo.FindByToken(c.Context(), c.Params("token"))
 		if err != nil {
 			return c.SendStatus(fiber.StatusNotFound)
+		}
+		if !paymentSessionTerminal(*session) && session.SelectedChainID != nil {
+			available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, *session.SelectedChainID)
+			if availabilityErr != nil {
+				return c.Status(fiber.StatusServiceUnavailable).SendString(checkoutNetworkAvailabilityError)
+			}
+			if !available {
+				return c.Status(fiber.StatusServiceUnavailable).SendString(reason)
+			}
 		}
 		payload := paymentURI(*session)
 		if payload == "" {
@@ -1278,8 +1376,13 @@ func checkoutAssetGroups(ctx context.Context, deps PaymentHandlerDeps, session m
 	assets := deps.AssetRegistry.ListAll()
 	bySymbol := make(map[string]CheckoutAssetGroup)
 	seenChains := make(map[string]map[constants.ChainID]struct{})
+	availabilityByChain := make(map[constants.ChainID]paymentNetworkDepositAvailabilityResult)
 	for _, assetInfo := range assets {
 		if paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) == "" {
+			continue
+		}
+		available, _, err := cachedPaymentNetworkDepositAvailability(ctx, deps.NetworkOperationalStateRepo, availabilityByChain, assetInfo.GetChainID())
+		if err != nil || !available {
 			continue
 		}
 		symbol := canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol())
@@ -1315,14 +1418,20 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 	selectedSymbol = canonicalSymbol(deps.AssetRegistry, selectedSymbol)
 	assets := deps.AssetRegistry.ListAll()
 	options := make([]CheckoutAssetOption, 0, len(assets))
+	availabilityByChain := make(map[constants.ChainID]paymentNetworkDepositAvailabilityResult)
 	for _, assetInfo := range assets {
 		groupSymbol := canonicalSymbol(deps.AssetRegistry, assetInfo.GetSymbol())
 		if selectedSymbol != "" && !strings.EqualFold(groupSymbol, selectedSymbol) {
 			continue
 		}
 		addressAvailable := paymentDepositAddressForChain(session.Wallet, assetInfo.GetChainID()) != ""
+		networkAvailable, networkUnavailableReason, availabilityErr := cachedPaymentNetworkDepositAvailability(ctx, deps.NetworkOperationalStateRepo, availabilityByChain, assetInfo.GetChainID())
 		unavailableReason := ""
-		if !addressAvailable {
+		if availabilityErr != nil {
+			unavailableReason = checkoutNetworkAvailabilityError
+		} else if !networkAvailable {
+			unavailableReason = networkUnavailableReason
+		} else if !addressAvailable {
 			unavailableReason = "address"
 		}
 		token := ""
@@ -1341,7 +1450,7 @@ func checkoutAssetOptions(ctx context.Context, deps PaymentHandlerDeps, session 
 			AmountRaw:         "",
 			AmountDisplay:     "",
 			Native:            assetInfo.IsNative(),
-			Available:         addressAvailable,
+			Available:         addressAvailable && networkAvailable && availabilityErr == nil,
 			QuoteAvailable:    false,
 			UnavailableReason: unavailableReason,
 			LogoURL:           deps.AssetRegistry.LogoURL(assetInfo.GetSymbol()),
@@ -1555,10 +1664,14 @@ func paymentDepositAddressForChain(wallet models.Wallet, chainID constants.Chain
 }
 
 func renderCheckoutWithError(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, message string) error {
+	return renderCheckoutWithErrorStatus(c, deps, session, fiber.StatusBadRequest, message)
+}
+
+func renderCheckoutWithErrorStatus(c fiber.Ctx, deps PaymentHandlerDeps, session *models.PaymentSession, status int, message string) error {
 	lang := checkoutLanguage(c)
 	selectedSymbol := strings.ToUpper(strings.TrimSpace(c.FormValue("symbol")))
 	productName, productDesc, productLogo := lookupCheckoutProduct(c.Context(), deps, session.ProductID)
-	return c.Status(fiber.StatusBadRequest).Render("gateway/checkout", fiber.Map{
+	return c.Status(status).Render("gateway/checkout", fiber.Map{
 		"Session":            session,
 		"Lang":               lang,
 		"IsEnglish":          lang == "en",
@@ -2029,6 +2142,15 @@ func HandlePaymentInvoice(deps PaymentHandlerDeps) fiber.Handler {
 		session, err := deps.PaymentRepo.FindByToken(c.Context(), token)
 		if err != nil {
 			return c.Status(fiber.StatusNotFound).SendString("Ödeme bulunamadı")
+		}
+		if !paymentSessionTerminal(*session) && session.SelectedChainID != nil {
+			available, reason, availabilityErr := paymentNetworkDepositAvailability(c.Context(), deps.NetworkOperationalStateRepo, *session.SelectedChainID)
+			if availabilityErr != nil {
+				return renderPaymentError(c, fiber.StatusServiceUnavailable, checkoutNetworkAvailabilityError)
+			}
+			if !available {
+				return renderPaymentError(c, fiber.StatusServiceUnavailable, reason)
+			}
 		}
 
 		isPaid := session.Status == models.PaymentStatusPaid

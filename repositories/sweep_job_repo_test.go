@@ -49,6 +49,39 @@ func TestSweepJobRepoEnqueueForTransactionIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSweepJobRepoDefersForNetworkStateWithoutConsumingAttempt(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.SweepJob{}); err != nil {
+		t.Fatalf("automigrate sweep jobs: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewSweepJobRepo(db)
+	now := time.Now().UTC()
+	due := now.Add(-time.Second)
+	job := sweepJobTestJob("maintenance-defer", uuid.New(), uuid.New(), constants.Ethereum, models.SweepJobStatusPending, now, &due, nil)
+	if err := db.WithContext(ctx).Create(&job).Error; err != nil {
+		t.Fatalf("seed sweep job: %v", err)
+	}
+	claimed, err := repo.ClaimDue(ctx, 1, time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim due = %#v, err=%v", claimed, err)
+	}
+	if err := repo.DeferForNetworkState(ctx, job.ID, "node upgrade", time.Minute); err != nil {
+		t.Fatalf("defer for network state: %v", err)
+	}
+
+	var reloaded models.SweepJob
+	if err := db.WithContext(ctx).First(&reloaded, "id = ?", job.ID).Error; err != nil {
+		t.Fatalf("reload sweep job: %v", err)
+	}
+	if reloaded.Status != models.SweepJobStatusPending || reloaded.Attempts != 0 || reloaded.LockedUntil != nil || reloaded.NextRunAt == nil || !reloaded.NextRunAt.After(time.Now()) {
+		t.Fatalf("deferred sweep state = %#v", reloaded)
+	}
+	if reloaded.FailureCategory != models.SweepFailureCategoryNetworkMaintenance || reloaded.LastError != "node upgrade" {
+		t.Fatalf("deferred sweep metadata = %q/%q", reloaded.FailureCategory, reloaded.LastError)
+	}
+}
+
 func TestSweepJobRepoClaimDueRecoversStaleProcessingAndSerializesWalletChain(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.SweepJob{}); err != nil {

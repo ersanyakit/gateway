@@ -994,6 +994,59 @@ func TestOutboundPolicySchemaIsRegistered(t *testing.T) {
 	}
 }
 
+func TestNetworkOperationalStateSchemaIsRegistered(t *testing.T) {
+	if !autoMigrateModelsIncludes(&models.NetworkOperationalState{}) {
+		t.Fatal("NetworkOperationalState must be registered in AutoMigrate models")
+	}
+
+	requiredColumns := map[string]bool{
+		"ID": false, "ChainID": false, "Mode": false, "Reason": false,
+		"UpdatedBy": false, "CreatedAt": false, "UpdatedAt": false,
+	}
+	for _, column := range requiredSchemaColumns() {
+		if column.table != "network_operational_states" {
+			continue
+		}
+		if _, ok := requiredColumns[column.field]; ok {
+			requiredColumns[column.field] = true
+		}
+	}
+	for field, found := range requiredColumns {
+		if !found {
+			t.Fatalf("VerifySchema does not require network_operational_states.%s", field)
+		}
+	}
+
+	requiredIndexes := map[string]bool{
+		"ux_network_operational_states_chain_id": false,
+		"idx_network_operational_states_mode":    false,
+	}
+	for _, index := range requiredSchemaIndexes() {
+		if index.table != "network_operational_states" {
+			continue
+		}
+		if _, ok := requiredIndexes[index.name]; ok {
+			requiredIndexes[index.name] = true
+		}
+	}
+	for name, found := range requiredIndexes {
+		if !found {
+			t.Fatalf("VerifySchema does not require network_operational_states index %s", name)
+		}
+	}
+
+	foundConstraint := false
+	for _, constraint := range requiredSchemaConstraints() {
+		if constraint.table == "network_operational_states" && constraint.name == "network_operational_states_mode_check" {
+			foundConstraint = true
+			break
+		}
+	}
+	if !foundConstraint {
+		t.Fatal("VerifySchema does not require network operational mode check constraint")
+	}
+}
+
 func TestProviderHealthSchemaIsRegistered(t *testing.T) {
 	if !autoMigrateModelsIncludes(&models.ProviderHealthSnapshot{}) {
 		t.Fatal("ProviderHealthSnapshot must be registered in AutoMigrate models")

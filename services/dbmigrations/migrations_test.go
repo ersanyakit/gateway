@@ -15,8 +15,8 @@ func TestMigrationArtifactsUseGORMModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest id: %v", err)
 	}
-	if latest != "202607130012_wallet_chiliz_spicy_partial_unique" {
-		t.Fatalf("latest id = %q, want wallet Chiliz Spicy partial-index migration", latest)
+	if latest != "202607130013_network_operational_states" {
+		t.Fatalf("latest id = %q, want network operational states migration", latest)
 	}
 
 	artifacts := Artifacts()
@@ -24,7 +24,7 @@ func TestMigrationArtifactsUseGORMModels(t *testing.T) {
 	for _, model := range artifacts[len(artifacts)-1].Models {
 		modelTypes[reflect.TypeOf(model)] = true
 	}
-	for _, want := range []any{&models.Wallet{}} {
+	for _, want := range []any{&models.NetworkOperationalState{}} {
 		if !modelTypes[reflect.TypeOf(want)] {
 			t.Fatalf("latest migration artifact missing model %T", want)
 		}

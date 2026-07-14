@@ -246,6 +246,7 @@ func autoMigrateModels() []any {
 		&models.ActivityLog{},
 		&models.OutboundPolicySetting{},
 		&models.OutboundAddressWhitelist{},
+		&models.NetworkOperationalState{},
 		&models.ProviderHealthSnapshot{},
 		&models.WalletAddressLookup{},
 		&models.WalletAddressReservation{},
@@ -707,6 +708,13 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "wallet_address_gap_scan_anomalies", model: &models.WalletAddressGapScanAnomaly{}, field: "DetectedAt"},
 		{table: "wallet_address_gap_scan_anomalies", model: &models.WalletAddressGapScanAnomaly{}, field: "CreatedAt"},
 		{table: "wallet_address_gap_scan_anomalies", model: &models.WalletAddressGapScanAnomaly{}, field: "UpdatedAt"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "ID"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "ChainID"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "Mode"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "Reason"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "UpdatedBy"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "CreatedAt"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, field: "UpdatedAt"},
 		{table: "admins", model: &models.Admin{}, field: "ID"},
 		{table: "admins", model: &models.Admin{}, field: "Role"},
 		{table: "transactions", model: &models.Transaction{}, field: "WebhookLockedUntil"},
@@ -824,6 +832,8 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 		{table: "wallet_addresses", model: &models.WalletAddress{}, name: "ux_wallet_addresses_chain_address"},
 		{table: "wallet_addresses", model: &models.WalletAddress{}, name: "ux_wallet_addresses_hd_chain"},
 		{table: "wallet_address_gap_scan_cursors", model: &models.WalletAddressGapScanCursor{}, name: "ux_wallet_address_gap_scan_scope"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, name: "ux_network_operational_states_chain_id"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, name: "idx_network_operational_states_mode"},
 		{table: "admins", model: &models.Admin{}, name: "idx_admins_role"},
 	}
 }
@@ -834,6 +844,7 @@ func requiredSchemaConstraints() []requiredSchemaConstraint {
 		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_account_check"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_direction_check"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ledger_entries_status_check"},
+		{table: "network_operational_states", model: &models.NetworkOperationalState{}, name: "network_operational_states_mode_check"},
 	}
 }
 

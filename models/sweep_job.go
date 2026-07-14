@@ -38,6 +38,7 @@ const (
 	SweepFailureCategoryTimeout            = "timeout"
 	SweepFailureCategoryTransient          = "transient"
 	SweepFailureCategoryBroadcastUncertain = "broadcast_uncertain"
+	SweepFailureCategoryNetworkMaintenance = "network_maintenance"
 )
 
 type SweepJob struct {

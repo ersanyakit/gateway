@@ -66,6 +66,7 @@
           <a class="admin-nav-link" href="{{.AdminReadinessURL}}" aria-selected="{{if eq .AdminPanel "readiness"}}true{{else}}false{{end}}"><span>Readiness</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminMetricsURL}}" aria-selected="{{if eq .AdminPanel "metrics"}}true{{else}}false{{end}}"><span>Metrics</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminProviderHealthURL}}" aria-selected="{{if eq .AdminPanel "provider-health"}}true{{else}}false{{end}}"><span>Provider Health</span><span class="admin-nav-dot"></span></a>
+          <a class="admin-nav-link" href="{{.AdminNetworksURL}}" aria-selected="{{if eq .AdminPanel "networks"}}true{{else}}false{{end}}"><span>Network Modları</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminRescanURL}}" aria-selected="{{if eq .AdminPanel "rescan"}}true{{else}}false{{end}}"><span>Rescan</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="/admin/admins" aria-selected="{{if eq .AdminPanel "admins"}}true{{else}}false{{end}}"><span>Adminler</span><span class="admin-nav-dot"></span></a>
           <a class="admin-nav-link" href="{{.AdminSecurityURL}}" aria-selected="{{if eq .AdminPanel "security"}}true{{else}}false{{end}}"><span>Güvenlik</span><span class="admin-nav-dot"></span></a>
@@ -1559,6 +1560,87 @@
         {{end}}
         </tbody>
       </table>
+    </div>
+  </div>
+  {{end}}
+
+  {{/* ══════ NETWORK OPERATIONAL MODES ══════ */}}
+  {{if eq .AdminPanel "networks"}}
+  <div class="grid gap-4">
+    <div class="rounded-3xl border border-line bg-white px-5 py-4">
+      <div class="flex flex-col justify-between gap-3 lg:flex-row lg:items-start">
+        <div>
+          <h2 class="m-0 text-lg font-black text-ink">Network operasyon modları</h2>
+          <p class="m-0 mt-1 max-w-3xl text-sm font-semibold text-muted">Her network için yeni deposit ve withdrawal girişlerini merkezi olarak açıp kapatın. Durum veritabanında tutulur; yeniden başlatma veya environment değişikliği gerekmez.</p>
+        </div>
+        <div class="flex flex-wrap gap-2 text-xs font-extrabold">
+          <span class="badge badge-green">active: tüm akışlar açık</span>
+          <span class="badge badge-amber">deposits_off / withdrawals_off</span>
+          <span class="badge badge-red">maintenance: ikisi de kapalı</span>
+        </div>
+      </div>
+      <p class="m-0 mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-xs font-semibold text-blue-800">Zincir listener'ları bakım sırasında da gelen transferleri güvenle izlemeyi sürdürür; bu ayar yeni müşteri işlem girişlerini kontrol eder.</p>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {{range .AdminNetworkStates}}
+      <article class="overflow-hidden rounded-3xl border border-line bg-white shadow-sm">
+        <div class="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
+          <div class="flex min-w-0 items-center gap-3">
+            <span class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-line bg-wash">
+              <img class="h-7 w-7 object-contain" src="{{.ChainLogoURL}}" alt="" loading="lazy">
+            </span>
+            <div class="min-w-0">
+              <h3 class="m-0 truncate text-base font-black text-ink">{{.Chain}}</h3>
+              <code class="block truncate text-[11px] text-muted">{{.ChainSlug}} · chain_id {{.ChainID}}</code>
+            </div>
+          </div>
+          <div class="flex shrink-0 flex-col items-end gap-1">
+            <span class="badge {{.ModeClass}}">{{.ModeLabel}}</span>
+            {{if .Testnet}}<span class="badge badge-violet">testnet</span>{{end}}
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 px-5 pt-4 text-xs font-extrabold">
+          {{if .BlocksDeposits}}
+          <span class="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-center text-red-700">Deposit kapalı</span>
+          {{else}}
+          <span class="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-center text-emerald-700">Deposit açık</span>
+          {{end}}
+          {{if .BlocksWithdrawals}}
+          <span class="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-center text-red-700">Withdrawal kapalı</span>
+          {{else}}
+          <span class="rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-center text-emerald-700">Withdrawal açık</span>
+          {{end}}
+        </div>
+
+        <form class="grid gap-3 p-5" method="post" action="/admin/networks/state" onsubmit="return confirm('Bu network operasyon modu güncellensin mi?')">
+          <input type="hidden" name="chain_id" value="{{.ChainID}}">
+          <label class="grid gap-1.5">
+            <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Operasyon modu</span>
+            <select class="min-h-11 rounded-2xl border border-line bg-wash px-3 text-sm font-extrabold text-ink outline-none focus:border-accent" name="mode" required>
+              <option value="active"{{if eq .Mode "active"}} selected{{end}}>active — deposit ve withdrawal açık</option>
+              <option value="deposits_off"{{if eq .Mode "deposits_off"}} selected{{end}}>deposits_off — yeni deposit kapalı</option>
+              <option value="withdrawals_off"{{if eq .Mode "withdrawals_off"}} selected{{end}}>withdrawals_off — yeni withdrawal kapalı</option>
+              <option value="maintenance"{{if eq .Mode "maintenance"}} selected{{end}}>maintenance — iki akış da kapalı</option>
+            </select>
+          </label>
+          <label class="grid gap-1.5">
+            <span class="text-[10px] font-black uppercase tracking-[0.06em] text-muted">Operasyon açıklaması</span>
+            <textarea class="min-h-20 resize-y rounded-2xl border border-line bg-wash px-3 py-2 text-sm font-semibold text-ink outline-none focus:border-accent" name="reason" maxlength="500" placeholder="Akış kapatılıyorsa açıklama zorunludur">{{.Reason}}</textarea>
+          </label>
+          <div class="flex flex-wrap items-end justify-between gap-3 border-t border-line pt-3">
+            <p class="m-0 min-w-0 text-[11px] font-semibold text-muted">
+              <span class="block truncate" title="{{.UpdatedBy}}">Son işlem: {{.UpdatedBy}}</span>
+              <time class="block">{{.UpdatedAt}}</time>
+            </p>
+            <button class="inline-flex min-h-10 items-center justify-center rounded-2xl bg-ink px-5 text-sm font-extrabold text-white hover:opacity-80" type="submit">Modu kaydet</button>
+          </div>
+        </form>
+      </article>
+      {{else}}
+      <div class="rounded-3xl border border-line bg-white p-8 text-center text-sm font-semibold text-muted md:col-span-2 xl:col-span-3">Network operasyon durumu bulunamadı.</div>
+      {{end}}
     </div>
   </div>
   {{end}}

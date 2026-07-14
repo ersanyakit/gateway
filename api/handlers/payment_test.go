@@ -54,6 +54,27 @@ func (p panicPriceOracle) Price(context.Context, string, string) (*big.Rat, erro
 	panic("checkout asset groups should not call the price oracle")
 }
 
+type fakePaymentNetworkStateRepo struct {
+	states map[constants.ChainID]models.NetworkOperationalState
+	err    error
+	calls  map[constants.ChainID]int
+}
+
+func (r *fakePaymentNetworkStateRepo) GetByChain(_ context.Context, chainID constants.ChainID) (*models.NetworkOperationalState, error) {
+	if r.calls == nil {
+		r.calls = make(map[constants.ChainID]int)
+	}
+	r.calls[chainID]++
+	if r.err != nil {
+		return nil, r.err
+	}
+	if state, ok := r.states[chainID]; ok {
+		copy := state
+		return &copy, nil
+	}
+	return &models.NetworkOperationalState{ChainID: chainID, Mode: models.NetworkOperationalModeActive}, nil
+}
+
 func TestCheckoutCanonicalSymbolAliases(t *testing.T) {
 	tests := map[string]string{
 		"WBTC": "BTC",
@@ -194,6 +215,80 @@ func TestCheckoutAssetSelectionDoesNotCallPriceOracle(t *testing.T) {
 	}
 	if groups[0].ChainCount != 1 {
 		t.Fatalf("chain count = %d, want 1", groups[0].ChainCount)
+	}
+}
+
+func TestCheckoutAssetListsRespectNetworkDepositModes(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	registry.Register(asset.NewERC20(constants.Ethereum, "0x1111111111111111111111111111111111111111", "USDT", "Tether USD", 6))
+	registry.Register(asset.NewEVMNative(constants.Base, "ETH", "Ethereum", 18))
+
+	networkRepo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeMaintenance,
+			Reason:  "Ethereum payments are paused for an upgrade.",
+		},
+		constants.Base: {
+			ChainID: constants.Base,
+			Mode:    models.NetworkOperationalModeWithdrawalsOff,
+		},
+	}}
+	session := models.PaymentSession{
+		SessionToken: "checkout-token",
+		Wallet: models.Wallet{
+			EthereumAddress: "0x2222222222222222222222222222222222222222",
+			BaseAddress:     "0x3333333333333333333333333333333333333333",
+		},
+	}
+	deps := PaymentHandlerDeps{AssetRegistry: registry, NetworkOperationalStateRepo: networkRepo}
+
+	groups := checkoutAssetGroups(context.Background(), deps, session)
+	if len(groups) != 1 || groups[0].Symbol != "ETH" || groups[0].ChainCount != 1 {
+		t.Fatalf("groups = %#v, want ETH on the one deposit-enabled network", groups)
+	}
+	if networkRepo.calls[constants.Ethereum] != 1 || networkRepo.calls[constants.Base] != 1 {
+		t.Fatalf("group state lookups = %#v, want one per chain", networkRepo.calls)
+	}
+
+	options := checkoutAssetOptions(context.Background(), deps, session, "")
+	if len(options) != 3 {
+		t.Fatalf("options = %d, want 3", len(options))
+	}
+	for _, option := range options {
+		switch constants.ChainID(option.ChainID) {
+		case constants.Ethereum:
+			if option.Available || option.UnavailableReason != "Ethereum payments are paused for an upgrade." {
+				t.Fatalf("ethereum option = %#v, want maintenance-disabled with public reason", option)
+			}
+		case constants.Base:
+			if !option.Available || option.UnavailableReason != "" {
+				t.Fatalf("base option = %#v, withdrawals_off must still accept deposits", option)
+			}
+		default:
+			t.Fatalf("unexpected option chain: %#v", option)
+		}
+	}
+	if networkRepo.calls[constants.Ethereum] != 2 || networkRepo.calls[constants.Base] != 2 {
+		t.Fatalf("combined state lookups = %#v, want one per chain per list build", networkRepo.calls)
+	}
+}
+
+func TestPaymentNetworkDepositAvailabilityUsesModeFallbackReason(t *testing.T) {
+	repo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeDepositsOff,
+		},
+	}}
+
+	available, reason, err := paymentNetworkDepositAvailability(context.Background(), repo, constants.Ethereum)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if available || reason != "Deposits are temporarily disabled for this network." {
+		t.Fatalf("availability/reason = %v/%q, want deposits disabled fallback", available, reason)
 	}
 }
 
@@ -378,6 +473,175 @@ func TestPreparePaymentCreateAssetSelectionQuotesSupportedAsset(t *testing.T) {
 	}
 	if !selection.quoteExpiresAt.Equal(now.Add(15 * time.Minute)) {
 		t.Fatalf("quote expires = %s, want %s", selection.quoteExpiresAt, now.Add(15*time.Minute))
+	}
+}
+
+func TestHandleCheckoutSelectAssetRejectsDepositBlockedNetworkBeforeMutation(t *testing.T) {
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewEVMNative(constants.Ethereum, "ETH", "Ethereum", 18))
+	future := time.Now().Add(10 * time.Minute)
+	session := &models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "maintenance-token",
+		Amount:       "10",
+		Currency:     "USD",
+		Status:       models.PaymentStatusPending,
+		ExpiresAt:    &future,
+		Wallet: models.Wallet{
+			EthereumAddress: "0x2222222222222222222222222222222222222222",
+		},
+	}
+	paymentRepo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	networkRepo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeMaintenance,
+			Reason:  "Ethereum is under scheduled maintenance.",
+		},
+	}}
+	app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
+	app.Post("/checkout/:token/select", HandleCheckoutSelectAsset(PaymentHandlerDeps{
+		PaymentRepo:                 paymentRepo,
+		NetworkOperationalStateRepo: networkRepo,
+		AssetRegistry:               registry,
+		PriceOracle:                 panicPriceOracle{},
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/checkout/maintenance-token/select?lang=en", strings.NewReader("chain_id=1&symbol=ETH"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Ethereum is under scheduled maintenance.") {
+		t.Fatalf("maintenance reason missing from response: %s", body)
+	}
+	if paymentRepo.selectCalls != 0 || len(paymentRepo.quotes) != 0 {
+		t.Fatalf("blocked selection mutated payment/quotes = %d/%d", paymentRepo.selectCalls, len(paymentRepo.quotes))
+	}
+}
+
+func TestSelectedCheckoutGETRejectsDepositBlockedNetwork(t *testing.T) {
+	chainID := constants.Ethereum
+	future := time.Now().Add(10 * time.Minute)
+	session := &models.PaymentSession{
+		ID:                uuid.New(),
+		SessionToken:      "selected-maintenance-token",
+		Amount:            "10",
+		Currency:          "USD",
+		Status:            models.PaymentStatusAwaitingPayment,
+		SelectedChainID:   &chainID,
+		SelectedSymbol:    "ETH",
+		SelectedDecimals:  18,
+		ExpectedAmountRaw: "1000000000000000000",
+		DepositAddress:    "0x2222222222222222222222222222222222222222",
+		ExpiresAt:         &future,
+	}
+	paymentRepo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	networkRepo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeDepositsOff,
+			Reason:  "Ethereum deposits are paused.",
+		},
+	}}
+
+	tests := []struct {
+		name    string
+		path    string
+		handler func(PaymentHandlerDeps) fiber.Handler
+	}{
+		{name: "checkout", path: "/checkout/selected-maintenance-token", handler: HandleCheckout},
+		{name: "payment instructions", path: "/checkout/selected-maintenance-token/pay", handler: HandleCheckoutPay},
+		{name: "QR code", path: "/checkout/selected-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
+		{name: "invoice", path: "/invoice/selected-maintenance-token", handler: HandlePaymentInvoice},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
+			app.Get(tt.path, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tt.path+"?lang=en", nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != fiber.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503: %s", resp.StatusCode, body)
+			}
+			if !strings.Contains(string(body), "Ethereum deposits are paused.") {
+				t.Fatalf("deposit pause reason missing from response: %s", body)
+			}
+		})
+	}
+}
+
+func TestPaidCheckoutSurfacesRemainReadableDuringNetworkMaintenance(t *testing.T) {
+	chainID := constants.Ethereum
+	txHash := "0xabc"
+	paidAt := time.Now().Add(-time.Minute)
+	session := &models.PaymentSession{
+		ID:                uuid.New(),
+		SessionToken:      "paid-maintenance-token",
+		OrderID:           "paid-order",
+		Amount:            "1",
+		Currency:          "USD",
+		Status:            models.PaymentStatusPaid,
+		SelectedChainID:   &chainID,
+		SelectedSymbol:    "ETH",
+		SelectedDecimals:  18,
+		ExpectedAmountRaw: "1000000000000000000",
+		DepositAddress:    "0x2222222222222222222222222222222222222222",
+		TxHash:            &txHash,
+		PaidAt:            &paidAt,
+	}
+	paymentRepo := &fakePaymentSessionRepo{sessions: []*models.PaymentSession{session}}
+	networkRepo := &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeMaintenance,
+			Reason:  "Ethereum deposits are paused.",
+		},
+	}}
+
+	tests := []struct {
+		name    string
+		path    string
+		handler func(PaymentHandlerDeps) fiber.Handler
+	}{
+		{name: "checkout", path: "/checkout/paid-maintenance-token", handler: HandleCheckout},
+		{name: "payment result", path: "/checkout/paid-maintenance-token/pay", handler: HandleCheckoutPay},
+		{name: "QR code", path: "/checkout/paid-maintenance-token/qr.png", handler: HandleCheckoutQRCode},
+		{name: "invoice", path: "/invoice/paid-maintenance-token", handler: HandlePaymentInvoice},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := fiber.New(fiber.Config{Views: fiberhtml.New("../../views", ".html")})
+			app.Get(tt.path, tt.handler(PaymentHandlerDeps{PaymentRepo: paymentRepo, NetworkOperationalStateRepo: networkRepo}))
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tt.path+"?lang=en", nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != fiber.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+			}
+		})
+	}
+	if networkRepo.calls[constants.Ethereum] != 0 {
+		t.Fatalf("terminal surfaces performed %d network mode lookups, want none", networkRepo.calls[constants.Ethereum])
 	}
 }
 
@@ -2295,6 +2559,39 @@ func performPaymentCreateRequest(t *testing.T, app *fiber.App, path string, body
 		}
 	}
 	return resp.StatusCode, decoded
+}
+
+func TestHandlePaymentCreateRejectsDepositBlockedPreselectionBeforeMutation(t *testing.T) {
+	registry := asset.NewRegistry()
+	token := "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+	registry.Register(asset.NewERC20(constants.Ethereum, token, "USDC", "USD Coin", 6))
+	oracle := &countingPriceOracle{prices: map[string]string{"USDC|USD": "1"}}
+	deps, walletRepo, paymentRepo, idempotencyRepo := newPaymentCreateHandlerTestDeps(oracle, registry)
+	deps.NetworkOperationalStateRepo = &fakePaymentNetworkStateRepo{states: map[constants.ChainID]models.NetworkOperationalState{
+		constants.Ethereum: {
+			ChainID: constants.Ethereum,
+			Mode:    models.NetworkOperationalModeDepositsOff,
+			Reason:  "USDC deposits are paused during maintenance.",
+		},
+	}}
+
+	app := fiber.New()
+	app.Post("/payments/create", HandlePaymentCreate(deps))
+	payload := `{"order_id":"order-maintenance","amount":"10","currency":"USD","chain_id":1,"symbol":"USDC","token":"` + token + `"}`
+	status, body := performPaymentCreateRequest(t, app, "/payments/create", payload, "idem-maintenance")
+
+	if status != fiber.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %#v", status, body)
+	}
+	if body["success"] != false || body["error"] != "USDC deposits are paused during maintenance." {
+		t.Fatalf("maintenance response = %#v", body)
+	}
+	if walletRepo.createCalls != 0 || paymentRepo.createCalls != 0 || paymentRepo.selectCalls != 0 || len(paymentRepo.quotes) != 0 {
+		t.Fatalf("blocked create mutated wallet/create/select/quotes = %d/%d/%d/%d", walletRepo.createCalls, paymentRepo.createCalls, paymentRepo.selectCalls, len(paymentRepo.quotes))
+	}
+	if oracle.calls != 0 || idempotencyRepo.failCalls != 0 || len(idempotencyRepo.records) != 0 {
+		t.Fatalf("blocked create called oracle or idempotency oracle/fail/records = %d/%d/%d", oracle.calls, idempotencyRepo.failCalls, len(idempotencyRepo.records))
+	}
 }
 
 func TestHandlePaymentCreateSelectedAssetPersistsQuoteAndCachesRetry(t *testing.T) {

@@ -12,6 +12,7 @@ import (
 	"core/models"
 	"core/repositories"
 	"core/services/chainresource"
+	"core/services/networkops"
 	"core/services/pricing"
 	services "core/services/system"
 	"core/services/txrescan"
@@ -90,34 +91,35 @@ var adminHeaderStatsCache = struct {
 }{}
 
 type DealerDeps struct {
-	MerchantService         *services.MerchantService
-	DomainRepo              *repositories.DomainRepo
-	DomainService           *services.DomainService
-	WalletRepo              *repositories.WalletRepo
-	ProductRepo             *repositories.ProductRepo
-	PaymentRepo             *repositories.PaymentRepo
-	WithdrawalRepo          *repositories.WithdrawalRequestRepo
-	RefundRepo              *repositories.RefundRepo
-	LedgerRepo              *repositories.LedgerRepo
-	SweepJobRepo            *repositories.SweepJobRepo
-	OutboundRepo            *repositories.OutboundTransactionRepo
-	TransactionRepo         *repositories.TransactionRepo
-	ReconciliationRepo      *repositories.ReconciliationRepo
-	WebhookDeliveryRepo     *repositories.WebhookDeliveryRepo
-	MoneyEventOutboxRepo    *repositories.MoneyEventOutboxRepo
-	MoneyEventInboxRepo     *repositories.MoneyEventInboxRepo
-	WorkerLeaseRepo         *repositories.WorkerLeaseRepo
-	ActivityLogRepo         *repositories.ActivityLogRepo
-	OutboundPolicyRepo      *repositories.OutboundPolicyRepo
-	AdminRepo               *repositories.AdminRepo
-	ChainStateRepo          *repositories.ChainStateRepo
-	ProviderHealthRepo      *repositories.ProviderHealthRepo
-	WalletAddressLookupRepo *repositories.WalletAddressLookupRepo
-	AssetRegistry           *asset.Registry
-	Blockchains             *blockchain.ChainFactory
-	TxRescanService         func() *txrescan.Service
-	Notifier                WebhookNotifier
-	PriceOracle             pricing.PriceOracle
+	MerchantService             *services.MerchantService
+	DomainRepo                  *repositories.DomainRepo
+	DomainService               *services.DomainService
+	WalletRepo                  *repositories.WalletRepo
+	ProductRepo                 *repositories.ProductRepo
+	PaymentRepo                 *repositories.PaymentRepo
+	WithdrawalRepo              *repositories.WithdrawalRequestRepo
+	RefundRepo                  *repositories.RefundRepo
+	LedgerRepo                  *repositories.LedgerRepo
+	SweepJobRepo                *repositories.SweepJobRepo
+	OutboundRepo                *repositories.OutboundTransactionRepo
+	TransactionRepo             *repositories.TransactionRepo
+	ReconciliationRepo          *repositories.ReconciliationRepo
+	WebhookDeliveryRepo         *repositories.WebhookDeliveryRepo
+	MoneyEventOutboxRepo        *repositories.MoneyEventOutboxRepo
+	MoneyEventInboxRepo         *repositories.MoneyEventInboxRepo
+	WorkerLeaseRepo             *repositories.WorkerLeaseRepo
+	ActivityLogRepo             *repositories.ActivityLogRepo
+	OutboundPolicyRepo          *repositories.OutboundPolicyRepo
+	AdminRepo                   *repositories.AdminRepo
+	ChainStateRepo              *repositories.ChainStateRepo
+	ProviderHealthRepo          *repositories.ProviderHealthRepo
+	NetworkOperationalStateRepo *repositories.NetworkOperationalStateRepo
+	WalletAddressLookupRepo     *repositories.WalletAddressLookupRepo
+	AssetRegistry               *asset.Registry
+	Blockchains                 *blockchain.ChainFactory
+	TxRescanService             func() *txrescan.Service
+	Notifier                    WebhookNotifier
+	PriceOracle                 pricing.PriceOracle
 }
 
 // WebhookNotifier is the minimal interface the dealer handlers need from the webhook service.
@@ -202,6 +204,7 @@ type DealerPageData struct {
 	AdminWebhooks           []DealerWebhookDeliveryView
 	AdminReconciliationJobs []DealerReconciliationJobView
 	AdminProviderHealth     []DealerProviderHealthView
+	AdminNetworkStates      []DealerNetworkOperationalStateView
 	AdminRefunds            []DealerRefundView
 	AdminReadiness          []DealerReadinessLevelView
 	AdminReadinessRaw       []DealerReadinessCheckView
@@ -232,6 +235,7 @@ type DealerPageData struct {
 	AdminWebhooksURL       string
 	AdminReconciliationURL string
 	AdminProviderHealthURL string
+	AdminNetworksURL       string
 	AdminRefundsURL        string
 	AdminReadinessURL      string
 	AdminMetricsURL        string
@@ -686,6 +690,22 @@ type DealerProviderHealthView struct {
 	CheckedAt         string
 	FallbackPolicy    string
 	ReadinessEvidence string
+}
+
+type DealerNetworkOperationalStateView struct {
+	Chain             string
+	ChainID           string
+	ChainSlug         string
+	ChainLogoURL      string
+	Mode              string
+	ModeLabel         string
+	ModeClass         string
+	Reason            string
+	UpdatedBy         string
+	UpdatedAt         string
+	BlocksDeposits    bool
+	BlocksWithdrawals bool
+	Testnet           bool
 }
 
 type DealerRefundView struct {
@@ -1697,6 +1717,9 @@ func parseDealerProductForm(c fiber.Ctx, deps DealerDeps, merchant *models.Merch
 		if err != nil {
 			return form, errors.New("Geçerli bir varsayılan asset seçmelisin.")
 		}
+		if err := networkops.RequireDeposits(c.Context(), deps.NetworkOperationalStateRepo, selectedAsset.GetChainID()); err != nil {
+			return form, errors.New(dealerDepositAvailabilityError(err))
+		}
 		chainID := int64(selectedAsset.GetChainID())
 		form.defaultChainID = &chainID
 		form.defaultSymbol = strings.ToUpper(strings.TrimSpace(selectedAsset.GetSymbol()))
@@ -1794,6 +1817,11 @@ func HandleDealerInvoiceCreate(deps DealerDeps) fiber.Handler {
 			logDealerActivity(c, deps.ActivityLogRepo, &merchant.ID, "dealer", merchant.Email, "invoice.create", "failed", "payment", orderID, err.Error())
 			return redirectWithError(c, merchantDashboardLinksURL, "Invoice oluşturulamadı: "+err.Error())
 		}
+		if params.ChainID != nil {
+			if err := networkops.RequireDeposits(c.Context(), deps.NetworkOperationalStateRepo, constants.ChainID(*params.ChainID)); err != nil {
+				return redirectWithError(c, merchantDashboardLinksURL, dealerDepositAvailabilityError(err))
+			}
+		}
 		now := time.Now()
 		expiresAt := now.Add(paymentSessionTTL())
 		var selection *paymentCreateAssetSelection
@@ -1888,6 +1916,9 @@ func HandlePaymentLink(deps DealerDeps) fiber.Handler {
 		var selection *paymentCreateAssetSelection
 		if product.DefaultChainID != nil {
 			chainID := *product.DefaultChainID
+			if err := networkops.RequireDeposits(c.Context(), deps.NetworkOperationalStateRepo, constants.ChainID(chainID)); err != nil {
+				return renderPaymentLinkError(c, dealerDepositAvailabilityError(err))
+			}
 			symbol := strings.ToUpper(strings.TrimSpace(product.DefaultSymbol))
 			params := types.PaymentCreateParams{
 				Context:  c.Context(),
@@ -1940,6 +1971,20 @@ func HandlePaymentLink(deps DealerDeps) fiber.Handler {
 		}
 		return c.Redirect().To("/checkout/" + session.SessionToken + "?lang=" + url.QueryEscape(language))
 	}
+}
+
+func dealerDepositAvailabilityError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var unavailable *networkops.UnavailableError
+	if errors.As(err, &unavailable) {
+		if reason := strings.TrimSpace(unavailable.Reason); reason != "" {
+			return "Seçilen network geçici olarak ödeme kabul etmiyor: " + reason
+		}
+		return "Seçilen network geçici olarak ödeme kabul etmiyor."
+	}
+	return "Network kullanılabilirliği doğrulanamadı. Lütfen kısa süre sonra tekrar deneyin."
 }
 
 func expiresAtValue(value *time.Time) time.Time {
@@ -2840,6 +2885,90 @@ func HandleAdminOutboundPolicyUpdate(deps DealerDeps) fiber.Handler {
 	}
 }
 
+// HandleAdminNetworkOperationalStateUpdate changes whether a network accepts
+// deposits, withdrawals, both, or neither. The database is the sole source of
+// truth so the change takes effect for every gateway instance.
+func HandleAdminNetworkOperationalStateUpdate(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+
+		chainIDRaw := strings.TrimSpace(c.FormValue("chain_id"))
+		fail := func(message string) error {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "network_operational_state.update", "failed", "network", chainIDRaw, message)
+			return redirectWithError(c, "/admin/networks", message)
+		}
+
+		if err := requirePrivilegedAdmin(c, deps.AdminRepo); err != nil {
+			return fail(err.Error())
+		}
+		if deps.NetworkOperationalStateRepo == nil {
+			return fail("Network operasyon durum deposu hazır değil.")
+		}
+
+		parsedChainID, err := strconv.ParseInt(chainIDRaw, 10, 64)
+		if err != nil {
+			return fail("Geçersiz network ID.")
+		}
+		chainID := constants.ChainID(parsedChainID)
+		if !constants.IsSupportedChainID(chainID) {
+			return fail("Desteklenmeyen network ID.")
+		}
+
+		mode := models.NormalizeNetworkOperationalMode(models.NetworkOperationalMode(c.FormValue("mode")))
+		if !models.IsValidNetworkOperationalMode(mode) {
+			return fail("Geçersiz network operasyon modu.")
+		}
+		reason := strings.TrimSpace(c.FormValue("reason"))
+		if len([]rune(reason)) > 500 {
+			return fail("Bakım açıklaması en fazla 500 karakter olabilir.")
+		}
+		if mode != models.NetworkOperationalModeActive && reason == "" {
+			return fail("Network akışını kapatırken açıklama zorunludur.")
+		}
+		candidate := models.NetworkOperationalState{
+			ChainID:   chainID,
+			Mode:      mode,
+			Reason:    reason,
+			UpdatedBy: adminEmail,
+		}
+		if err := candidate.Validate(); err != nil {
+			return fail("Network operasyon durumu doğrulanamadı: " + err.Error())
+		}
+
+		previous, err := deps.NetworkOperationalStateRepo.GetByChain(c.Context(), chainID)
+		if err != nil {
+			return fail("Mevcut network durumu okunamadı: " + err.Error())
+		}
+		updated, err := deps.NetworkOperationalStateRepo.Upsert(c.Context(), repositories.NetworkOperationalStateUpdate{
+			ChainID:   chainID,
+			Mode:      mode,
+			Reason:    reason,
+			UpdatedBy: adminEmail,
+		})
+		if err != nil {
+			return fail("Network operasyon durumu güncellenemedi: " + err.Error())
+		}
+
+		beforeMode := string(models.NetworkOperationalModeActive)
+		if previous != nil {
+			beforeMode = string(previous.Mode)
+		}
+		afterMode := string(mode)
+		if updated != nil {
+			afterMode = string(updated.Mode)
+		}
+		description := fmt.Sprintf("%s ağı %s moduna alındı.", chainLabel(chainID), afterMode)
+		if reason != "" {
+			description += " Açıklama: " + reason
+		}
+		logDealerDecisionActivity(c, deps.ActivityLogRepo, nil, nil, "admin", adminEmail, "network_operational_state.update", "success", "network", chainIDRaw, description, beforeMode, afterMode)
+		return redirectWithSuccess(c, "/admin/networks", chainLabel(chainID)+" operasyon modu güncellendi.")
+	}
+}
+
 func HandleAdminOutboundWhitelistCreate(deps DealerDeps) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		adminEmail, ok := requireAdmin(c)
@@ -3173,6 +3302,16 @@ func HandleAdminDashboard(deps DealerDeps) fiber.Handler {
 			}
 			data.AdminProviderHealth = dealerProviderHealthViews(rows)
 			data.AdminPagination = dealerPaginationView(1, limit, int64(len(data.AdminProviderHealth)), "/admin/provider-health")
+
+		case "networks":
+			if deps.NetworkOperationalStateRepo == nil {
+				return renderAdminDashboardError(c, data, "Network operasyon durum deposu hazır değil", errors.New("network operational state repository is nil"))
+			}
+			rows, err := deps.NetworkOperationalStateRepo.ListAll(c.Context())
+			if err != nil {
+				return renderAdminDashboardError(c, data, "Network operasyon durumları okunamadı", err)
+			}
+			data.AdminNetworkStates = dealerNetworkOperationalStateViews(rows)
 
 		case "sweep":
 			if deps.SweepJobRepo != nil {
@@ -5884,6 +6023,8 @@ func currentAdminPanel(c fiber.Ctx) string {
 		return "metrics"
 	case "/admin/provider-health":
 		return "provider-health"
+	case "/admin/networks":
+		return "networks"
 	case "/admin/rescan":
 		return "rescan"
 	case "/admin/tests":
@@ -5933,6 +6074,7 @@ func adminPageData(adminEmail string, panel string) DealerPageData {
 		AdminWebhooksURL:       "/admin/webhooks",
 		AdminReconciliationURL: "/admin/reconciliation",
 		AdminProviderHealthURL: "/admin/provider-health",
+		AdminNetworksURL:       "/admin/networks",
 		AdminRefundsURL:        "/admin/refunds",
 		AdminReadinessURL:      "/admin/readiness",
 		AdminMetricsURL:        "/admin/metrics",
@@ -7686,6 +7828,45 @@ func dealerProviderHealthViews(rows []models.ProviderHealthSnapshot) []DealerPro
 		})
 	}
 	return views
+}
+
+func dealerNetworkOperationalStateViews(rows []models.NetworkOperationalState) []DealerNetworkOperationalStateView {
+	views := make([]DealerNetworkOperationalStateView, 0, len(rows))
+	for _, row := range rows {
+		mode := models.NormalizeNetworkOperationalMode(row.Mode)
+		modeLabel, modeClass := networkOperationalModePresentation(mode)
+		views = append(views, DealerNetworkOperationalStateView{
+			Chain:             chainLabel(row.ChainID),
+			ChainID:           strconv.FormatInt(int64(row.ChainID), 10),
+			ChainSlug:         constants.ChainName(row.ChainID),
+			ChainLogoURL:      asset.ChainLogoURL(row.ChainID),
+			Mode:              string(mode),
+			ModeLabel:         modeLabel,
+			ModeClass:         modeClass,
+			Reason:            strings.TrimSpace(row.Reason),
+			UpdatedBy:         emptyDash(row.UpdatedBy),
+			UpdatedAt:         formatPanelTime(row.UpdatedAt),
+			BlocksDeposits:    row.BlocksDeposits(),
+			BlocksWithdrawals: row.BlocksWithdrawals(),
+			Testnet:           constants.IsTestnet(row.ChainID),
+		})
+	}
+	return views
+}
+
+func networkOperationalModePresentation(mode models.NetworkOperationalMode) (string, string) {
+	switch models.NormalizeNetworkOperationalMode(mode) {
+	case models.NetworkOperationalModeActive:
+		return "Aktif", "badge-green"
+	case models.NetworkOperationalModeDepositsOff:
+		return "Deposit kapalı", "badge-amber"
+	case models.NetworkOperationalModeWithdrawalsOff:
+		return "Çekim kapalı", "badge-amber"
+	case models.NetworkOperationalModeMaintenance:
+		return "Bakım", "badge-red"
+	default:
+		return "Bilinmiyor", "badge-violet"
+	}
 }
 
 func providerHealthStatusClass(status string) string {

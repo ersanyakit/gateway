@@ -1030,6 +1030,137 @@ func TestAdminProviderHealthSurfaceUsesSnapshotSourceOfTruth(t *testing.T) {
 	}
 }
 
+func TestAdminNetworkOperationalStateSurfaceUsesDatabaseSourceOfTruth(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	dashboard := extractHandlerFunctionBody(t, source, "HandleAdminDashboard")
+	for _, token := range []string{
+		`case "networks":`,
+		`deps.NetworkOperationalStateRepo.ListAll(c.Context())`,
+		`data.AdminNetworkStates = dealerNetworkOperationalStateViews(rows)`,
+	} {
+		if !strings.Contains(dashboard, token) {
+			t.Fatalf("admin network dashboard missing %q", token)
+		}
+	}
+
+	update := extractHandlerFunctionBody(t, source, "HandleAdminNetworkOperationalStateUpdate")
+	for _, token := range []string{
+		`requirePrivilegedAdmin(c, deps.AdminRepo)`,
+		`strings.TrimSpace(c.FormValue("chain_id"))`,
+		`constants.IsSupportedChainID(chainID)`,
+		`models.NormalizeNetworkOperationalMode`,
+		`models.IsValidNetworkOperationalMode(mode)`,
+		`len([]rune(reason)) > 500`,
+		`mode != models.NetworkOperationalModeActive && reason == ""`,
+		`candidate.Validate()`,
+		`deps.NetworkOperationalStateRepo.GetByChain(c.Context(), chainID)`,
+		`deps.NetworkOperationalStateRepo.Upsert`,
+		`repositories.NetworkOperationalStateUpdate{`,
+		`logDealerDecisionActivity`,
+		`"network_operational_state.update"`,
+	} {
+		if !strings.Contains(update, token) {
+			t.Fatalf("admin network update handler missing %q", token)
+		}
+	}
+	guardIndex := strings.Index(update, `requirePrivilegedAdmin(c, deps.AdminRepo)`)
+	parseIndex := strings.Index(update, `strconv.ParseInt(chainIDRaw, 10, 64)`)
+	if guardIndex < 0 || parseIndex < 0 || guardIndex > parseIndex {
+		t.Fatal("admin network update must check privileged role before parsing the target network")
+	}
+
+	templateBytes, err := os.ReadFile("../../views/dealer/admin_dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(templateBytes)
+	for _, token := range []string{
+		`href="{{.AdminNetworksURL}}"`,
+		`{{if eq .AdminPanel "networks"}}`,
+		`{{range .AdminNetworkStates}}`,
+		`action="/admin/networks/state"`,
+		`name="chain_id"`,
+		`name="mode"`,
+		`value="deposits_off"`,
+		`value="withdrawals_off"`,
+		`value="maintenance"`,
+		`name="reason" maxlength="500"`,
+		`{{.UpdatedBy}}`,
+		`{{.UpdatedAt}}`,
+	} {
+		if !strings.Contains(html, token) {
+			t.Fatalf("admin network template missing %q", token)
+		}
+	}
+}
+
+func TestDealerNetworkOperationalStateViewsExposeFlowSemantics(t *testing.T) {
+	updatedAt := time.Date(2026, time.July, 13, 9, 30, 0, 0, time.UTC)
+	views := dealerNetworkOperationalStateViews([]models.NetworkOperationalState{
+		{
+			ChainID:   constants.Ethereum,
+			Mode:      models.NetworkOperationalModeMaintenance,
+			Reason:    "  RPC bakımı  ",
+			UpdatedBy: "security@example.com",
+			UpdatedAt: updatedAt,
+		},
+		{
+			ChainID: constants.TRONTestnet,
+			Mode:    models.NetworkOperationalModeDepositsOff,
+		},
+	})
+	if len(views) != 2 {
+		t.Fatalf("network state views = %d, want 2", len(views))
+	}
+	maintenance := views[0]
+	if maintenance.Chain != "Ethereum" || maintenance.ChainID != "1" || maintenance.ChainSlug != "ethereum" {
+		t.Fatalf("maintenance chain identity = %+v", maintenance)
+	}
+	if maintenance.Mode != "maintenance" || maintenance.ModeLabel != "Bakım" || maintenance.ModeClass != "badge-red" {
+		t.Fatalf("maintenance presentation = %+v", maintenance)
+	}
+	if !maintenance.BlocksDeposits || !maintenance.BlocksWithdrawals {
+		t.Fatalf("maintenance flow flags = %+v", maintenance)
+	}
+	if maintenance.Reason != "RPC bakımı" || maintenance.UpdatedBy != "security@example.com" || maintenance.UpdatedAt == "-" {
+		t.Fatalf("maintenance metadata = %+v", maintenance)
+	}
+
+	depositsOff := views[1]
+	if !depositsOff.BlocksDeposits || depositsOff.BlocksWithdrawals {
+		t.Fatalf("deposits_off flow flags = %+v", depositsOff)
+	}
+	if !depositsOff.Testnet || depositsOff.UpdatedBy != "-" || depositsOff.UpdatedAt != "-" {
+		t.Fatalf("testnet/default metadata = %+v", depositsOff)
+	}
+}
+
+func TestDealerPreselectedDepositFlowsCheckNetworkModeBeforeMutation(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	tests := []struct {
+		function string
+		mutation string
+	}{
+		{function: "parseDealerProductForm", mutation: "form.defaultChainID = &chainID"},
+		{function: "HandleDealerInvoiceCreate", mutation: "deps.WalletRepo.Create"},
+		{function: "HandlePaymentLink", mutation: "deps.WalletRepo.Create"},
+	}
+	for _, tc := range tests {
+		body := extractHandlerFunctionBody(t, source, tc.function)
+		guard := strings.Index(body, "networkops.RequireDeposits")
+		mutation := strings.Index(body, tc.mutation)
+		if guard < 0 {
+			t.Fatalf("%s missing persisted network deposit guard", tc.function)
+		}
+		if mutation < 0 {
+			t.Fatalf("%s missing mutation token %q", tc.function, tc.mutation)
+		}
+		if guard > mutation {
+			t.Fatalf("%s must check network mode before %q", tc.function, tc.mutation)
+		}
+	}
+}
+
 func TestDealerMetricsParserClassifiesOperationalRisk(t *testing.T) {
 	raw := strings.Join([]string{
 		"# HELP gateway_metrics_collection_error Metrics collection errors by collector.",

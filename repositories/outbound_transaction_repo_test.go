@@ -61,6 +61,35 @@ func TestOutboundTransactionRepoCreateAndClaimDueAreIdempotent(t *testing.T) {
 	}
 }
 
+func TestOutboundTransactionRepoDefersForNetworkStateWithoutConsumingAttempt(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.OutboundTransaction{}, &models.OutboundChainResourceReservation{}); err != nil {
+		t.Fatalf("automigrate outbound tables: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewOutboundTransactionRepo(db)
+	outbound := createOutboundTransactionForTest(t, repo, ctx, models.OutboundResourceWithdrawal, constants.Ethereum)
+
+	claimed, err := repo.ClaimDue(ctx, []string{models.OutboundResourceWithdrawal}, 1, time.Minute)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim due = %#v, err=%v", claimed, err)
+	}
+	if err := repo.DeferForNetworkState(ctx, outbound.ID, "provider upgrade", time.Minute); err != nil {
+		t.Fatalf("defer for network state: %v", err)
+	}
+
+	var reloaded models.OutboundTransaction
+	if err := db.WithContext(ctx).First(&reloaded, "id = ?", outbound.ID).Error; err != nil {
+		t.Fatalf("reload outbound: %v", err)
+	}
+	if reloaded.Status != models.OutboundStatusPrepared || reloaded.Attempts != 0 || reloaded.LockedUntil != nil || reloaded.NextRunAt == nil || !reloaded.NextRunAt.After(time.Now()) {
+		t.Fatalf("deferred outbound state = %#v", reloaded)
+	}
+	if reloaded.ErrorCategory != "network_maintenance" || reloaded.ErrorDetail != "provider upgrade" {
+		t.Fatalf("deferred outbound error metadata = %q/%q", reloaded.ErrorCategory, reloaded.ErrorDetail)
+	}
+}
+
 func TestOutboundTransactionRepoSequenceReservationReleasesAndConsumes(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.OutboundTransaction{}, &models.OutboundChainResourceReservation{}); err != nil {

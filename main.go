@@ -11,6 +11,7 @@ import (
 	"core/models"
 	"core/services/chainresource"
 	depositsvc "core/services/deposits"
+	"core/services/networkops"
 	"core/services/providerhealth"
 	"core/services/realtime"
 	reconsvc "core/services/reconciliation"
@@ -926,6 +927,10 @@ func executeOutboundTransaction(ctx context.Context, outbound models.OutboundTra
 		openOutboundLifecycleReconciliation(ctx, router.ReconciliationRepo, outbound.ChainName, outbound.MerchantID, outbound.DomainID, outbound.ResourceType, outbound.ResourceID.String(), outbound.Status, "outbound_broadcast_attempt_recovered", err, outbound.TxHash)
 		return err
 	}
+	if err := networkops.RequireWithdrawals(ctx, router.NetworkOperationalStateRepo, outbound.ChainID); err != nil {
+		deferErr := router.OutboundTransactionRepo.DeferForNetworkState(ctx, outbound.ID, err.Error(), 30*time.Second)
+		return errors.Join(err, deferErr)
+	}
 
 	wallet, err := router.WalletRepo.FindByID(ctx, outbound.WalletID)
 	if err != nil {
@@ -942,6 +947,14 @@ func executeOutboundTransaction(ctx context.Context, outbound models.OutboundTra
 	reservation, _, err := router.OutboundTransactionRepo.ReserveSequence(ctx, outbound, sourceAddress, outboundTransactionLockTimeout())
 	if err != nil {
 		err = joinLoggedPersistenceError(err, "mark outbound failed after reservation error", router.OutboundTransactionRepo.MarkFailed(ctx, outbound.ID, err, 30*time.Second))
+		return err
+	}
+	// Re-read the persisted mode at the last safe point before recording a
+	// broadcast attempt. This closes the preparation window where an admin may
+	// have disabled withdrawals after the worker's initial guard.
+	if err := networkops.RequireWithdrawals(ctx, router.NetworkOperationalStateRepo, outbound.ChainID); err != nil {
+		err = joinLoggedPersistenceError(err, "release outbound resource after network state changed", router.OutboundTransactionRepo.ReleaseResource(ctx, reservation.ID))
+		err = joinLoggedPersistenceError(err, "defer outbound after network state changed", router.OutboundTransactionRepo.DeferForNetworkState(ctx, outbound.ID, err.Error(), 30*time.Second))
 		return err
 	}
 
@@ -1054,6 +1067,9 @@ func executeSweepJob(ctx context.Context, job models.SweepJob, txModel *models.T
 func executeAutoSweepDepositWithJob(ctx context.Context, txModel *models.Transaction, job *models.SweepJob) (*blockchain.TransactionResult, error) {
 	if txModel == nil || txModel.MerchantID == nil || txModel.WalletID == nil {
 		return nil, nil
+	}
+	if err := networkops.RequireWithdrawals(ctx, coreApplication.CORE.Router.NetworkOperationalStateRepo, txModel.ChainID); err != nil {
+		return nil, err
 	}
 	if job == nil || job.ID == uuid.Nil || coreApplication.CORE.Router.LedgerRepo == nil {
 		return nil, repositories.ErrLedgerReservationRequired
@@ -1788,11 +1804,24 @@ func processSweepJobs(ctx context.Context) {
 			markSweepBroadcastUncertainAndReconcile(ctx, router, job, txModel, "sweep_stale_processing_recovered", err)
 			continue
 		}
+		if err := networkops.RequireWithdrawals(ctx, router.NetworkOperationalStateRepo, job.ChainID); err != nil {
+			if deferErr := router.SweepJobRepo.DeferForNetworkState(ctx, job.ID, err.Error(), 30*time.Second); deferErr != nil {
+				log.Printf("Sweep job network-state defer error job=%s chain=%d: %v\n", job.ID, job.ChainID, deferErr)
+			}
+			log.Printf("Sweep job deferred by network state job=%s chain=%d: %v\n", job.ID, job.ChainID, err)
+			continue
+		}
 		jobCtx, cancel := context.WithTimeout(ctx, sweepJobExecutionTimeout)
 		result, err := executeSweepJob(jobCtx, job, txModel)
 		cancel()
 		if err != nil {
 			log.Printf("Sweep job failed job=%s tx=%s: %v\n", job.ID, job.TransactionUniqueHash, err)
+			if networkops.IsUnavailable(err) {
+				if deferErr := router.SweepJobRepo.DeferForNetworkState(ctx, job.ID, err.Error(), 30*time.Second); deferErr != nil {
+					log.Printf("Sweep job network-state defer error job=%s chain=%d: %v\n", job.ID, job.ChainID, deferErr)
+				}
+				continue
+			}
 			if sweepFailureBroadcastUncertain(err) {
 				markSweepBroadcastUncertainAndReconcile(ctx, router, job, txModel, "sweep_broadcast_uncertain", err)
 				continue

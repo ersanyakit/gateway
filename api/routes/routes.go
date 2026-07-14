@@ -12,6 +12,7 @@ import (
 	"core/constants"
 	"core/models"
 	"core/repositories"
+	"core/services/networkops"
 	"core/services/pricing"
 	"core/services/providerhealth"
 	"core/services/realtime"
@@ -47,36 +48,37 @@ type Router struct {
 	blockchains   *blockchain.ChainFactory
 	assetRegistry *asset.Registry
 
-	MerchantRepo            *repositories.MerchantRepo
-	DomainRepo              *repositories.DomainRepo
-	WalletRepo              *repositories.WalletRepo
-	ChainStateRepo          *repositories.ChainStateRepo
-	ChainFactRepo           *repositories.ChainFactRepo
-	DepositRepo             *repositories.DepositRepo
-	TransactionRepo         *repositories.TransactionRepo
-	PaymentRepo             *repositories.PaymentRepo
-	ProductRepo             *repositories.ProductRepo
-	WithdrawalRepo          *repositories.WithdrawalRequestRepo
-	LedgerRepo              *repositories.LedgerRepo
-	IdempotencyRepo         *repositories.IdempotencyRepo
-	MoneyEventOutboxRepo    *repositories.MoneyEventOutboxRepo
-	MoneyEventInboxRepo     *repositories.MoneyEventInboxRepo
-	WorkerLeaseRepo         *repositories.WorkerLeaseRepo
-	WebhookDeliveryRepo     *repositories.WebhookDeliveryRepo
-	SweepJobRepo            *repositories.SweepJobRepo
-	OutboundTransactionRepo *repositories.OutboundTransactionRepo
-	ReconciliationRepo      *repositories.ReconciliationRepo
-	RefundRepo              *repositories.RefundRepo
-	ActivityLogRepo         *repositories.ActivityLogRepo
-	OutboundPolicyRepo      *repositories.OutboundPolicyRepo
-	ProviderHealthRepo      *repositories.ProviderHealthRepo
-	WalletAddressLookupRepo *repositories.WalletAddressLookupRepo
-	AdminRepo               *repositories.AdminRepo
-	MerchantService         *services.MerchantService
-	WalletService           *services.WalletService
-	DomainService           *services.DomainService
-	PaymentHub              *realtime.PaymentHub
-	TxRescanService         *txrescan.Service
+	MerchantRepo                *repositories.MerchantRepo
+	DomainRepo                  *repositories.DomainRepo
+	WalletRepo                  *repositories.WalletRepo
+	ChainStateRepo              *repositories.ChainStateRepo
+	ChainFactRepo               *repositories.ChainFactRepo
+	DepositRepo                 *repositories.DepositRepo
+	TransactionRepo             *repositories.TransactionRepo
+	PaymentRepo                 *repositories.PaymentRepo
+	ProductRepo                 *repositories.ProductRepo
+	WithdrawalRepo              *repositories.WithdrawalRequestRepo
+	LedgerRepo                  *repositories.LedgerRepo
+	IdempotencyRepo             *repositories.IdempotencyRepo
+	MoneyEventOutboxRepo        *repositories.MoneyEventOutboxRepo
+	MoneyEventInboxRepo         *repositories.MoneyEventInboxRepo
+	WorkerLeaseRepo             *repositories.WorkerLeaseRepo
+	WebhookDeliveryRepo         *repositories.WebhookDeliveryRepo
+	SweepJobRepo                *repositories.SweepJobRepo
+	OutboundTransactionRepo     *repositories.OutboundTransactionRepo
+	ReconciliationRepo          *repositories.ReconciliationRepo
+	RefundRepo                  *repositories.RefundRepo
+	ActivityLogRepo             *repositories.ActivityLogRepo
+	OutboundPolicyRepo          *repositories.OutboundPolicyRepo
+	ProviderHealthRepo          *repositories.ProviderHealthRepo
+	NetworkOperationalStateRepo *repositories.NetworkOperationalStateRepo
+	WalletAddressLookupRepo     *repositories.WalletAddressLookupRepo
+	AdminRepo                   *repositories.AdminRepo
+	MerchantService             *services.MerchantService
+	WalletService               *services.WalletService
+	DomainService               *services.DomainService
+	PaymentHub                  *realtime.PaymentHub
+	TxRescanService             *txrescan.Service
 }
 
 func NewRouter(db *gorm.DB) *Router {
@@ -165,13 +167,14 @@ func NewRouter(db *gorm.DB) *Router {
 	}
 
 	r.ChainStateRepo = repositories.NewChainStateRepo(r.db)
+	r.NetworkOperationalStateRepo = repositories.NewNetworkOperationalStateRepo(r.db)
 	r.ChainFactRepo = repositories.NewChainFactRepo(r.db)
 	r.DepositRepo = repositories.NewDepositRepo(r.db)
 	r.TransactionRepo = repositories.NewTransactionRepo(r.db)
 	r.PaymentRepo = repositories.NewPaymentRepo(r.db)
 	if x402ConfigErr == nil {
 		r.fiber.Use(x402svc.NewCheckoutMiddleware(x402Config, func(ctx context.Context, token string) (x402svc.CheckoutPayment, error) {
-			return resolveX402CheckoutPayment(ctx, r.PaymentRepo, token)
+			return resolveX402CheckoutPayment(ctx, r.PaymentRepo, r.NetworkOperationalStateRepo, token)
 		}))
 		log.Printf("[x402] session-driven checkout middleware mounted")
 	}
@@ -244,34 +247,35 @@ func NewRouter(db *gorm.DB) *Router {
 
 	priceOracle := pricing.NewCoinGecko()
 	dealerDeps := handlers.DealerDeps{
-		MerchantService:         r.MerchantService,
-		DomainRepo:              r.DomainRepo,
-		DomainService:           r.DomainService,
-		WalletRepo:              r.WalletRepo,
-		ProductRepo:             r.ProductRepo,
-		PaymentRepo:             r.PaymentRepo,
-		WithdrawalRepo:          r.WithdrawalRepo,
-		RefundRepo:              r.RefundRepo,
-		LedgerRepo:              r.LedgerRepo,
-		SweepJobRepo:            r.SweepJobRepo,
-		OutboundRepo:            r.OutboundTransactionRepo,
-		TransactionRepo:         r.TransactionRepo,
-		ReconciliationRepo:      r.ReconciliationRepo,
-		WebhookDeliveryRepo:     r.WebhookDeliveryRepo,
-		MoneyEventOutboxRepo:    r.MoneyEventOutboxRepo,
-		MoneyEventInboxRepo:     r.MoneyEventInboxRepo,
-		WorkerLeaseRepo:         r.WorkerLeaseRepo,
-		ActivityLogRepo:         r.ActivityLogRepo,
-		OutboundPolicyRepo:      r.OutboundPolicyRepo,
-		AdminRepo:               r.AdminRepo,
-		ChainStateRepo:          r.ChainStateRepo,
-		ProviderHealthRepo:      r.ProviderHealthRepo,
-		WalletAddressLookupRepo: r.WalletAddressLookupRepo,
-		AssetRegistry:           r.assetRegistry,
-		Blockchains:             r.blockchains,
-		TxRescanService:         func() *txrescan.Service { return r.TxRescanService },
-		Notifier:                webhooksvc.NewNotifier(),
-		PriceOracle:             priceOracle,
+		MerchantService:             r.MerchantService,
+		DomainRepo:                  r.DomainRepo,
+		DomainService:               r.DomainService,
+		WalletRepo:                  r.WalletRepo,
+		ProductRepo:                 r.ProductRepo,
+		PaymentRepo:                 r.PaymentRepo,
+		WithdrawalRepo:              r.WithdrawalRepo,
+		RefundRepo:                  r.RefundRepo,
+		LedgerRepo:                  r.LedgerRepo,
+		SweepJobRepo:                r.SweepJobRepo,
+		OutboundRepo:                r.OutboundTransactionRepo,
+		TransactionRepo:             r.TransactionRepo,
+		ReconciliationRepo:          r.ReconciliationRepo,
+		WebhookDeliveryRepo:         r.WebhookDeliveryRepo,
+		MoneyEventOutboxRepo:        r.MoneyEventOutboxRepo,
+		MoneyEventInboxRepo:         r.MoneyEventInboxRepo,
+		WorkerLeaseRepo:             r.WorkerLeaseRepo,
+		ActivityLogRepo:             r.ActivityLogRepo,
+		OutboundPolicyRepo:          r.OutboundPolicyRepo,
+		AdminRepo:                   r.AdminRepo,
+		ChainStateRepo:              r.ChainStateRepo,
+		ProviderHealthRepo:          r.ProviderHealthRepo,
+		NetworkOperationalStateRepo: r.NetworkOperationalStateRepo,
+		WalletAddressLookupRepo:     r.WalletAddressLookupRepo,
+		AssetRegistry:               r.assetRegistry,
+		Blockchains:                 r.blockchains,
+		TxRescanService:             func() *txrescan.Service { return r.TxRescanService },
+		Notifier:                    webhooksvc.NewNotifier(),
+		PriceOracle:                 priceOracle,
 	}
 	registerMerchantPortal := func(prefix string) {
 		r.fiber.Get(prefix+"/login", handlers.HandleDealerLogin())
@@ -325,6 +329,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/security/outbound-policy", handlers.HandleAdminOutboundPolicyUpdate(dealerDeps))
 	r.fiber.Post("/admin/security/outbound-whitelist", handlers.HandleAdminOutboundWhitelistCreate(dealerDeps))
 	r.fiber.Post("/admin/security/outbound-whitelist/:id/toggle", handlers.HandleAdminOutboundWhitelistToggle(dealerDeps))
+	r.fiber.Post("/admin/networks/state", handlers.HandleAdminNetworkOperationalStateUpdate(dealerDeps))
 	r.fiber.Post("/admin/withdrawals/:id/approve", handlers.HandleAdminWithdrawalApprove(dealerDeps))
 	r.fiber.Post("/admin/withdrawals/:id/reject", handlers.HandleAdminWithdrawalReject(dealerDeps))
 	r.fiber.Post("/admin/refunds/:id/approve", handlers.HandleAdminRefundApprove(dealerDeps))
@@ -344,18 +349,19 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/admin/:section", handlers.HandleAdminDashboard(dealerDeps))
 
 	paymentDeps := handlers.PaymentHandlerDeps{
-		DomainRepo:          r.DomainRepo,
-		WalletRepo:          r.WalletRepo,
-		PaymentRepo:         r.PaymentRepo,
-		WebhookDeliveryRepo: r.WebhookDeliveryRepo,
-		ProductRepo:         r.ProductRepo,
-		AssetRegistry:       r.assetRegistry,
-		Blockchains:         r.blockchains,
-		PriceOracle:         priceOracle,
-		Notifier:            webhooksvc.NewNotifier(),
-		PaymentHub:          r.PaymentHub,
-		IdempotencyRepo:     r.IdempotencyRepo,
-		RequireSignature:    true,
+		DomainRepo:                  r.DomainRepo,
+		WalletRepo:                  r.WalletRepo,
+		PaymentRepo:                 r.PaymentRepo,
+		WebhookDeliveryRepo:         r.WebhookDeliveryRepo,
+		ProductRepo:                 r.ProductRepo,
+		AssetRegistry:               r.assetRegistry,
+		Blockchains:                 r.blockchains,
+		PriceOracle:                 priceOracle,
+		Notifier:                    webhooksvc.NewNotifier(),
+		PaymentHub:                  r.PaymentHub,
+		IdempotencyRepo:             r.IdempotencyRepo,
+		NetworkOperationalStateRepo: r.NetworkOperationalStateRepo,
+		RequireSignature:            true,
 	}
 	checkoutSameOrigin := middleware.RequireSameOrigin()
 	r.fiber.Post("/payments/create", middleware.RateLimitPaymentCreate(), handlers.HandlePaymentCreate(paymentDeps))
@@ -374,29 +380,30 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Get("/invoice/:token", handlers.HandlePaymentInvoice(paymentDeps))
 
 	v1Deps := handlers.V1APIDeps{
-		DomainRepo:              r.DomainRepo,
-		WalletRepo:              r.WalletRepo,
-		PaymentRepo:             r.PaymentRepo,
-		ProductRepo:             r.ProductRepo,
-		WithdrawalRepo:          r.WithdrawalRepo,
-		RefundRepo:              r.RefundRepo,
-		LedgerRepo:              r.LedgerRepo,
-		TransactionRepo:         r.TransactionRepo,
-		WebhookDeliveryRepo:     r.WebhookDeliveryRepo,
-		SweepJobRepo:            r.SweepJobRepo,
-		OutboundRepo:            r.OutboundTransactionRepo,
-		ReconciliationRepo:      r.ReconciliationRepo,
-		ActivityLogRepo:         r.ActivityLogRepo,
-		OutboundPolicyRepo:      r.OutboundPolicyRepo,
-		ProviderHealthRepo:      r.ProviderHealthRepo,
-		WalletAddressLookupRepo: r.WalletAddressLookupRepo,
-		AssetRegistry:           r.assetRegistry,
-		Blockchains:             r.blockchains,
-		PriceOracle:             priceOracle,
-		Notifier:                webhooksvc.NewNotifier(),
-		PaymentHub:              r.PaymentHub,
-		IdempotencyRepo:         r.IdempotencyRepo,
-		TxRescanService:         func() *txrescan.Service { return r.TxRescanService },
+		DomainRepo:                  r.DomainRepo,
+		WalletRepo:                  r.WalletRepo,
+		PaymentRepo:                 r.PaymentRepo,
+		ProductRepo:                 r.ProductRepo,
+		WithdrawalRepo:              r.WithdrawalRepo,
+		RefundRepo:                  r.RefundRepo,
+		LedgerRepo:                  r.LedgerRepo,
+		TransactionRepo:             r.TransactionRepo,
+		WebhookDeliveryRepo:         r.WebhookDeliveryRepo,
+		SweepJobRepo:                r.SweepJobRepo,
+		OutboundRepo:                r.OutboundTransactionRepo,
+		ReconciliationRepo:          r.ReconciliationRepo,
+		ActivityLogRepo:             r.ActivityLogRepo,
+		OutboundPolicyRepo:          r.OutboundPolicyRepo,
+		NetworkOperationalStateRepo: r.NetworkOperationalStateRepo,
+		ProviderHealthRepo:          r.ProviderHealthRepo,
+		WalletAddressLookupRepo:     r.WalletAddressLookupRepo,
+		AssetRegistry:               r.assetRegistry,
+		Blockchains:                 r.blockchains,
+		PriceOracle:                 priceOracle,
+		Notifier:                    webhooksvc.NewNotifier(),
+		PaymentHub:                  r.PaymentHub,
+		IdempotencyRepo:             r.IdempotencyRepo,
+		TxRescanService:             func() *txrescan.Service { return r.TxRescanService },
 	}
 
 	// ── Common API ───────────────────────────────────────────────────────────
@@ -549,7 +556,7 @@ func (r *Router) GetFiber() *fiber.App {
 	return r.fiber
 }
 
-func resolveX402CheckoutPayment(ctx context.Context, repo *repositories.PaymentRepo, token string) (x402svc.CheckoutPayment, error) {
+func resolveX402CheckoutPayment(ctx context.Context, repo *repositories.PaymentRepo, networkStates *repositories.NetworkOperationalStateRepo, token string) (x402svc.CheckoutPayment, error) {
 	token = strings.TrimSpace(token)
 	if repo == nil || token == "" {
 		return x402svc.CheckoutPayment{}, x402svc.ErrCheckoutNotEligible
@@ -571,6 +578,9 @@ func resolveX402CheckoutPayment(ctx context.Context, repo *repositories.PaymentR
 	if session.SelectedChainID == nil || session.SelectedToken == nil || strings.TrimSpace(*session.SelectedToken) == "" || strings.TrimSpace(session.DepositAddress) == "" || strings.TrimSpace(session.ExpectedAmountRaw) == "" {
 		// Native assets and sessions before asset selection continue through the
 		// existing hosted checkout page instead of being advertised as x402.
+		return x402svc.CheckoutPayment{}, x402svc.ErrCheckoutNotEligible
+	}
+	if err := networkops.RequireDeposits(ctx, networkStates, *session.SelectedChainID); err != nil {
 		return x402svc.CheckoutPayment{}, x402svc.ErrCheckoutNotEligible
 	}
 	network, ok := x402svc.CheckoutNetworkForChain(*session.SelectedChainID)
