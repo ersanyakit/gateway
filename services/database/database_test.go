@@ -97,6 +97,8 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 		"IdempotencyKey": false,
 		"PayloadJSON":    false,
 		"Status":         false,
+		"Sequence":       false,
+		"LeaseToken":     false,
 	}
 	for _, column := range requiredSchemaColumns() {
 		if column.table != "money_event_outboxes" {
@@ -115,6 +117,7 @@ func TestMoneyEventOutboxSchemaIsRegistered(t *testing.T) {
 	requiredIndexes := map[string]bool{
 		"ux_money_event_outboxes_event_id":          false,
 		"ux_money_event_outboxes_idempotency_scope": false,
+		"idx_money_event_outbox_aggregate_sequence": false,
 	}
 	for _, index := range requiredSchemaIndexes() {
 		if index.table != "money_event_outboxes" {
@@ -141,6 +144,7 @@ func TestWebhookOrderingSchemaIsRegistered(t *testing.T) {
 	requiredColumns := map[string]map[string]bool{
 		"webhook_deliveries": {
 			"ResourceType": false, "ResourceID": false, "Sequence": false, "IdempotencyKey": false,
+			"NotificationMode": false, "TargetSubject": false, "LeaseToken": false,
 		},
 		"webhook_resource_sequences": {
 			"ID": false, "MerchantID": false, "DomainID": false,
@@ -327,8 +331,9 @@ func TestBlockSchemaIsRegistered(t *testing.T) {
 	}
 
 	requiredIndexes := map[string]bool{
-		"ux_blocks_chain_hash":        false,
-		"ux_blocks_chain_number_hash": false,
+		"ux_blocks_chain_hash":           false,
+		"ux_blocks_chain_number_hash":    false,
+		"ux_blocks_one_canonical_height": false,
 	}
 	for _, index := range requiredSchemaIndexes() {
 		if index.table != "blocks" {
@@ -473,6 +478,11 @@ func TestApplyGORMMigrationsReconcilesLedgerCheckConstraints(t *testing.T) {
 		t.Fatalf("read database.go: %v", err)
 	}
 	source := string(sourceBytes)
+	preparePosition := strings.Index(source, "dbmigrations.Prepare(ctx, db)")
+	autoMigratePosition := strings.Index(source, "db.WithContext(ctx).AutoMigrate(autoMigrateModels()...)")
+	if preparePosition < 0 || autoMigratePosition < 0 || preparePosition > autoMigratePosition {
+		t.Fatal("ApplyGORMMigrations must run versioned data preflight before AutoMigrate creates invariant indexes")
+	}
 	if !strings.Contains(source, "ReconcileLedgerEntryCheckConstraints(ctx, db)") {
 		t.Fatal("ApplyGORMMigrations must reconcile ledger check constraints after AutoMigrate")
 	}
@@ -1336,8 +1346,8 @@ func TestEmbeddedMigrationArtifactsAreValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("latest migration id: %v", err)
 	}
-	if latest != "202607130013_network_operational_states" {
-		t.Fatalf("latest migration id = %q, want network operational states migration", latest)
+	if latest != "202607180014_canonical_block_money_event_sequence_invariants" {
+		t.Fatalf("latest migration id = %q, want canonical block and money-event sequence migration", latest)
 	}
 }
 
@@ -1391,6 +1401,41 @@ func TestVerifySchemaReportsMissingIndexDrift(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "api_rate_limit_counters index idx_api_rate_limit_counters_reset_at is missing") {
 		t.Fatalf("VerifySchema error = %q, want missing index detail", err.Error())
+	}
+}
+
+func TestVerifySchemaReportsStaleFinancialPartialIndexShapes(t *testing.T) {
+	db := openDatabasePostgresTestDB(t)
+	ctx := context.Background()
+
+	if err := ApplyGORMMigrations(ctx, db); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	if err := db.WithContext(ctx).Exec("DROP INDEX IF EXISTS " + quotePostgresIdentifier(canonicalBlockHeightIndexName)).Error; err != nil {
+		t.Fatalf("drop canonical block index: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec("CREATE INDEX " + quotePostgresIdentifier(canonicalBlockHeightIndexName) + " ON blocks (chain_id, number)").Error; err != nil {
+		t.Fatalf("create stale canonical block index: %v", err)
+	}
+	if err := VerifySchema(ctx, db); err == nil || !strings.Contains(err.Error(), "blocks index "+canonicalBlockHeightIndexName+" is missing or stale") {
+		t.Fatalf("VerifySchema canonical index error = %v", err)
+	}
+
+	if err := db.WithContext(ctx).Exec("DROP INDEX IF EXISTS " + quotePostgresIdentifier(canonicalBlockHeightIndexName)).Error; err != nil {
+		t.Fatalf("drop stale canonical block index: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec("CREATE UNIQUE INDEX " + quotePostgresIdentifier(canonicalBlockHeightIndexName) + " ON blocks (chain_id, number) WHERE canonical = true").Error; err != nil {
+		t.Fatalf("restore canonical block index: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec("DROP INDEX IF EXISTS " + quotePostgresIdentifier(moneyEventAggregateSequenceIndexName)).Error; err != nil {
+		t.Fatalf("drop money event sequence index: %v", err)
+	}
+	if err := db.WithContext(ctx).Exec("CREATE UNIQUE INDEX " + quotePostgresIdentifier(moneyEventAggregateSequenceIndexName) + " ON money_event_outboxes (aggregate_type, aggregate_id, sequence) WHERE sequence > 0").Error; err != nil {
+		t.Fatalf("create stale money event sequence index: %v", err)
+	}
+	if err := VerifySchema(ctx, db); err == nil || !strings.Contains(err.Error(), "money_event_outboxes index "+moneyEventAggregateSequenceIndexName+" is missing or stale") {
+		t.Fatalf("VerifySchema money-event index error = %v", err)
 	}
 }
 

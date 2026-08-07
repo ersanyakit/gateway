@@ -6,6 +6,7 @@ import (
 	"core/models"
 	webhooksvc "core/services/webhook"
 	"core/types"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -79,55 +80,64 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}
 
 		now := time.Now()
+		// Canonical identity is authoritative and must be persisted before taking
+		// the transaction row lock. Reorg correction uses block -> money-row lock
+		// order; following the same order here avoids an inverse-lock deadlock and
+		// lets an already-reorged transaction prove exact canonical reappearance in
+		// this same transaction.
+		if err := r.observeCanonicalBlockWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, parentHash, uniqueHash, now); err != nil {
+			return err
+		}
 		existing, found, err := r.findExistingForCreateWithDB(ctx, tx, uniqueHash)
 		if err != nil {
 			return err
 		}
+		reviving := false
 		if found {
-			if existing.Status == models.TransactionStatusReorged {
-				if transactionBlockIdentityChanged(existing, *params.Block, blockHash) {
-					fromBlock := parseBlockNumber(existing.BlockNumber)
-					reason := transactionReorgReason("tx_reappeared", params.ChainID, existing.BlockNumber)
-					_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
-						ChainID:             params.ChainID,
-						FromBlock:           fromBlock,
-						ToBlock:             fromBlock,
-						Reason:              reason,
-						ScopeKey:            fmt.Sprintf("tx_reappeared:%s:%s", existing.UniqueHash, reason),
-						ResourceType:        "transaction_reappeared",
-						ResourceID:          existing.UniqueHash,
-						AffectedResourceIDs: []string{existing.UniqueHash},
-						Evidence: map[string]any{
-							"original_block_number": existing.BlockNumber,
-							"original_block_hash":   existing.BlockHash,
-							"new_block_number":      *params.Block,
-							"new_block_hash":        blockHash,
-						},
-					})
-					return err
-				}
-				return nil
-			}
 			identityChanged := transactionBlockIdentityChanged(existing, *params.Block, blockHash)
 			if existing.Status == models.TransactionStatusFailed {
 				return nil
 			}
-			if existing.FinalizedAt != nil && identityChanged {
+			if existing.Status == models.TransactionStatusReorged {
+				canonical, err := canonicalBlockMatchesWithDB(ctx, tx, params.ChainID, parseBlockNumber(*params.Block), blockHash)
+				if err != nil {
+					return err
+				}
+				if !canonical || !transactionEconomicIdentityEqual(existing, params, hash, logIndex) {
+					return recordTransactionReappearanceReview(ctx, tx, existing, params, blockHash, canonical)
+				}
+				reviving = true
+			} else if existing.FinalizedAt != nil && identityChanged {
+				// The same economic transaction moved to another authoritative block.
+				// Reverse the orphaned generation first, then reload the corrected row
+				// and continue through the exact canonical-reappearance path instead of
+				// returning with a permanently reorged transaction.
 				fromBlock := parseBlockNumber(existing.BlockNumber)
 				reason := transactionReorgReason("tx_block_identity_changed", params.ChainID, existing.BlockNumber)
-				return r.markTransactionsReorgedWithDB(ctx, tx, []models.Transaction{existing}, now, params.ChainID, fromBlock, fromBlock, reason)
-			}
-			if existing.FinalizedAt != nil {
+				if err := r.markTransactionsReorgedWithDB(ctx, tx, []models.Transaction{existing}, now, params.ChainID, fromBlock, fromBlock, reason); err != nil {
+					return err
+				}
+				existing, found, err = r.findExistingForCreateWithDB(ctx, tx, uniqueHash)
+				if err != nil {
+					return err
+				}
+				if !found {
+					return gorm.ErrRecordNotFound
+				}
+				canonical, err := canonicalBlockMatchesWithDB(ctx, tx, params.ChainID, parseBlockNumber(*params.Block), blockHash)
+				if err != nil {
+					return err
+				}
+				if !canonical || !transactionEconomicIdentityEqual(existing, params, hash, logIndex) {
+					return recordTransactionReappearanceReview(ctx, tx, existing, params, blockHash, canonical)
+				}
+				reviving = true
+			} else if existing.FinalizedAt != nil {
 				return nil
 			}
 		}
-		if err := r.observeCanonicalBlockWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, parentHash, uniqueHash, now); err != nil {
-			return err
-		}
-		if err := r.markBlockHashConflictsWithDB(ctx, tx, params.ChainID, *params.Block, blockHash, uniqueHash, now); err != nil {
-			return err
-		}
 		identityChanged := found && transactionBlockIdentityChanged(existing, *params.Block, blockHash)
+		resetLifecycle := identityChanged || reviving
 		assignments := map[string]interface{}{
 			"hash":          hash,
 			"log_index":     logIndexPtr,
@@ -143,14 +153,19 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 			"confirmations": uint(0),
 			"updated_at":    now,
 		}
-		if found && !identityChanged {
+		if found && !resetLifecycle {
 			delete(assignments, "status")
 			delete(assignments, "confirmations")
 		}
-		if identityChanged {
+		if resetLifecycle {
+			// Canonical reappearance starts a fresh finality generation even when
+			// the provider already labels the transaction confirmed. Restored money
+			// state and merchant notification are committed only by MarkFinality.
+			assignments["status"] = models.TransactionStatusPendingConfirmation
 			assignments["confirmations_required"] = uint(1)
 			assignments["finalized_at"] = nil
 			assignments["reorged_at"] = nil
+			assignments["correction_reason"] = transactionReappearanceMarker(existing.ReorgedAt, *params.Block, blockHash)
 			assignments["webhook_sent_at"] = nil
 			assignments["webhook_attempts"] = uint(0)
 			assignments["webhook_last_error"] = ""
@@ -181,9 +196,158 @@ func (r *TransactionRepo) Create(params types.TransactionParam) error {
 		}).Create(txModel).Error; err != nil {
 			return err
 		}
-
 		return nil
 	})
+}
+
+const transactionReappearanceMarkerPrefix = "canonical_reappearance:"
+
+func transactionReappearanceMarker(reorgedAt *time.Time, blockNumber, blockHash string) string {
+	epoch := moneyEventGenerationUnixNano(time.Now())
+	if reorgedAt != nil && !reorgedAt.IsZero() {
+		epoch = moneyEventGenerationUnixNano(*reorgedAt)
+	}
+	return boundedCorrectionReason(fmt.Sprintf("%s%d:%s:%s", transactionReappearanceMarkerPrefix, epoch, strings.TrimSpace(blockNumber), normalizeBlockIdentifier(blockHash)))
+}
+
+// PostgreSQL timestamps have microsecond precision. Event generations derived
+// from a persisted ReorgedAt must use that same precision or a restoration
+// reconstructed later can reference a nanosecond-qualified correction ID that
+// never existed.
+func moneyEventGenerationUnixNano(value time.Time) int64 {
+	return value.UTC().Truncate(time.Microsecond).UnixNano()
+}
+
+func transactionIsCanonicalReappearance(txModel models.Transaction) bool {
+	return strings.HasPrefix(strings.TrimSpace(txModel.CorrectionReason), transactionReappearanceMarkerPrefix)
+}
+
+func transactionEconomicIdentityEqual(existing models.Transaction, params types.TransactionParam, hash, logIndex string) bool {
+	if existing.ChainID != params.ChainID ||
+		!chainFactTransactionHashesEqual(existing.ChainID, existing.Hash, hash) ||
+		normalizeTransactionLogIndex(existing.LogIndex) != logIndex ||
+		!chainAssetIdentityEqual(existing.ChainID, existing.Token, params.Token) ||
+		!strings.EqualFold(strings.TrimSpace(existing.Symbol), strings.TrimSpace(ptrString(params.Symbol))) ||
+		existing.Decimals != params.Decimals ||
+		NormalizeWalletLookupAddress(existing.ChainID, existing.FromAddress) != NormalizeWalletLookupAddress(params.ChainID, ptrString(params.From)) ||
+		NormalizeWalletLookupAddress(existing.ChainID, existing.ToAddress) != NormalizeWalletLookupAddress(params.ChainID, ptrString(params.To)) ||
+		strings.TrimSpace(existing.Amount) != strings.TrimSpace(ptrString(params.Amount)) {
+		return false
+	}
+	return chainFactPositiveRaw(existing.Amount)
+}
+
+func recordTransactionReappearanceReview(ctx context.Context, tx *gorm.DB, existing models.Transaction, params types.TransactionParam, blockHash string, canonical bool) error {
+	reason := "tx_reappearance_not_canonical"
+	if canonical {
+		reason = "tx_reappearance_payload_mismatch"
+	}
+	fromBlock := parseBlockNumber(existing.BlockNumber)
+	toBlock := parseBlockNumber(ptrString(params.Block))
+	_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+		ChainID:             params.ChainID,
+		FromBlock:           fromBlock,
+		ToBlock:             toBlock,
+		Reason:              reason,
+		ScopeKey:            fmt.Sprintf("%s:%s:%s:%s", reason, existing.UniqueHash, strings.TrimSpace(ptrString(params.Block)), normalizeBlockIdentifier(blockHash)),
+		ResourceType:        "transaction_reappeared",
+		ResourceID:          existing.UniqueHash,
+		AffectedResourceIDs: []string{existing.UniqueHash},
+		Evidence: map[string]any{
+			"canonical_match":       canonical,
+			"original_block_number": existing.BlockNumber,
+			"original_block_hash":   existing.BlockHash,
+			"new_block_number":      ptrString(params.Block),
+			"new_block_hash":        blockHash,
+		},
+	})
+	return err
+}
+
+func recordTransactionRestoredEvent(ctx context.Context, tx *gorm.DB, restored models.Transaction, occurredAt time.Time) error {
+	if restored.MerchantID == nil || restored.DomainID == nil || restored.ID == uuid.Nil {
+		return nil
+	}
+	generation, ok := transactionReappearanceGeneration(restored.CorrectionReason)
+	if !ok {
+		return errors.New("canonical reappearance transaction has no restoration generation")
+	}
+	eventName := constants.WebhookEventTransactionRestored
+	eventID := fmt.Sprintf("%s:%s:%d", restored.ID.String(), eventName, generation)
+	reorgEventID := fmt.Sprintf("%s:%s:%d", restored.ID.String(), constants.WebhookEventTransactionReorged, generation)
+	var reorgEvent models.MoneyEventOutbox
+	reorgPayload := make(map[string]any)
+	if err := tx.WithContext(ctx).First(&reorgEvent, "event_id = ?", reorgEventID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("load transaction reorg event for restoration: %w", err)
+	} else if err == nil {
+		if err := json.Unmarshal([]byte(reorgEvent.PayloadJSON), &reorgPayload); err != nil {
+			return fmt.Errorf("decode transaction reorg event for restoration: %w", err)
+		}
+	}
+	payload := map[string]any{
+		"event_id":                   eventID,
+		"event_type":                 eventName,
+		"event_version":              constants.WebhookEventVersionV1,
+		"occurred_at":                occurredAt.UTC().Format(time.RFC3339Nano),
+		"merchant_id":                restored.MerchantID.String(),
+		"domain_id":                  restored.DomainID.String(),
+		"resource_type":              "transaction",
+		"resource_id":                restored.ID.String(),
+		"resource_status":            restored.Status,
+		"idempotency_key":            eventID,
+		"correlation_id":             "transaction:" + restored.UniqueHash,
+		"restoration":                true,
+		"restoration_reason":         "transaction reappeared in an exact canonical block",
+		"reorg_event_id":             reorgEventID,
+		"restored_from_event_id":     reorgEventID,
+		"transaction_id":             restored.ID.String(),
+		"tx_hash":                    restored.Hash,
+		"tx_unique_hash":             restored.UniqueHash,
+		"chain_id":                   int64(restored.ChainID),
+		"log_index":                  normalizeTransactionLogIndex(restored.LogIndex),
+		"amount_raw":                 restored.Amount,
+		"symbol":                     restored.Symbol,
+		"token":                      restored.Token,
+		"orphaned_block_number":      reorgPayload["orphaned_block_number"],
+		"orphaned_block_hash":        reorgPayload["orphaned_block_hash"],
+		"canonical_block_number":     restored.BlockNumber,
+		"canonical_block_hash":       normalizeBlockIdentifier(restored.BlockHash),
+		"original_event_id":          restored.OriginalEventID,
+		"original_resource_id":       restored.OriginalResourceID,
+		"previous_correction_reason": reorgPayload["correction_reason"],
+		"confirmations":              restored.Confirmations,
+		"confirmations_required":     restored.ConfirmationsRequired,
+		"finalized_at":               restored.FinalizedAt,
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventName,
+		EventID:        eventID,
+		AggregateType:  "transaction",
+		AggregateID:    restored.ID.String(),
+		MerchantID:     *restored.MerchantID,
+		DomainID:       *restored.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
+}
+
+func transactionReappearanceGeneration(reason string) (int64, bool) {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, transactionReappearanceMarkerPrefix) {
+		return 0, false
+	}
+	remainder := strings.TrimPrefix(reason, transactionReappearanceMarkerPrefix)
+	separator := strings.IndexByte(remainder, ':')
+	if separator <= 0 {
+		return 0, false
+	}
+	generation, err := strconv.ParseInt(remainder[:separator], 10, 64)
+	return generation, err == nil && generation > 0
 }
 
 func normalizeTransactionHash(hash *string) string {
@@ -274,7 +438,7 @@ func transactionBlockIdentityChanged(existing models.Transaction, blockNumber st
 	}
 	existingHash := strings.TrimSpace(existing.BlockHash)
 	nextHash := strings.TrimSpace(blockHash)
-	return existingHash != "" && nextHash != "" && !strings.EqualFold(existingHash, nextHash)
+	return existingHash != "" && nextHash != "" && !historicalBlockHashesEqual(existing.ChainID, existingHash, nextHash)
 }
 
 func parseBlockNumber(blockNumber string) int64 {
@@ -351,6 +515,12 @@ func (r *TransactionRepo) observeCanonicalBlockWithDB(ctx context.Context, tx *g
 	if blockNumber <= 0 || blockHash == "" {
 		return nil
 	}
+	// Serialize competing scanners/rescans before reading or replacing the
+	// canonical row. The database partial unique index is the final invariant;
+	// this lock also makes the reorg correction sequence deterministic.
+	if err := AcquireCanonicalBlockLockWithDB(ctx, tx, chainID, blockNumber); err != nil {
+		return err
+	}
 
 	if parentHash != "" && blockNumber > 1 {
 		if err := r.markParentHashConflictsWithDB(ctx, tx, chainID, blockNumber, parentHash, currentUniqueHash, now); err != nil {
@@ -359,11 +529,63 @@ func (r *TransactionRepo) observeCanonicalBlockWithDB(ctx context.Context, tx *g
 	}
 
 	reason := transactionReorgReason("reorg_detected", chainID, strconv.FormatInt(blockNumber, 10))
+	heightConflict, err := canonicalBlockHeightConflictExistsWithDB(ctx, tx, chainID, blockNumber, blockHash)
+	if err != nil {
+		return err
+	}
+	// A legacy repair/migration can already have selected the provider's block
+	// as the sole canonical row while transactions from a discarded duplicate
+	// still exist. Reconcile transaction economics on every authoritative block
+	// observation, not only when the block table itself still shows a conflict.
+	if err := r.markBlockHashConflictsWithDB(ctx, tx, chainID, blockNumberRaw, blockHash, currentUniqueHash, now); err != nil {
+		return err
+	}
+	if heightConflict {
+		// Correct money state before replacing the canonical block record. Looking
+		// only at the new block's parent catches the tip of a fork but can leave
+		// transactions near the fork's common ancestor incorrectly credited.
+		if err := r.markBlockRangeTransactionsReorgedWithDB(ctx, tx, chainID, blockNumber, currentUniqueHash, now, reason); err != nil {
+			return err
+		}
+	}
 	if err := markCanonicalBlockHeightConflictsWithDB(ctx, tx, chainID, blockNumber, blockHash, reason, now); err != nil {
 		return err
 	}
 
 	return upsertCanonicalBlockWithDB(ctx, tx, chainID, blockNumber, blockHash, parentHash, now)
+}
+
+func CanonicalBlockLockKey(chainID constants.ChainID, blockNumber int64) string {
+	return fmt.Sprintf("canonical-block:%d:%d", chainID, blockNumber)
+}
+
+// AcquireCanonicalBlockLockWithDB establishes the global lock order used by
+// canonical observers and money-state consumers: canonical height first, then
+// ChainFact/Transaction/Deposit/inbox rows. PostgreSQL advisory locks are held
+// until the surrounding transaction completes.
+func AcquireCanonicalBlockLockWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64) error {
+	if tx == nil {
+		return gorm.ErrInvalidDB
+	}
+	if blockNumber <= 0 {
+		return nil
+	}
+	if tx.Dialector == nil || tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", CanonicalBlockLockKey(chainID, blockNumber)).Error
+}
+
+func canonicalBlockHeightConflictExistsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, blockHash string) (bool, error) {
+	var count int64
+	err := tx.WithContext(ctx).
+		Model(&models.Block{}).
+		Where("chain_id = ?", chainID).
+		Where("number = ?", blockNumber).
+		Where("canonical = ?", true).
+		Where("hash <> ?", normalizeBlockIdentifier(blockHash)).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func (r *TransactionRepo) ObserveCanonicalBlock(ctx context.Context, chainID constants.ChainID, blockNumber int64, blockHash string, parentHash string) error {
@@ -440,6 +662,9 @@ func (r *TransactionRepo) markBlockRangeTransactionsReorgedWithDB(ctx context.Co
 	if len(hashes) == 0 && len(hexHashes) == 0 {
 		return nil
 	}
+	if err := markChainFactsReorgedByBlockHashesWithDB(ctx, tx, chainID, hashes, hexHashes, reason, now); err != nil {
+		return err
+	}
 
 	var conflicts []models.Transaction
 	query := tx.WithContext(ctx).
@@ -459,6 +684,29 @@ func (r *TransactionRepo) markBlockRangeTransactionsReorgedWithDB(ctx context.Co
 		return err
 	}
 	return r.markTransactionsReorgedWithDB(ctx, tx, conflicts, now, chainID, fromBlock, toBlock, reason)
+}
+
+func markChainFactsReorgedByBlockHashesWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, hashes, hexHashes []string, reason string, now time.Time) error {
+	query := tx.WithContext(ctx).
+		Model(&models.ChainFact{}).
+		Where("chain_id = ?", chainID).
+		Where("status NOT IN ?", []string{models.ChainFactStatusReorged, models.ChainFactStatusSuperseded})
+	switch {
+	case len(hashes) > 0 && len(hexHashes) > 0:
+		query = query.Where("(block_hash IN ? OR LOWER(block_hash) IN ?)", hashes, hexHashes)
+	case len(hashes) > 0:
+		query = query.Where("block_hash IN ?", hashes)
+	case len(hexHashes) > 0:
+		query = query.Where("LOWER(block_hash) IN ?", hexHashes)
+	default:
+		return nil
+	}
+	return query.Updates(map[string]any{
+		"status":            models.ChainFactStatusReorged,
+		"reorged_at":        &now,
+		"correction_reason": boundedCorrectionReason(reason),
+		"updated_at":        now,
+	}).Error
 }
 
 func markCanonicalBlockHeightConflictsWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, blockHash string, reason string, now time.Time) error {
@@ -547,7 +795,7 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 			return err
 		}
 		originalEventID := webhooksvc.TransactionEventID(conflict)
-		if err := tx.WithContext(ctx).
+		updateResult := tx.WithContext(ctx).
 			Model(&models.Transaction{}).
 			Where("id = ?", conflict.ID).
 			Where("status <> ?", models.TransactionStatusReorged).
@@ -563,26 +811,18 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 				"webhook_last_error":   "",
 				"webhook_locked_until": nil,
 				"updated_at":           now,
-			}).Error; err != nil {
-			return err
+			})
+		if updateResult.Error != nil {
+			return updateResult.Error
+		}
+		if updateResult.RowsAffected == 1 {
+			if err := recordTransactionReorgEvent(ctx, tx, conflict, originalEventID, reason, now); err != nil {
+				return err
+			}
 		}
 	}
 	if len(uniqueHashes) == 0 {
 		return nil
-	}
-
-	if err := tx.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("transaction_unique_hash IN ?", uniqueHashes).
-		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
-		Updates(map[string]any{
-			"status":       models.SweepJobStatusDeadLetter,
-			"last_error":   "source transaction was reorged",
-			"next_run_at":  nil,
-			"locked_until": nil,
-			"updated_at":   now,
-		}).Error; err != nil {
-		return err
 	}
 
 	if strings.TrimSpace(reason) == "" {
@@ -608,6 +848,52 @@ func (r *TransactionRepo) markTransactionsReorgedWithDB(ctx context.Context, tx 
 			"unique_hashes":     uniqueHashes,
 		},
 	})
+	return err
+}
+
+func recordTransactionReorgEvent(ctx context.Context, tx *gorm.DB, txModel models.Transaction, originalEventID, reason string, occurredAt time.Time) error {
+	if txModel.MerchantID == nil || txModel.DomainID == nil || txModel.ID == uuid.Nil {
+		return nil
+	}
+	eventName := "transaction.reorged.v1"
+	eventID := fmt.Sprintf("%s:%s:%d", txModel.ID.String(), eventName, moneyEventGenerationUnixNano(occurredAt))
+	payload := map[string]any{
+		"event_id":              eventID,
+		"event_type":            eventName,
+		"event_version":         constants.WebhookEventVersionV1,
+		"occurred_at":           occurredAt.UTC().Format(time.RFC3339Nano),
+		"merchant_id":           txModel.MerchantID.String(),
+		"domain_id":             txModel.DomainID.String(),
+		"resource_type":         "transaction",
+		"resource_id":           txModel.ID.String(),
+		"resource_status":       models.TransactionStatusReorged,
+		"idempotency_key":       eventID,
+		"correlation_id":        "transaction:" + txModel.UniqueHash,
+		"correction":            true,
+		"transaction_id":        txModel.ID.String(),
+		"tx_hash":               txModel.Hash,
+		"tx_unique_hash":        txModel.UniqueHash,
+		"chain_id":              int64(txModel.ChainID),
+		"orphaned_block_number": txModel.BlockNumber,
+		"orphaned_block_hash":   txModel.BlockHash,
+		"original_event_id":     originalEventID,
+		"original_resource_id":  txModel.ID.String(),
+		"correction_reason":     boundedCorrectionReason(reason),
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventName,
+		EventID:        eventID,
+		AggregateType:  "transaction",
+		AggregateID:    txModel.ID.String(),
+		MerchantID:     *txModel.MerchantID,
+		DomainID:       *txModel.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
 	return err
 }
 
@@ -756,29 +1042,115 @@ func (r *TransactionRepo) MarkWebhookAttempt(ctx context.Context, uniqueHash str
 }
 
 func (r *TransactionRepo) MarkFinality(ctx context.Context, uniqueHash string, confirmations, required uint, finalized bool) (*models.Transaction, error) {
-	updates := map[string]interface{}{
-		"confirmations":          confirmations,
-		"confirmations_required": required,
-		"updated_at":             time.Now(),
+	if r == nil || r.DB() == nil {
+		return nil, gorm.ErrInvalidDB
 	}
-	if finalized {
+	var out models.Transaction
+	err := r.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current models.Transaction
+		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&current, "unique_hash = ?", uniqueHash).Error; err != nil {
+			return err
+		}
+		if current.Status == models.TransactionStatusReorged || current.Status == models.TransactionStatusFailed {
+			out = current
+			return nil
+		}
+		if !finalized && current.FinalizedAt != nil {
+			out = current
+			return nil
+		}
+
 		now := time.Now()
-		updates["status"] = models.TransactionStatusConfirmed
-		updates["finalized_at"] = &now
-	} else {
-		updates["status"] = models.TransactionStatusPendingConfirmation
-	}
-	query := r.DB().WithContext(ctx).
-		Model(&models.Transaction{}).
-		Where("unique_hash = ?", uniqueHash).
-		Where("status NOT IN ?", []string{models.TransactionStatusReorged, models.TransactionStatusFailed})
-	if !finalized {
-		query = query.Where("finalized_at IS NULL")
-	}
-	if err := query.Updates(updates).Error; err != nil {
+		updates := map[string]interface{}{
+			"confirmations":          confirmations,
+			"confirmations_required": required,
+			"updated_at":             now,
+		}
+		if finalized {
+			updates["status"] = models.TransactionStatusConfirmed
+			if current.FinalizedAt == nil {
+				updates["finalized_at"] = &now
+			}
+			if transactionIsCanonicalReappearance(current) {
+				updates["event_type"] = constants.WebhookEventTransactionRestored
+			}
+		} else {
+			updates["status"] = models.TransactionStatusPendingConfirmation
+		}
+		if err := tx.WithContext(ctx).
+			Model(&models.Transaction{}).
+			Where("id = ?", current.ID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.WithContext(ctx).First(&out, "id = ?", current.ID).Error; err != nil {
+			return err
+		}
+		if finalized && current.FinalizedAt == nil && transactionIsCanonicalReappearance(out) {
+			if _, err := NewLedgerRepo(tx).PostTransactionRestorationWithDB(ctx, tx, out); err != nil {
+				return err
+			}
+			if err := recordTransactionRestoredEvent(ctx, tx, out, now); err != nil {
+				return err
+			}
+		} else if finalized && current.FinalizedAt == nil {
+			if err := recordTransactionDetectedEvent(ctx, tx, out); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	return r.FindByUniqueHash(ctx, uniqueHash)
+	return &out, nil
+}
+
+func recordTransactionDetectedEvent(ctx context.Context, tx *gorm.DB, txModel models.Transaction) error {
+	if txModel.ID == uuid.Nil || txModel.MerchantID == nil || txModel.DomainID == nil || strings.TrimSpace(txModel.EventType) == "" {
+		return nil
+	}
+	sourceEventType := strings.TrimSpace(txModel.EventType)
+	eventSnapshot := txModel
+	if _, _, cataloged := webhooksvc.MoneyEventCatalogEntryForEmittedEvent(sourceEventType); !cataloged {
+		// Historical/admin rows may carry application-specific event labels. A
+		// catalog miss must not roll back finality forever: emit the canonical
+		// transaction event while retaining the original label as provenance.
+		eventSnapshot.EventType = constants.WebhookEventTransactionDetected
+	}
+	eventID := webhooksvc.TransactionEventID(eventSnapshot)
+	payload, err := webhooksvc.TransactionPayloadJSON(eventSnapshot, webhooksvc.DeliveryMetadata{})
+	if err != nil {
+		return err
+	}
+	if eventSnapshot.EventType != sourceEventType {
+		var envelope map[string]any
+		if err := json.Unmarshal(payload, &envelope); err != nil {
+			return err
+		}
+		envelope["source_event_type"] = sourceEventType
+		payload, err = json.Marshal(envelope)
+		if err != nil {
+			return err
+		}
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventSnapshot.EventType,
+		EventID:        eventID,
+		AggregateType:  "transaction",
+		AggregateID:    txModel.ID.String(),
+		MerchantID:     *txModel.MerchantID,
+		DomainID:       *txModel.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
 }
 
 func (r *TransactionRepo) MarkFailed(ctx context.Context, uniqueHash string) (*models.Transaction, error) {

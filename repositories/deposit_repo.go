@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-var ErrDepositInvalid = errors.New("invalid deposit")
+var (
+	ErrDepositInvalid             = errors.New("invalid deposit")
+	ErrDepositRevivalNotCanonical = errors.New("reorged deposit revival is not canonical")
+)
 
 type DepositRepo struct {
 	db *gorm.DB
@@ -27,6 +31,17 @@ func NewDepositRepo(db *gorm.DB) *DepositRepo {
 
 func (r *DepositRepo) DB() *gorm.DB {
 	return r.db
+}
+
+func (r *DepositRepo) FindByIDForUpdate(ctx context.Context, id uuid.UUID) (*models.Deposit, error) {
+	if r == nil || r.db == nil || id == uuid.Nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	var deposit models.Deposit
+	if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&deposit, "id = ?", id).Error; err != nil {
+		return nil, err
+	}
+	return &deposit, nil
 }
 
 func (r *DepositRepo) ListPendingFinality(ctx context.Context, limit int) ([]models.Deposit, error) {
@@ -75,14 +90,14 @@ func (r *DepositRepo) ConsumeChainFact(ctx context.Context, fact models.ChainFac
 	var out models.Deposit
 	created := false
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		current, found, err := findDepositByChainFactEventID(ctx, tx, prepared.ChainFactEventID)
-		if err != nil {
-			return err
+		result := tx.WithContext(ctx).Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "chain_fact_event_id"}},
+			DoNothing: true,
+		}).Create(&prepared)
+		if result.Error != nil {
+			return result.Error
 		}
-		if !found {
-			if err := tx.WithContext(ctx).Create(&prepared).Error; err != nil {
-				return err
-			}
+		if result.RowsAffected == 1 {
 			out = prepared
 			created = true
 			if out.Status == models.DepositStatusFinalized {
@@ -91,12 +106,35 @@ func (r *DepositRepo) ConsumeChainFact(ctx context.Context, fact models.ChainFac
 			return nil
 		}
 
+		var current models.Deposit
+		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&current, "chain_fact_event_id = ?", prepared.ChainFactEventID).Error; err != nil {
+			return err
+		}
+		reviving := current.Status == models.DepositStatusReorged
+		if reviving {
+			canonical, err := canonicalBlockMatchesWithDB(ctx, tx, prepared.ChainID, prepared.BlockNumber, prepared.BlockHash)
+			if err != nil {
+				return err
+			}
+			if !canonical || fact.Status != models.ChainFactStatusObserved || !depositEconomicIdentityEqual(current, prepared) {
+				return ErrDepositRevivalNotCanonical
+			}
+		}
+		reorgedAt := current.ReorgedAt
 		next, finalizedNow := mergeDepositFromFact(current, prepared)
 		if err := tx.WithContext(ctx).Save(&next).Error; err != nil {
 			return err
 		}
 		out = next
+		if reviving {
+			return recordDepositReappearanceEvent(ctx, tx, out, current, reorgedAt)
+		}
 		if finalizedNow {
+			if depositReappearanceEpoch(out.CorrectionReason) != "" {
+				return recordDepositReappearanceEvent(ctx, tx, out, current, nil)
+			}
 			return recordDepositFinalizedEvent(ctx, tx, out)
 		}
 		return nil
@@ -105,20 +143,6 @@ func (r *DepositRepo) ConsumeChainFact(ctx context.Context, fact models.ChainFac
 		return nil, false, err
 	}
 	return &out, created, nil
-}
-
-func findDepositByChainFactEventID(ctx context.Context, tx *gorm.DB, eventID string) (models.Deposit, bool, error) {
-	var deposit models.Deposit
-	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		First(&deposit, "chain_fact_event_id = ?", eventID).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return models.Deposit{}, false, nil
-	}
-	if err != nil {
-		return models.Deposit{}, false, err
-	}
-	return deposit, true, nil
 }
 
 func buildDepositFromChainFact(fact models.ChainFact, wallet *models.Wallet) (models.Deposit, error) {
@@ -133,7 +157,7 @@ func buildDepositFromChainFact(fact models.ChainFact, wallet *models.Wallet) (mo
 		ChainID:               fact.ChainID,
 		BlockNumber:           fact.BlockNumber,
 		BlockHash:             strings.TrimSpace(fact.BlockHash),
-		TxHash:                strings.ToLower(strings.TrimSpace(fact.TxHash)),
+		TxHash:                normalizeChainFactTransactionHash(fact.ChainID, fact.TxHash),
 		LogIndex:              strings.TrimSpace(fact.LogIndex),
 		ObservedAddress:       strings.TrimSpace(fact.ObservedAddress),
 		Direction:             strings.TrimSpace(fact.Direction),
@@ -205,6 +229,42 @@ func buildDepositFromChainFact(fact models.ChainFact, wallet *models.Wallet) (mo
 
 func mergeDepositFromFact(current, incoming models.Deposit) (models.Deposit, bool) {
 	next := current
+	if current.Status == models.DepositStatusReorged {
+		next.ChainFactID = incoming.ChainFactID
+		next.BlockNumber = incoming.BlockNumber
+		next.BlockHash = incoming.BlockHash
+		next.TxHash = incoming.TxHash
+		next.LogIndex = incoming.LogIndex
+		next.ObservedAddress = incoming.ObservedAddress
+		next.Direction = incoming.Direction
+		next.ObservationStatus = incoming.ObservationStatus
+		next.Memo = incoming.Memo
+		next.MemoNormalized = incoming.MemoNormalized
+		next.MemoStatus = incoming.MemoStatus
+		next.Token = incoming.Token
+		next.Symbol = incoming.Symbol
+		next.Decimals = incoming.Decimals
+		next.AmountRaw = incoming.AmountRaw
+		next.Confirmations = incoming.Confirmations
+		next.ConfirmationsRequired = incoming.ConfirmationsRequired
+		next.TransactionUniqueHash = incoming.TransactionUniqueHash
+		next.SourceEventType = incoming.SourceEventType
+		next.Status = incoming.Status
+		next.FinalizedAt = incoming.FinalizedAt
+		next.ReorgedAt = nil
+		next.SupersededByEventID = ""
+		next.CorrectionReason = depositReappearanceMarker(current.ReorgedAt)
+		if incoming.WalletID != nil {
+			next.WalletID = incoming.WalletID
+			next.MerchantID = incoming.MerchantID
+			next.DomainID = incoming.DomainID
+			next.ProductID = incoming.ProductID
+			next.UserID = incoming.UserID
+			next.UnmatchedReason = ""
+		}
+		next.UpdatedAt = time.Now()
+		return next, next.Status == models.DepositStatusFinalized
+	}
 	next.ChainFactID = incoming.ChainFactID
 	next.BlockNumber = incoming.BlockNumber
 	next.BlockHash = incoming.BlockHash
@@ -257,6 +317,20 @@ func mergeDepositFromFact(current, incoming models.Deposit) (models.Deposit, boo
 	return next, !finalizedBefore && next.Status == models.DepositStatusFinalized
 }
 
+func depositEconomicIdentityEqual(existing, incoming models.Deposit) bool {
+	return existing.ChainFactEventID == incoming.ChainFactEventID &&
+		existing.ChainID == incoming.ChainID &&
+		chainFactTransactionHashesEqual(existing.ChainID, existing.TxHash, incoming.TxHash) &&
+		normalizeChainFactLogIndex(existing.LogIndex) == normalizeChainFactLogIndex(incoming.LogIndex) &&
+		NormalizeWalletLookupAddress(existing.ChainID, existing.ObservedAddress) == NormalizeWalletLookupAddress(incoming.ChainID, incoming.ObservedAddress) &&
+		strings.TrimSpace(existing.Direction) == strings.TrimSpace(incoming.Direction) &&
+		chainAssetIdentityEqual(existing.ChainID, existing.Token, incoming.Token) &&
+		strings.EqualFold(strings.TrimSpace(existing.Symbol), strings.TrimSpace(incoming.Symbol)) &&
+		existing.Decimals == incoming.Decimals &&
+		strings.TrimSpace(existing.AmountRaw) == strings.TrimSpace(incoming.AmountRaw) &&
+		normalizePaymentMemo(firstNonEmptyString(existing.MemoNormalized, existing.Memo)) == normalizePaymentMemo(firstNonEmptyString(incoming.MemoNormalized, incoming.Memo))
+}
+
 func depositStatusForFinality(confirmations, required uint, finalized bool) string {
 	if required == 0 {
 		required = 1
@@ -287,7 +361,7 @@ func depositMemoStatusFromFact(fact models.ChainFact) string {
 }
 
 func depositTransactionUniqueHash(fact models.ChainFact) string {
-	return fmt.Sprintf("%d-%s-%s", fact.ChainID, strings.ToLower(strings.TrimSpace(fact.TxHash)), strings.TrimSpace(fact.LogIndex))
+	return fmt.Sprintf("%d-%s-%s", fact.ChainID, normalizeChainFactTransactionHash(fact.ChainID, fact.TxHash), strings.TrimSpace(fact.LogIndex))
 }
 
 func firstNonEmptyString(values ...string) string {
@@ -328,6 +402,84 @@ func recordDepositFinalizedEvent(ctx context.Context, tx *gorm.DB, deposit model
 		"confirmations":          deposit.Confirmations,
 		"confirmations_required": deposit.ConfirmationsRequired,
 		"source_event_type":      deposit.SourceEventType,
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventType,
+		EventID:        eventID,
+		AggregateType:  "deposit",
+		AggregateID:    deposit.ID.String(),
+		MerchantID:     *deposit.MerchantID,
+		DomainID:       *deposit.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
+}
+
+const depositReappearanceMarkerPrefix = "canonical_reappearance:"
+
+func depositReappearanceMarker(reorgedAt *time.Time) string {
+	epoch := moneyEventGenerationUnixNano(time.Now())
+	if reorgedAt != nil && !reorgedAt.IsZero() {
+		epoch = moneyEventGenerationUnixNano(*reorgedAt)
+	}
+	return depositReappearanceMarkerPrefix + strconv.FormatInt(epoch, 10)
+}
+
+func depositReappearanceEpoch(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, depositReappearanceMarkerPrefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(reason, depositReappearanceMarkerPrefix))
+}
+
+func recordDepositReappearanceEvent(ctx context.Context, tx *gorm.DB, deposit, previous models.Deposit, reorgedAt *time.Time) error {
+	if deposit.MerchantID == nil || deposit.DomainID == nil || deposit.WalletID == nil {
+		return nil
+	}
+	epoch := depositReappearanceEpoch(deposit.CorrectionReason)
+	if epoch == "" {
+		epoch = strings.TrimPrefix(depositReappearanceMarker(reorgedAt), depositReappearanceMarkerPrefix)
+	}
+	eventType := "deposit.detected.v1"
+	if deposit.Status == models.DepositStatusFinalized {
+		eventType = "deposit.finalized.v1"
+	}
+	eventID := deposit.ID.String() + ":" + eventType + ":restored:" + epoch
+	payload := map[string]any{
+		"event_id":               eventID,
+		"event_type":             eventType,
+		"event_version":          constants.WebhookEventVersionV1,
+		"occurred_at":            time.Now().UTC().Format(time.RFC3339Nano),
+		"merchant_id":            deposit.MerchantID.String(),
+		"domain_id":              deposit.DomainID.String(),
+		"resource_type":          "deposit",
+		"resource_id":            deposit.ID.String(),
+		"resource_status":        deposit.Status,
+		"idempotency_key":        eventID,
+		"correlation_id":         "chain_fact:" + deposit.ChainFactEventID,
+		"restoration":            true,
+		"restoration_reason":     "transaction reappeared in an exact canonical block",
+		"chain_id":               int64(deposit.ChainID),
+		"tx_hash":                deposit.TxHash,
+		"tx_unique_hash":         deposit.TransactionUniqueHash,
+		"log_index":              deposit.LogIndex,
+		"amount_raw":             deposit.AmountRaw,
+		"symbol":                 deposit.Symbol,
+		"token":                  deposit.Token,
+		"wallet_id":              deposit.WalletID.String(),
+		"confirmations":          deposit.Confirmations,
+		"confirmations_required": deposit.ConfirmationsRequired,
+		"source_event_type":      deposit.SourceEventType,
+		"previous_block_number":  previous.BlockNumber,
+		"previous_block_hash":    previous.BlockHash,
+		"canonical_block_number": deposit.BlockNumber,
+		"canonical_block_hash":   deposit.BlockHash,
 	}
 	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
 		EventName:      eventType,

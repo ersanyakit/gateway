@@ -2,11 +2,13 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"core/constants"
 	"core/models"
 	webhooksvc "core/services/webhook"
 
@@ -19,7 +21,12 @@ type WebhookDeliveryRepo struct {
 	db *gorm.DB
 }
 
-var ErrWebhookReplayScopeDenied = errors.New("webhook delivery not found")
+var (
+	ErrWebhookReplayScopeDenied = errors.New("webhook delivery not found")
+	ErrWebhookReplayNotReady    = errors.New("webhook delivery is not in a replayable state")
+	ErrWebhookDeliveryConflict  = errors.New("webhook delivery event identity conflicts with existing row")
+	ErrWebhookDeliveryLeaseLost = errors.New("webhook delivery lease is no longer owned by this worker")
+)
 
 type WebhookReplayParams struct {
 	DeliveryID  uuid.UUID
@@ -55,7 +62,7 @@ func (r *WebhookDeliveryRepo) createWithDB(ctx context.Context, tx *gorm.DB, del
 	return tx.WithContext(ctx).Create(delivery).Error
 }
 
-func (r *WebhookDeliveryRepo) enqueueByEventID(ctx context.Context, eventID string, build func() *models.WebhookDelivery) (*models.WebhookDelivery, bool, error) {
+func (r *WebhookDeliveryRepo) enqueueByEventID(ctx context.Context, eventID string, strictPayload bool, build func() *models.WebhookDelivery) (*models.WebhookDelivery, bool, error) {
 	if eventID == "" || build == nil {
 		return nil, false, gorm.ErrInvalidData
 	}
@@ -66,8 +73,19 @@ func (r *WebhookDeliveryRepo) enqueueByEventID(ctx context.Context, eventID stri
 			return err
 		}
 		var existing models.WebhookDelivery
-		err := tx.WithContext(ctx).First(&existing, "event_id = ?", eventID).Error
+		err := tx.WithContext(ctx).
+			Where("event_id = ?", eventID).
+			Order("original_delivery_id NULLS FIRST, created_at ASC, id ASC").
+			First(&existing).Error
 		if err == nil {
+			candidate := build()
+			if candidate == nil {
+				return gorm.ErrInvalidData
+			}
+			candidate.EventID = eventID
+			if !webhookDeliveryEventCompatible(existing, *candidate, strictPayload) {
+				return ErrWebhookDeliveryConflict
+			}
 			delivery = &existing
 			return nil
 		}
@@ -93,6 +111,72 @@ func (r *WebhookDeliveryRepo) enqueueByEventID(ctx context.Context, eventID stri
 		return nil
 	})
 	return delivery, created, err
+}
+
+func webhookDeliveryEventCompatible(existing, candidate models.WebhookDelivery, strictPayload bool) bool {
+	if candidate.EventVersion == "" {
+		candidate.EventVersion = constants.WebhookEventVersionV1
+	}
+	if candidate.IdempotencyKey == "" {
+		candidate.IdempotencyKey = candidate.EventID
+	}
+	resourceType, resourceID := webhookDeliveryResource(&candidate)
+	if existing.MerchantID != candidate.MerchantID ||
+		existing.DomainID != candidate.DomainID ||
+		strings.TrimSpace(existing.EventID) != strings.TrimSpace(candidate.EventID) ||
+		strings.TrimSpace(existing.EventType) != strings.TrimSpace(candidate.EventType) ||
+		strings.TrimSpace(existing.EventVersion) != strings.TrimSpace(candidate.EventVersion) ||
+		strings.TrimSpace(existing.IdempotencyKey) != strings.TrimSpace(candidate.IdempotencyKey) ||
+		strings.TrimSpace(existing.EntityType) != strings.TrimSpace(candidate.EntityType) ||
+		!sameWebhookUUID(existing.EntityID, candidate.EntityID) ||
+		!sameWebhookUUID(existing.PaymentID, candidate.PaymentID) ||
+		!sameWebhookUUID(existing.TransactionID, candidate.TransactionID) ||
+		strings.TrimSpace(existing.ResourceType) != strings.TrimSpace(resourceType) ||
+		strings.TrimSpace(existing.ResourceID) != strings.TrimSpace(resourceID) {
+		return false
+	}
+	if !strictPayload {
+		return true
+	}
+	existingPayload, err := webhookBusinessPayload(existing.PayloadJSON)
+	if err != nil {
+		return false
+	}
+	candidatePayload, err := webhookBusinessPayload(candidate.PayloadJSON)
+	return err == nil && existingPayload == candidatePayload
+}
+
+func sameWebhookUUID(left, right *uuid.UUID) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func webhookBusinessPayload(raw string) (string, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload); err != nil || payload == nil {
+		return "", gorm.ErrInvalidData
+	}
+	for _, field := range []string{
+		"delivery_id",
+		"resource_type",
+		"resource_id",
+		"sequence",
+		"idempotency_key",
+		"original_delivery_id",
+		"replay_count",
+		// Lifecycle producers can materialize the same durable event before
+		// and after the relay observes it. These envelope timestamps are not
+		// allowed to turn an identical EventID/business state into a second
+		// event; the first immutable snapshot remains authoritative.
+		"occurred_at",
+		"updated_at",
+	} {
+		delete(payload, field)
+	}
+	canonical, err := json.Marshal(payload)
+	return string(canonical), err
 }
 
 func (r *WebhookDeliveryRepo) prepareWebhookDeliveryMetadata(ctx context.Context, tx *gorm.DB, delivery *models.WebhookDelivery) error {
@@ -197,17 +281,25 @@ func (r *WebhookDeliveryRepo) EnqueueTransaction(ctx context.Context, domain mod
 	if eventID == "" {
 		return nil, false, gorm.ErrInvalidData
 	}
-	return r.enqueueByEventID(ctx, eventID, func() *models.WebhookDelivery {
+	body, err := webhooksvc.TransactionPayloadJSON(txModel, webhooksvc.DeliveryMetadata{})
+	if err != nil {
+		return nil, false, err
+	}
+	return r.enqueueByEventID(ctx, eventID, false, func() *models.WebhookDelivery {
+		mode, target, subject := notificationSnapshot(domain)
 		return &models.WebhookDelivery{
-			MerchantID:    *txModel.MerchantID,
-			DomainID:      *txModel.DomainID,
-			TransactionID: &txModel.ID,
-			EventType:     txModel.EventType,
-			EventVersion:  "v1",
-			EntityType:    "transaction",
-			EntityID:      &txModel.ID,
-			TargetURL:     notificationTarget(domain),
-			Status:        models.WebhookDeliveryStatusPending,
+			MerchantID:       *txModel.MerchantID,
+			DomainID:         *txModel.DomainID,
+			TransactionID:    &txModel.ID,
+			EventType:        txModel.EventType,
+			EventVersion:     constants.WebhookEventVersionV1,
+			EntityType:       "transaction",
+			EntityID:         &txModel.ID,
+			PayloadJSON:      string(body),
+			NotificationMode: mode,
+			TargetURL:        target,
+			TargetSubject:    subject,
+			Status:           models.WebhookDeliveryStatusPending,
 		}
 	})
 }
@@ -220,17 +312,90 @@ func (r *WebhookDeliveryRepo) EnqueuePayment(ctx context.Context, domain models.
 	if eventID == "" {
 		return nil, false, gorm.ErrInvalidData
 	}
-	return r.enqueueByEventID(ctx, eventID, func() *models.WebhookDelivery {
+	body, err := webhooksvc.PaymentPayloadJSON(session, webhooksvc.DeliveryMetadata{})
+	if err != nil {
+		return nil, false, err
+	}
+	return r.enqueueByEventID(ctx, eventID, false, func() *models.WebhookDelivery {
+		mode, target, subject := notificationSnapshot(domain)
 		return &models.WebhookDelivery{
-			MerchantID:   session.MerchantID,
-			DomainID:     session.DomainID,
-			PaymentID:    &session.ID,
-			EventType:    session.WebhookEvent,
-			EventVersion: "v1",
-			EntityType:   "payment",
-			EntityID:     &session.ID,
-			TargetURL:    notificationTarget(domain),
-			Status:       models.WebhookDeliveryStatusPending,
+			MerchantID:       session.MerchantID,
+			DomainID:         session.DomainID,
+			PaymentID:        &session.ID,
+			EventType:        session.WebhookEvent,
+			EventVersion:     constants.WebhookEventVersionV1,
+			EntityType:       "payment",
+			EntityID:         &session.ID,
+			PayloadJSON:      string(body),
+			NotificationMode: mode,
+			TargetURL:        target,
+			TargetSubject:    subject,
+			Status:           models.WebhookDeliveryStatusPending,
+		}
+	})
+}
+
+// EnqueueMoneyEvent translates a canonical money-event outbox record into the
+// shared webhook/NATS delivery queue without rebuilding its payload. EventID is
+// the durable idempotency boundary, matching transaction and payment enqueueing.
+func (r *WebhookDeliveryRepo) EnqueueMoneyEvent(ctx context.Context, domain models.Domain, event models.MoneyEventOutbox) (*models.WebhookDelivery, bool, error) {
+	eventID := strings.TrimSpace(event.EventID)
+	eventType := strings.TrimSpace(event.EventType)
+	aggregateType := strings.TrimSpace(event.AggregateType)
+	aggregateID := strings.TrimSpace(event.AggregateID)
+	idempotencyKey := strings.TrimSpace(event.IdempotencyKey)
+	payloadJSON := strings.TrimSpace(event.PayloadJSON)
+	if eventID == "" ||
+		eventType == "" ||
+		aggregateType == "" ||
+		aggregateID == "" ||
+		idempotencyKey == "" ||
+		payloadJSON == "" ||
+		event.MerchantID == uuid.Nil ||
+		event.DomainID == uuid.Nil ||
+		domain.ID != event.DomainID ||
+		domain.MerchantID != event.MerchantID {
+		return nil, false, gorm.ErrInvalidData
+	}
+
+	eventVersion := strings.TrimSpace(event.EventVersion)
+	if eventVersion == "" {
+		eventVersion = constants.WebhookEventVersionV1
+	}
+	var entityID *uuid.UUID
+	if parsed, err := uuid.Parse(aggregateID); err == nil {
+		entityID = &parsed
+	}
+	var paymentID *uuid.UUID
+	if strings.EqualFold(aggregateType, "payment") && entityID != nil {
+		parsed := *entityID
+		paymentID = &parsed
+	}
+	var transactionID *uuid.UUID
+	if strings.EqualFold(aggregateType, "transaction") && entityID != nil {
+		parsed := *entityID
+		transactionID = &parsed
+	}
+
+	return r.enqueueByEventID(ctx, eventID, true, func() *models.WebhookDelivery {
+		mode, target, subject := notificationSnapshot(domain)
+		return &models.WebhookDelivery{
+			MerchantID:       event.MerchantID,
+			DomainID:         event.DomainID,
+			PaymentID:        paymentID,
+			TransactionID:    transactionID,
+			EventType:        eventType,
+			EventVersion:     eventVersion,
+			EntityType:       aggregateType,
+			EntityID:         entityID,
+			ResourceType:     aggregateType,
+			ResourceID:       aggregateID,
+			IdempotencyKey:   idempotencyKey,
+			PayloadJSON:      payloadJSON,
+			NotificationMode: mode,
+			TargetURL:        target,
+			TargetSubject:    subject,
+			Status:           models.WebhookDeliveryStatusPending,
 		}
 	})
 }
@@ -246,17 +411,20 @@ func (r *WebhookDeliveryRepo) EnqueueLifecycle(ctx context.Context, domain model
 	if err != nil {
 		return nil, false, err
 	}
-	return r.enqueueByEventID(ctx, payload.EventID, func() *models.WebhookDelivery {
+	return r.enqueueByEventID(ctx, payload.EventID, true, func() *models.WebhookDelivery {
+		mode, target, subject := notificationSnapshot(domain)
 		return &models.WebhookDelivery{
-			MerchantID:   domain.MerchantID,
-			DomainID:     domain.ID,
-			EventType:    payload.EventType,
-			EventVersion: payload.EventVersion,
-			EntityType:   payload.EntityType,
-			EntityID:     payload.EntityUUID(),
-			PayloadJSON:  string(body),
-			TargetURL:    notificationTarget(domain),
-			Status:       models.WebhookDeliveryStatusPending,
+			MerchantID:       domain.MerchantID,
+			DomainID:         domain.ID,
+			EventType:        payload.EventType,
+			EventVersion:     payload.EventVersion,
+			EntityType:       payload.EntityType,
+			EntityID:         payload.EntityUUID(),
+			PayloadJSON:      string(body),
+			NotificationMode: mode,
+			TargetURL:        target,
+			TargetSubject:    subject,
+			Status:           models.WebhookDeliveryStatusPending,
 		}
 	})
 }
@@ -268,15 +436,109 @@ func notificationTarget(domain models.Domain) string {
 	return domain.WebhookURL
 }
 
-func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, delivered bool, lastErr error) error {
+func notificationSnapshot(domain models.Domain) (mode, target, subject string) {
+	mode = domain.EffectiveNotificationMode()
+	target = notificationTarget(domain)
+	if mode == models.DomainNotificationNATS {
+		subject = domain.EffectiveNATSSubject()
+	}
+	return strings.TrimSpace(mode), strings.TrimSpace(target), strings.TrimSpace(subject)
+}
+
+// HasActivePaymentDelivery reports whether a payment already has work in the
+// durable delivery queue. Bridges use it to avoid inserting a second legacy row
+// that could bypass the resource-ordered canonical delivery.
+func (r *WebhookDeliveryRepo) HasActivePaymentDelivery(ctx context.Context, paymentID uuid.UUID) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	if paymentID == uuid.Nil {
+		return false, gorm.ErrInvalidData
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var row models.WebhookDelivery
+	err := r.db.WithContext(ctx).
+		Select("id").
+		Where("payment_id = ?", paymentID).
+		Where("status IN ?", []string{
+			models.WebhookDeliveryStatusPending,
+			models.WebhookDeliveryStatusProcessing,
+			models.WebhookDeliveryStatusFailed,
+		}).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// HasPaymentDeliveryForEvent returns whether this payment lifecycle event has
+// ever entered the durable queue and whether one equivalent canonical/legacy
+// delivery already succeeded. Bridges use this to repair legacy source state
+// without bypassing an existing dead-letter row or sending a second payload.
+func (r *WebhookDeliveryRepo) HasPaymentDeliveryForEvent(ctx context.Context, paymentID uuid.UUID, eventType string) (bool, bool, error) {
+	if r == nil || r.db == nil {
+		return false, false, gorm.ErrInvalidDB
+	}
+	eventType = strings.TrimSpace(eventType)
+	if paymentID == uuid.Nil || eventType == "" {
+		return false, false, gorm.ErrInvalidData
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var rows []models.WebhookDelivery
+	if err := r.db.WithContext(ctx).
+		Select("event_type", "status").
+		Where("payment_id = ?", paymentID).
+		Find(&rows).Error; err != nil {
+		return false, false, err
+	}
+	found := false
+	for _, row := range rows {
+		if !webhooksvc.MoneyEventTypesEquivalent(row.EventType, eventType) {
+			continue
+		}
+		found = true
+		if row.Status == models.WebhookDeliveryStatusSucceeded {
+			return true, true, nil
+		}
+	}
+	return found, false, nil
+}
+
+// MarkAttempt accepts an outcome only from the worker that owns the current
+// processing lease. ClaimDue rotates LeaseToken on every claim/reclaim, so an
+// expired worker cannot commit after another worker has taken ownership.
+func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id, leaseToken uuid.UUID, delivered bool, lastErr error) error {
+	if r == nil || r.db == nil {
+		return gorm.ErrInvalidDB
+	}
+	if id == uuid.Nil || leaseToken == uuid.Nil {
+		return gorm.ErrInvalidData
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var current models.WebhookDelivery
 	if err := r.db.WithContext(ctx).First(&current, "id = ?", id).Error; err != nil {
 		return err
 	}
+	if current.Status != models.WebhookDeliveryStatusProcessing ||
+		current.LeaseToken == nil ||
+		*current.LeaseToken != leaseToken {
+		return ErrWebhookDeliveryLeaseLost
+	}
 
 	updates := map[string]any{
-		"attempts":   gorm.Expr("attempts + 1"),
-		"updated_at": time.Now(),
+		"attempts":    gorm.Expr("attempts + 1"),
+		"lease_token": nil,
+		"updated_at":  time.Now(),
 	}
 	if delivered {
 		now := time.Now()
@@ -301,10 +563,17 @@ func (r *WebhookDeliveryRepo) MarkAttempt(ctx context.Context, id uuid.UUID, del
 		}
 		updates["operator_action"] = operatorAction
 	}
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Model(&models.WebhookDelivery{}).
-		Where("id = ?", id).
-		Updates(updates).Error
+		Where("id = ? AND status = ? AND lease_token = ?", id, models.WebhookDeliveryStatusProcessing, leaseToken).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrWebhookDeliveryLeaseLost
+	}
+	return nil
 }
 
 func webhookDeliveryFailureState(currentAttempts uint, lastErr error) (string, string) {
@@ -319,9 +588,17 @@ func webhookMaxAttempts() uint {
 }
 
 func webhookDeliveryClaimTimeout() time.Duration {
-	return durationFromEnv("WEBHOOK_DELIVERY_CLAIM_TIMEOUT", 2*time.Minute)
+	timeout := durationFromEnv("WEBHOOK_DELIVERY_CLAIM_TIMEOUT", 2*time.Minute)
+	// Main claims five rows and the delivery boundary permits up to twenty
+	// seconds per row. A shorter lease can expire before the final row is sent.
+	if timeout < 2*time.Minute {
+		return 2 * time.Minute
+	}
+	return timeout
 }
 
+// ClaimDue assigns every returned row a fresh ownership token. Callers must
+// pass that exact token to MarkAttempt after the external delivery finishes.
 func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Duration) ([]models.WebhookDelivery, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -352,7 +629,7 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 					) AS event_rank,
 					(
 						(status IN ? AND (next_retry_at IS NULL OR next_retry_at <= ?))
-						OR (status = ? AND next_retry_at <= ?)
+						OR (status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?))
 					) AS is_due
 				FROM webhook_deliveries
 				WHERE status IN ?
@@ -363,6 +640,7 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 				    last_error = ?,
 				    failure_category = ?,
 				    next_retry_at = NULL,
+				    lease_token = NULL,
 				    operator_action = ?,
 				    updated_at = ?
 				FROM active
@@ -378,7 +656,7 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 				  AND candidate.is_due
 				  AND NOT EXISTS (
 				      SELECT 1
-				      FROM active prior
+				      FROM webhook_deliveries prior
 				      WHERE prior.domain_id = candidate.domain_id
 				        AND TRIM(COALESCE(prior.resource_type, '')) <> ''
 				        AND TRIM(COALESCE(prior.resource_id, '')) <> ''
@@ -387,7 +665,25 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 				        AND prior.sequence > 0
 				        AND candidate.sequence > 0
 				        AND prior.sequence < candidate.sequence
-				        AND prior.status IN ?
+				        AND NOT EXISTS (
+				            SELECT 1
+				            FROM webhook_deliveries acknowledged
+				            WHERE acknowledged.domain_id = prior.domain_id
+				              AND acknowledged.resource_type = prior.resource_type
+				              AND acknowledged.resource_id = prior.resource_id
+				              AND acknowledged.status = ?
+				              AND (
+				                  (
+				                      TRIM(COALESCE(prior.event_id, '')) <> ''
+				                      AND acknowledged.event_id = prior.event_id
+				                  )
+				                  OR (
+				                      TRIM(COALESCE(prior.event_id, '')) = ''
+				                      AND COALESCE(acknowledged.original_delivery_id, acknowledged.id) =
+				                          COALESCE(prior.original_delivery_id, prior.id)
+				                  )
+				              )
+				        )
 				  )
 				ORDER BY candidate.updated_at ASC, candidate.created_at ASC, candidate.id ASC
 				LIMIT ?
@@ -407,7 +703,7 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 			"duplicate",
 			"duplicate_suppressed",
 			now,
-			[]string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusFailed, models.WebhookDeliveryStatusProcessing},
+			models.WebhookDeliveryStatusSucceeded,
 			limit,
 		).Scan(&rows).Error; err != nil {
 			return err
@@ -415,24 +711,24 @@ func (r *WebhookDeliveryRepo) ClaimDue(ctx context.Context, limit int, lockFor t
 		if len(rows) == 0 {
 			return nil
 		}
-		ids := make([]uuid.UUID, 0, len(rows))
 		for i := range rows {
+			leaseToken := uuid.New()
 			rows[i].Status = models.WebhookDeliveryStatusProcessing
 			rows[i].NextRetryAt = &lockUntil
-			ids = append(ids, rows[i].ID)
+			rows[i].LeaseToken = &leaseToken
+			if err := tx.Model(&models.WebhookDelivery{}).
+				Where("id = ?", rows[i].ID).
+				Updates(map[string]any{
+					"status":          models.WebhookDeliveryStatusProcessing,
+					"operator_action": "delivery_in_progress",
+					"next_retry_at":   lockUntil,
+					"lease_token":     leaseToken,
+					"updated_at":      now,
+				}).Error; err != nil {
+				return err
+			}
 		}
-		if err := tx.Model(&models.WebhookDelivery{}).
-			Where("id IN ?", ids).
-			Updates(map[string]any{
-				"status":          models.WebhookDeliveryStatusProcessing,
-				"operator_action": "delivery_in_progress",
-				"updated_at":      now,
-			}).Error; err != nil {
-			return err
-		}
-		return tx.Model(&models.WebhookDelivery{}).
-			Where("id IN ?", ids).
-			Update("next_retry_at", lockUntil).Error
+		return nil
 	})
 	return rows, err
 }
@@ -469,6 +765,21 @@ func (r *WebhookDeliveryRepo) EnqueueReplay(ctx context.Context, params WebhookR
 		}
 		if params.DomainID != nil && root.DomainID != *params.DomainID {
 			return ErrWebhookReplayScopeDenied
+		}
+		switch root.Status {
+		case models.WebhookDeliveryStatusPending,
+			models.WebhookDeliveryStatusProcessing,
+			models.WebhookDeliveryStatusFailed:
+			// The original delivery still owns retry responsibility. Creating a
+			// replay with the same EventID/sequence would either race it or be
+			// duplicate-suppressed by ClaimDue, so return the active original.
+			delivery = &root
+			return nil
+		case models.WebhookDeliveryStatusSucceeded,
+			models.WebhookDeliveryStatusDeadLetter:
+			// Terminal rows may be replayed explicitly by an operator.
+		default:
+			return ErrWebhookReplayNotReady
 		}
 
 		var existing models.WebhookDelivery
@@ -527,7 +838,9 @@ func newWebhookReplayDelivery(root models.WebhookDelivery, actor string, now tim
 		Sequence:           root.Sequence,
 		IdempotencyKey:     root.IdempotencyKey,
 		PayloadJSON:        root.PayloadJSON,
+		NotificationMode:   root.NotificationMode,
 		TargetURL:          root.TargetURL,
+		TargetSubject:      root.TargetSubject,
 		Status:             models.WebhookDeliveryStatusPending,
 		OriginalDeliveryID: &root.ID,
 		ReplayCount:        root.ReplayCount + 1,

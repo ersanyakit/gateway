@@ -3,11 +3,14 @@ package repositories
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -19,6 +22,12 @@ var (
 	ErrSweepJobTxHashRequired  = errors.New("sweep transaction hash is required")
 	ErrSweepRecoveryAction     = errors.New("invalid sweep recovery action")
 	ErrSweepRecoveryNoteNeeded = errors.New("sweep recovery note is required")
+)
+
+const (
+	sweepSourceReorgRevivalReason    = "source transaction was reorged"
+	sweepSourceReorgProcessingReason = "source transaction reorged while sweep processing; reconcile sweep broadcast"
+	sweepSourceReorgSucceededReason  = "source transaction reorged after sweep success; reconcile sweep broadcast"
 )
 
 type SweepJobRepo struct {
@@ -52,18 +61,57 @@ func (r *SweepJobRepo) EnqueueForTransaction(ctx context.Context, txModel models
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
-	result := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(job)
-	if result.Error != nil {
-		return nil, false, result.Error
-	}
-	if result.RowsAffected == 1 {
-		return job, true, nil
-	}
-	var existing models.SweepJob
-	if err := r.db.WithContext(ctx).First(&existing, "transaction_unique_hash = ?", txModel.UniqueHash).Error; err != nil {
+	var out models.SweepJob
+	queued := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(job)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			out = *job
+			queued = true
+			return recordSweepLifecycleWithDB(ctx, tx, constants.WebhookEventSweepRequestedV1, out, &txModel, "")
+		}
+		canonicalSource, canonical, err := canonicalSweepSourceForRevival(ctx, tx, txModel)
+		if err != nil {
+			return err
+		}
+		// Reorg correction locks the transaction before it updates the sweep job.
+		// Keep the same transaction -> sweep order here to avoid an ABBA deadlock
+		// between canonical reappearance and correction.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&out, "transaction_unique_hash = ?", txModel.UniqueHash).Error; err != nil {
+			return err
+		}
+		if out.Status == models.SweepJobStatusDeadLetter && out.LastError == sweepSourceReorgRevivalReason && canonical {
+			if err := tx.Model(&models.SweepJob{}).Where("id = ?", out.ID).Updates(map[string]any{
+				"status":           models.SweepJobStatusPending,
+				"attempts":         0,
+				"last_error":       "",
+				"failure_category": "",
+				"next_run_at":      &now,
+				"locked_until":     nil,
+				"operator_action":  "",
+				"updated_at":       now,
+			}).Error; err != nil {
+				return err
+			}
+			if err := tx.First(&out, "id = ?", out.ID).Error; err != nil {
+				return err
+			}
+			// Revival is a new lifecycle occurrence of the same durable job. Its
+			// event identity must not collide with the original request snapshot.
+			if err := recordSweepLifecycleOccurrenceWithDB(ctx, tx, constants.WebhookEventSweepRequestedV1, out, &canonicalSource, ""); err != nil {
+				return err
+			}
+			queued = true
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, false, err
 	}
-	return &existing, false, nil
+	return &out, queued, nil
 }
 
 func (r *SweepJobRepo) ClaimDue(ctx context.Context, limit int, lockFor time.Duration) ([]models.SweepJob, error) {
@@ -241,73 +289,71 @@ func (r *SweepJobRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, txHash s
 	if txHash == "" {
 		return ErrSweepJobTxHashRequired
 	}
-	result := r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Where("status = ?", models.SweepJobStatusProcessing).
-		Where("locked_until IS NULL OR locked_until >= ?", now).
-		Updates(map[string]any{
-			"status":           models.SweepJobStatusSucceeded,
-			"sweep_tx_hash":    txHash,
-			"last_error":       "",
-			"failure_category": "",
-			"locked_until":     nil,
-			"next_run_at":      nil,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrSweepJobStateConflict
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.SweepJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if job.Status != models.SweepJobStatusProcessing || (job.LockedUntil != nil && job.LockedUntil.Before(now)) {
+			return ErrSweepJobStateConflict
+		}
+		if err := tx.Model(&models.SweepJob{}).Where("id = ?", id).Updates(map[string]any{
+			"status": models.SweepJobStatusSucceeded, "sweep_tx_hash": txHash,
+			"last_error": "", "failure_category": "", "locked_until": nil, "next_run_at": nil, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&job, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return recordSweepLifecycleOccurrenceWithDB(ctx, tx, constants.WebhookEventSweepSucceededV1, job, nil, "")
+	})
 }
 
 func (r *SweepJobRepo) MarkFailed(ctx context.Context, id uuid.UUID, err error) error {
-	var job models.SweepJob
-	if readErr := r.db.WithContext(ctx).First(&job, "id = ?", id).Error; readErr != nil {
-		return readErr
-	}
-	if job.Status == models.SweepJobStatusSucceeded || job.Status == models.SweepJobStatusDeadLetter {
-		return ErrSweepJobStateConflict
-	}
-	attempts := job.Attempts + 1
-	maxAttempts := job.MaxAttempts
-	if maxAttempts == 0 {
-		maxAttempts = uintFromEnv("SWEEP_MAX_ATTEMPTS", 12)
-	}
-	category := sweepJobFailureCategory(err)
-	status := models.SweepJobStatusFailed
-	var nextRunAt *time.Time
-	if category == models.SweepFailureCategoryPolicy || attempts >= maxAttempts {
-		status = models.SweepJobStatusDeadLetter
-	} else {
-		next := time.Now().Add(sweepRetryBackoff(attempts))
-		nextRunAt = &next
-	}
-	now := time.Now()
-	result := r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
-		Where("locked_until IS NULL OR locked_until >= ?", now).
-		Updates(map[string]any{
-			"status":           status,
-			"attempts":         attempts,
-			"last_error":       sweepJobErrorText(err, ""),
-			"failure_category": category,
-			"locked_until":     nil,
-			"next_run_at":      nextRunAt,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrSweepJobStateConflict
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.SweepJob
+		if readErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; readErr != nil {
+			return readErr
+		}
+		if job.Status == models.SweepJobStatusSucceeded || job.Status == models.SweepJobStatusDeadLetter {
+			return ErrSweepJobStateConflict
+		}
+		now := time.Now()
+		if job.LockedUntil != nil && job.LockedUntil.Before(now) {
+			return ErrSweepJobStateConflict
+		}
+		attempts := job.Attempts + 1
+		maxAttempts := job.MaxAttempts
+		if maxAttempts == 0 {
+			maxAttempts = uintFromEnv("SWEEP_MAX_ATTEMPTS", 12)
+		}
+		category := sweepJobFailureCategory(err)
+		status := models.SweepJobStatusFailed
+		var nextRunAt *time.Time
+		if category == models.SweepFailureCategoryPolicy || attempts >= maxAttempts {
+			status = models.SweepJobStatusDeadLetter
+		} else {
+			next := now.Add(sweepRetryBackoff(attempts))
+			nextRunAt = &next
+		}
+		if err := tx.Model(&models.SweepJob{}).Where("id = ?", id).Updates(map[string]any{
+			"status": status, "attempts": attempts, "last_error": sweepJobErrorText(err, ""),
+			"failure_category": category, "locked_until": nil, "next_run_at": nextRunAt, "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&job, "id = ?", id).Error; err != nil {
+			return err
+		}
+		eventType := constants.WebhookEventSweepFailedV1
+		if status == models.SweepJobStatusDeadLetter {
+			eventType = constants.WebhookEventSweepDeadLetteredV1
+		} else if attempts > 1 {
+			return nil
+		}
+		return recordSweepLifecycleOccurrenceWithDB(ctx, tx, eventType, job, nil, job.LastError)
+	})
 }
 
 // DeferForNetworkState returns a claimed sweep to the pending queue without
@@ -343,28 +389,26 @@ func (r *SweepJobRepo) DeferForNetworkState(ctx context.Context, id uuid.UUID, d
 
 func (r *SweepJobRepo) MarkBroadcastUncertain(ctx context.Context, id uuid.UUID, err error) error {
 	now := time.Now()
-	result := r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed}).
-		Where("locked_until IS NULL OR locked_until >= ?", now).
-		Updates(map[string]any{
-			"status":           models.SweepJobStatusDeadLetter,
-			"attempts":         gorm.Expr("attempts + 1"),
-			"last_error":       sweepJobErrorText(err, "broadcast outcome uncertain"),
-			"failure_category": models.SweepFailureCategoryBroadcastUncertain,
-			"operator_action":  models.SweepOperatorActionReconcileBroadcast,
-			"locked_until":     nil,
-			"next_run_at":      nil,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrSweepJobStateConflict
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.SweepJob
+		if loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; loadErr != nil {
+			return loadErr
+		}
+		if job.Status == models.SweepJobStatusSucceeded || job.Status == models.SweepJobStatusDeadLetter || (job.LockedUntil != nil && job.LockedUntil.Before(now)) {
+			return ErrSweepJobStateConflict
+		}
+		if updateErr := tx.Model(&models.SweepJob{}).Where("id = ?", id).Updates(map[string]any{
+			"status": models.SweepJobStatusDeadLetter, "attempts": gorm.Expr("attempts + 1"),
+			"last_error": sweepJobErrorText(err, "broadcast outcome uncertain"), "failure_category": models.SweepFailureCategoryBroadcastUncertain,
+			"operator_action": models.SweepOperatorActionReconcileBroadcast, "locked_until": nil, "next_run_at": nil, "updated_at": now,
+		}).Error; updateErr != nil {
+			return updateErr
+		}
+		if loadErr := tx.First(&job, "id = ?", id).Error; loadErr != nil {
+			return loadErr
+		}
+		return recordSweepLifecycleOccurrenceWithDB(ctx, tx, constants.WebhookEventSweepDeadLetteredV1, job, nil, job.LastError)
+	})
 }
 
 func (r *SweepJobRepo) MarkNeedsOperatorAction(ctx context.Context, id uuid.UUID, action string, err error) error {
@@ -373,24 +417,94 @@ func (r *SweepJobRepo) MarkNeedsOperatorAction(ctx context.Context, id uuid.UUID
 		action = models.SweepOperatorActionReviewPolicy
 	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Where("status IN ?", []string{models.SweepJobStatusPending, models.SweepJobStatusProcessing, models.SweepJobStatusFailed, models.SweepJobStatusDeadLetter}).
-		Updates(map[string]any{
-			"status":           models.SweepJobStatusDeadLetter,
-			"last_error":       sweepJobErrorText(err, "operator action required"),
-			"failure_category": sweepJobFailureCategory(err),
-			"operator_action":  action,
-			"locked_until":     nil,
-			"next_run_at":      nil,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return result.Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.SweepJob
+		if loadErr := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; loadErr != nil {
+			return loadErr
+		}
+		if job.Status == models.SweepJobStatusSucceeded {
+			return ErrSweepJobStateConflict
+		}
+		if updateErr := tx.Model(&models.SweepJob{}).Where("id = ?", id).Updates(map[string]any{
+			"status": models.SweepJobStatusDeadLetter, "last_error": sweepJobErrorText(err, "operator action required"),
+			"failure_category": sweepJobFailureCategory(err), "operator_action": action,
+			"locked_until": nil, "next_run_at": nil, "updated_at": now,
+		}).Error; updateErr != nil {
+			return updateErr
+		}
+		if loadErr := tx.First(&job, "id = ?", id).Error; loadErr != nil {
+			return loadErr
+		}
+		return recordSweepLifecycleOccurrenceWithDB(ctx, tx, constants.WebhookEventSweepDeadLetteredV1, job, nil, job.LastError)
+	})
+}
+
+func fenceSweepJobsForSourceReorgWithDB(ctx context.Context, tx *gorm.DB, txModel models.Transaction) error {
+	if tx == nil {
+		return gorm.ErrInvalidDB
 	}
-	if result.RowsAffected == 0 {
-		return ErrSweepJobStateConflict
+	if strings.TrimSpace(txModel.UniqueHash) == "" || !tx.Migrator().HasTable(&models.SweepJob{}) {
+		return nil
+	}
+	var jobs []models.SweepJob
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("transaction_unique_hash = ?", txModel.UniqueHash).
+		Where("status IN ?", []string{
+			models.SweepJobStatusPending,
+			models.SweepJobStatusProcessing,
+			models.SweepJobStatusFailed,
+			models.SweepJobStatusSucceeded,
+		}).
+		Order("id ASC").
+		Find(&jobs).Error; err != nil {
+		return err
+	}
+	if len(jobs) == 0 {
+		return nil
+	}
+	now := time.Now()
+	for i := range jobs {
+		reason := sweepSourceReorgRevivalReason
+		updates := map[string]any{
+			"status":       models.SweepJobStatusDeadLetter,
+			"last_error":   sweepSourceReorgRevivalReason,
+			"next_run_at":  nil,
+			"locked_until": nil,
+			"updated_at":   now,
+		}
+		switch jobs[i].Status {
+		case models.SweepJobStatusProcessing:
+			reason = sweepSourceReorgProcessingReason
+			updates["last_error"] = reason
+			updates["failure_category"] = models.SweepFailureCategoryBroadcastUncertain
+			updates["operator_action"] = models.SweepOperatorActionReconcileBroadcast
+		case models.SweepJobStatusSucceeded:
+			reason = sweepSourceReorgSucceededReason
+			updates["last_error"] = reason
+			updates["failure_category"] = models.SweepFailureCategoryBroadcastUncertain
+			updates["operator_action"] = models.SweepOperatorActionReconcileBroadcast
+		default:
+			// Pending/failed jobs have no in-flight broadcast. The exact reason is
+			// the durable revival fence checked after canonical reappearance.
+			updates["operator_action"] = ""
+		}
+		result := tx.WithContext(ctx).
+			Model(&models.SweepJob{}).
+			Where("id = ? AND status = ?", jobs[i].ID, jobs[i].Status).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrSweepJobStateConflict
+		}
+		if err := tx.WithContext(ctx).First(&jobs[i], "id = ?", jobs[i].ID).Error; err != nil {
+			return err
+		}
+		if err := recordSweepLifecycleOccurrenceWithDB(ctx, tx, constants.WebhookEventSweepDeadLetteredV1, jobs[i], &txModel, reason); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -402,51 +516,102 @@ func (r *SweepJobRepo) RecordOperatorRecovery(ctx context.Context, id uuid.UUID,
 	if note == "" {
 		return ErrSweepRecoveryNoteNeeded
 	}
-	now := time.Now()
-	updates := map[string]any{
-		"operator_note":   sweepJobErrorText(nil, note),
-		"recovery_action": action,
-		"recovered_at":    &now,
-		"locked_until":    nil,
-		"updated_at":      now,
+	if action == models.SweepRecoveryActionMarkSuccess && txHash == "" {
+		return ErrSweepJobTxHashRequired
+	}
+	if action != models.SweepRecoveryActionRetry &&
+		action != models.SweepRecoveryActionMarkSuccess &&
+		action != models.SweepRecoveryActionPreserveHold &&
+		action != models.SweepRecoveryActionReleaseHold {
+		return ErrSweepRecoveryAction
+	}
+	note = sweepJobErrorText(nil, note)
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var job models.SweepJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&job, "id = ?", id).Error; err != nil {
+			return err
+		}
+		if sweepRecoveryIsCurrent(job) {
+			if sweepRecoveryMatches(job, action, note, txHash, retryAt) {
+				return nil
+			}
+			return ErrSweepJobStateConflict
+		}
+		if job.Status != models.SweepJobStatusFailed && job.Status != models.SweepJobStatusDeadLetter {
+			return ErrSweepJobStateConflict
+		}
+
+		now := time.Now()
+		updates := map[string]any{
+			"operator_note":   note,
+			"operator_action": "",
+			"recovery_action": action,
+			"recovered_at":    &now,
+			"locked_until":    nil,
+			"updated_at":      now,
+		}
+		eventType := constants.WebhookEventSweepDeadLetteredV1
+		switch action {
+		case models.SweepRecoveryActionRetry:
+			if retryAt == nil {
+				retry := now
+				retryAt = &retry
+			}
+			updates["status"] = models.SweepJobStatusFailed
+			updates["next_run_at"] = retryAt
+			eventType = constants.WebhookEventSweepFailedV1
+		case models.SweepRecoveryActionMarkSuccess:
+			updates["status"] = models.SweepJobStatusSucceeded
+			updates["sweep_tx_hash"] = txHash
+			updates["next_run_at"] = nil
+			updates["last_error"] = ""
+			updates["failure_category"] = ""
+			eventType = constants.WebhookEventSweepSucceededV1
+		case models.SweepRecoveryActionPreserveHold, models.SweepRecoveryActionReleaseHold:
+			updates["status"] = models.SweepJobStatusDeadLetter
+			updates["next_run_at"] = nil
+		}
+		if err := tx.Model(&models.SweepJob{}).Where("id = ?", id).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.First(&job, "id = ?", id).Error; err != nil {
+			return err
+		}
+		return recordSweepLifecycleOccurrenceWithDB(ctx, tx, eventType, job, nil, job.LastError)
+	})
+}
+
+func sweepRecoveryIsCurrent(job models.SweepJob) bool {
+	return job.RecoveredAt != nil && !job.UpdatedAt.After(*job.RecoveredAt)
+}
+
+func sweepRecoveryMatches(job models.SweepJob, action, note, txHash string, retryAt *time.Time) bool {
+	if job.RecoveryAction != action || job.OperatorNote != note {
+		return false
 	}
 	switch action {
 	case models.SweepRecoveryActionRetry:
-		if retryAt == nil {
-			retry := now
-			retryAt = &retry
+		if job.Status != models.SweepJobStatusFailed || job.NextRunAt == nil {
+			return false
 		}
-		updates["status"] = models.SweepJobStatusFailed
-		updates["next_run_at"] = retryAt
-		updates["operator_action"] = ""
+		return retryAt == nil || sweepRecoveryTimesEqual(*job.NextRunAt, *retryAt)
 	case models.SweepRecoveryActionMarkSuccess:
-		if txHash == "" {
-			return ErrSweepJobTxHashRequired
-		}
-		updates["status"] = models.SweepJobStatusSucceeded
-		updates["sweep_tx_hash"] = txHash
-		updates["next_run_at"] = nil
-		updates["operator_action"] = ""
-		updates["last_error"] = ""
-		updates["failure_category"] = ""
+		return job.Status == models.SweepJobStatusSucceeded && job.SweepTxHash == txHash
 	case models.SweepRecoveryActionPreserveHold, models.SweepRecoveryActionReleaseHold:
-		updates["status"] = models.SweepJobStatusDeadLetter
-		updates["next_run_at"] = nil
+		return job.Status == models.SweepJobStatusDeadLetter
 	default:
-		return ErrSweepRecoveryAction
+		return false
 	}
-	result := r.db.WithContext(ctx).
-		Model(&models.SweepJob{}).
-		Where("id = ?", id).
-		Where("status IN ?", []string{models.SweepJobStatusFailed, models.SweepJobStatusDeadLetter}).
-		Updates(updates)
-	if result.Error != nil {
-		return result.Error
+}
+
+func sweepRecoveryTimesEqual(left, right time.Time) bool {
+	delta := left.Sub(right)
+	if delta < 0 {
+		delta = -delta
 	}
-	if result.RowsAffected == 0 {
-		return ErrSweepJobStateConflict
-	}
-	return nil
+	// PostgreSQL timestamps have microsecond precision while callers commonly
+	// retain nanoseconds. Treat the same persisted retry instant as idempotent.
+	return delta < time.Microsecond
 }
 
 func (r *SweepJobRepo) Find(ctx context.Context, id uuid.UUID) (*models.SweepJob, error) {
@@ -572,6 +737,105 @@ func (r *SweepJobRepo) EnqueueMissingFinalizedTransactions(ctx context.Context, 
 		}
 	}
 	return created, nil
+}
+
+func canonicalSweepSourceForRevival(ctx context.Context, tx *gorm.DB, supplied models.Transaction) (models.Transaction, bool, error) {
+	if tx == nil {
+		return models.Transaction{}, false, gorm.ErrInvalidDB
+	}
+	source := supplied
+	if tx.Migrator().HasTable(&models.Transaction{}) {
+		err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&source, "unique_hash = ?", supplied.UniqueHash).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return source, false, nil
+		}
+		if err != nil {
+			return models.Transaction{}, false, err
+		}
+	}
+	canonical := source.Status == models.TransactionStatusConfirmed && source.FinalizedAt != nil && source.ReorgedAt == nil
+	return source, canonical, nil
+}
+
+func recordSweepLifecycleWithDB(ctx context.Context, tx *gorm.DB, eventType string, job models.SweepJob, txModel *models.Transaction, errText string) error {
+	return recordSweepLifecycleEventWithDB(ctx, tx, eventType, job, txModel, errText, false)
+}
+
+func recordSweepLifecycleOccurrenceWithDB(ctx context.Context, tx *gorm.DB, eventType string, job models.SweepJob, txModel *models.Transaction, errText string) error {
+	return recordSweepLifecycleEventWithDB(ctx, tx, eventType, job, txModel, errText, true)
+}
+
+func recordSweepLifecycleEventWithDB(ctx context.Context, tx *gorm.DB, eventType string, job models.SweepJob, txModel *models.Transaction, errText string, allowRepeat bool) error {
+	if tx == nil || job.ID == uuid.Nil {
+		return gorm.ErrInvalidDB
+	}
+	var source models.Transaction
+	if txModel != nil {
+		source = *txModel
+	} else {
+		if !tx.Migrator().HasTable(&models.Transaction{}) {
+			return nil
+		}
+		if err := tx.WithContext(ctx).First(&source, "unique_hash = ?", job.TransactionUniqueHash).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				// A broken legacy job can still be moved to a safe failed state even
+				// when its source transaction has already been removed. There is no
+				// domain scope in that case, so no merchant event can be constructed.
+				return nil
+			}
+			return err
+		}
+	}
+	if source.MerchantID == nil || source.DomainID == nil || *source.MerchantID == uuid.Nil || *source.DomainID == uuid.Nil {
+		return nil
+	}
+	payload := webhooksvc.NewSweepPayload(eventType, job, &source, errText)
+	var existing int64
+	if err := tx.WithContext(ctx).
+		Model(&models.MoneyEventOutbox{}).
+		Where("event_id = ?", payload.EventID).
+		Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 && !allowRepeat {
+		return nil
+	}
+	if existing == 0 {
+		_, _, err := NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, payload)
+		return err
+	}
+
+	// A sweep job can legitimately traverse the same lifecycle state again
+	// after a reorg or operator recovery. Keep the first public identity stable,
+	// then append immutable occurrence identities so a later transition cannot
+	// disappear behind the first event's idempotency key. Every caller holds the
+	// sweep job row lock, which serializes this generation assignment.
+	var occurrence int64
+	if err := tx.WithContext(ctx).
+		Model(&models.MoneyEventOutbox{}).
+		Where("aggregate_type = ? AND aggregate_id = ? AND event_type = ?", webhooksvc.EntityTypeSweep, job.ID.String(), eventType).
+		Count(&occurrence).Error; err != nil {
+		return err
+	}
+	payload.EventID = fmt.Sprintf("%s:occurrence:%d", payload.EventID, occurrence+1)
+	payload.IdempotencyKey = payload.EventID
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventType,
+		EventID:        payload.EventID,
+		AggregateType:  webhooksvc.EntityTypeSweep,
+		AggregateID:    job.ID.String(),
+		MerchantID:     *source.MerchantID,
+		DomainID:       *source.DomainID,
+		IdempotencyKey: payload.EventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
 }
 
 func sweepJobErrorText(err error, fallback string) string {

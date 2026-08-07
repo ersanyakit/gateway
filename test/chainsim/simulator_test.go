@@ -19,7 +19,7 @@ func TestSimulatorBuildsDeterministicChainFacts(t *testing.T) {
 	}{
 		{name: "evm-token", chainID: constants.Ethereum, token: "0xToken", symbol: "USDC", logIndex: "log:7", wantID: "1:0xtx:log:7"},
 		{name: "bitcoin-native", chainID: constants.Bitcoin, symbol: "BTC", logIndex: "vout:1", wantID: "0:btctx:vout:1"},
-		{name: "solana-native", chainID: constants.Solana, symbol: "SOL", logIndex: "ix:2", wantID: "99999999:soltx:ix:2"},
+		{name: "solana-native", chainID: constants.Solana, symbol: "SOL", logIndex: "ix:2", wantID: "99999999:solTx:ix:2"},
 		{name: "tron-token", chainID: constants.TRON, token: "TRC20Token", symbol: "USDT", logIndex: "log:3", wantID: "99999998:trontx:log:3"},
 	}
 

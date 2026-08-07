@@ -543,6 +543,20 @@ func handleChainIndexerEvent(ctx context.Context, event dispatcher.Event) error 
 	return err
 }
 
+func runChainEventHandlerSafely(handler func() error) (err error) {
+	if handler == nil {
+		return errors.New("chain event handler is not configured")
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Keep the consumer alive without serializing a potentially sensitive
+			// panic payload into logs or durable error evidence.
+			err = fmt.Errorf("chain event handler panic (%T)", recovered)
+		}
+	}()
+	return handler()
+}
+
 type chainFactAddressOwnershipLookup func(context.Context, constants.ChainID, string) (bool, error)
 
 func chainFactAssetSupported(registry *asset.Registry, eventType string, txParam types.TransactionParam) (bool, error) {
@@ -792,9 +806,6 @@ func processDepositFacts(ctx context.Context) {
 		LedgerRepo:          router.LedgerRepo,
 		SweepJobRepo:        router.SweepJobRepo,
 		MoneyEventInboxRepo: router.MoneyEventInboxRepo,
-		SweepLifecycleEnqueue: func(ctx context.Context, job models.SweepJob, txModel *models.Transaction, eventType string, errText string) {
-			enqueueSweepLifecycleWebhook(ctx, job, txModel, eventType, errText)
-		},
 	}, chainConfirmationRequirement)
 	summary, err := service.ProcessBatch(ctx, 200)
 	if err != nil {
@@ -1292,6 +1303,16 @@ func handlePaymentDeposit(ctx context.Context, notifier *webhooksvc.Notifier, tx
 	if session.WebhookSentAt != nil {
 		return
 	}
+	if coreApplication.CORE.Router.MoneyEventOutboxRepo != nil {
+		ownedByOutbox, err := coreApplication.CORE.Router.MoneyEventOutboxRepo.HasAggregateEvent(ctx, "payment", session.ID.String(), session.WebhookEvent)
+		if err != nil {
+			log.Printf("Payment webhook canonical outbox lookup payment_id=%s error=%v\n", session.ID, err)
+			return
+		}
+		if ownedByOutbox {
+			return
+		}
+	}
 
 	createPaymentWebhookDelivery(ctx, session.Domain, *session)
 }
@@ -1354,6 +1375,31 @@ func enqueueLifecycleWebhook(ctx context.Context, domain models.Domain, payload 
 	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
 		return uuid.Nil
 	}
+	if outbox := coreApplication.CORE.Router.MoneyEventOutboxRepo; outbox != nil {
+		event, findErr := outbox.FindByEventID(ctx, payload.EventID)
+		switch {
+		case findErr == nil:
+			// The canonical outbox is already the durable success boundary. Only its
+			// ordered relay may create the delivery row; bypassing that relay here can
+			// assign a later lifecycle event a lower delivery sequence after a crash.
+			return event.ID
+		case !errors.Is(findErr, gorm.ErrRecordNotFound):
+			log.Printf("Lifecycle canonical outbox lookup error event=%s id=%s: %v\n", payload.EventType, payload.EventID, findErr)
+			return uuid.Nil
+		}
+		ownedByOutbox, ownershipErr := outbox.HasAggregate(ctx, payload.EntityType, payload.EntityID)
+		if ownershipErr != nil {
+			log.Printf("Lifecycle canonical aggregate lookup error event=%s id=%s aggregate=%s/%s: %v\n", payload.EventType, payload.EventID, payload.EntityType, payload.EntityID, ownershipErr)
+			return uuid.Nil
+		}
+		if ownedByOutbox {
+			// A missing event inside an aggregate already owned by the canonical
+			// outbox is a producer/reconciliation defect. Direct enqueue here could
+			// leapfrog an earlier sequence, so fail closed and leave an operator-visible log.
+			log.Printf("Lifecycle canonical event missing; direct enqueue blocked for reconciliation event=%s id=%s aggregate=%s/%s\n", payload.EventType, payload.EventID, payload.EntityType, payload.EntityID)
+			return uuid.Nil
+		}
+	}
 	delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
 	if err != nil {
 		log.Printf("Lifecycle webhook enqueue error event=%s id=%s: %v\n", payload.EventType, payload.EventID, err)
@@ -1412,11 +1458,11 @@ func enqueueRefundLifecycleWebhook(ctx context.Context, refund models.Refund, ev
 	return enqueueLifecycleWebhook(ctx, *domain, payload)
 }
 
-func markWebhookDeliveryAttempt(ctx context.Context, deliveryID uuid.UUID, delivered bool, lastErr error) {
-	if deliveryID == uuid.Nil || coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
+func markWebhookDeliveryAttempt(ctx context.Context, deliveryID, leaseToken uuid.UUID, delivered bool, lastErr error) {
+	if deliveryID == uuid.Nil || leaseToken == uuid.Nil || coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil {
 		return
 	}
-	if err := coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, delivered, lastErr); err != nil {
+	if err := coreApplication.CORE.Router.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, leaseToken, delivered, lastErr); err != nil {
 		log.Println("Webhook delivery log update error:", err)
 	}
 }
@@ -1479,9 +1525,6 @@ func paymentRealtimeBroadcastEvent(session *models.PaymentSession) realtime.Paym
 }
 
 func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
-	bridgePendingTransactionWebhookDeliveries(ctx)
-	bridgePendingPaymentWebhookDeliveries(ctx)
-
 	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.DomainRepo == nil || notifier == nil {
 		return
 	}
@@ -1492,16 +1535,34 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 	defer releaseLease(nil)
 
 	router := coreApplication.CORE.Router
+	domainLookup := func(ctx context.Context, id uuid.UUID) (*models.Domain, error) {
+		idString := id.String()
+		return router.DomainRepo.FindByID(types.DomainParams{
+			Context:  ctx,
+			DomainID: &idString,
+		})
+	}
+	if router.MoneyEventOutboxRepo != nil {
+		relay := webhooksvc.MoneyEventRelay{
+			Queue:      router.MoneyEventOutboxRepo,
+			Deliveries: router.WebhookDeliveryRepo,
+			Domains: webhookDomainLookupAdapter{
+				find: domainLookup,
+			},
+		}
+		summary, err := relay.RunOnce(ctx, 100)
+		if err != nil {
+			log.Printf("Money event outbox relay error: %v\n", err)
+		}
+		if summary.Claimed > 0 {
+			log.Printf("Money event outbox relayed=%d failed=%d claimed=%d\n", summary.Relayed, summary.Failed, summary.Claimed)
+		}
+	}
+
 	processor := webhooksvc.DeliveryProcessor{
 		DeliveryRepo: router.WebhookDeliveryRepo,
 		Notifier:     notifier,
-		DomainLookup: func(ctx context.Context, id uuid.UUID) (*models.Domain, error) {
-			idString := id.String()
-			return router.DomainRepo.FindByID(types.DomainParams{
-				Context:  ctx,
-				DomainID: &idString,
-			})
-		},
+		DomainLookup: domainLookup,
 	}
 	if router.TransactionRepo != nil {
 		processor.TransactionLookup = router.TransactionRepo.FindByID
@@ -1511,18 +1572,76 @@ func retryPendingWebhooks(ctx context.Context, notifier *webhooksvc.Notifier) {
 		processor.PaymentLookup = router.PaymentRepo.FindByID
 		processor.MarkPaymentAttempt = router.PaymentRepo.MarkWebhookAttempt
 	}
-	summary, err := processor.ProcessDue(ctx, 100)
+	summary, err := processPendingWebhookDeliveries(ctx, processor, 100)
 	if err != nil {
 		log.Println("Webhook boundary delivery error:", err)
-		return
-	}
-	if summary.Claimed > 0 {
+	} else if summary.Claimed > 0 {
 		log.Printf("Webhook boundary delivered=%d failed=%d claimed=%d\n", summary.Delivered, summary.Failed, summary.Claimed)
+	}
+
+	// Legacy transaction/payment rows remain a compatibility source for events
+	// that do not yet have a canonical money-event outbox producer. Running this
+	// bridge after the canonical relay prevents a newly relayed payment from
+	// racing a second delivery row in the same worker cycle.
+	bridgePendingTransactionWebhookDeliveries(ctx)
+	bridgePendingPaymentWebhookDeliveries(ctx)
+	bridgedSummary, bridgeErr := processPendingWebhookDeliveries(ctx, processor, 100)
+	if bridgeErr != nil {
+		log.Println("Bridged webhook boundary delivery error:", bridgeErr)
+	} else if bridgedSummary.Claimed > 0 {
+		log.Printf("Bridged webhook boundary delivered=%d failed=%d claimed=%d\n", bridgedSummary.Delivered, bridgedSummary.Failed, bridgedSummary.Claimed)
 	}
 }
 
+// processPendingWebhookDeliveries deliberately claims only a lease-safe number
+// of rows at once. DeliveryBoundary sends rows serially with a 20-second
+// per-destination timeout; claiming a large batch would let the final rows'
+// default two-minute leases expire before they are attempted. Repeating small
+// batches keeps throughput bounded by maxRows without exposing pre-claimed work
+// to another worker.
+func processPendingWebhookDeliveries(ctx context.Context, processor webhooksvc.DeliveryProcessor, maxRows int) (webhooksvc.DeliveryProcessorStats, error) {
+	const leaseSafeBatchSize = 5
+	if maxRows <= 0 {
+		maxRows = leaseSafeBatchSize
+	}
+
+	var total webhooksvc.DeliveryProcessorStats
+	for total.Claimed < maxRows {
+		batchSize := leaseSafeBatchSize
+		if remaining := maxRows - total.Claimed; remaining < batchSize {
+			batchSize = remaining
+		}
+		summary, err := processor.ProcessDue(ctx, batchSize)
+		total.Claimed += summary.Claimed
+		total.Delivered += summary.Delivered
+		total.Failed += summary.Failed
+		if err != nil {
+			return total, err
+		}
+		if summary.Claimed < batchSize {
+			break
+		}
+	}
+	return total, nil
+}
+
+type webhookDomainLookupAdapter struct {
+	find func(context.Context, uuid.UUID) (*models.Domain, error)
+}
+
+func (a webhookDomainLookupAdapter) FindByID(params types.DomainParams) (*models.Domain, error) {
+	if a.find == nil || params.DomainID == nil {
+		return nil, errors.New("webhook domain lookup is not configured")
+	}
+	id, err := uuid.Parse(*params.DomainID)
+	if err != nil {
+		return nil, err
+	}
+	return a.find(params.Context, id)
+}
+
 func bridgePendingTransactionWebhookDeliveries(ctx context.Context) {
-	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.TransactionRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.WalletRepo == nil {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.TransactionRepo == nil || coreApplication.CORE.Router.WebhookDeliveryRepo == nil || coreApplication.CORE.Router.DomainRepo == nil {
 		return
 	}
 	transactions, err := coreApplication.CORE.Router.TransactionRepo.ListPendingWebhooks(ctx, 100)
@@ -1532,20 +1651,46 @@ func bridgePendingTransactionWebhookDeliveries(ctx context.Context) {
 	}
 
 	for _, txModel := range transactions {
-		if txModel.WalletID == nil || txModel.WebhookSentAt != nil {
+		if txModel.DomainID == nil || txModel.WebhookSentAt != nil {
 			continue
 		}
-
-		wallet, err := coreApplication.CORE.Router.WalletRepo.FindByID(ctx, *txModel.WalletID)
-		if err != nil {
-			log.Println("Webhook wallet lookup error:", err)
-			if markErr := coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, false, err); markErr != nil {
-				log.Printf("Webhook transaction attempt update hash=%s error=%v\n", txModel.UniqueHash, markErr)
+		if coreApplication.CORE.Router.MoneyEventOutboxRepo != nil {
+			ownedByOutbox, err := coreApplication.CORE.Router.MoneyEventOutboxRepo.HasAggregate(ctx, "transaction", txModel.ID.String())
+			if err != nil {
+				// Fail closed: a transient canonical-outbox lookup must not create
+				// a parallel legacy delivery for the same lifecycle event.
+				log.Printf("Transaction webhook bridge outbox lookup transaction_id=%s error=%v\n", txModel.ID, err)
+				continue
 			}
+			if ownedByOutbox {
+				continue
+			}
+		}
+
+		domainID := txModel.DomainID.String()
+		domain, err := coreApplication.CORE.Router.DomainRepo.FindByID(types.DomainParams{Context: ctx, DomainID: &domainID})
+		if err != nil {
+			// This failure happened before durable delivery enqueueing. Do not
+			// consume the external delivery retry budget; the next bridge cycle
+			// must be able to recover after a transient database/config issue.
+			log.Printf("Transaction webhook bridge domain lookup domain_id=%s hash=%s error=%v\n", domainID, txModel.UniqueHash, err)
+			continue
+		}
+		if domain == nil {
+			log.Printf("Transaction webhook bridge domain lookup domain_id=%s hash=%s returned nil\n", domainID, txModel.UniqueHash)
 			continue
 		}
 
-		createTransactionWebhookDelivery(ctx, wallet.Domain, txModel)
+		delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueueTransaction(ctx, *domain, txModel)
+		if err != nil {
+			log.Printf("Transaction webhook bridge enqueue hash=%s error=%v\n", txModel.UniqueHash, err)
+			continue
+		}
+		if delivery != nil && delivery.Status == models.WebhookDeliveryStatusSucceeded {
+			if err := coreApplication.CORE.Router.TransactionRepo.MarkWebhookAttempt(ctx, txModel.UniqueHash, true, nil); err != nil {
+				log.Printf("Transaction webhook bridge source repair hash=%s error=%v\n", txModel.UniqueHash, err)
+			}
+		}
 	}
 }
 
@@ -1559,7 +1704,42 @@ func bridgePendingPaymentWebhookDeliveries(ctx context.Context) {
 		return
 	}
 	for _, session := range sessions {
-		createPaymentWebhookDelivery(ctx, session.Domain, session)
+		exists, succeeded, err := coreApplication.CORE.Router.WebhookDeliveryRepo.HasPaymentDeliveryForEvent(ctx, session.ID, session.WebhookEvent)
+		if err != nil {
+			log.Printf("Payment webhook bridge delivery lookup payment_id=%s error=%v\n", session.ID, err)
+			continue
+		}
+		if succeeded {
+			if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
+				log.Printf("Payment webhook bridge source repair payment_id=%s error=%v\n", session.ID, err)
+			}
+			continue
+		}
+		if exists {
+			continue
+		}
+		if coreApplication.CORE.Router.MoneyEventOutboxRepo != nil {
+			ownedByOutbox, err := coreApplication.CORE.Router.MoneyEventOutboxRepo.HasAggregateEvent(ctx, "payment", session.ID.String(), session.WebhookEvent)
+			if err != nil {
+				// Fail closed: a transient outbox lookup must not create a parallel
+				// legacy delivery that later duplicates the canonical event.
+				log.Printf("Payment webhook bridge outbox lookup payment_id=%s error=%v\n", session.ID, err)
+				continue
+			}
+			if ownedByOutbox {
+				continue
+			}
+		}
+		delivery, _, err := coreApplication.CORE.Router.WebhookDeliveryRepo.EnqueuePayment(ctx, session.Domain, session)
+		if err != nil {
+			log.Printf("Payment webhook bridge enqueue payment_id=%s error=%v\n", session.ID, err)
+			continue
+		}
+		if delivery != nil && delivery.Status == models.WebhookDeliveryStatusSucceeded {
+			if err := coreApplication.CORE.Router.PaymentRepo.MarkWebhookAttempt(ctx, session.ID, true, nil); err != nil {
+				log.Printf("Payment webhook bridge source repair payment_id=%s error=%v\n", session.ID, err)
+			}
+		}
 	}
 }
 
@@ -1603,39 +1783,43 @@ func bootstrapAdminAccount(ctx context.Context) {
 	}
 }
 
-func backfillMissingAddresses(ctx context.Context) {
-	lookupBackfilled, lookupErr := repositories.NewWalletAddressLookupRepo(coreApplication.CORE.DB).BackfillWallets(ctx, 500)
-	if lookupErr != nil {
-		log.Printf("Backfill: wallet address lookup error: %v\n", lookupErr)
-	} else if lookupBackfilled > 0 {
-		log.Printf("Backfill: wallet address lookup rows ensured for %d wallets\n", lookupBackfilled)
+func backfillMissingAddresses(ctx context.Context) error {
+	if coreApplication.CORE == nil || coreApplication.CORE.Router == nil || coreApplication.CORE.Router.WalletRepo == nil {
+		return errors.New("wallet repository is not configured")
+	}
+	walletRepo := coreApplication.CORE.Router.WalletRepo
+	if walletRepo.DB() == nil || coreApplication.CORE.Router.Blockchains() == nil {
+		return errors.New("wallet address backfill dependencies are not configured")
 	}
 
-	wallets, err := coreApplication.CORE.Router.WalletRepo.List(ctx, 10000)
+	ensured := 0
+	var wallets []models.Wallet
+	if err := walletRepo.DB().WithContext(ctx).
+		Select("id").
+		Order("id ASC").
+		FindInBatches(&wallets, 200, func(_ *gorm.DB, _ int) error {
+			for _, wallet := range wallets {
+				if err := walletRepo.EnsureAllAddresses(ctx, wallet.ID, coreApplication.CORE.Router.Blockchains()); err != nil {
+					return fmt.Errorf("ensure wallet %s addresses: %w", wallet.ID, err)
+				}
+				ensured++
+			}
+			return nil
+		}).Error; err != nil {
+		return err
+	}
+	if ensured > 0 {
+		log.Printf("Backfill: ensured addresses for %d wallets\n", ensured)
+	}
+
+	lookupBackfilled, err := repositories.NewWalletAddressLookupRepo(coreApplication.CORE.DB).BackfillWallets(ctx, 500)
 	if err != nil {
-		log.Printf("Backfill: wallet list error: %v\n", err)
-		return
+		return fmt.Errorf("backfill wallet address lookup rows: %w", err)
 	}
-	filled := 0
-	for _, wallet := range wallets {
-		if err := coreApplication.CORE.Router.WalletRepo.EnsureAllAddresses(
-			ctx,
-			wallet.ID,
-			coreApplication.CORE.Router.Blockchains(),
-		); err != nil {
-			log.Printf("Backfill: wallet %s error: %v\n", wallet.ID, err)
-		} else {
-			filled++
-		}
+	if lookupBackfilled > 0 {
+		log.Printf("Backfill: wallet address lookup rows ensured for %d wallets\n", lookupBackfilled)
 	}
-	if filled > 0 {
-		log.Printf("Backfill: ensured addresses for %d wallets\n", filled)
-	}
-	if filled > 0 || lookupBackfilled > 0 {
-		if err := addrIndex.Load(); err != nil {
-			log.Printf("Backfill: address index reload error: %v\n", err)
-		}
-	}
+	return nil
 }
 
 func startSessionExpiryWorker(ctx context.Context) {
@@ -1657,6 +1841,7 @@ func startSessionExpiryWorker(ctx context.Context) {
 }
 
 func startWebhookRetryWorker(ctx context.Context, notifier *webhooksvc.Notifier) {
+	retryPendingWebhooks(ctx, notifier)
 	ticker := time.NewTicker(webhookRetryInterval())
 	defer ticker.Stop()
 
@@ -2400,7 +2585,8 @@ func startTransferFinalizationWorker(ctx context.Context) {
 	}
 }
 
-func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, verboseTxLogging bool) {
+func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, verboseTxLogging bool) error {
+	var startupErrors []error
 	logStartupTask("ChainInfra", func() {
 		deletedChainStates, err := coreApplication.CORE.Router.ChainStateRepo.DeleteUnsupported(
 			ctx,
@@ -2408,13 +2594,14 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 		)
 		if err != nil {
 			log.Printf("Startup:ChainInfra: delete unsupported chain states error: %v\n", err)
+			startupErrors = append(startupErrors, fmt.Errorf("delete unsupported chain states: %w", err))
 		} else if deletedChainStates > 0 {
 			log.Printf("Deleted %d unsupported chain state rows\n", deletedChainStates)
 		}
 
 		subscribeBus := func(chain blockchain.Chain) {
 			events := bus.Subscribe(chain.ChainID(), 1000)
-			coreHelpers.GoSafely("chain-event-consumer."+chain.Name(), func() {
+			coreHelpers.GoSafelyRestarting("chain-event-consumer."+chain.Name(), ctx.Done(), time.Second, func() {
 				for {
 					select {
 					case <-ctx.Done():
@@ -2447,7 +2634,9 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 							)
 						}
 
-						err := handleChainIndexerEvent(ctx, event)
+						err := runChainEventHandlerSafely(func() error {
+							return handleChainIndexerEvent(ctx, event)
+						})
 						if err != nil {
 							log.Printf("Chain fact record error: %v\n", err)
 						}
@@ -2463,12 +2652,14 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 			chain, err := coreApplication.CORE.Router.MerchantRepo.Blockchains().GetChain(chainName)
 			if err != nil {
 				log.Printf("[%s] chain not found: %v\n", chainName, err)
+				startupErrors = append(startupErrors, fmt.Errorf("chain %s lookup: %w", chainName, err))
 				continue
 			}
 
 			state, err := coreApplication.CORE.Router.ChainStateRepo.Get(ctx, chain.ChainID())
 			if err != nil {
 				log.Printf("[%s] chain state error: %v\n", chainName, err)
+				startupErrors = append(startupErrors, fmt.Errorf("chain %s state: %w", chainName, err))
 				continue
 			}
 
@@ -2505,7 +2696,7 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 					},
 				)
 			default:
-				listener := evmListener.NewRpcListener(
+				worker = evmListener.NewRpcListener(
 					chain,
 					coreApplication.CORE.Router.AssetRegistry(),
 					state,
@@ -2514,14 +2705,19 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 						return coreApplication.CORE.Router.ChainStateRepo.Update(ctx, s)
 					},
 				)
-				if coreApplication.CORE.Router.TransactionRepo != nil {
-					listener.SetCanonicalBlockObserver(coreApplication.CORE.Router.TransactionRepo.ObserveCanonicalBlock)
+			}
+
+			if coreApplication.CORE.Router.TransactionRepo != nil {
+				if observerAware, ok := worker.(interface {
+					SetCanonicalBlockObserver(func(context.Context, constants.ChainID, int64, string, string) error)
+				}); ok {
+					observerAware.SetCanonicalBlockObserver(coreApplication.CORE.Router.TransactionRepo.ObserveCanonicalBlock)
 				}
-				worker = listener
 			}
 
 			if err := chain.AddWorker(worker); err != nil {
 				log.Printf("[%s] add worker error: %v\n", chain.Name(), err)
+				startupErrors = append(startupErrors, fmt.Errorf("chain %s add worker: %w", chain.Name(), err))
 				continue
 			}
 			subscribeBus(chain)
@@ -2529,8 +2725,10 @@ func startChainInfrastructure(ctx context.Context, bus *dispatcher.Dispatcher, v
 
 		for chainName, startErr := range coreApplication.CORE.Router.Blockchains().StartAllWorkers(ctx) {
 			log.Printf("[%s] worker start error: %v\n", chainName, startErr)
+			startupErrors = append(startupErrors, fmt.Errorf("chain %s worker start: %w", chainName, startErr))
 		}
 	})
+	return errors.Join(startupErrors...)
 }
 
 func NewApp() (*coreApplication.App, error) {
@@ -2641,17 +2839,31 @@ func main() {
 	}
 	addrIndex = addressindex.NewAddressIndex(mainCtx, coreDB.DB)
 	coreApplication.CORE.Router.WalletRepo.SetAddressObserver(addrIndex.AddWallet)
+	var addressBackfillErr error
+	logStartupTask("AddressBackfill", func() {
+		addressBackfillErr = backfillMissingAddresses(mainCtx)
+	})
+	if addressBackfillErr != nil {
+		log.Fatalf("Address backfill failed; refusing to serve without complete chain ownership data: %v", addressBackfillErr)
+	}
+	var addressIndexErr error
 	logStartupTask("AddressIndexLoad", func() {
 		if err := addrIndex.Load(); err != nil {
-			log.Printf("Address index load error; chain listeners will remain stopped: %v\n", err)
+			addressIndexErr = err
 			return
 		}
 		if !addrIndex.Ready() {
-			log.Printf("Address index is incomplete; chain listeners will remain stopped. Remove ADDRESS_INDEX_PRELOAD_LIMIT or leave it unset.\n")
+			addressIndexErr = errors.New("address index is incomplete; remove ADDRESS_INDEX_PRELOAD_LIMIT or leave it unset")
 			return
 		}
 		log.Println("Address index loaded")
 	})
+	if addressIndexErr != nil {
+		log.Fatalf("Address index unavailable; refusing to serve without chain listeners: %v", addressIndexErr)
+	}
+	if err := startChainInfrastructure(mainCtx, bus, verboseTxLogging); err != nil {
+		log.Fatalf("Chain infrastructure failed; refusing to serve without all configured listeners: %v", err)
+	}
 	ensureGatewayWorkerLeaseRows(mainCtx)
 	if err := compositionRoot.WorkerSupervisor.Start(mainCtx); err != nil {
 		log.Fatal(err)
@@ -2672,23 +2884,12 @@ func main() {
 		serverErr <- listenErr
 	})
 
-	coreHelpers.GoSafely("startup.address-backfill", func() {
-		backfillMissingAddresses(mainCtx)
-	})
 	if appEnvIsProduction() && strings.TrimSpace(os.Getenv("ADMIN_PASSWORD")) == "" {
 		log.Fatal("ADMIN_PASSWORD must be set in production before bootstrapping admin account")
 	}
 	coreHelpers.GoSafely("startup.bootstrap-admin", func() {
 		bootstrapAdminAccount(mainCtx)
 	})
-	coreHelpers.GoSafely("startup.chain-infrastructure", func() {
-		if addrIndex == nil || !addrIndex.Ready() {
-			log.Printf("Chain infrastructure not started: complete wallet address index is unavailable.\n")
-			return
-		}
-		startChainInfrastructure(mainCtx, bus, verboseTxLogging)
-	})
-
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(c)

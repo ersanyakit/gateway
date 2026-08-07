@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -32,6 +33,32 @@ func TestRunSafelyRecoversAndLogsStack(t *testing.T) {
 		!strings.Contains(logged, "worker failed") ||
 		!strings.Contains(logged, "goroutine") {
 		t.Fatalf("panic log is incomplete: %q", logged)
+	}
+}
+
+func TestGoSafelyRestartingRecoversAndRunsAgainUntilStopped(t *testing.T) {
+	stop := make(chan struct{})
+	restarted := make(chan struct{}, 1)
+	var runs atomic.Int32
+	GoSafelyRestarting("restart-test", stop, time.Millisecond, func() {
+		if runs.Add(1) == 1 {
+			panic("restart me")
+		}
+		select {
+		case restarted <- struct{}{}:
+		default:
+		}
+		<-stop
+	})
+	select {
+	case <-restarted:
+		close(stop)
+	case <-time.After(time.Second):
+		close(stop)
+		t.Fatal("restarting goroutine did not run again")
+	}
+	if runs.Load() < 2 {
+		t.Fatalf("runs = %d, want at least 2", runs.Load())
 	}
 }
 

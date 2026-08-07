@@ -2,14 +2,18 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"core/constants"
 	"core/helpers"
 	"core/models"
+	webhooksvc "core/services/webhook"
 	"core/types"
 
 	"github.com/google/uuid"
@@ -288,9 +292,11 @@ func TestTransactionRepoReorgsFinalizedTransactionWhenBlockIdentityChanges(t *te
 		&models.ChainFact{},
 		&models.Deposit{},
 		&models.LedgerEntry{},
+		&models.LedgerBalanceProjection{},
 		&models.PaymentSession{},
 		&models.PaymentDepositAllocation{},
 		&models.SweepJob{},
+		&models.MoneyEventOutbox{},
 		&models.ReconciliationJob{},
 	); err != nil {
 		t.Fatalf("automigrate reorg identity models: %v", err)
@@ -305,6 +311,15 @@ func TestTransactionRepoReorgsFinalizedTransactionWhenBlockIdentityChanges(t *te
 	if err := db.WithContext(ctx).Create(&oldTx).Error; err != nil {
 		t.Fatalf("seed finalized transaction: %v", err)
 	}
+	credit := testLedgerEntryWithType("identity-original-credit:"+uuid.NewString(), merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositAvailable, models.LedgerAccountMerchantAvailable, models.LedgerDirectionCredit, models.LedgerStatusPosted, oldTx.Amount)
+	debit := testLedgerEntryWithType("identity-original-debit:"+uuid.NewString(), merchantID, &domainID, &walletID, models.LedgerEntryTypeDepositAvailable, models.LedgerAccountPlatformClearing, models.LedgerDirectionDebit, models.LedgerStatusPosted, oldTx.Amount)
+	for _, entry := range []*models.LedgerEntry{&credit, &debit} {
+		entry.TransactionUniqueHash = oldTx.UniqueHash
+		entry.TransactionHash = oldTx.Hash
+	}
+	if err := db.WithContext(ctx).Create(&[]models.LedgerEntry{credit, debit}).Error; err != nil {
+		t.Fatalf("seed finalized transaction ledger: %v", err)
+	}
 
 	reappeared := types.TransactionParam{
 		Context:   ctx,
@@ -318,6 +333,7 @@ func TestTransactionRepoReorgsFinalizedTransactionWhenBlockIdentityChanges(t *te
 		Decimals:  oldTx.Decimals,
 		Amount:    helpers.StrPtr(oldTx.Amount),
 		LogIndex:  helpers.StrPtr("0"),
+		Status:    helpers.StrPtr(models.TransactionStatusConfirmed),
 	}
 	if err := NewTransactionRepo(db).Create(reappeared); err != nil {
 		t.Fatalf("create reappeared transaction: %v", err)
@@ -327,13 +343,37 @@ func TestTransactionRepoReorgsFinalizedTransactionWhenBlockIdentityChanges(t *te
 	if err := db.WithContext(ctx).First(&corrected, "id = ?", oldTx.ID).Error; err != nil {
 		t.Fatalf("load corrected transaction: %v", err)
 	}
-	if corrected.Status != models.TransactionStatusReorged || corrected.EventType != constants.WebhookEventTransactionReorged {
+	if corrected.Status != models.TransactionStatusPendingConfirmation {
 		t.Fatalf("corrected transaction status/event = %q/%q", corrected.Status, corrected.EventType)
 	}
-	if corrected.ReorgedAt == nil || !strings.HasPrefix(corrected.CorrectionReason, "tx_block_identity_changed:") {
+	if corrected.FinalizedAt != nil || corrected.ReorgedAt != nil || corrected.BlockNumber != "101" || corrected.BlockHash != "0xnew-identity-block" ||
+		!strings.HasPrefix(corrected.CorrectionReason, transactionReappearanceMarkerPrefix) {
 		t.Fatalf("correction metadata = %#v", corrected)
 	}
 	requireTransactionRepoCount(t, db, &models.ReconciliationJob{}, "chain_id = ? AND from_block = ? AND to_block = ?", []any{constants.Ethereum, int64(100), int64(100)}, 1)
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ? AND event_type = ?", []any{oldTx.ID.String(), constants.WebhookEventTransactionReorged}, 1)
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ? AND event_type = ?", []any{oldTx.ID.String(), constants.WebhookEventTransactionRestored}, 0)
+	requireTransactionRepoCount(t, db, &models.LedgerEntry{}, "transaction_unique_hash = ? AND description LIKE ?", []any{oldTx.UniqueHash, "Canonical reappearance restoration%"}, 0)
+
+	finalized, err := NewTransactionRepo(db).MarkFinality(ctx, oldTx.UniqueHash, 12, 12, true)
+	if err != nil {
+		t.Fatalf("finalize reappeared transaction: %v", err)
+	}
+	if finalized.Status != models.TransactionStatusConfirmed || finalized.FinalizedAt == nil || finalized.EventType != constants.WebhookEventTransactionRestored {
+		t.Fatalf("finalized reappearance = %#v", finalized)
+	}
+	firstFinalizedAt := *finalized.FinalizedAt
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ? AND event_type = ?", []any{oldTx.ID.String(), constants.WebhookEventTransactionRestored}, 1)
+	requireTransactionRepoCount(t, db, &models.LedgerEntry{}, "transaction_unique_hash = ? AND description LIKE ?", []any{oldTx.UniqueHash, "Canonical reappearance restoration%"}, 2)
+	repeated, err := NewTransactionRepo(db).MarkFinality(ctx, oldTx.UniqueHash, 13, 12, true)
+	if err != nil {
+		t.Fatalf("repeat reappearance finality: %v", err)
+	}
+	if repeated.FinalizedAt == nil || !repeated.FinalizedAt.Equal(firstFinalizedAt) || repeated.EventType != constants.WebhookEventTransactionRestored {
+		t.Fatalf("repeat finality mutated immutable projection: first=%s repeated=%#v", firstFinalizedAt, repeated)
+	}
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ? AND event_type = ?", []any{oldTx.ID.String(), constants.WebhookEventTransactionRestored}, 1)
+	requireTransactionRepoCount(t, db, &models.LedgerEntry{}, "transaction_unique_hash = ? AND description LIKE ?", []any{oldTx.UniqueHash, "Canonical reappearance restoration%"}, 2)
 }
 
 func TestTransactionRepoReorgCorrectionIsAtomicAndIdempotent(t *testing.T) {
@@ -350,6 +390,7 @@ func TestTransactionRepoReorgCorrectionIsAtomicAndIdempotent(t *testing.T) {
 		&models.PaymentSession{},
 		&models.PaymentDepositAllocation{},
 		&models.SweepJob{},
+		&models.MoneyEventOutbox{},
 		&models.ReconciliationJob{},
 	); err != nil {
 		t.Fatalf("automigrate reorg correction models: %v", err)
@@ -585,9 +626,15 @@ func TestTransactionRepoReorgCorrectionIsAtomicAndIdempotent(t *testing.T) {
 	if err := db.WithContext(ctx).First(&alreadySucceeded, "id = ?", succeededSweep.ID).Error; err != nil {
 		t.Fatalf("load succeeded sweep: %v", err)
 	}
-	if alreadySucceeded.Status != models.SweepJobStatusSucceeded || alreadySucceeded.SweepTxHash != "0xsweep" {
+	if alreadySucceeded.Status != models.SweepJobStatusDeadLetter ||
+		alreadySucceeded.SweepTxHash != "0xsweep" ||
+		alreadySucceeded.FailureCategory != models.SweepFailureCategoryBroadcastUncertain ||
+		alreadySucceeded.OperatorAction != models.SweepOperatorActionReconcileBroadcast ||
+		alreadySucceeded.NextRunAt != nil || alreadySucceeded.LockedUntil != nil {
 		t.Fatalf("succeeded sweep should route to reconciliation without blind retry: %#v", alreadySucceeded)
 	}
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", []any{deadLetterCandidate.ID.String() + ":" + constants.WebhookEventSweepDeadLetteredV1}, 1)
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", []any{succeededSweep.ID.String() + ":" + constants.WebhookEventSweepDeadLetteredV1}, 1)
 
 	reason := transactionReorgReason("reorg_detected", constants.Ethereum, "100")
 	requireTransactionRepoCount(t, db, &models.ReconciliationJob{}, "chain_id = ? AND from_block = ? AND to_block = ? AND reason = ?", []any{constants.Ethereum, int64(100), int64(100), reason}, 1)
@@ -626,6 +673,177 @@ func TestTransactionRepoReorgCorrectionIsAtomicAndIdempotent(t *testing.T) {
 	}
 	if len(locked) != 0 {
 		t.Fatalf("locked correction webhooks returned again: %#v", locked)
+	}
+}
+
+func TestTransactionRepoSameHeightCanonicalReplacementReorgsOldTransactionAndOrphanFact(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(
+		&models.Block{},
+		&models.Transaction{},
+		&models.ChainFact{},
+		&models.Deposit{},
+		&models.LedgerEntry{},
+		&models.PaymentSession{},
+		&models.PaymentDepositAllocation{},
+		&models.SweepJob{},
+		&models.ReconciliationJob{},
+	); err != nil {
+		t.Fatalf("automigrate same-height replacement models: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	oldBlock := models.Block{
+		ID:         uuid.New(),
+		ChainID:    constants.Ethereum,
+		Number:     100,
+		Hash:       "0xold-same-height-block",
+		ParentHash: "0xshared-parent",
+		Processed:  true,
+		Canonical:  true,
+		Status:     models.BlockStatusCanonical,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if err := db.WithContext(ctx).Create(&oldBlock).Error; err != nil {
+		t.Fatalf("seed old canonical block: %v", err)
+	}
+
+	oldTx := transactionReorgTestTx(
+		uuid.New(),
+		uuid.New(),
+		uuid.New(),
+		"1-0xold-same-height-tx-0",
+		"0xold-same-height-tx",
+		"0xwallet",
+		now,
+	)
+	oldTx.BlockHash = oldBlock.Hash
+	if err := db.WithContext(ctx).Create(&oldTx).Error; err != nil {
+		t.Fatalf("seed old-block transaction: %v", err)
+	}
+
+	orphanFactSource := oldTx
+	orphanFactSource.Hash = "0xorphan-chain-fact-tx"
+	orphanFactSource.UniqueHash = "1-0xorphan-chain-fact-tx-7"
+	orphanLogIndex := "7"
+	orphanFactSource.LogIndex = &orphanLogIndex
+	orphanFact := transactionReorgTestChainFact(orphanFactSource, "0xwallet", now)
+	if err := db.WithContext(ctx).Create(&orphanFact).Error; err != nil {
+		t.Fatalf("seed old-block orphan chain fact: %v", err)
+	}
+	var orphanTransactionCount int64
+	if err := db.WithContext(ctx).
+		Model(&models.Transaction{}).
+		Where("chain_id = ? AND hash = ?", orphanFact.ChainID, orphanFact.TxHash).
+		Count(&orphanTransactionCount).Error; err != nil {
+		t.Fatalf("count orphan fact transactions: %v", err)
+	}
+	if orphanTransactionCount != 0 {
+		t.Fatalf("orphan chain fact unexpectedly has %d transaction rows", orphanTransactionCount)
+	}
+
+	replacementHash := "0xreplacement-same-height-block"
+	repo := NewTransactionRepo(db)
+	if err := repo.ObserveCanonicalBlock(ctx, constants.Ethereum, oldBlock.Number, replacementHash, oldBlock.ParentHash); err != nil {
+		t.Fatalf("observe same-height canonical replacement: %v", err)
+	}
+
+	var replacementTransactionCount int64
+	if err := db.WithContext(ctx).
+		Model(&models.Transaction{}).
+		Where("chain_id = ? AND block_hash = ?", constants.Ethereum, replacementHash).
+		Count(&replacementTransactionCount).Error; err != nil {
+		t.Fatalf("count replacement-block transactions: %v", err)
+	}
+	if replacementTransactionCount != 0 {
+		t.Fatalf("replacement block unexpectedly has %d transaction rows", replacementTransactionCount)
+	}
+
+	var correctedTx models.Transaction
+	if err := db.WithContext(ctx).First(&correctedTx, "id = ?", oldTx.ID).Error; err != nil {
+		t.Fatalf("load corrected old transaction: %v", err)
+	}
+	expectedReason := transactionReorgReason("reorg_detected", constants.Ethereum, "100")
+	if correctedTx.Status != models.TransactionStatusReorged || correctedTx.EventType != constants.WebhookEventTransactionReorged || correctedTx.ReorgedAt == nil {
+		t.Fatalf("old transaction was not reorged by block replacement: %#v", correctedTx)
+	}
+	if correctedTx.CorrectionReason != expectedReason {
+		t.Fatalf("old transaction correction reason = %q, want %q", correctedTx.CorrectionReason, expectedReason)
+	}
+
+	var correctedFact models.ChainFact
+	if err := db.WithContext(ctx).First(&correctedFact, "id = ?", orphanFact.ID).Error; err != nil {
+		t.Fatalf("load corrected orphan chain fact: %v", err)
+	}
+	if correctedFact.Status != models.ChainFactStatusReorged || correctedFact.ReorgedAt == nil || correctedFact.CorrectionReason != expectedReason {
+		t.Fatalf("orphan chain fact was not reorged by block replacement: %#v", correctedFact)
+	}
+
+	var correctedOldBlock models.Block
+	if err := db.WithContext(ctx).First(&correctedOldBlock, "id = ?", oldBlock.ID).Error; err != nil {
+		t.Fatalf("load replaced canonical block: %v", err)
+	}
+	if correctedOldBlock.Canonical || correctedOldBlock.Status != models.BlockStatusReorged || correctedOldBlock.ReorgedAt == nil || correctedOldBlock.SupersededByHash != replacementHash {
+		t.Fatalf("old canonical block replacement state = %#v", correctedOldBlock)
+	}
+	var replacementBlock models.Block
+	if err := db.WithContext(ctx).First(&replacementBlock, "chain_id = ? AND hash = ?", constants.Ethereum, replacementHash).Error; err != nil {
+		t.Fatalf("load replacement canonical block: %v", err)
+	}
+	if !replacementBlock.Canonical || replacementBlock.Status != models.BlockStatusCanonical || replacementBlock.Number != oldBlock.Number {
+		t.Fatalf("replacement canonical block state = %#v", replacementBlock)
+	}
+}
+
+func TestTransactionRepoAuthoritativeObservationRepairsTransactionsAfterBlockRowsAlreadyDeduplicated(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(
+		&models.Block{}, &models.Transaction{}, &models.ChainFact{}, &models.Deposit{},
+		&models.LedgerEntry{}, &models.PaymentSession{}, &models.PaymentDepositAllocation{},
+		&models.SweepJob{}, &models.ReconciliationJob{},
+	); err != nil {
+		t.Fatalf("automigrate deduplicated block repair models: %v", err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	const height int64 = 222
+	providerHash := "0xprovider-canonical"
+	discardedBlock := models.Block{
+		ID: uuid.New(), ChainID: constants.Ethereum, Number: height, Hash: "0xdiscarded-duplicate",
+		ParentHash: "0xparent", Processed: true, Canonical: true, Status: models.BlockStatusReorged,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	if err := db.Create(&discardedBlock).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.Block{}).Where("id = ?", discardedBlock.ID).Update("canonical", false).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Block{
+		ID: uuid.New(), ChainID: constants.Ethereum, Number: height, Hash: providerHash,
+		ParentHash: "0xparent", Processed: true, Canonical: true, Status: models.BlockStatusCanonical,
+		CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	orphan := transactionReorgTestTx(uuid.New(), uuid.New(), uuid.New(), "1-0xlegacy-duplicate-0", "0xlegacy-duplicate", "0xwallet", now)
+	orphan.BlockNumber = strconv.FormatInt(height, 10)
+	orphan.BlockHash = "0xdiscarded-duplicate"
+	if err := db.Create(&orphan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := NewTransactionRepo(db).ObserveCanonicalBlock(ctx, constants.Ethereum, height, providerHash, "0xparent"); err != nil {
+		t.Fatalf("observe already-deduplicated canonical block: %v", err)
+	}
+	var repaired models.Transaction
+	if err := db.First(&repaired, "id = ?", orphan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if repaired.Status != models.TransactionStatusReorged || repaired.ReorgedAt == nil {
+		t.Fatalf("discarded duplicate transaction was not repaired: %#v", repaired)
 	}
 }
 
@@ -741,6 +959,133 @@ func TestTransactionRepoParentHashMismatchReorgsCanonicalBlockRange(t *testing.T
 
 	reason := transactionReorgReason("parent_mismatch", constants.Ethereum, "100")
 	requireTransactionRepoCount(t, db, &models.ReconciliationJob{}, "chain_id = ? AND from_block = ? AND to_block = ? AND reason = ?", []any{constants.Ethereum, int64(100), int64(101), reason}, 1)
+}
+
+func TestTransactionRepoConcurrentObserversLeaveOneCanonicalBlockPerHeight(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(8)
+	}
+	if err := db.AutoMigrate(&models.Block{}, &models.ChainFact{}, &models.Transaction{}); err != nil {
+		t.Fatalf("automigrate canonical observer models: %v", err)
+	}
+	repo := NewTransactionRepo(db)
+	ctx := context.Background()
+	const height int64 = 777
+	hashes := []string{"0xcanonical-a", "0xcanonical-b"}
+	start := make(chan struct{})
+	errs := make(chan error, len(hashes))
+	var wg sync.WaitGroup
+	for _, hash := range hashes {
+		hash := hash
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- repo.ObserveCanonicalBlock(ctx, constants.Ethereum, height, hash, "0xparent")
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent canonical observer: %v", err)
+		}
+	}
+	var canonical []models.Block
+	if err := db.Where("chain_id = ? AND number = ? AND canonical = ?", constants.Ethereum, height, true).Find(&canonical).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) != 1 {
+		t.Fatalf("canonical rows = %#v, want exactly one", canonical)
+	}
+}
+
+func TestTransactionRepoMarkFinalityPersistsDetectedEventInSameTransaction(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}); err != nil {
+		t.Fatalf("automigrate transaction: %v", err)
+	}
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	logIndex := "log:1"
+	txModel := models.Transaction{
+		ID:                    uuid.New(),
+		ChainID:               constants.Ethereum,
+		Hash:                  "0xdetected",
+		LogIndex:              &logIndex,
+		BlockNumber:           "123",
+		BlockHash:             "0xblock",
+		Symbol:                "ETH",
+		Decimals:              18,
+		FromAddress:           "0xfrom",
+		ToAddress:             "0xto",
+		Amount:                "100",
+		UniqueHash:            "1-0xdetected-log:1",
+		Status:                models.TransactionStatusPendingConfirmation,
+		EventType:             constants.WebhookEventNativeTransfer,
+		WalletID:              &walletID,
+		MerchantID:            &merchantID,
+		DomainID:              &domainID,
+		ConfirmationsRequired: 12,
+		CreatedAt:             time.Now().UTC(),
+	}
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewTransactionRepo(db)
+	finalized, err := repo.MarkFinality(context.Background(), txModel.UniqueHash, 12, 12, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID := webhooksvc.TransactionEventID(*finalized)
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", []any{eventID}, 1)
+	if _, err := repo.MarkFinality(context.Background(), txModel.UniqueHash, 13, 12, true); err != nil {
+		t.Fatal(err)
+	}
+	requireTransactionRepoCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", []any{eventID}, 1)
+}
+
+func TestTransactionRepoMarkFinalityCanonicalizesUnknownHistoricalEventType(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}); err != nil {
+		t.Fatalf("automigrate transaction: %v", err)
+	}
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	logIndex := "log:7"
+	txModel := models.Transaction{
+		ID: uuid.New(), ChainID: constants.Ethereum, Hash: "0xhistorical", LogIndex: &logIndex,
+		BlockNumber: "124", BlockHash: "0xblock", Symbol: "ETH", Decimals: 18,
+		FromAddress: "0xfrom", ToAddress: "0xto", Amount: "100",
+		UniqueHash: "1-0xhistorical-log:7", Status: models.TransactionStatusPendingConfirmation,
+		EventType: "merchant_specific_legacy_event", WalletID: &walletID, MerchantID: &merchantID,
+		DomainID: &domainID, ConfirmationsRequired: 12, CreatedAt: time.Now().UTC(),
+	}
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	finalized, err := NewTransactionRepo(db).MarkFinality(context.Background(), txModel.UniqueHash, 12, 12, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var event models.MoneyEventOutbox
+	if err := db.First(&event, "aggregate_type = ? AND aggregate_id = ?", "transaction", finalized.ID.String()).Error; err != nil {
+		t.Fatal(err)
+	}
+	if event.EventType != constants.WebhookEventTransactionDetected {
+		t.Fatalf("event type = %q", event.EventType)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["source_event_type"] != txModel.EventType {
+		t.Fatalf("source event type = %#v", payload["source_event_type"])
+	}
 }
 
 func transactionReorgTestTx(merchantID, domainID, walletID uuid.UUID, uniqueHash, hash, toAddress string, now time.Time) models.Transaction {

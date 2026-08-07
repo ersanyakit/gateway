@@ -14,6 +14,7 @@ import (
 type Artifact struct {
 	ID                string
 	Models            []any
+	PreAutoMigrate    []SQLStep
 	Summary           string
 	ForwardPlan       string
 	LockImpact        string
@@ -21,6 +22,17 @@ type Artifact struct {
 	Rollback          string
 	VerificationQuery string
 	Verify            string
+}
+
+// SQLStep is reserved for invariants that GORM cannot establish safely by
+// itself. In particular, a unique index cannot be created until legacy
+// duplicates have been reconciled. Steps are executed transactionally before
+// any artifact model is passed to AutoMigrate.
+type SQLStep struct {
+	Name           string
+	Dialect        string
+	RequiredTables []string
+	Statements     []string
 }
 
 func Artifacts() []Artifact {
@@ -208,6 +220,23 @@ func Artifacts() []Artifact {
 			VerificationQuery: "database.VerifySchema must report network_operational_states columns, chain uniqueness, mode index, and mode check constraint present.",
 			Verify:            "Run database.VerifySchema plus network operational state model and repository default, validation, and upsert tests after applying.",
 		},
+		{
+			ID: canonicalBlockMoneyEventSequenceMigrationID,
+			Models: []any{
+				&models.Block{},
+				&models.MoneyEventOutbox{},
+				&models.WebhookDelivery{},
+				&models.NetworkOperationalState{},
+			},
+			PreAutoMigrate:    canonicalBlockMoneyEventSequencePreflight(),
+			Summary:           "Adds durable aggregate ordering and immutable target snapshots to outbound delivery state, enforces exactly one canonical block per chain height, and gates affected networks until authoritative repair is acknowledged.",
+			ForwardPlan:       "In one PostgreSQL transaction, pause competing writers, safely create the network operational gate table when upgrading a partial legacy schema, set every chain with duplicate canonical heights to maintenance, rewind its checkpoint, deterministically mark duplicate canonical block rows and their unprocessed chain facts reorged, quarantine their deposit inbox work, add and backfill money_event_outboxes.sequence plus relay lease fencing, add webhook delivery target snapshot and lease-fencing columns, then create the aggregate sequence and partial canonical-height indexes before GORM reconciliation.",
+			LockImpact:        "The preflight takes SHARE ROW EXCLUSIVE locks on blocks, network_operational_states, money_event_outboxes, and webhook_deliveries and builds safety indexes; scanners and delivery workers must be paused and the migration must run in a low-write maintenance window.",
+			Backfill:          "Existing outbox rows receive deterministic positive sequences partitioned by merchant, domain, aggregate type and aggregate id in created_at/id order. Legacy webhook delivery transport mode is inferred from its persisted target URL and NATS subject is recovered from the domain when available. Chains with duplicate canonical heights are rewound 64 blocks before the earliest ambiguity; each is durably forced to maintenance with migration evidence before facts on discarded branches and their deposit inbox work are quarantined for authoritative scanner replay and money-state reconciliation.",
+			Rollback:          "Deploy prior code while leaving the additive sequence column, safety indexes, and migration-created maintenance gates in place. Never automatically reactivate an affected network; only a privileged operator may do so after replay, reconciliation, and evidence acknowledgement.",
+			VerificationQuery: "Verify every chain marked rollback_required has network_operational_states.mode = maintenance, updated_by = migration, and the migration replay/reconciliation/operator-acknowledgement reason; verify money_event_outboxes.sequence and lease_token, webhook delivery target snapshots and lease_token, no duplicate canonical height, no observed fact on a discarded branch, and all required safety indexes.",
+			Verify:            "Run database.VerifySchema, services/dbmigrations incremental and idempotency tests, admin network-state visibility tests, money-event outbox ordering tests, canonical block concurrency tests, and an authoritative scanner replay plus money-state reconciliation for every chain marked rollback_required before a privileged operator explicitly reactivates it.",
+		},
 	}
 }
 
@@ -250,6 +279,30 @@ func ValidateArtifacts(artifacts []Artifact) error {
 		if len(artifact.Models) == 0 {
 			return fmt.Errorf("migration artifact %s has no GORM models", artifact.ID)
 		}
+		for stepIndex, step := range artifact.PreAutoMigrate {
+			if strings.TrimSpace(step.Name) == "" {
+				return fmt.Errorf("migration artifact %s pre-auto-migrate step %d has no name", artifact.ID, stepIndex)
+			}
+			if strings.TrimSpace(step.Dialect) == "" {
+				return fmt.Errorf("migration artifact %s pre-auto-migrate step %s has no dialect", artifact.ID, step.Name)
+			}
+			if len(step.RequiredTables) == 0 {
+				return fmt.Errorf("migration artifact %s pre-auto-migrate step %s has no required tables", artifact.ID, step.Name)
+			}
+			for _, table := range step.RequiredTables {
+				if strings.TrimSpace(table) == "" {
+					return fmt.Errorf("migration artifact %s pre-auto-migrate step %s has a blank required table", artifact.ID, step.Name)
+				}
+			}
+			if len(step.Statements) == 0 {
+				return fmt.Errorf("migration artifact %s pre-auto-migrate step %s has no statements", artifact.ID, step.Name)
+			}
+			for _, statement := range step.Statements {
+				if strings.TrimSpace(statement) == "" {
+					return fmt.Errorf("migration artifact %s pre-auto-migrate step %s has a blank statement", artifact.ID, step.Name)
+				}
+			}
+		}
 	}
 	if !sort.StringsAreSorted(ids) {
 		return errors.New("migration artifact ids must be sorted")
@@ -270,9 +323,62 @@ func Apply(ctx context.Context, db *gorm.DB) error {
 	if err := ValidateArtifacts(artifacts); err != nil {
 		return err
 	}
+	if err := prepareArtifacts(ctx, db, artifacts); err != nil {
+		return err
+	}
 	for _, artifact := range artifacts {
 		if err := db.WithContext(ctx).AutoMigrate(artifact.Models...); err != nil {
 			return fmt.Errorf("apply migration %s: %w", artifact.ID, err)
+		}
+	}
+	return nil
+}
+
+// Prepare runs data reconciliation and defensive DDL that must precede
+// AutoMigrate. It is safe on a blank database: a step is skipped until all of
+// its required legacy tables exist, after which AutoMigrate creates the fresh
+// schema directly from the models.
+func Prepare(ctx context.Context, db *gorm.DB) error {
+	artifacts := Artifacts()
+	if err := ValidateArtifacts(artifacts); err != nil {
+		return err
+	}
+	return prepareArtifacts(ctx, db, artifacts)
+}
+
+func prepareArtifacts(ctx context.Context, db *gorm.DB, artifacts []Artifact) error {
+	if db == nil {
+		return gorm.ErrInvalidDB
+	}
+	for _, artifact := range artifacts {
+		if len(artifact.PreAutoMigrate) == 0 {
+			continue
+		}
+		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			for _, step := range artifact.PreAutoMigrate {
+				if tx.Dialector == nil || tx.Dialector.Name() != step.Dialect {
+					continue
+				}
+				ready := true
+				for _, table := range step.RequiredTables {
+					if !tx.Migrator().HasTable(table) {
+						ready = false
+						break
+					}
+				}
+				if !ready {
+					continue
+				}
+				for _, statement := range step.Statements {
+					if err := tx.Exec(statement).Error; err != nil {
+						return fmt.Errorf("step %s: %w", step.Name, err)
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("prepare migration %s: %w", artifact.ID, err)
 		}
 	}
 	return nil

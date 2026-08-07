@@ -240,10 +240,14 @@ func TestDepositServiceSweepSchedulingSkipsReserveWallets(t *testing.T) {
 	for _, token := range []string{
 		"wallet.HDAddressId == 0",
 		"SweepJobRepo.EnqueueForTransaction(ctx, *txModel)",
-		"WebhookEventSweepRequestedV1",
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("enqueueFinalizedSweepJob missing %q", token)
+		}
+	}
+	for _, ghostCallback := range []string{"SweepLifecycleEnqueue", "WebhookEventSweepRequestedV1", "enqueueSweepLifecycleWebhook"} {
+		if strings.Contains(source, ghostCallback) {
+			t.Fatalf("deposit service must not retain non-transactional sweep lifecycle callback %q", ghostCallback)
 		}
 	}
 }

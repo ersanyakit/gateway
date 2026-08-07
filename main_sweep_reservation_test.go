@@ -30,6 +30,32 @@ func TestExecuteAutoSweepDepositWithJobUsesReservedTokenAndNativeTronSweep(t *te
 	}
 }
 
+func TestLifecycleWebhookCrashRecoveryCannotLeapfrogCanonicalAggregate(t *testing.T) {
+	sourceBytes, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := extractMainSweepFunctionBody(t, string(sourceBytes), "enqueueLifecycleWebhook")
+	for _, token := range []string{
+		"outbox.FindByEventID(ctx, payload.EventID)",
+		"return event.ID",
+		"outbox.HasAggregate(ctx, payload.EntityType, payload.EntityID)",
+		"direct enqueue blocked for reconciliation",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("enqueueLifecycleWebhook missing canonical ordering guard %q", token)
+		}
+	}
+	if strings.Contains(body, "EnqueueMoneyEvent") {
+		t.Fatal("canonical lifecycle bridge must leave delivery creation to the ordered relay")
+	}
+	ownershipIndex := strings.Index(body, "outbox.HasAggregate")
+	fallbackIndex := strings.Index(body, "WebhookDeliveryRepo.EnqueueLifecycle")
+	if ownershipIndex < 0 || fallbackIndex < 0 || ownershipIndex > fallbackIndex {
+		t.Fatal("aggregate ownership must be checked before the legacy direct-delivery fallback")
+	}
+}
+
 func TestExecuteAutoSweepDepositWithJobRequiresDurableJobAndLedgerRepo(t *testing.T) {
 	sourceBytes, err := os.ReadFile("main.go")
 	if err != nil {

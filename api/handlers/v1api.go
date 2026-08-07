@@ -43,6 +43,7 @@ type V1APIDeps struct {
 	LedgerRepo                  *repositories.LedgerRepo
 	TransactionRepo             *repositories.TransactionRepo
 	WebhookDeliveryRepo         *repositories.WebhookDeliveryRepo
+	MoneyEventOutboxRepo        *repositories.MoneyEventOutboxRepo
 	SweepJobRepo                *repositories.SweepJobRepo
 	OutboundRepo                *repositories.OutboundTransactionRepo
 	ReconciliationRepo          *repositories.ReconciliationRepo
@@ -1286,7 +1287,7 @@ func enqueueV1PayoutRequestedLifecycle(ctx context.Context, deps V1APIDeps, doma
 		return nil
 	}
 	payload := webhooksvc.NewPayoutPayload(constants.WebhookEventPayoutRequestedV1, request)
-	_, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	_, err := enqueueV1LifecycleDelivery(ctx, deps, domain, payload)
 	return err
 }
 
@@ -1295,8 +1296,34 @@ func enqueueV1RefundRequestedLifecycle(ctx context.Context, deps V1APIDeps, doma
 		return nil
 	}
 	payload := webhooksvc.NewRefundPayload(constants.WebhookEventRefundRequestedV1, refund)
-	_, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	_, err := enqueueV1LifecycleDelivery(ctx, deps, domain, payload)
 	return err
+}
+
+func enqueueV1LifecycleDelivery(ctx context.Context, deps V1APIDeps, domain models.Domain, payload webhooksvc.LifecyclePayload) (*models.WebhookDelivery, error) {
+	if deps.WebhookDeliveryRepo == nil {
+		return nil, nil
+	}
+	if deps.MoneyEventOutboxRepo != nil {
+		_, err := deps.MoneyEventOutboxRepo.FindByEventID(ctx, payload.EventID)
+		switch {
+		case err == nil:
+			// Persisting the canonical outbox row already completed this enqueue.
+			// The ordered relay is the sole writer of its delivery row.
+			return nil, nil
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return nil, err
+		}
+		ownedByOutbox, err := deps.MoneyEventOutboxRepo.HasAggregate(ctx, payload.EntityType, payload.EntityID)
+		if err != nil {
+			return nil, err
+		}
+		if ownedByOutbox {
+			return nil, fmt.Errorf("canonical money event outbox owns aggregate %s/%s but event %s is missing; direct delivery fallback is blocked", payload.EntityType, payload.EntityID, payload.EventID)
+		}
+	}
+	delivery, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
+	return delivery, err
 }
 
 func openV1OutboundLifecycleReconciliation(ctx context.Context, deps V1APIDeps, chain string, merchantID uuid.UUID, domainID *uuid.UUID, resourceType string, resourceID string, lifecycleStatus string, reason string, err error, txHash string) {

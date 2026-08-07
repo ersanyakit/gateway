@@ -336,6 +336,7 @@ func NewRouter(db *gorm.DB) *Router {
 	r.fiber.Post("/admin/refunds/:id/reject", handlers.HandleAdminRefundReject(dealerDeps))
 	r.fiber.Post("/admin/rescan", handlers.HandleAdminTxRescan(dealerDeps))
 	r.fiber.Post("/admin/webhooks/:id/replay", handlers.HandleAdminWebhookReplay(dealerDeps))
+	r.fiber.Post("/admin/money-event-outbox/:id/retry", handlers.HandleAdminMoneyEventOutboxRetry(dealerDeps))
 	r.fiber.Get("/admin/sweep/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))
 	r.fiber.Get("/admin/recover/live-balance", handlers.HandleAdminSweepLiveBalance(dealerDeps))
 	r.fiber.Get("/admin/recover/:chain_id", handlers.HandleAdminDashboard(dealerDeps))
@@ -353,6 +354,7 @@ func NewRouter(db *gorm.DB) *Router {
 		WalletRepo:                  r.WalletRepo,
 		PaymentRepo:                 r.PaymentRepo,
 		WebhookDeliveryRepo:         r.WebhookDeliveryRepo,
+		MoneyEventOutboxRepo:        r.MoneyEventOutboxRepo,
 		ProductRepo:                 r.ProductRepo,
 		AssetRegistry:               r.assetRegistry,
 		Blockchains:                 r.blockchains,
@@ -389,6 +391,7 @@ func NewRouter(db *gorm.DB) *Router {
 		LedgerRepo:                  r.LedgerRepo,
 		TransactionRepo:             r.TransactionRepo,
 		WebhookDeliveryRepo:         r.WebhookDeliveryRepo,
+		MoneyEventOutboxRepo:        r.MoneyEventOutboxRepo,
 		SweepJobRepo:                r.SweepJobRepo,
 		OutboundRepo:                r.OutboundTransactionRepo,
 		ReconciliationRepo:          r.ReconciliationRepo,

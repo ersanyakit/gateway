@@ -189,10 +189,21 @@ func (n *Notifier) Deliver(ctx context.Context, domain models.Domain, tx models.
 }
 
 func (n *Notifier) DeliverWithMetadata(ctx context.Context, domain models.Domain, tx models.Transaction, metadata DeliveryMetadata) error {
+	body, err := TransactionPayloadJSON(tx, metadata)
+	if err != nil {
+		return err
+	}
+	return n.deliverPayload(ctx, domain, tx.EventType, TransactionEventID(tx), constants.WebhookEventVersionV1, body, metadata)
+}
+
+// TransactionPayloadJSON builds the immutable consumer payload for a transaction
+// event. Durable delivery queues should persist these bytes when the event is
+// enqueued instead of rebuilding them from a mutable transaction row later.
+func TransactionPayloadJSON(tx models.Transaction, metadata DeliveryMetadata) ([]byte, error) {
 	payload := Payload{
 		EventID:            TransactionEventID(tx),
 		EventType:          tx.EventType,
-		EventVersion:       "v1",
+		EventVersion:       constants.WebhookEventVersionV1,
 		TransactionID:      tx.ID.String(),
 		DeliveryID:         metadata.DeliveryID,
 		ResourceType:       metadata.ResourceType,
@@ -229,11 +240,7 @@ func (n *Notifier) DeliverWithMetadata(ctx context.Context, domain models.Domain
 		payload.WalletID = tx.WalletID.String()
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return n.deliverPayload(ctx, domain, tx.EventType, payload.EventID, "v1", body, metadata)
+	return json.Marshal(payload)
 }
 
 func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, session models.PaymentSession) error {
@@ -241,6 +248,16 @@ func (n *Notifier) DeliverPayment(ctx context.Context, domain models.Domain, ses
 }
 
 func (n *Notifier) DeliverPaymentWithMetadata(ctx context.Context, domain models.Domain, session models.PaymentSession, metadata DeliveryMetadata) error {
+	body, err := PaymentPayloadJSON(session, metadata)
+	if err != nil {
+		return err
+	}
+	return n.deliverPayload(ctx, domain, session.WebhookEvent, PaymentEventID(session), constants.WebhookEventVersionV1, body, metadata)
+}
+
+// PaymentPayloadJSON builds the immutable consumer payload for a payment event.
+// It deliberately depends only on the supplied snapshot and delivery metadata.
+func PaymentPayloadJSON(session models.PaymentSession, metadata DeliveryMetadata) ([]byte, error) {
 	var chainID *int64
 	if session.SelectedChainID != nil {
 		value := int64(*session.SelectedChainID)
@@ -254,13 +271,13 @@ func (n *Notifier) DeliverPaymentWithMetadata(ctx context.Context, domain models
 	originalEventID, originalResourceID, correctionReason := paymentCorrectionRelation(session)
 	productSnapshot, err := paymentProductSnapshot(session.ProductSnapshot)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	payload := PaymentPayload{
 		EventID:            PaymentEventID(session),
 		EventType:          session.WebhookEvent,
-		EventVersion:       "v1",
+		EventVersion:       constants.WebhookEventVersionV1,
 		DeliveryID:         metadata.DeliveryID,
 		ResourceType:       metadata.ResourceType,
 		ResourceID:         metadata.ResourceID,
@@ -299,11 +316,7 @@ func (n *Notifier) DeliverPaymentWithMetadata(ctx context.Context, domain models
 		PaidAt:             paidAt,
 	}
 
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return err
-	}
-	return n.deliverPayload(ctx, domain, session.WebhookEvent, payload.EventID, "v1", body, metadata)
+	return json.Marshal(payload)
 }
 
 func paymentProductSnapshot(raw models.JSONData) (*models.PaymentProductSnapshot, error) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,8 +18,9 @@ import (
 )
 
 var (
-	ErrMoneyEventInboxInvalid = errors.New("invalid money event inbox record")
-	ErrMoneyEventInboxLocked  = errors.New("money event inbox record is locked")
+	ErrMoneyEventInboxInvalid      = errors.New("invalid money event inbox record")
+	ErrMoneyEventInboxLocked       = errors.New("money event inbox record is locked")
+	ErrMoneyEventInboxHandlerPanic = errors.New("money event inbox handler panicked")
 )
 
 type MoneyEventInboxRepo struct {
@@ -34,6 +36,10 @@ type MoneyEventInboxConsumeParams struct {
 	ResourceID       string
 	MaxAttempts      uint
 	LockFor          time.Duration
+	// AdvisoryLockKeys are acquired before the inbox row is claimed. Money
+	// consumers use the canonical block-height key here so the global order is
+	// canonical -> inbox -> fact/transaction/deposit.
+	AdvisoryLockKeys []string
 	Evidence         any
 }
 
@@ -85,6 +91,9 @@ func (r *MoneyEventInboxRepo) ProcessWithDB(ctx context.Context, params MoneyEve
 	processed := false
 	var processErr error
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := acquireMoneyEventAdvisoryLocksWithDB(ctx, tx, params.AdvisoryLockKeys); err != nil {
+			return err
+		}
 		row, shouldProcess, err := claimMoneyEventInboxWithDB(ctx, tx, prepared)
 		if err != nil {
 			return err
@@ -94,7 +103,13 @@ func (r *MoneyEventInboxRepo) ProcessWithDB(ctx context.Context, params MoneyEve
 			return nil
 		}
 		if fn != nil {
-			if err := fn(tx); err != nil {
+			// The inbox attempt and its failure evidence must commit even when the
+			// business callback fails, but partial business writes must not. A
+			// nested transaction gives the callback a savepoint that can be rolled
+			// back independently before the outer transaction records the failure.
+			if err := tx.Transaction(func(workTx *gorm.DB) error {
+				return callMoneyEventInboxHandler(workTx, fn)
+			}); err != nil {
 				processErr = err
 				if markErr := markMoneyEventInboxFailedWithDB(ctx, tx, row.ID, row.MaxAttempts, err); markErr != nil {
 					return markErr
@@ -115,6 +130,43 @@ func (r *MoneyEventInboxRepo) ProcessWithDB(ctx context.Context, params MoneyEve
 		return out, false, processErr
 	}
 	return out, processed, nil
+}
+
+func acquireMoneyEventAdvisoryLocksWithDB(ctx context.Context, tx *gorm.DB, keys []string) error {
+	if tx == nil || tx.Dialector == nil || tx.Dialector.Name() != "postgres" || len(keys) == 0 {
+		return nil
+	}
+	unique := make(map[string]struct{}, len(keys))
+	ordered := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, exists := unique[key]; exists {
+			continue
+		}
+		unique[key] = struct{}{}
+		ordered = append(ordered, key)
+	}
+	sort.Strings(ordered)
+	for _, key := range ordered {
+		if err := tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", key).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func callMoneyEventInboxHandler(tx *gorm.DB, fn func(*gorm.DB) error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			// Do not interpolate the panic value: inbox errors are operational
+			// evidence and must not become a path for leaking secrets.
+			err = fmt.Errorf("%w (%T)", ErrMoneyEventInboxHandlerPanic, recovered)
+		}
+	}()
+	return fn(tx)
 }
 
 func (r *MoneyEventInboxRepo) OldestAgeSecondsByStatus(ctx context.Context, statuses ...string) (map[string]float64, error) {

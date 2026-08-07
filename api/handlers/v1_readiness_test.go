@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -194,8 +195,8 @@ func TestV1ReadinessCountDetails(t *testing.T) {
 		"failed":      1,
 		"dead_letter": 0,
 	}
-	got := v1ReadinessCountDetails(counts, "pending", "failed", "dead_letter")
-	want := "pending=2, failed=1, dead_letter=0"
+	got := v1ReadinessCountDetails(counts, "pending", "processing", "failed", "dead_letter")
+	want := "pending=2, processing=0, failed=1, dead_letter=0"
 	if got != want {
 		t.Fatalf("details = %q, want %q", got, want)
 	}
@@ -211,6 +212,51 @@ func TestV1ReadinessCountTotal(t *testing.T) {
 	}
 	if got := v1ReadinessCountTotal(counts, "open", "processing", "needs_operator_action", "retry_scheduled", "failed"); got != 15 {
 		t.Fatalf("total = %d, want 15", got)
+	}
+}
+
+type fakeV1ReadinessStatusCounter struct {
+	counts   map[string]int64
+	statuses []string
+	err      error
+}
+
+func (f *fakeV1ReadinessStatusCounter) CountByStatus(_ context.Context, statuses ...string) (map[string]int64, error) {
+	f.statuses = append([]string(nil), statuses...)
+	return f.counts, f.err
+}
+
+func TestV1MoneyEventOutboxReadinessCountsRetryStatusesAndBlocksDeadLetters(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deadLetter int64
+		wantOK     bool
+	}{
+		{name: "no dead letters", deadLetter: 0, wantOK: true},
+		{name: "dead letter blocks readiness", deadLetter: 2, wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			counter := &fakeV1ReadinessStatusCounter{counts: map[string]int64{
+				models.MoneyEventOutboxStatusPending:    3,
+				models.MoneyEventOutboxStatusProcessing: 1,
+				models.MoneyEventOutboxStatusFailed:     4,
+				models.MoneyEventOutboxStatusDeadLetter: tc.deadLetter,
+			}}
+			checks := make([]types.V1ReadinessCheck, 0, 1)
+			v1AppendMoneyEventOutboxReadiness(context.Background(), &checks, counter)
+
+			wantStatuses := []string{"pending", "processing", "failed", "dead_letter"}
+			if strings.Join(counter.statuses, ",") != strings.Join(wantStatuses, ",") {
+				t.Fatalf("queried statuses = %v, want %v", counter.statuses, wantStatuses)
+			}
+			if len(checks) != 1 || checks[0].Name != "money_event.outbox_backlog" || checks[0].OK != tc.wantOK {
+				t.Fatalf("readiness checks = %#v, want ok=%v", checks, tc.wantOK)
+			}
+			wantDetails := "pending=3, processing=1, failed=4, dead_letter=" + strconv.FormatInt(tc.deadLetter, 10)
+			if checks[0].Details != wantDetails {
+				t.Fatalf("details = %q, want %q", checks[0].Details, wantDetails)
+			}
+		})
 	}
 }
 

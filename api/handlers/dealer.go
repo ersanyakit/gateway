@@ -3564,7 +3564,7 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 		if !ok {
 			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
 		}
-		if deps.WebhookDeliveryRepo == nil || deps.Notifier == nil {
+		if deps.WebhookDeliveryRepo == nil {
 			return redirectWithError(c, "/admin/webhooks", "Webhook replay servisi hazır değil.")
 		}
 		id, err := uuid.Parse(c.Params("id"))
@@ -3590,23 +3590,52 @@ func HandleAdminWebhookReplay(deps DealerDeps) fiber.Handler {
 			return redirectWithSuccess(c, "/admin/webhooks", "Webhook replay zaten kuyrukta.")
 		}
 
-		boundary := dealerWebhookDeliveryBoundary(deps)
-		if err := boundary.DeliverOne(c.Context(), *delivery); err != nil {
-			safeErr := webhooksvc.SanitizeDeliveryError(err)
-			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "failed", "webhook_delivery", delivery.ID.String(), "Replay başarısız: "+safeErr)
-			return redirectWithError(c, "/admin/webhooks", "Replay başarısız: "+safeErr)
-		}
-		message := "Webhook yeniden gönderildi."
+		// Delivery must only be performed by the lease-owning retry worker. Sending
+		// here immediately after enqueue races ClaimDue and can publish the same
+		// replay twice (especially for HTTP webhooks, which have no broker dedupe).
+		message := "Webhook yeniden gönderim kuyruğuna alındı."
 		switch {
 		case delivery.PaymentID != nil:
-			message = "Payment webhook yeniden gönderildi."
+			message = "Payment webhook yeniden gönderim kuyruğuna alındı."
 		case delivery.TransactionID != nil:
-			message = "Transaction webhook yeniden gönderildi."
+			message = "Transaction webhook yeniden gönderim kuyruğuna alındı."
 		case strings.TrimSpace(delivery.PayloadJSON) != "":
-			message = "Lifecycle webhook yeniden gönderildi."
+			message = "Lifecycle webhook yeniden gönderim kuyruğuna alındı."
 		}
 		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "webhook.replay", "success", "webhook_delivery", id.String(), message)
 		return redirectWithSuccess(c, "/admin/webhooks", message)
+	}
+}
+
+func HandleAdminMoneyEventOutboxRetry(deps DealerDeps) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		adminEmail, ok := requireAdmin(c)
+		if !ok {
+			return redirectWithError(c, "/admin/login", "Admin girişi gerekli.")
+		}
+		if deps.MoneyEventOutboxRepo == nil {
+			return redirectWithError(c, "/admin/webhooks", "Money event outbox servisi hazır değil.")
+		}
+		id, err := uuid.Parse(c.Params("id"))
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "money_event_outbox.retry", "failed", "money_event_outbox", c.Params("id"), "Geçersiz outbox retry isteği.")
+			return redirectWithError(c, "/admin/webhooks", "Geçersiz money event outbox kaydı.")
+		}
+		confirmRetry := strings.TrimSpace(firstNonEmpty(c.FormValue("confirm_retry"), c.Get("X-Gateway-Retry-Confirm")))
+		if confirmRetry != "retry:"+id.String() {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "money_event_outbox.retry", "failed", "money_event_outbox", id.String(), "Retry confirmation missing.")
+			return redirectWithError(c, "/admin/webhooks", "Money event retry için confirmation gerekli.")
+		}
+		requeued, err := deps.MoneyEventOutboxRepo.RequeueRelay(c.Context(), id)
+		if err != nil {
+			logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "money_event_outbox.retry", "failed", "money_event_outbox", id.String(), "Outbox retry başarısız.")
+			return redirectWithError(c, "/admin/webhooks", "Money event outbox retry başarısız.")
+		}
+		if !requeued {
+			return redirectWithError(c, "/admin/webhooks", "Kayıt retry edilebilir failed/dead-letter durumda değil.")
+		}
+		logDealerActivity(c, deps.ActivityLogRepo, nil, "admin", adminEmail, "money_event_outbox.retry", "success", "money_event_outbox", id.String(), "Outbox kaydı yeniden kuyruğa alındı.")
+		return redirectWithSuccess(c, "/admin/webhooks", "Money event yeniden kuyruğa alındı.")
 	}
 }
 
@@ -7444,6 +7473,15 @@ func deliverAdminPaymentWebhookIfMatched(ctx context.Context, deps DealerDeps, t
 		return false, err
 	}
 	session := matchResult.Session
+	if deps.MoneyEventOutboxRepo != nil {
+		ownedByOutbox, err := deps.MoneyEventOutboxRepo.HasAggregateEvent(ctx, "payment", session.ID.String(), session.WebhookEvent)
+		if err != nil {
+			return false, err
+		}
+		if ownedByOutbox {
+			return true, nil
+		}
+	}
 	_, _, err = deps.WebhookDeliveryRepo.EnqueuePayment(ctx, session.Domain, *session)
 	return true, err
 }
@@ -7521,6 +7559,28 @@ func enqueueDealerLifecycleWebhook(ctx context.Context, deps DealerDeps, domain 
 	if deps.WebhookDeliveryRepo == nil {
 		return uuid.Nil
 	}
+	if deps.MoneyEventOutboxRepo != nil {
+		event, findErr := deps.MoneyEventOutboxRepo.FindByEventID(ctx, payload.EventID)
+		switch {
+		case findErr == nil:
+			// A canonical outbox row is durable success. Delivery creation belongs to
+			// the ordered relay so a later event cannot leapfrog this one after a crash.
+			return event.ID
+		case !errors.Is(findErr, gorm.ErrRecordNotFound):
+			return uuid.Nil
+		}
+		ownedByOutbox, ownershipErr := deps.MoneyEventOutboxRepo.HasAggregate(ctx, payload.EntityType, payload.EntityID)
+		if ownershipErr != nil {
+			log.Printf("dealer lifecycle canonical aggregate lookup error event=%s id=%s aggregate=%s/%s: %v", payload.EventType, payload.EventID, payload.EntityType, payload.EntityID, ownershipErr)
+			return uuid.Nil
+		}
+		if ownedByOutbox {
+			// Do not let a legacy repair bypass a predecessor already sequenced in
+			// the canonical outbox. The missing event needs reconciliation instead.
+			log.Printf("dealer lifecycle canonical event missing; direct enqueue blocked for reconciliation event=%s id=%s aggregate=%s/%s", payload.EventType, payload.EventID, payload.EntityType, payload.EntityID)
+			return uuid.Nil
+		}
+	}
 	delivery, _, err := deps.WebhookDeliveryRepo.EnqueueLifecycle(ctx, domain, payload)
 	if err != nil || delivery == nil {
 		return uuid.Nil
@@ -7587,11 +7647,11 @@ func openDealerOutboundLifecycleReconciliation(ctx context.Context, deps DealerD
 	}
 }
 
-func markAdminWebhookDeliveryAttempt(ctx context.Context, deps DealerDeps, deliveryID uuid.UUID, delivered bool, lastErr error) {
-	if deps.WebhookDeliveryRepo == nil || deliveryID == uuid.Nil {
+func markAdminWebhookDeliveryAttempt(ctx context.Context, deps DealerDeps, deliveryID, leaseToken uuid.UUID, delivered bool, lastErr error) {
+	if deps.WebhookDeliveryRepo == nil || deliveryID == uuid.Nil || leaseToken == uuid.Nil {
 		return
 	}
-	if err := deps.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, delivered, lastErr); err != nil {
+	if err := deps.WebhookDeliveryRepo.MarkAttempt(ctx, deliveryID, leaseToken, delivered, lastErr); err != nil {
 		log.Printf("admin webhook delivery attempt update delivery_id=%s error=%v", deliveryID, err)
 	}
 }

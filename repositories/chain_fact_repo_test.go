@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestBuildChainFactFromTransactionStableEventIDs(t *testing.T) {
 	}{
 		{name: "evm-log", chainID: constants.Ethereum, txHash: "0xABC", logIndex: "log:7", wantID: "1:0xabc:log:7"},
 		{name: "bitcoin-vout", chainID: constants.Bitcoin, txHash: "btc-tx", logIndex: "vout:1", wantID: "0:btc-tx:vout:1"},
-		{name: "solana-instruction", chainID: constants.Solana, txHash: "solsig", logIndex: "ix:2", wantID: "99999999:solsig:ix:2"},
+		{name: "solana-instruction", chainID: constants.Solana, txHash: "SoLSig", logIndex: "ix:2", wantID: "99999999:SoLSig:ix:2"},
 		{name: "tron-log", chainID: constants.TRON, txHash: "tron-tx", logIndex: "log:3", wantID: "99999998:tron-tx:log:3"},
 	}
 
@@ -47,6 +48,17 @@ func TestBuildChainFactFromTransactionStableEventIDs(t *testing.T) {
 				t.Fatalf("fact metadata = %#v", fact)
 			}
 		})
+	}
+}
+
+func TestChainFactEventIDPreservesCaseSensitiveSolanaSignatures(t *testing.T) {
+	upper := ChainFactEventID(constants.Solana, "AbCDef123", "ix:0")
+	lower := ChainFactEventID(constants.Solana, "abcdef123", "ix:0")
+	if upper == lower {
+		t.Fatalf("case-distinct Solana signatures collided: %q", upper)
+	}
+	if got := ChainFactEventID(constants.Ethereum, "0xABCDEF", "log:0"); got != "1:0xabcdef:log:0" {
+		t.Fatalf("EVM hash normalization changed: %q", got)
 	}
 }
 
@@ -255,6 +267,18 @@ func TestBuildChainFactRejectsConfirmedObservationWithoutBlock(t *testing.T) {
 	}
 }
 
+func TestBuildChainFactRejectsConfirmedObservationWithoutBlockHash(t *testing.T) {
+	tx := chainFactTestTx(constants.Ethereum, "0xmissing-block-hash", "log:0")
+	tx.BlockHash = nil
+
+	if _, err := BuildChainFact(ChainFactBuildParams{
+		EventType:   "native_transfer",
+		Transaction: tx,
+	}); !errors.Is(err, ErrChainFactInvalid) {
+		t.Fatalf("BuildChainFact error = %v, want ErrChainFactInvalid", err)
+	}
+}
+
 func TestBuildChainFactFromTransactionRejectsInvalidInput(t *testing.T) {
 	tx := chainFactTestTx(constants.Ethereum, "0xabc", "log:1")
 	tx.Hash = nil
@@ -301,6 +325,68 @@ func TestChainFactRepoPostgresUpsertIdempotent(t *testing.T) {
 		t.Fatalf("duplicate returned %#v, want existing %#v", second, first)
 	}
 	requirePostgresCount(t, db, &models.ChainFact{}, "event_id = ?", first.EventID, 1)
+}
+
+func TestChainFactRepoPostgresConcurrentRecordIsIdempotent(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.ChainFact{}); err != nil {
+		t.Fatalf("automigrate chain facts: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+
+	repo := NewChainFactRepo(db)
+	ctx := context.Background()
+	txParam := chainFactTestTx(constants.Ethereum, "0xconcurrent", "log:9")
+
+	const writers = 8
+	start := make(chan struct{})
+	type result struct {
+		fact    *models.ChainFact
+		created bool
+		err     error
+	}
+	results := make(chan result, writers)
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			fact, created, err := repo.RecordTransaction(ctx, "native_transfer", txParam)
+			results <- result{fact: fact, created: created, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	created := 0
+	var persistedID uuid.UUID
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent record: %v", result.err)
+		}
+		if result.fact == nil {
+			t.Fatal("concurrent record returned nil fact")
+		}
+		if result.created {
+			created++
+		}
+		if persistedID == uuid.Nil {
+			persistedID = result.fact.ID
+		} else if result.fact.ID != persistedID {
+			t.Fatalf("fact id = %s, want winning id %s", result.fact.ID, persistedID)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created count = %d, want exactly one", created)
+	}
+	eventID := ChainFactEventID(constants.Ethereum, "0xconcurrent", "log:9")
+	requirePostgresCount(t, db, &models.ChainFact{}, "event_id = ?", eventID, 1)
 }
 
 func TestChainFactRepoRecordOrUpdateAdvancesFinality(t *testing.T) {
@@ -395,7 +481,7 @@ func TestChainFactRepoRecordOrUpdateUpgradesZeroAmountPayload(t *testing.T) {
 
 func TestChainFactRepoListForDepositProcessingSkipsIgnoredFactsAndKeepsLegacyRematch(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
-	if err := db.AutoMigrate(&models.ChainFact{}, &models.Deposit{}, &models.Wallet{}, &models.WalletAddressLookup{}, &models.MoneyEventOutbox{}); err != nil {
+	if err := db.AutoMigrate(&models.ChainFact{}, &models.Deposit{}, &models.Wallet{}, &models.WalletAddressLookup{}, &models.MoneyEventOutbox{}, &models.MoneyEventInbox{}); err != nil {
 		t.Fatalf("automigrate deposit processing models: %v", err)
 	}
 
@@ -442,6 +528,23 @@ func TestChainFactRepoListForDepositProcessingSkipsIgnoredFactsAndKeepsLegacyRem
 	if err := NewWalletAddressLookupRepo(db).UpsertWallet(ctx, wallet); err != nil {
 		t.Fatalf("upsert wallet lookup: %v", err)
 	}
+	deadLettered := testDepositChainFact("1:0xdead-lettered:log:1", true)
+	deadLettered.TxHash = "0xdead-lettered"
+	deadLettered.ObservedAddress = strings.ToLower(wallet.EthereumAddress)
+	deadLettered.Status = models.ChainFactStatusObserved
+	if err := db.WithContext(ctx).Create(&deadLettered).Error; err != nil {
+		t.Fatalf("create dead-lettered fact: %v", err)
+	}
+	if err := db.WithContext(ctx).Create(&models.MoneyEventInbox{
+		EventID:          deadLettered.EventID,
+		ConsumerName:     "deposit_fact_processor",
+		IdempotencyScope: "deposit_fact_processor:" + deadLettered.EventID,
+		Status:           models.MoneyEventInboxStatusDeadLetter,
+		MaxAttempts:      8,
+		EvidenceJSON:     `{}`,
+	}).Error; err != nil {
+		t.Fatalf("create dead-lettered inbox: %v", err)
+	}
 
 	tronTestnetRematchable := testDepositChainFact("99999997:tron-testnet-rematch:tx:0", true)
 	tronTestnetRematchable.ChainID = constants.TRONTestnet
@@ -482,6 +585,9 @@ func TestChainFactRepoListForDepositProcessingSkipsIgnoredFactsAndKeepsLegacyRem
 	if !seen[tronTestnetRematchable.EventID] {
 		t.Fatal("legacy tron testnet unmatched fact must be selected after its wallet appears")
 	}
+	if seen[deadLettered.EventID] {
+		t.Fatal("dead-lettered poison fact must not consume every processing batch")
+	}
 	if err := repo.MarkIgnored(ctx, rematchable.EventID, "test owned fact processed"); err != nil {
 		t.Fatalf("mark rematchable ignored: %v", err)
 	}
@@ -503,7 +609,7 @@ func TestChainFactRepoListForDepositProcessingSkipsIgnoredFactsAndKeepsLegacyRem
 
 func TestChainFactRepoListForDepositProcessingPrioritizesOwnedWalletFacts(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
-	if err := db.AutoMigrate(&models.ChainFact{}, &models.Deposit{}, &models.Wallet{}, &models.WalletAddressLookup{}, &models.MoneyEventOutbox{}); err != nil {
+	if err := db.AutoMigrate(&models.ChainFact{}, &models.Deposit{}, &models.Wallet{}, &models.WalletAddressLookup{}, &models.MoneyEventOutbox{}, &models.MoneyEventInbox{}); err != nil {
 		t.Fatalf("automigrate deposit processing models: %v", err)
 	}
 

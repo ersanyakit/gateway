@@ -436,6 +436,7 @@ func (r *PaymentRepo) Cancel(ctx context.Context, token string) (*models.Payment
 		}
 
 		session.Status = models.PaymentStatusCanceled
+		resetPaymentWebhookDeliveryStateOnEventChange(&session, constants.WebhookEventPaymentFailed)
 		session.WebhookEvent = constants.WebhookEventPaymentFailed
 		session.UpdatedAt = time.Now()
 		return tx.Save(&session).Error
@@ -480,6 +481,9 @@ func (r *PaymentRepo) Expire(ctx context.Context, token string) (*models.Payment
 			"webhook_event": constants.WebhookEventPaymentExpired,
 			"updated_at":    now,
 		}
+		if paymentWebhookEventChanged(session.WebhookEvent, constants.WebhookEventPaymentExpired) {
+			addPaymentWebhookDeliveryReset(updates)
+		}
 		result := tx.Model(&models.PaymentSession{}).
 			Where("id = ?", session.ID).
 			Where(
@@ -502,6 +506,7 @@ func (r *PaymentRepo) Expire(ctx context.Context, token string) (*models.Payment
 			}
 		}
 		session.Status = models.PaymentStatusExpired
+		resetPaymentWebhookDeliveryStateOnEventChange(&session, constants.WebhookEventPaymentExpired)
 		session.WebhookEvent = constants.WebhookEventPaymentExpired
 		session.UpdatedAt = now
 		changed = true
@@ -521,6 +526,28 @@ func paymentSessionCanExpire(session models.PaymentSession, now time.Time) bool 
 		return session.PaymentOutcome == models.PaymentOutcomePartialAggregating
 	}
 	return session.Status == models.PaymentStatusPending || session.Status == models.PaymentStatusAwaitingPayment
+}
+
+func paymentWebhookEventChanged(current, next string) bool {
+	return strings.TrimSpace(current) != strings.TrimSpace(next)
+}
+
+func resetPaymentWebhookDeliveryStateOnEventChange(session *models.PaymentSession, nextEvent string) bool {
+	if session == nil || !paymentWebhookEventChanged(session.WebhookEvent, nextEvent) {
+		return false
+	}
+	session.WebhookSentAt = nil
+	session.WebhookAttempts = 0
+	session.WebhookLastError = ""
+	session.WebhookLockedUntil = nil
+	return true
+}
+
+func addPaymentWebhookDeliveryReset(updates map[string]any) {
+	updates["webhook_sent_at"] = nil
+	updates["webhook_attempts"] = 0
+	updates["webhook_last_error"] = ""
+	updates["webhook_locked_until"] = nil
 }
 
 func (r *PaymentRepo) MarkFailedForTest(ctx context.Context, sessionID uuid.UUID, reason string) (*models.PaymentSession, bool, error) {
@@ -549,6 +576,7 @@ func (r *PaymentRepo) MarkFailedForTest(ctx context.Context, sessionID uuid.UUID
 		session.Status = models.PaymentStatusFailed
 		session.PaymentOutcome = models.PaymentOutcomeAdminTestFailed
 		session.PaymentOutcomeReason = boundedCorrectionReason(reason)
+		resetPaymentWebhookDeliveryStateOnEventChange(&session, constants.WebhookEventPaymentFailed)
 		session.WebhookEvent = constants.WebhookEventPaymentFailed
 		session.UpdatedAt = now
 		changed = true
@@ -620,7 +648,14 @@ func (r *PaymentRepo) MatchFinalizedDeposit(ctx context.Context, txModel models.
 		return nil, nil
 	}
 	if strings.TrimSpace(txModel.UniqueHash) != "" {
-		if existing, err := r.findPaymentSessionByAllocationTx(ctx, txModel.UniqueHash); err == nil {
+		if allocation, err := r.findPaymentAllocationByTx(ctx, txModel.UniqueHash); err == nil {
+			if allocation.Status == models.PaymentDepositAllocationStatusReorged {
+				return r.restoreReorgedPaymentAllocation(ctx, allocation.ID, txModel, deposit)
+			}
+			existing, err := r.FindByID(ctx, allocation.PaymentSessionID)
+			if err != nil {
+				return nil, err
+			}
 			result := paymentMatchResultFromSession(existing, false)
 			if result != nil {
 				result.LedgerEligible = true
@@ -671,7 +706,7 @@ func (r *PaymentRepo) MatchFinalizedDeposit(ctx context.Context, txModel models.
 	return nil, nil
 }
 
-func (r *PaymentRepo) findPaymentSessionByAllocationTx(ctx context.Context, uniqueHash string) (*models.PaymentSession, error) {
+func (r *PaymentRepo) findPaymentAllocationByTx(ctx context.Context, uniqueHash string) (*models.PaymentDepositAllocation, error) {
 	uniqueHash = strings.TrimSpace(uniqueHash)
 	if uniqueHash == "" {
 		return nil, gorm.ErrRecordNotFound
@@ -681,7 +716,215 @@ func (r *PaymentRepo) findPaymentSessionByAllocationTx(ctx context.Context, uniq
 		First(&allocation, "transaction_unique_hash = ?", uniqueHash).Error; err != nil {
 		return nil, err
 	}
-	return r.FindByID(ctx, allocation.PaymentSessionID)
+	return &allocation, nil
+}
+
+func (r *PaymentRepo) restoreReorgedPaymentAllocation(ctx context.Context, allocationID uuid.UUID, txModel models.Transaction, deposit *models.Deposit) (*PaymentMatchResult, error) {
+	var result *PaymentMatchResult
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "payment-tx:"+txModel.UniqueHash).Error; err != nil {
+			return err
+		}
+		var allocation models.PaymentDepositAllocation
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&allocation, "id = ?", allocationID).Error; err != nil {
+			return err
+		}
+		var session models.PaymentSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Domain").First(&session, "id = ?", allocation.PaymentSessionID).Error; err != nil {
+			return err
+		}
+		if allocation.Status != models.PaymentDepositAllocationStatusReorged {
+			result = paymentMatchResultFromSession(&session, false)
+			if result != nil {
+				result.LedgerEligible = true
+			}
+			return nil
+		}
+
+		canonical, err := canonicalBlockMatchesWithDB(ctx, tx, txModel.ChainID, parseBlockNumber(txModel.BlockNumber), txModel.BlockHash)
+		if err != nil {
+			return err
+		}
+		if !canonical || !transactionIsCanonicalReappearance(txModel) || !paymentAllocationEconomicIdentityEqual(allocation, txModel, deposit) {
+			if err := recordPaymentReappearanceReview(ctx, tx, session, allocation, txModel, canonical); err != nil {
+				return err
+			}
+			result = blockedReorgedPaymentMatchResult(&session)
+			return nil
+		}
+
+		baseline := session
+		baseline.Status = models.PaymentStatusAwaitingPayment
+		baseline.PaymentOutcomeReason = ""
+		baseline.PaidAt = nil
+		baseline.ConfirmedAt = nil
+		if baseline.TxUniqueHash != nil && strings.TrimSpace(*baseline.TxUniqueHash) == strings.TrimSpace(txModel.UniqueHash) {
+			baseline.TxUniqueHash = nil
+			baseline.TxHash = nil
+		}
+		decision, ok, err := restoredPaymentDecision(ctx, tx, baseline, txModel, deposit, allocation.CreatedAt)
+		if err != nil {
+			return err
+		}
+		if !ok || (!decision.Aggregate && strings.TrimSpace(allocation.Outcome) != "" && allocation.Outcome != decision.Outcome) {
+			if err := recordPaymentReappearanceReview(ctx, tx, session, allocation, txModel, true); err != nil {
+				return err
+			}
+			result = blockedReorgedPaymentMatchResult(&session)
+			return nil
+		}
+
+		reorgedAt := allocation.ReorgedAt
+		restoredAllocation := paymentDepositAllocationFromDecision(session.ID, txModel, deposit, decision, time.Now())
+		allocation.DepositID = restoredAllocation.DepositID
+		allocation.ChainFactEventID = restoredAllocation.ChainFactEventID
+		allocation.TxHash = restoredAllocation.TxHash
+		allocation.ChainID = restoredAllocation.ChainID
+		allocation.ObservedAddress = restoredAllocation.ObservedAddress
+		allocation.ObservedAddressNormalized = restoredAllocation.ObservedAddressNormalized
+		allocation.Token = restoredAllocation.Token
+		allocation.Symbol = restoredAllocation.Symbol
+		allocation.Decimals = restoredAllocation.Decimals
+		allocation.AmountRaw = restoredAllocation.AmountRaw
+		allocation.Memo = restoredAllocation.Memo
+		allocation.MemoNormalized = restoredAllocation.MemoNormalized
+		allocation.MemoStatus = restoredAllocation.MemoStatus
+		allocation.Status = restoredAllocation.Status
+		allocation.Outcome = restoredAllocation.Outcome
+		allocation.Reason = restoredAllocation.Reason
+		allocation.ReorgedAt = nil
+		allocation.UpdatedAt = time.Now()
+		if err := tx.Save(&allocation).Error; err != nil {
+			return err
+		}
+
+		now := time.Now()
+		session.Status = decision.Status
+		session.PaymentOutcome = decision.Outcome
+		session.PaymentOutcomeReason = decision.Reason
+		session.MatchedAmountRaw = decision.MatchedAmountRaw
+		session.ShortfallAmountRaw = decision.ShortfallAmountRaw
+		session.ExcessAmountRaw = decision.ExcessAmountRaw
+		session.PaidAt = nil
+		if decision.Status == models.PaymentStatusPaid {
+			session.PaidAt = &now
+		}
+		session.ConfirmedAt = txModel.FinalizedAt
+		session.ConfirmationsRequired = txModel.ConfirmationsRequired
+		if paymentMatchDecisionShouldSetTerminalTx(decision) {
+			session.TxUniqueHash = &txModel.UniqueHash
+			session.TxHash = &txModel.Hash
+		} else if session.TxUniqueHash != nil && strings.TrimSpace(*session.TxUniqueHash) == strings.TrimSpace(txModel.UniqueHash) {
+			session.TxUniqueHash = nil
+			session.TxHash = nil
+		}
+		resetPaymentWebhookDeliveryStateOnEventChange(&session, decision.WebhookEvent)
+		session.WebhookEvent = decision.WebhookEvent
+		session.UpdatedAt = now
+		if err := tx.Save(&session).Error; err != nil {
+			return err
+		}
+		if err := recordPaymentReappearanceEvent(ctx, tx, session, allocation, txModel, deposit, decision, reorgedAt, now); err != nil {
+			return err
+		}
+		result = &PaymentMatchResult{
+			Session:        &session,
+			Changed:        true,
+			Status:         decision.Status,
+			Outcome:        decision.Outcome,
+			WebhookEvent:   decision.WebhookEvent,
+			LedgerEligible: decision.LedgerEligible,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func restoredPaymentDecision(ctx context.Context, tx *gorm.DB, session models.PaymentSession, txModel models.Transaction, deposit *models.Deposit, observedAt time.Time) (paymentMatchDecision, bool, error) {
+	if !paymentSessionChainMatchesTransaction(session, txModel) {
+		return failedPaymentMatchDecision(txModel, models.PaymentOutcomeWrongChain, "deposit chain does not match selected checkout chain"), true, nil
+	}
+	if !paymentSessionAssetMatchesTransaction(session, txModel) {
+		return failedPaymentMatchDecision(txModel, models.PaymentOutcomeWrongAsset, "deposit asset does not match selected checkout asset"), true, nil
+	}
+	if !paymentSessionDepositAddressMatchesTransaction(session, txModel, deposit) {
+		return paymentMatchDecision{}, false, nil
+	}
+	if memoDecision, ok := paymentMemoDecisionForSession(session, txModel, deposit); ok {
+		return memoDecision, true, nil
+	}
+	if paymentSettlementPolicy(session) == models.PaymentSettlementPolicyAggregate {
+		decision, err := NewPaymentRepo(tx).aggregatePaymentMatchDecisionForSession(ctx, tx, session, txModel, deposit, observedAt)
+		return decision, decision.Status != "", err
+	}
+	decision, ok := paymentMatchDecisionForSession(session, txModel, observedAt)
+	return decision, ok, nil
+}
+
+func paymentAllocationEconomicIdentityEqual(allocation models.PaymentDepositAllocation, txModel models.Transaction, deposit *models.Deposit) bool {
+	if strings.TrimSpace(allocation.TransactionUniqueHash) != strings.TrimSpace(txModel.UniqueHash) ||
+		allocation.ChainID != txModel.ChainID ||
+		!strings.EqualFold(strings.TrimSpace(allocation.TxHash), strings.TrimSpace(txModel.Hash)) ||
+		!chainAssetIdentityEqual(allocation.ChainID, allocation.Token, txModel.Token) ||
+		!strings.EqualFold(strings.TrimSpace(allocation.Symbol), strings.TrimSpace(txModel.Symbol)) ||
+		allocation.Decimals != txModel.Decimals ||
+		strings.TrimSpace(allocation.AmountRaw) != strings.TrimSpace(txModel.Amount) {
+		return false
+	}
+	if deposit == nil {
+		return allocation.DepositID == nil && strings.TrimSpace(allocation.ChainFactEventID) == ""
+	}
+	if allocation.DepositID != nil && *allocation.DepositID != deposit.ID {
+		return false
+	}
+	return strings.TrimSpace(allocation.ChainFactEventID) == strings.TrimSpace(deposit.ChainFactEventID) &&
+		NormalizeWalletLookupAddress(txModel.ChainID, allocation.ObservedAddress) == NormalizeWalletLookupAddress(deposit.ChainID, deposit.ObservedAddress) &&
+		normalizePaymentMemo(firstNonEmptyString(allocation.MemoNormalized, allocation.Memo)) == normalizePaymentMemo(firstNonEmptyString(deposit.MemoNormalized, deposit.Memo))
+}
+
+func blockedReorgedPaymentMatchResult(session *models.PaymentSession) *PaymentMatchResult {
+	if session == nil {
+		return nil
+	}
+	return &PaymentMatchResult{
+		Session:        session,
+		Status:         session.Status,
+		Outcome:        session.PaymentOutcome,
+		WebhookEvent:   session.WebhookEvent,
+		LedgerEligible: false,
+	}
+}
+
+func recordPaymentReappearanceReview(ctx context.Context, tx *gorm.DB, session models.PaymentSession, allocation models.PaymentDepositAllocation, txModel models.Transaction, canonical bool) error {
+	reason := "payment_reappearance_not_canonical"
+	if canonical {
+		reason = "payment_reappearance_payload_mismatch"
+	}
+	merchantID := session.MerchantID
+	domainID := session.DomainID
+	_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+		ChainID:             txModel.ChainID,
+		FromBlock:           parseBlockNumber(txModel.BlockNumber),
+		ToBlock:             parseBlockNumber(txModel.BlockNumber),
+		Reason:              reason,
+		MerchantID:          &merchantID,
+		DomainID:            &domainID,
+		ScopeKey:            reason + ":" + allocation.ID.String() + ":" + normalizeBlockIdentifier(txModel.BlockHash),
+		ResourceType:        "payment",
+		ResourceID:          session.ID.String(),
+		AffectedResourceIDs: []string{session.ID.String(), allocation.ID.String(), txModel.UniqueHash},
+		Evidence: map[string]any{
+			"canonical_match": canonical,
+			"allocation_id":   allocation.ID.String(),
+			"tx_unique_hash":  txModel.UniqueHash,
+			"block_number":    txModel.BlockNumber,
+			"block_hash":      txModel.BlockHash,
+		},
+	})
+	return err
 }
 
 func (r *PaymentRepo) selectPaymentMatchCandidateForDeposit(ctx context.Context, sessions []models.PaymentSession, txModel models.Transaction, deposit *models.Deposit, now time.Time) (uuid.UUID, paymentMatchDecision, bool, error) {
@@ -839,6 +1082,7 @@ func (r *PaymentRepo) applyPaymentMatchDecision(ctx context.Context, sessionID u
 			matchedSession.TxUniqueHash = &txModel.UniqueHash
 			matchedSession.TxHash = &txModel.Hash
 		}
+		resetPaymentWebhookDeliveryStateOnEventChange(&matchedSession, decision.WebhookEvent)
 		matchedSession.WebhookEvent = decision.WebhookEvent
 		matchedSession.UpdatedAt = now
 		changed = true
@@ -935,6 +1179,79 @@ func recordPaymentSettlementEvent(ctx context.Context, tx *gorm.DB, session mode
 		"token":                  txModel.Token,
 		"memo_status":            decision.MemoStatus,
 		"allocation_status":      decision.AllocationStatus,
+	}
+	if session.ExpiresAt != nil {
+		payload["expires_at"] = session.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	if deposit != nil {
+		payload["deposit_id"] = deposit.ID.String()
+		payload["chain_fact_event_id"] = deposit.ChainFactEventID
+		payload["observed_address"] = deposit.ObservedAddress
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventName,
+		EventID:        eventID,
+		AggregateType:  "payment",
+		AggregateID:    session.ID.String(),
+		MerchantID:     session.MerchantID,
+		DomainID:       session.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
+}
+
+func recordPaymentReappearanceEvent(ctx context.Context, tx *gorm.DB, session models.PaymentSession, allocation models.PaymentDepositAllocation, txModel models.Transaction, deposit *models.Deposit, decision paymentMatchDecision, reorgedAt *time.Time, occurredAt time.Time) error {
+	eventName := paymentSettlementMoneyEventName(decision)
+	if eventName == "" || session.ID == uuid.Nil || session.MerchantID == uuid.Nil || session.DomainID == uuid.Nil {
+		return nil
+	}
+	epoch := moneyEventGenerationUnixNano(occurredAt)
+	if reorgedAt != nil && !reorgedAt.IsZero() {
+		epoch = moneyEventGenerationUnixNano(*reorgedAt)
+	}
+	eventID := fmt.Sprintf("%s:%s:restored:%s:%d", session.ID.String(), eventName, allocation.ID.String(), epoch)
+	payload := map[string]any{
+		"event_id":               eventID,
+		"event_type":             eventName,
+		"event_version":          constants.WebhookEventVersionV1,
+		"occurred_at":            occurredAt.UTC().Format(time.RFC3339Nano),
+		"merchant_id":            session.MerchantID.String(),
+		"domain_id":              session.DomainID.String(),
+		"resource_type":          "payment",
+		"resource_id":            session.ID.String(),
+		"resource_status":        session.Status,
+		"idempotency_key":        eventID,
+		"correlation_id":         "transaction:" + txModel.UniqueHash,
+		"restoration":            true,
+		"restoration_reason":     "matched transaction reappeared in an exact canonical block",
+		"payment_id":             session.ID.String(),
+		"order_id":               session.OrderID,
+		"amount":                 session.Amount,
+		"currency":               session.Currency,
+		"status":                 session.Status,
+		"payment_outcome":        session.PaymentOutcome,
+		"payment_outcome_reason": session.PaymentOutcomeReason,
+		"failure_reason":         session.PaymentOutcomeReason,
+		"expected_amount_raw":    session.ExpectedAmountRaw,
+		"matched_amount_raw":     session.MatchedAmountRaw,
+		"shortfall_amount_raw":   session.ShortfallAmountRaw,
+		"excess_amount_raw":      session.ExcessAmountRaw,
+		"tx_hash":                txModel.Hash,
+		"tx_unique_hash":         txModel.UniqueHash,
+		"chain_id":               int64(txModel.ChainID),
+		"canonical_block_number": txModel.BlockNumber,
+		"canonical_block_hash":   txModel.BlockHash,
+		"amount_raw":             txModel.Amount,
+		"symbol":                 txModel.Symbol,
+		"token":                  txModel.Token,
+		"memo_status":            decision.MemoStatus,
+		"allocation_status":      decision.AllocationStatus,
+		"allocation_id":          allocation.ID.String(),
 	}
 	if session.ExpiresAt != nil {
 		payload["expires_at"] = session.ExpiresAt.UTC().Format(time.RFC3339Nano)
@@ -1481,30 +1798,242 @@ func (r *PaymentRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *go
 		return err
 	}
 	query := tx.WithContext(ctx).
-		Model(&models.PaymentSession{}).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
 		Where("NOT (status = ? AND payment_outcome_reason = ?)", models.PaymentStatusFailed, paymentReorgOutcomeReason)
 	if len(allocationSessionIDs) > 0 {
 		query = query.Where("tx_unique_hash = ? OR id IN ?", uniqueHash, allocationSessionIDs)
 	} else {
 		query = query.Where("tx_unique_hash = ?", uniqueHash)
 	}
-	if err := query.
-		Updates(map[string]any{
-			"status":                 models.PaymentStatusFailed,
-			"payment_outcome":        paymentReorgOutcomeExpr(),
-			"payment_outcome_reason": paymentReorgOutcomeReason,
-			"paid_at":                nil,
-			"confirmed_at":           nil,
-			"webhook_event":          constants.WebhookEventPaymentFailed,
-			"webhook_sent_at":        nil,
-			"webhook_attempts":       0,
-			"webhook_last_error":     "",
-			"webhook_locked_until":   nil,
-			"updated_at":             now,
-		}).Error; err != nil {
+	var sessions []models.PaymentSession
+	if err := query.Find(&sessions).Error; err != nil {
 		return err
 	}
+	for i := range sessions {
+		session := &sessions[i]
+		if paymentSettlementPolicy(*session) == models.PaymentSettlementPolicyAggregate {
+			if err := recomputeAggregatePaymentSessionAfterReorg(ctx, tx, session, now); err != nil {
+				return err
+			}
+		} else {
+			applySinglePaymentReorgState(session, now)
+		}
+		if err := tx.WithContext(ctx).Save(session).Error; err != nil {
+			return err
+		}
+		if err := recordPaymentReorgTransitionEvent(ctx, tx, *session, uniqueHash, now); err != nil {
+			return err
+		}
+	}
 	return openPaymentReorgReconciliation(ctx, tx, uniqueHash, allocationSessionIDs, now)
+}
+
+func recordPaymentReorgTransitionEvent(ctx context.Context, tx *gorm.DB, session models.PaymentSession, reorgedUniqueHash string, occurredAt time.Time) error {
+	eventName := paymentSettlementMoneyEventName(paymentMatchDecision{WebhookEvent: session.WebhookEvent})
+	if eventName == "" {
+		eventName = "payment.failed.v1"
+	}
+	if session.ID == uuid.Nil || session.MerchantID == uuid.Nil || session.DomainID == uuid.Nil {
+		return nil
+	}
+	eventID := fmt.Sprintf("%s:%s:reorg:%d", session.ID.String(), eventName, moneyEventGenerationUnixNano(occurredAt))
+	txHash := ""
+	if session.TxHash != nil {
+		txHash = strings.TrimSpace(*session.TxHash)
+	}
+	payload := map[string]any{
+		"event_id":               eventID,
+		"event_type":             eventName,
+		"event_version":          constants.WebhookEventVersionV1,
+		"occurred_at":            occurredAt.UTC().Format(time.RFC3339Nano),
+		"merchant_id":            session.MerchantID.String(),
+		"domain_id":              session.DomainID.String(),
+		"resource_type":          "payment",
+		"resource_id":            session.ID.String(),
+		"resource_status":        session.Status,
+		"idempotency_key":        eventID,
+		"correlation_id":         "transaction:" + strings.TrimSpace(reorgedUniqueHash),
+		"correction":             true,
+		"correction_reason":      paymentReorgOutcomeReason,
+		"reorged_tx_unique_hash": strings.TrimSpace(reorgedUniqueHash),
+		"payment_id":             session.ID.String(),
+		"order_id":               session.OrderID,
+		"amount":                 session.Amount,
+		"currency":               session.Currency,
+		"status":                 session.Status,
+		"payment_outcome":        session.PaymentOutcome,
+		"payment_outcome_reason": session.PaymentOutcomeReason,
+		"failure_reason":         session.PaymentOutcomeReason,
+		"expected_amount_raw":    session.ExpectedAmountRaw,
+		"matched_amount_raw":     session.MatchedAmountRaw,
+		"shortfall_amount_raw":   session.ShortfallAmountRaw,
+		"excess_amount_raw":      session.ExcessAmountRaw,
+		"tx_hash":                txHash,
+		"tx_unique_hash":         strings.TrimSpace(reorgedUniqueHash),
+	}
+	if session.SelectedChainID != nil {
+		payload["chain_id"] = int64(*session.SelectedChainID)
+	}
+	if session.ExpiresAt != nil {
+		payload["expires_at"] = session.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	event, err := BuildMoneyEventOutbox(MoneyEventOutboxBuildParams{
+		EventName:      eventName,
+		EventID:        eventID,
+		AggregateType:  "payment",
+		AggregateID:    session.ID.String(),
+		MerchantID:     session.MerchantID,
+		DomainID:       session.DomainID,
+		IdempotencyKey: eventID,
+		Payload:        payload,
+	})
+	if err != nil {
+		return err
+	}
+	_, _, err = NewMoneyEventOutboxRepo(tx).RecordWithDB(ctx, tx, &event)
+	return err
+}
+
+func applySinglePaymentReorgState(session *models.PaymentSession, now time.Time) {
+	if session == nil {
+		return
+	}
+	if strings.TrimSpace(session.PaymentOutcome) == "" {
+		switch session.Status {
+		case models.PaymentStatusPaid:
+			session.PaymentOutcome = models.PaymentOutcomeExact
+		case models.PaymentStatusUnderpaid:
+			session.PaymentOutcome = models.PaymentOutcomeUnderpaid
+		case models.PaymentStatusOverpaid:
+			session.PaymentOutcome = models.PaymentOutcomeOverpaid
+		case models.PaymentStatusPartialPaid:
+			session.PaymentOutcome = models.PaymentOutcomePartialUnsupported
+		case models.PaymentStatusExpired:
+			session.PaymentOutcome = models.PaymentOutcomeExpiredAfterDeposit
+		}
+	}
+	session.Status = models.PaymentStatusFailed
+	session.PaymentOutcomeReason = paymentReorgOutcomeReason
+	session.PaidAt = nil
+	session.ConfirmedAt = nil
+	session.WebhookEvent = constants.WebhookEventPaymentFailed
+	resetPaymentDeliveryForCorrection(session)
+	session.UpdatedAt = now
+}
+
+func recomputeAggregatePaymentSessionAfterReorg(ctx context.Context, tx *gorm.DB, session *models.PaymentSession, now time.Time) error {
+	if session == nil {
+		return nil
+	}
+	var allocations []models.PaymentDepositAllocation
+	if err := tx.WithContext(ctx).
+		Where("payment_session_id = ?", session.ID).
+		Where("status = ?", models.PaymentDepositAllocationStatusApplied).
+		Order("created_at DESC, id DESC").
+		Find(&allocations).Error; err != nil {
+		return err
+	}
+	total := big.NewInt(0)
+	for _, allocation := range allocations {
+		amount, ok := new(big.Int).SetString(strings.TrimSpace(allocation.AmountRaw), 10)
+		if ok && amount.Sign() > 0 {
+			total.Add(total, amount)
+		}
+	}
+	expected, expectedOK := new(big.Int).SetString(strings.TrimSpace(session.ExpectedAmountRaw), 10)
+	expectedOK = expectedOK && expected.Sign() > 0
+
+	session.PaidAt = nil
+	session.ConfirmedAt = nil
+	session.TxUniqueHash = nil
+	session.TxHash = nil
+	session.MatchedAmountRaw = total.String()
+	session.ShortfallAmountRaw = ""
+	session.ExcessAmountRaw = ""
+	session.PaymentOutcomeReason = paymentReorgOutcomeReason
+	session.WebhookEvent = constants.WebhookEventPaymentFailed
+	if total.Sign() == 0 || !expectedOK {
+		session.Status = models.PaymentStatusAwaitingPayment
+		session.PaymentOutcome = ""
+		if expectedOK {
+			session.ShortfallAmountRaw = expected.String()
+		}
+		if !models.IsDonationLinkType(session.LinkType) && session.ExpiresAt != nil && now.After(*session.ExpiresAt) {
+			session.Status = models.PaymentStatusExpired
+		}
+		resetPaymentDeliveryForCorrection(session)
+		session.UpdatedAt = now
+		return nil
+	}
+
+	switch total.Cmp(expected) {
+	case -1:
+		session.Status = models.PaymentStatusPartialPaid
+		session.PaymentOutcome = models.PaymentOutcomePartialAggregating
+		session.PaymentOutcomeReason = "aggregate payment recomputed after reorg; remaining deposits are below expected amount"
+		session.ShortfallAmountRaw = new(big.Int).Sub(expected, total).String()
+		session.WebhookEvent = constants.WebhookEventPaymentPartialPaid
+	case 0:
+		session.Status = models.PaymentStatusPaid
+		session.PaymentOutcome = models.PaymentOutcomeAggregateComplete
+		session.PaymentOutcomeReason = "aggregate payment recomputed after reorg; remaining deposits exactly match expected amount"
+		session.PaidAt = &now
+		session.WebhookEvent = constants.WebhookEventPaymentSucceeded
+		if err := bindAggregatePaymentSessionToLatestAllocation(ctx, tx, session, allocations); err != nil {
+			return err
+		}
+	default:
+		session.Status = models.PaymentStatusOverpaid
+		session.PaymentOutcome = models.PaymentOutcomeOverpaid
+		session.PaymentOutcomeReason = "aggregate payment recomputed after reorg; remaining deposits exceed expected amount"
+		session.ExcessAmountRaw = new(big.Int).Sub(total, expected).String()
+		session.WebhookEvent = constants.WebhookEventPaymentOverpaid
+		if err := bindAggregatePaymentSessionToLatestAllocation(ctx, tx, session, allocations); err != nil {
+			return err
+		}
+	}
+	resetPaymentDeliveryForCorrection(session)
+	session.UpdatedAt = now
+	return nil
+}
+
+func bindAggregatePaymentSessionToLatestAllocation(ctx context.Context, tx *gorm.DB, session *models.PaymentSession, allocations []models.PaymentDepositAllocation) error {
+	if session == nil || len(allocations) == 0 {
+		return nil
+	}
+	latest := allocations[0]
+	uniqueHash := strings.TrimSpace(latest.TransactionUniqueHash)
+	txHash := strings.TrimSpace(latest.TxHash)
+	if uniqueHash != "" {
+		session.TxUniqueHash = &uniqueHash
+	}
+	if txHash != "" {
+		session.TxHash = &txHash
+	}
+	if uniqueHash == "" {
+		return nil
+	}
+	var txModel models.Transaction
+	if err := tx.WithContext(ctx).First(&txModel, "unique_hash = ?", uniqueHash).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	session.ConfirmedAt = txModel.FinalizedAt
+	if txModel.ConfirmationsRequired > 0 {
+		session.ConfirmationsRequired = txModel.ConfirmationsRequired
+	}
+	return nil
+}
+
+func resetPaymentDeliveryForCorrection(session *models.PaymentSession) {
+	if session == nil {
+		return
+	}
+	session.WebhookSentAt = nil
+	session.WebhookAttempts = 0
+	session.WebhookLastError = ""
+	session.WebhookLockedUntil = nil
 }
 
 func paymentReorgOutcomeExpr() clause.Expr {
@@ -1643,7 +2172,7 @@ func (r *PaymentRepo) MarkExpiredSessions(ctx context.Context) (int64, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		query := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
 			Model(&models.PaymentSession{}).
-			Select("id", "selected_chain_id", "deposit_address").
+			Select("id", "selected_chain_id", "deposit_address", "webhook_event").
 			Where(
 				"(status IN ? OR (status = ? AND payment_outcome = ?))",
 				[]string{models.PaymentStatusPending, models.PaymentStatusAwaitingPayment},
@@ -1660,14 +2189,27 @@ func (r *PaymentRepo) MarkExpiredSessions(ctx context.Context) (int64, error) {
 			return nil
 		}
 		ids := make([]uuid.UUID, 0, len(expired))
+		resetIDs := make([]uuid.UUID, 0, len(expired))
 		for _, session := range expired {
 			ids = append(ids, session.ID)
+			if paymentWebhookEventChanged(session.WebhookEvent, constants.WebhookEventPaymentExpired) {
+				resetIDs = append(resetIDs, session.ID)
+			}
+		}
+		if len(resetIDs) > 0 {
+			updates := make(map[string]any, 4)
+			addPaymentWebhookDeliveryReset(updates)
+			if err := tx.Model(&models.PaymentSession{}).
+				Where("id IN ?", resetIDs).
+				Updates(updates).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Model(&models.PaymentSession{}).
 			Where("id IN ?", ids).
 			Updates(map[string]interface{}{
 				"status":        models.PaymentStatusExpired,
-				"webhook_event": "payment_expired",
+				"webhook_event": constants.WebhookEventPaymentExpired,
 				"updated_at":    now,
 			}).Error; err != nil {
 			return err

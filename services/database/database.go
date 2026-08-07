@@ -5,6 +5,7 @@ import (
 	"core/application"
 	"core/constants"
 	"core/models"
+	"core/services/dbmigrations"
 	"database/sql"
 	"fmt"
 	"log"
@@ -52,9 +53,11 @@ type checkConstraintSpec struct {
 }
 
 const (
-	ledgerEntryImmutabilityFunctionName = "fn_reject_ledger_entries_mutation"
-	ledgerEntryImmutabilityTriggerName  = "trg_ledger_entries_immutable"
-	walletChilizSpicyIndexName          = "idx_wallets_chiliz_spicy_address"
+	ledgerEntryImmutabilityFunctionName  = "fn_reject_ledger_entries_mutation"
+	ledgerEntryImmutabilityTriggerName   = "trg_ledger_entries_immutable"
+	walletChilizSpicyIndexName           = "idx_wallets_chiliz_spicy_address"
+	canonicalBlockHeightIndexName        = "ux_blocks_one_canonical_height"
+	moneyEventAggregateSequenceIndexName = "ux_money_event_outbox_aggregate_sequence"
 )
 
 var postgresStringLiteralPattern = compilePostgresStringLiteralPattern()
@@ -180,6 +183,11 @@ func Migrate(app *application.App) error {
 }
 
 func ApplyGORMMigrations(ctx context.Context, db *gorm.DB) error {
+	// Some invariants need deterministic legacy-data reconciliation before
+	// GORM can safely create their indexes. This must remain before AutoMigrate.
+	if err := dbmigrations.Prepare(ctx, db); err != nil {
+		return err
+	}
 	if err := db.WithContext(ctx).AutoMigrate(autoMigrateModels()...); err != nil {
 		return err
 	}
@@ -299,6 +307,9 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "ResourceID"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "Sequence"},
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "IdempotencyKey"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "NotificationMode"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "TargetSubject"},
+		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, field: "LeaseToken"},
 		{table: "webhook_resource_sequences", model: &models.WebhookResourceSequence{}, field: "ID"},
 		{table: "webhook_resource_sequences", model: &models.WebhookResourceSequence{}, field: "MerchantID"},
 		{table: "webhook_resource_sequences", model: &models.WebhookResourceSequence{}, field: "DomainID"},
@@ -441,6 +452,8 @@ func requiredSchemaColumns() []requiredSchemaColumn {
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "IdempotencyKey"},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "PayloadJSON"},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "Status"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "Sequence"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, field: "LeaseToken"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, field: "ID"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, field: "EventID"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, field: "ConsumerName"},
@@ -728,6 +741,8 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 		{table: "wallets", model: &models.Wallet{}, name: walletChilizSpicyIndexName},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_event_id"},
 		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outboxes_idempotency_scope"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "idx_money_event_outbox_aggregate_sequence"},
+		{table: "money_event_outboxes", model: &models.MoneyEventOutbox{}, name: "ux_money_event_outbox_aggregate_sequence"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, name: "ux_money_event_inbox_consumer_event"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, name: "idx_money_event_inbox_consumer_status"},
 		{table: "money_event_inboxes", model: &models.MoneyEventInbox{}, name: "idx_money_event_inboxes_idempotency_scope"},
@@ -741,6 +756,7 @@ func requiredSchemaIndexes() []requiredSchemaIndex {
 		{table: "webhook_deliveries", model: &models.WebhookDelivery{}, name: "idx_webhook_delivery_resource_order"},
 		{table: "blocks", model: &models.Block{}, name: "ux_blocks_chain_hash"},
 		{table: "blocks", model: &models.Block{}, name: "ux_blocks_chain_number_hash"},
+		{table: "blocks", model: &models.Block{}, name: "ux_blocks_one_canonical_height"},
 		{table: "chain_facts", model: &models.ChainFact{}, name: "ux_chain_facts_event_id"},
 		{table: "deposits", model: &models.Deposit{}, name: "ux_deposits_chain_fact_event_id"},
 		{table: "ledger_entries", model: &models.LedgerEntry{}, name: "ux_ledger_idempotent_account"},
@@ -1065,8 +1081,78 @@ func VerifySchema(ctx context.Context, db *gorm.DB) error {
 		if !found || !walletChilizSpicyIndexMatches(definition, predicate, unique) {
 			return fmt.Errorf("schema check failed: wallets index %s is missing or stale", walletChilizSpicyIndexName)
 		}
+		for _, invariant := range []struct {
+			table     string
+			name      string
+			columns   []string
+			predicate string
+		}{
+			{
+				table:     "blocks",
+				name:      canonicalBlockHeightIndexName,
+				columns:   []string{"chain_id", "number"},
+				predicate: "canonical = true",
+			},
+			{
+				table:     "money_event_outboxes",
+				name:      moneyEventAggregateSequenceIndexName,
+				columns:   []string{"merchant_id", "domain_id", "aggregate_type", "aggregate_id", "sequence"},
+				predicate: "sequence > 0",
+			},
+		} {
+			columns, predicate, unique, found, err := postgresIndexShape(ctx, db, invariant.table, invariant.name)
+			if err != nil {
+				return err
+			}
+			if !found || !postgresIndexShapeMatches(columns, predicate, unique, invariant.columns, invariant.predicate) {
+				return fmt.Errorf("schema check failed: %s index %s is missing or stale", invariant.table, invariant.name)
+			}
+		}
 	}
 	return nil
+}
+
+func postgresIndexShape(ctx context.Context, db *gorm.DB, tableName, indexName string) (columns string, predicate string, unique bool, found bool, err error) {
+	err = db.WithContext(ctx).Raw(`
+		SELECT COALESCE(string_agg(attribute.attname, ',' ORDER BY key.ordinality), ''),
+		       COALESCE(pg_get_expr(index.indpred, index.indrelid), ''),
+		       index.indisunique
+		FROM pg_index index
+		JOIN pg_class index_class ON index_class.oid = index.indexrelid
+		JOIN pg_class table_class ON table_class.oid = index.indrelid
+		JOIN pg_namespace namespace ON namespace.oid = table_class.relnamespace
+		CROSS JOIN LATERAL unnest(index.indkey) WITH ORDINALITY AS key(attnum, ordinality)
+		LEFT JOIN pg_attribute attribute
+		  ON attribute.attrelid = index.indrelid
+		 AND attribute.attnum = key.attnum
+		WHERE namespace.nspname = current_schema()
+		  AND table_class.relname = ?
+		  AND index_class.relname = ?
+		GROUP BY index.indexrelid, index.indpred, index.indrelid, index.indisunique
+	`, tableName, indexName).Row().Scan(&columns, &predicate, &unique)
+	if err == sql.ErrNoRows {
+		return "", "", false, false, nil
+	}
+	if err != nil {
+		return "", "", false, false, err
+	}
+	return columns, predicate, unique, true, nil
+}
+
+func postgresIndexShapeMatches(columns, predicate string, unique bool, expectedColumns []string, expectedPredicate string) bool {
+	if !unique {
+		return false
+	}
+	actualColumns := strings.Split(strings.ToLower(strings.TrimSpace(columns)), ",")
+	if len(actualColumns) != len(expectedColumns) {
+		return false
+	}
+	for index := range actualColumns {
+		if strings.TrimSpace(actualColumns[index]) != strings.ToLower(strings.TrimSpace(expectedColumns[index])) {
+			return false
+		}
+	}
+	return normalizePostgresIndexExpression(predicate) == normalizePostgresIndexExpression(expectedPredicate)
 }
 
 func postgresIndexDefinition(ctx context.Context, db *gorm.DB, tableName, indexName string) (definition string, predicate string, unique bool, found bool, err error) {

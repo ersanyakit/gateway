@@ -4,6 +4,7 @@ import (
 	"context"
 	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 	"math/big"
 	"strings"
 	"time"
@@ -52,18 +53,29 @@ func (r *RefundRepo) CountByStatus(ctx context.Context, statuses ...string) (map
 }
 
 func (r *RefundRepo) Create(ctx context.Context, refund *models.Refund) error {
+	if refund == nil {
+		return gorm.ErrInvalidData
+	}
 	if refund.ID == uuid.Nil {
 		refund.ID = uuid.New()
 	}
 	if refund.Status == "" {
 		refund.Status = models.RefundStatusPending
 	}
-	return r.db.WithContext(ctx).Create(refund).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(refund).Error; err != nil {
+			return err
+		}
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundRequestedV1, *refund)
+	})
 }
 
 func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, session models.PaymentSession, ledger *LedgerRepo) error {
 	if ledger == nil {
 		return ErrLedgerReservationRequired
+	}
+	if refund == nil {
+		return gorm.ErrInvalidData
 	}
 	if refund.ID == uuid.Nil {
 		refund.ID = uuid.New()
@@ -76,7 +88,10 @@ func (r *RefundRepo) CreateWithHold(ctx context.Context, refund *models.Refund, 
 		if err := tx.Create(refund).Error; err != nil {
 			return err
 		}
-		return NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, *refund, session)
+		if err := NewLedgerRepo(tx).CreateRefundHoldWithDB(ctx, tx, *refund, session); err != nil {
+			return err
+		}
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundRequestedV1, *refund)
 	})
 }
 
@@ -443,22 +458,36 @@ func (r *RefundRepo) RecordBroadcast(ctx context.Context, id uuid.UUID, reviewed
 		return ErrTxHashRequired
 	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ? AND status = ?", id, models.RefundStatusProcessing).
-		Updates(map[string]any{
-			"reviewed_by":    reviewedBy,
-			"reviewed_at":    &now,
-			"tx_hash":        txHash,
-			"broadcasted_at": &now,
-			"error":          "",
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, "id = ? AND status = ?", id, models.RefundStatusProcessing).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status = ?", id, models.RefundStatusProcessing).
+			Updates(map[string]any{
+				"reviewed_by":    reviewedBy,
+				"reviewed_at":    &now,
+				"tx_hash":        txHash,
+				"broadcasted_at": &now,
+				"error":          "",
+				"updated_at":     now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.TxHash = txHash
+		refund.BroadcastedAt = &now
+		refund.Error = ""
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundBroadcastV1, refund)
+	})
 }
 
 func applyRefundSessionMetadata(refund *models.Refund, session models.PaymentSession) {
@@ -488,23 +517,38 @@ func (r *RefundRepo) MarkSucceeded(ctx context.Context, id uuid.UUID, reviewedBy
 		return ErrTxHashRequired
 	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&models.Refund{}).
-		Where("id = ? AND status IN ?", id, []string{models.RefundStatusProcessing, models.RefundStatusApproved}).
-		Updates(map[string]any{
-			"status":       models.RefundStatusSucceeded,
-			"reviewed_by":  reviewedBy,
-			"reviewed_at":  &now,
-			"tx_hash":      txHash,
-			"finalized_at": &now,
-			"error":        "",
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		statuses := []string{models.RefundStatusProcessing, models.RefundStatusApproved}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&refund, "id = ? AND status IN ?", id, statuses).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.Refund{}).
+			Where("id = ? AND status IN ?", id, statuses).
+			Updates(map[string]any{
+				"status":       models.RefundStatusSucceeded,
+				"reviewed_by":  reviewedBy,
+				"reviewed_at":  &now,
+				"tx_hash":      txHash,
+				"finalized_at": &now,
+				"error":        "",
+				"updated_at":   now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		refund.Status = models.RefundStatusSucceeded
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.TxHash = txHash
+		refund.FinalizedAt = &now
+		refund.Error = ""
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundSucceededV1, refund)
+	})
 }
 
 func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, reviewedBy string, txHash string, session models.PaymentSession, ledger *LedgerRepo) error {
@@ -534,6 +578,7 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 				"tx_hash":      txHash,
 				"finalized_at": &now,
 				"error":        "",
+				"updated_at":   now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -541,13 +586,25 @@ func (r *RefundRepo) MarkSucceededWithLedger(ctx context.Context, id uuid.UUID, 
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return nil
+		refund.Status = models.RefundStatusSucceeded
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.TxHash = txHash
+		refund.FinalizedAt = &now
+		refund.Error = ""
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundSucceededV1, refund)
 	})
 }
 
 func (r *RefundRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
 	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var refund models.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&refund, "id = ? AND status = ?", id, models.RefundStatusPending).Error; err != nil {
+			return err
+		}
 		result := tx.Model(&models.Refund{}).
 			Where("id = ? AND status = ?", id, models.RefundStatusPending).
 			Updates(map[string]any{
@@ -555,6 +612,7 @@ func (r *RefundRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy 
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"error":       reason,
+				"updated_at":  now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -562,7 +620,15 @@ func (r *RefundRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy 
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+		if err := NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id); err != nil {
+			return err
+		}
+		refund.Status = models.RefundStatusRejected
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.Error = reason
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundRejectedV1, refund)
 	})
 }
 
@@ -581,6 +647,7 @@ func (r *RefundRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy st
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"error":       errText,
+				"updated_at":  now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -588,10 +655,17 @@ func (r *RefundRepo) MarkFailed(ctx context.Context, id uuid.UUID, reviewedBy st
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if strings.TrimSpace(refund.TxHash) != "" {
-			return nil
+		if strings.TrimSpace(refund.TxHash) == "" {
+			if err := NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id); err != nil {
+				return err
+			}
 		}
-		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+		refund.Status = models.RefundStatusFailed
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.Error = errText
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundFailedV1, refund)
 	})
 }
 
@@ -614,6 +688,7 @@ func (r *RefundRepo) MarkFailedFinalWithLedgerRelease(ctx context.Context, id uu
 				"reviewed_at":  &now,
 				"finalized_at": &now,
 				"error":        errText,
+				"updated_at":   now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -621,7 +696,16 @@ func (r *RefundRepo) MarkFailedFinalWithLedgerRelease(ctx context.Context, id uu
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id)
+		if err := NewLedgerRepo(tx).VoidRefundHoldWithDB(ctx, tx, id); err != nil {
+			return err
+		}
+		refund.Status = models.RefundStatusFailed
+		refund.ReviewedBy = reviewedBy
+		refund.ReviewedAt = &now
+		refund.FinalizedAt = &now
+		refund.Error = errText
+		refund.UpdatedAt = now
+		return recordRefundLifecycleWithDB(ctx, tx, constants.WebhookEventRefundFailedV1, refund)
 	})
 }
 
@@ -636,4 +720,10 @@ func (r *RefundRepo) SetProcessingError(ctx context.Context, id uuid.UUID, errTe
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func recordRefundLifecycleWithDB(ctx context.Context, tx *gorm.DB, eventType string, refund models.Refund) error {
+	payload := webhooksvc.NewRefundPayload(eventType, refund)
+	_, _, err := NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, payload)
+	return err
 }

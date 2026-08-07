@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"core/asset"
 	"core/blockchain"
 	"core/blockchain/addrutil"
+	"core/constants"
 	"core/helpers"
 	"core/models"
 	"core/types"
@@ -46,11 +48,12 @@ const (
 )
 
 type RpcListener struct {
-	chain       blockchain.Chain
-	registry    *asset.Registry
-	chainState  *models.ChainState
-	stateWriter func(*models.ChainState) error
-	bus         *dispatcher.Dispatcher
+	chain                 blockchain.Chain
+	registry              *asset.Registry
+	chainState            *models.ChainState
+	stateWriter           func(*models.ChainState) error
+	bus                   *dispatcher.Dispatcher
+	observeCanonicalBlock func(context.Context, constants.ChainID, int64, string, string) error
 
 	conn            *grpc.ClientConn
 	client          tronWalletClient
@@ -68,6 +71,8 @@ type RpcListener struct {
 
 	throttleErrors       int
 	lastRetryableWarning time.Time
+	lastBlockHash        string
+	lastBlockParentHash  string
 }
 
 type walletClient struct {
@@ -112,13 +117,28 @@ func (m *transactionInfoList) GetTransactionInfo() []*pb.TransactionInfo {
 }
 
 type tronHTTPTransactionInfo struct {
-	ID          string          `json:"id"`
-	Result      json.RawMessage `json:"result"`
-	BlockNumber int64           `json:"blockNumber"`
-	Receipt     struct {
+	ID                   string                        `json:"id"`
+	Result               json.RawMessage               `json:"result"`
+	BlockNumber          int64                         `json:"blockNumber"`
+	InternalTransactions []tronHTTPInternalTransaction `json:"internal_transactions"`
+	Receipt              struct {
 		Result string `json:"result"`
 	} `json:"receipt"`
 	Log []tronHTTPLog `json:"log"`
+}
+
+type tronHTTPInternalTransaction struct {
+	Hash              string                          `json:"hash"`
+	CallerAddress     string                          `json:"caller_address"`
+	TransferToAddress string                          `json:"transferTo_address"`
+	CallValueInfo     []tronHTTPInternalCallValueInfo `json:"callValueInfo"`
+	Note              string                          `json:"note"`
+	Rejected          bool                            `json:"rejected"`
+}
+
+type tronHTTPInternalCallValueInfo struct {
+	CallValue int64  `json:"callValue"`
+	TokenID   string `json:"tokenId"`
 }
 
 type tronHTTPLog struct {
@@ -133,12 +153,17 @@ func (t tronHTTPTransactionInfo) toProto() (*pb.TransactionInfo, error) {
 		return nil, fmt.Errorf("decode tron transaction info id: %w", err)
 	}
 	info := &pb.TransactionInfo{
-		Id:          id,
-		BlockNumber: t.BlockNumber,
-		Result:      pb.TransactionInfo_SUCESS,
-		Log:         make([]*pb.TransactionInfo_Log, 0, len(t.Log)),
+		Id:                   id,
+		BlockNumber:          t.BlockNumber,
+		Result:               pb.TransactionInfo_SUCESS,
+		Log:                  make([]*pb.TransactionInfo_Log, 0, len(t.Log)),
+		InternalTransactions: make([]*pb.InternalTransaction, 0, len(t.InternalTransactions)),
 	}
-	if tronHTTPInfoFailed(t.Result, t.Receipt.Result) {
+	failed, err := tronHTTPInfoFailed(t.Result, t.Receipt.Result)
+	if err != nil {
+		return nil, err
+	}
+	if failed {
 		info.Result = pb.TransactionInfo_FAILED
 	}
 	for idx, entry := range t.Log {
@@ -148,7 +173,48 @@ func (t tronHTTPTransactionInfo) toProto() (*pb.TransactionInfo, error) {
 		}
 		info.Log = append(info.Log, logEntry)
 	}
+	for idx, entry := range t.InternalTransactions {
+		internal, err := entry.toProto()
+		if err != nil {
+			return nil, fmt.Errorf("decode tron internal transaction %d: %w", idx, err)
+		}
+		info.InternalTransactions = append(info.InternalTransactions, internal)
+	}
 	return info, nil
+}
+
+func (t tronHTTPInternalTransaction) toProto() (*pb.InternalTransaction, error) {
+	hash, err := tronDecodeHex(t.Hash)
+	if err != nil {
+		return nil, fmt.Errorf("decode hash: %w", err)
+	}
+	caller, err := tronDecodeHex(t.CallerAddress)
+	if err != nil {
+		return nil, fmt.Errorf("decode caller address: %w", err)
+	}
+	to, err := tronDecodeHex(t.TransferToAddress)
+	if err != nil {
+		return nil, fmt.Errorf("decode transfer-to address: %w", err)
+	}
+	note, err := tronDecodeHex(t.Note)
+	if err != nil {
+		return nil, fmt.Errorf("decode note: %w", err)
+	}
+	internal := &pb.InternalTransaction{
+		Hash:              hash,
+		CallerAddress:     caller,
+		TransferToAddress: to,
+		Note:              note,
+		Rejected:          t.Rejected,
+		CallValueInfo:     make([]*pb.InternalTransaction_CallValueInfo, 0, len(t.CallValueInfo)),
+	}
+	for _, value := range t.CallValueInfo {
+		internal.CallValueInfo = append(internal.CallValueInfo, &pb.InternalTransaction_CallValueInfo{
+			CallValue: value.CallValue,
+			TokenId:   value.TokenID,
+		})
+	}
+	return internal, nil
 }
 
 func (l tronHTTPLog) toProto() (*pb.TransactionInfo_Log, error) {
@@ -177,22 +243,46 @@ func (l tronHTTPLog) toProto() (*pb.TransactionInfo_Log, error) {
 	return out, nil
 }
 
-func tronHTTPInfoFailed(raw json.RawMessage, receiptResult string) bool {
-	if strings.EqualFold(strings.TrimSpace(receiptResult), "FAILED") {
-		return true
+func tronHTTPInfoFailed(raw json.RawMessage, receiptResult string) (bool, error) {
+	receiptResult = strings.ToUpper(strings.TrimSpace(receiptResult))
+	if receiptResult != "" {
+		switch receiptResult {
+		case "SUCCESS", "SUCESS":
+			// Continue below: a top-level failure still wins.
+		case "FAILED", "REVERT", "BAD_JUMP_DESTINATION", "OUT_OF_MEMORY", "PRECOMPILED_CONTRACT",
+			"STACK_TOO_SMALL", "STACK_TOO_LARGE", "ILLEGAL_OPERATION", "STACK_OVERFLOW",
+			"OUT_OF_ENERGY", "OUT_OF_TIME", "JVM_STACK_OVER_FLOW", "UNKNOWN":
+			return true, nil
+		default:
+			return false, fmt.Errorf("unknown tron HTTP receipt result %q", receiptResult)
+		}
 	}
-	if len(raw) == 0 || string(raw) == "null" {
-		return false
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return false, nil
 	}
 	var text string
-	if err := json.Unmarshal(raw, &text); err == nil {
-		return strings.EqualFold(strings.TrimSpace(text), "FAILED")
+	if err := json.Unmarshal(trimmed, &text); err == nil {
+		switch strings.ToUpper(strings.TrimSpace(text)) {
+		case "SUCCESS", "SUCESS":
+			return false, nil
+		case "FAILED", "REVERT", "BAD_JUMP_DESTINATION", "OUT_OF_MEMORY", "PRECOMPILED_CONTRACT",
+			"STACK_TOO_SMALL", "STACK_TOO_LARGE", "ILLEGAL_OPERATION", "STACK_OVERFLOW",
+			"OUT_OF_ENERGY", "OUT_OF_TIME", "JVM_STACK_OVER_FLOW", "UNKNOWN":
+			return true, nil
+		default:
+			return false, fmt.Errorf("unknown tron HTTP transaction result %q", text)
+		}
 	}
 	var numeric int
-	if err := json.Unmarshal(raw, &numeric); err == nil {
-		return numeric == int(pb.TransactionInfo_FAILED)
+	if err := json.Unmarshal(trimmed, &numeric); err == nil {
+		return numeric != int(pb.TransactionInfo_SUCESS), nil
 	}
-	return false
+	var boolean bool
+	if err := json.Unmarshal(trimmed, &boolean); err == nil {
+		return !boolean, nil
+	}
+	return false, fmt.Errorf("malformed tron HTTP transaction result %q", string(trimmed))
 }
 
 func tronDecodeHex(value string) ([]byte, error) {
@@ -261,6 +351,10 @@ func NewRpcListener(
 	}
 }
 
+func (r *RpcListener) SetCanonicalBlockObserver(observer func(context.Context, constants.ChainID, int64, string, string) error) {
+	r.observeCanonicalBlock = observer
+}
+
 func (r *RpcListener) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -268,13 +362,16 @@ func (r *RpcListener) Start() error {
 	if r.running {
 		return fmt.Errorf("listener already running")
 	}
+	if err := requireCompleteTRONInternalTransactionSource(); err != nil {
+		return err
+	}
 	r.quit = make(chan struct{})
 	if err := r.connect(); err != nil {
 		return err
 	}
 
 	r.running = true
-	helpers.GoSafely("listener.tron."+r.chain.Name(), r.pollLoop)
+	helpers.GoSafelyRestarting("listener.tron."+r.chain.Name(), r.quit, time.Second, r.pollLoop)
 	return nil
 }
 
@@ -633,14 +730,26 @@ func (r *RpcListener) catchUp() error {
 			return err
 		}
 
-		r.chainState.LastProcessedBlock = blockNumber
-		r.chainState.LastConfirmedBlock = confirmedHead
-		if r.stateWriter != nil {
-			if err := r.stateWriter(r.chainState); err != nil {
-				return fmt.Errorf("write chain state: %w", err)
-			}
+		if err := r.writeChainState(blockNumber, confirmedHead); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func (r *RpcListener) writeChainState(blockNumber, confirmedHead int64) error {
+	if r.chainState == nil {
+		return errors.New("tron chain state is nil")
+	}
+	next := *r.chainState
+	listenerconfig.RecordProcessedBlockCheckpoint(&next, blockNumber, r.lastBlockHash, r.lastBlockParentHash)
+	next.LastConfirmedBlock = confirmedHead
+	if r.stateWriter != nil {
+		if err := r.stateWriter(&next); err != nil {
+			return fmt.Errorf("write chain state: %w", err)
+		}
+	}
+	*r.chainState = next
 	return nil
 }
 
@@ -654,10 +763,20 @@ func (r *RpcListener) latestBlockNumber(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return block.GetBlockHeader().GetRawData().GetNumber(), nil
+	if block == nil || block.GetBlockHeader() == nil || block.GetBlockHeader().GetRawData() == nil {
+		return 0, errors.New("tron latest block response is missing block header")
+	}
+	blockNumber := block.GetBlockHeader().GetRawData().GetNumber()
+	if blockNumber <= 0 {
+		return 0, fmt.Errorf("tron latest block response has invalid number %d", blockNumber)
+	}
+	return blockNumber, nil
 }
 
 func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error {
+	if err := requireCompleteTRONInternalTransactionSource(); err != nil {
+		return err
+	}
 	var block *pb.Block
 	err := r.withClientFailover(ctx, func(client tronWalletClient) error {
 		var err error
@@ -666,6 +785,69 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 	})
 	if err != nil {
 		return err
+	}
+	if block == nil || block.GetBlockHeader() == nil || block.GetBlockHeader().GetRawData() == nil {
+		return fmt.Errorf("tron block %d response is missing block header", blockNumber)
+	}
+	rawHeader := block.GetBlockHeader().GetRawData()
+	providerBlockNumber := rawHeader.GetNumber()
+	if providerBlockNumber != blockNumber {
+		return fmt.Errorf("tron block height mismatch: requested %d got %d", blockNumber, providerBlockNumber)
+	}
+	blockHash := tronBlockID(block)
+	if strings.TrimSpace(blockHash) == "" {
+		return fmt.Errorf("tron block %d response has no block id", blockNumber)
+	}
+	parentHashBytes := rawHeader.GetParentHash()
+	if blockNumber > 0 && len(parentHashBytes) != sha256.Size {
+		return fmt.Errorf("tron block %d response has invalid parent hash length %d", blockNumber, len(parentHashBytes))
+	}
+	parentHash := hex.EncodeToString(parentHashBytes)
+	if blockNumber > 0 && strings.EqualFold(blockHash, parentHash) {
+		return fmt.Errorf("tron block %d hash equals parent hash", blockNumber)
+	}
+	txIDs := make([]string, len(block.GetTransactions()))
+	blockTxIDs := make(map[string]struct{}, len(txIDs))
+	for txIndex, tx := range block.GetTransactions() {
+		if tx == nil || tx.GetRawData() == nil {
+			return fmt.Errorf("tron block %d transaction %d is missing raw data", blockNumber, txIndex)
+		}
+		txID, err := tronTxID(tx)
+		if err != nil {
+			return fmt.Errorf("tron block %d transaction %d id: %w", blockNumber, txIndex, err)
+		}
+		if strings.TrimSpace(txID) == "" {
+			return fmt.Errorf("tron block %d transaction %d has an empty id", blockNumber, txIndex)
+		}
+		if _, duplicate := blockTxIDs[txID]; duplicate {
+			return fmt.Errorf("tron block %d returned duplicate transaction %s", blockNumber, txID)
+		}
+		txIDs[txIndex] = txID
+		blockTxIDs[txID] = struct{}{}
+	}
+
+	if r.chainState != nil {
+		continuityState := *r.chainState
+		if continuityErr := listenerconfig.ValidateParentContinuity(&continuityState, blockNumber, parentHash); continuityErr != nil {
+			if r.observeCanonicalBlock != nil {
+				if observeErr := r.observeCanonicalBlock(ctx, r.chain.ChainID(), blockNumber, blockHash, parentHash); observeErr != nil {
+					return fmt.Errorf("observe canonical tron block after parent continuity failure: %w", observeErr)
+				}
+			}
+			listenerconfig.RewindParentContinuityCheckpoint(&continuityState, blockNumber)
+			if r.stateWriter != nil {
+				if writeErr := r.stateWriter(&continuityState); writeErr != nil {
+					return fmt.Errorf("write tron chain rollback state: %w", writeErr)
+				}
+			}
+			*r.chainState = continuityState
+			return continuityErr
+		}
+	}
+	if r.observeCanonicalBlock != nil {
+		if err := r.observeCanonicalBlock(ctx, r.chain.ChainID(), blockNumber, blockHash, parentHash); err != nil {
+			return fmt.Errorf("observe canonical tron block: %w", err)
+		}
 	}
 
 	var infoList *transactionInfoList
@@ -682,13 +864,42 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 			err = errors.Join(err, fallbackErr)
 		}
 	}
-	infoByTxID := make(map[string]*pb.TransactionInfo)
+	infoByTxID := make(map[string]*pb.TransactionInfo, len(txIDs))
 	if err != nil {
 		return fmt.Errorf("transaction info fetch failed for block %d; checkpoint held to preserve TRC20 logs: %w", blockNumber, err)
 	} else {
-		for _, info := range infoList.GetTransactionInfo() {
-			infoByTxID[hex.EncodeToString(info.GetId())] = info
+		for infoIndex, info := range infoList.GetTransactionInfo() {
+			if info == nil || len(info.GetId()) == 0 {
+				return fmt.Errorf("transaction info %d for block %d is missing transaction id; checkpoint held", infoIndex, blockNumber)
+			}
+			txID := hex.EncodeToString(info.GetId())
+			if _, belongs := blockTxIDs[txID]; !belongs {
+				return fmt.Errorf("transaction info %s does not belong to tron block %d; checkpoint held", txID, blockNumber)
+			}
+			if info.GetBlockNumber() != blockNumber {
+				return fmt.Errorf("transaction info %s block mismatch: requested %d got %d; checkpoint held", txID, blockNumber, info.GetBlockNumber())
+			}
+			if _, duplicate := infoByTxID[txID]; duplicate {
+				return fmt.Errorf("duplicate transaction info %s for tron block %d; checkpoint held", txID, blockNumber)
+			}
+			infoByTxID[txID] = info
 		}
+	}
+	for _, txID := range txIDs {
+		if infoByTxID[txID] != nil {
+			continue
+		}
+		info, fallbackErr := r.httpTransactionInfoByID(ctx, txID)
+		if fallbackErr != nil {
+			return fmt.Errorf("transaction info %s missing from tron block %d response and HTTP completion failed; checkpoint held: %w", txID, blockNumber, fallbackErr)
+		}
+		if info == nil || !strings.EqualFold(hex.EncodeToString(info.GetId()), txID) {
+			return fmt.Errorf("transaction info HTTP completion returned mismatched id for %s in tron block %d; checkpoint held", txID, blockNumber)
+		}
+		if info.GetBlockNumber() != blockNumber {
+			return fmt.Errorf("transaction info HTTP completion %s block mismatch: requested %d got %d; checkpoint held", txID, blockNumber, info.GetBlockNumber())
+		}
+		infoByTxID[txID] = info
 	}
 
 	nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
@@ -697,28 +908,35 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 	}
 
 	readableBlock := fmt.Sprintf("%d", blockNumber)
-	blockHash := tronBlockID(block)
 	for txIndex, tx := range block.GetTransactions() {
-		txID, err := tronTxID(tx)
-		if err != nil {
-			return err
-		}
+		txID := txIDs[txIndex]
 
-		status := tronTxStatus(tx)
-		if info := infoByTxID[txID]; info != nil {
-			status = tronInfoStatus(info)
+		status, statusErr := tronTxStatus(tx)
+		if statusErr != nil {
+			return fmt.Errorf("transaction %s execution result is incomplete; checkpoint held: %w", txID, statusErr)
+		}
+		if info := infoByTxID[txID]; info != nil && info.GetResult() == pb.TransactionInfo_FAILED {
+			// Receipt information may downgrade an apparently successful outer
+			// transaction, but an omitted/default receipt must never upgrade an
+			// explicit outer failure.
+			status = models.TransactionStatusFailed
 		}
 
 		memo := tronTransactionMemo(tx)
-		if err := r.handleNativeTransfers(ctx, tx, txID, blockHash, readableBlock, txIndex, status, memo, nativeAsset); err != nil {
+		if err := r.handleNativeTransfers(ctx, tx, txID, blockHash, parentHash, readableBlock, txIndex, status, memo, nativeAsset); err != nil {
 			return err
 		}
 		if info := infoByTxID[txID]; info != nil {
-			if err := r.handleTRC20Logs(ctx, info, txID, blockHash, readableBlock, status, memo); err != nil {
+			if err := r.handleInternalTRXTransfers(ctx, info, txID, blockHash, parentHash, readableBlock, status, memo, nativeAsset); err != nil {
+				return err
+			}
+			if err := r.handleTRC20Logs(ctx, info, txID, blockHash, parentHash, readableBlock, status, memo); err != nil {
 				return err
 			}
 		}
 	}
+	r.lastBlockHash = blockHash
+	r.lastBlockParentHash = parentHash
 	return nil
 }
 
@@ -823,7 +1041,7 @@ func (r *RpcListener) tronHTTPPost(ctx context.Context, path string, payload any
 	return nil, lastErr
 }
 
-func (r *RpcListener) handleNativeTransfers(ctx context.Context, tx *pb.Transaction, txID, blockHash, blockNumber string, txIndex int, status, memo string, nativeAsset asset.Asset) error {
+func (r *RpcListener) handleNativeTransfers(ctx context.Context, tx *pb.Transaction, txID, blockHash, parentHash, blockNumber string, txIndex int, status, memo string, nativeAsset asset.Asset) error {
 	if tx == nil || tx.GetRawData() == nil {
 		return nil
 	}
@@ -841,20 +1059,21 @@ func (r *RpcListener) handleNativeTransfers(ctx context.Context, tx *pb.Transact
 		}
 
 		txParam := &types.TransactionParam{
-			Context:   context.Background(),
-			ChainID:   r.chain.ChainID(),
-			Symbol:    helpers.StrPtr(nativeAsset.GetSymbol()),
-			Decimals:  nativeAsset.GetDecimals(),
-			Hash:      helpers.StrPtr(txID),
-			Block:     helpers.StrPtr(blockNumber),
-			BlockHash: helpers.StrPtr(blockHash),
-			Token:     nil,
-			From:      helpers.StrPtr(tronAddress(transfer.GetOwnerAddress())),
-			To:        helpers.StrPtr(tronAddress(transfer.GetToAddress())),
-			Amount:    helpers.StrPtr(fmt.Sprintf("%d", transfer.GetAmount())),
-			LogIndex:  helpers.StrPtr(fmt.Sprintf("tx:%d", contractIndex)),
-			Status:    helpers.StrPtr(status),
-			Memo:      optionalMemoPtr(memo),
+			Context:    context.Background(),
+			ChainID:    r.chain.ChainID(),
+			Symbol:     helpers.StrPtr(nativeAsset.GetSymbol()),
+			Decimals:   nativeAsset.GetDecimals(),
+			Hash:       helpers.StrPtr(txID),
+			Block:      helpers.StrPtr(blockNumber),
+			BlockHash:  helpers.StrPtr(blockHash),
+			ParentHash: helpers.StrPtr(parentHash),
+			Token:      nil,
+			From:       helpers.StrPtr(tronAddress(transfer.GetOwnerAddress())),
+			To:         helpers.StrPtr(tronAddress(transfer.GetToAddress())),
+			Amount:     helpers.StrPtr(fmt.Sprintf("%d", transfer.GetAmount())),
+			LogIndex:   helpers.StrPtr(fmt.Sprintf("tx:%d", contractIndex)),
+			Status:     helpers.StrPtr(status),
+			Memo:       optionalMemoPtr(memo),
 		}
 		if err := r.dispatch(ctx, "native_transfer", txParam); err != nil {
 			return err
@@ -863,7 +1082,7 @@ func (r *RpcListener) handleNativeTransfers(ctx context.Context, tx *pb.Transact
 	return nil
 }
 
-func (r *RpcListener) handleTRC20Logs(ctx context.Context, info *pb.TransactionInfo, txID, blockHash, blockNumber, status, memo string) error {
+func (r *RpcListener) handleTRC20Logs(ctx context.Context, info *pb.TransactionInfo, txID, blockHash, parentHash, blockNumber, status, memo string) error {
 	for idx, entry := range info.GetLog() {
 		topics := entry.GetTopics()
 		if len(topics) < 3 || !equalBytes(topics[0], transferEventHash) {
@@ -881,26 +1100,117 @@ func (r *RpcListener) handleTRC20Logs(ctx context.Context, info *pb.TransactionI
 			continue
 		}
 		txParam := &types.TransactionParam{
-			Context:   context.Background(),
-			ChainID:   r.chain.ChainID(),
-			Symbol:    helpers.StrPtr(assetInfo.GetSymbol()),
-			Decimals:  assetInfo.GetDecimals(),
-			Hash:      helpers.StrPtr(txID),
-			Block:     helpers.StrPtr(blockNumber),
-			BlockHash: helpers.StrPtr(blockHash),
-			Token:     helpers.StrPtr(tokenID),
-			From:      helpers.StrPtr(topicToTronAddress(topics[1])),
-			To:        helpers.StrPtr(topicToTronAddress(topics[2])),
-			Amount:    helpers.StrPtr(amount.String()),
-			LogIndex:  helpers.StrPtr(fmt.Sprintf("log:%d", idx)),
-			Status:    helpers.StrPtr(status),
-			Memo:      optionalMemoPtr(memo),
+			Context:    context.Background(),
+			ChainID:    r.chain.ChainID(),
+			Symbol:     helpers.StrPtr(assetInfo.GetSymbol()),
+			Decimals:   assetInfo.GetDecimals(),
+			Hash:       helpers.StrPtr(txID),
+			Block:      helpers.StrPtr(blockNumber),
+			BlockHash:  helpers.StrPtr(blockHash),
+			ParentHash: helpers.StrPtr(parentHash),
+			Token:      helpers.StrPtr(tokenID),
+			From:       helpers.StrPtr(topicToTronAddress(topics[1])),
+			To:         helpers.StrPtr(topicToTronAddress(topics[2])),
+			Amount:     helpers.StrPtr(amount.String()),
+			LogIndex:   helpers.StrPtr(fmt.Sprintf("log:%d", idx)),
+			Status:     helpers.StrPtr(status),
+			Memo:       optionalMemoPtr(memo),
 		}
 		if err := r.dispatch(ctx, "token_transfer", txParam); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (r *RpcListener) handleInternalTRXTransfers(ctx context.Context, info *pb.TransactionInfo, txID, blockHash, parentHash, blockNumber, status, memo string, nativeAsset asset.Asset) error {
+	if info == nil {
+		return nil
+	}
+	seenInternalHashes := make(map[string]struct{}, len(info.GetInternalTransactions()))
+	for internalIndex, internal := range info.GetInternalTransactions() {
+		if internal == nil || internal.GetRejected() {
+			continue
+		}
+		note := strings.ToLower(strings.TrimSpace(string(internal.GetNote())))
+		switch note {
+		case "call", "create", "suicide":
+			// These TVM instructions can move native TRX value.
+		case "":
+			for _, value := range internal.GetCallValueInfo() {
+				if value != nil && value.GetCallValue() > 0 && strings.TrimSpace(value.GetTokenId()) == "" {
+					return fmt.Errorf("tron internal transaction %s/%d has positive native value but no instruction note", txID, internalIndex)
+				}
+			}
+			continue
+		default:
+			// Resource/stake/delegation instructions can also expose callValueInfo,
+			// but those values are not merchant deposits.
+			continue
+		}
+		from, fromErr := addrutil.TronAddressFromHash(internal.GetCallerAddress())
+		to, toErr := addrutil.TronAddressFromHash(internal.GetTransferToAddress())
+		if fromErr != nil || toErr != nil {
+			return fmt.Errorf("tron internal transaction %s/%d has invalid address data", txID, internalIndex)
+		}
+		internalHashBytes := internal.GetHash()
+		if len(internalHashBytes) != sha256.Size {
+			return fmt.Errorf("tron internal transaction %s/%d has invalid %d-byte identity hash", txID, internalIndex, len(internalHashBytes))
+		}
+		internalHash := hex.EncodeToString(internalHashBytes)
+		if _, duplicate := seenInternalHashes[internalHash]; duplicate {
+			return fmt.Errorf("tron transaction %s contains duplicate internal identity %s", txID, internalHash)
+		}
+		seenInternalHashes[internalHash] = struct{}{}
+		nativeValueCount := 0
+		for _, value := range internal.GetCallValueInfo() {
+			if value == nil || value.GetCallValue() <= 0 {
+				continue
+			}
+			// TRC10 call values carry a token id and require independent asset
+			// metadata. They must not be mislabeled as native TRX deposits.
+			if strings.TrimSpace(value.GetTokenId()) != "" {
+				continue
+			}
+			nativeValueCount++
+			if nativeValueCount > 1 {
+				return fmt.Errorf("tron internal transaction %s/%d has ambiguous multiple native values", txID, internalIndex)
+			}
+			amount := strconv.FormatInt(value.GetCallValue(), 10)
+			txParam := &types.TransactionParam{
+				Context:    context.Background(),
+				ChainID:    r.chain.ChainID(),
+				Symbol:     helpers.StrPtr(nativeAsset.GetSymbol()),
+				Decimals:   nativeAsset.GetDecimals(),
+				Hash:       helpers.StrPtr(txID),
+				Block:      helpers.StrPtr(blockNumber),
+				BlockHash:  helpers.StrPtr(blockHash),
+				ParentHash: helpers.StrPtr(parentHash),
+				From:       helpers.StrPtr(from),
+				To:         helpers.StrPtr(to),
+				Amount:     helpers.StrPtr(amount),
+				LogIndex:   helpers.StrPtr("internal:" + internalHash + ":trx"),
+				Status:     helpers.StrPtr(status),
+				Memo:       optionalMemoPtr(memo),
+			}
+			if err := r.dispatch(ctx, "internal_transfer", txParam); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func requireCompleteTRONInternalTransactionSource() error {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production") {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("TRON_INTERNAL_TX_SOURCE_COMPLETE"))) {
+	case "1", "true", "yes", "on":
+		return nil
+	default:
+		return errors.New("production TRON scanning requires TRON_INTERNAL_TX_SOURCE_COMPLETE=true and an RPC/FullNode with saveInternalTx enabled")
+	}
 }
 
 func tronTransactionMemo(tx *pb.Transaction) string {
@@ -978,23 +1288,23 @@ func tronBlockID(block *pb.Block) string {
 	return hex.EncodeToString(id[:])
 }
 
-func tronTxStatus(tx *pb.Transaction) string {
-	if tx == nil {
-		return "confirmed"
+func tronTxStatus(tx *pb.Transaction) (string, error) {
+	if tx == nil || tx.GetRawData() == nil || len(tx.GetRawData().GetContract()) == 0 {
+		return "", errors.New("transaction contracts are missing")
 	}
-	for _, result := range tx.GetRet() {
-		if result.GetContractRet() != pb.Transaction_Result_SUCCESS && result.GetContractRet() != pb.Transaction_Result_DEFAULT {
-			return "failed"
+	results := tx.GetRet()
+	if len(results) != len(tx.GetRawData().GetContract()) {
+		return "", fmt.Errorf("transaction result count %d does not match contract count %d", len(results), len(tx.GetRawData().GetContract()))
+	}
+	for resultIndex, result := range results {
+		if result == nil || result.GetContractRet() == pb.Transaction_Result_DEFAULT {
+			return "", fmt.Errorf("transaction result %d is missing an explicit contract result", resultIndex)
+		}
+		if result.GetContractRet() != pb.Transaction_Result_SUCCESS {
+			return models.TransactionStatusFailed, nil
 		}
 	}
-	return "confirmed"
-}
-
-func tronInfoStatus(info *pb.TransactionInfo) string {
-	if info != nil && info.GetResult() == pb.TransactionInfo_FAILED {
-		return "failed"
-	}
-	return "confirmed"
+	return models.TransactionStatusConfirmed, nil
 }
 
 func equalBytes(left, right []byte) bool {

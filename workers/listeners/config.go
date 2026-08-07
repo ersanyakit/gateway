@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"core/blockchain"
+	"core/constants"
 	"core/models"
 )
 
@@ -132,13 +133,51 @@ func RewindParentContinuityCheckpoint(state *models.ChainState, nextBlockNumber 
 	if state == nil || nextBlockNumber <= 0 {
 		return
 	}
-	rewindTo := nextBlockNumber - 2
+	rewindBlocks := ReorgRewindBlocks(state.ChainID)
+	rewindTo := nextBlockNumber - 1 - rewindBlocks
 	if rewindTo < 0 {
 		rewindTo = 0
 	}
 	state.LastProcessedBlock = rewindTo
 	state.LastProcessedHash = ""
 	state.LastProcessedParentHash = ""
+	rewindEvidence := fmt.Sprintf("rewound %d blocks to checkpoint %d", rewindBlocks, rewindTo)
+	if reason := strings.TrimSpace(state.ContinuityReason); reason != "" {
+		state.ContinuityReason = boundedContinuityReason(reason + "; " + rewindEvidence)
+	} else {
+		state.ContinuityReason = rewindEvidence
+	}
+}
+
+// ReorgRewindBlocks returns the replay window used after a parent mismatch.
+// Replaying a bounded canonical window is intentionally conservative: a
+// one-block rewind can skip the beginning of a deeper fork permanently.
+func ReorgRewindBlocks(chainID constants.ChainID) int64 {
+	keys := []string{fmt.Sprintf("CHAIN_%d_REORG_REWIND_BLOCKS", chainID)}
+	if name := strings.TrimSpace(constants.ChainName(chainID)); name != "" {
+		envName := strings.ToUpper(strings.NewReplacer("-", "_").Replace(name))
+		keys = append(keys, envName+"_REORG_REWIND_BLOCKS")
+	}
+	keys = append(keys, "SCANNER_REORG_REWIND_BLOCKS")
+	for _, key := range keys {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err == nil && value > 0 && value <= 10000 {
+			return value
+		}
+	}
+	return 64
+}
+
+func boundedContinuityReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if len(reason) > 256 {
+		return reason[:256]
+	}
+	return reason
 }
 
 func RecordProcessedBlockCheckpoint(state *models.ChainState, blockNumber int64, hash string, parentHash string) {

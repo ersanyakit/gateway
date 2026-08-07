@@ -5,15 +5,20 @@ import (
 	"core/constants"
 	"core/types"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
 	ErrNoSubscribers          = errors.New("no subscribers for chain")
 	ErrDistributedBusRequired = errors.New("in-process dispatcher is not a distributed event bus")
+	ErrSubscriberAckClosed    = errors.New("subscriber closed acknowledgement channel")
 )
+
+const defaultAckTimeout = 30 * time.Second
 
 type Event struct {
 	Chain       constants.ChainID
@@ -28,6 +33,7 @@ type Dispatcher struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
+	ackTimeout  time.Duration
 }
 
 func NewDispatcher() *Dispatcher {
@@ -37,7 +43,22 @@ func NewDispatcher() *Dispatcher {
 		subscribers: make(map[constants.ChainID][]chan Event),
 		ctx:         ctx,
 		cancel:      cancel,
+		ackTimeout:  configuredAckTimeout(),
 	}
+}
+
+func configuredAckTimeout() time.Duration {
+	for _, key := range []string{"CHAIN_EVENT_ACK_TIMEOUT", "DISPATCHER_ACK_TIMEOUT"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		timeout, err := time.ParseDuration(raw)
+		if err == nil && timeout > 0 {
+			return timeout
+		}
+	}
+	return defaultAckTimeout
 }
 
 func ProductionScaleModeEnabled() bool {
@@ -98,6 +119,9 @@ func (d *Dispatcher) Dispatch(event Event) {
 }
 
 func (d *Dispatcher) DispatchAndWait(ctx context.Context, event Event) error {
+	ctx, cancel := d.boundedContext(ctx)
+	defer cancel()
+
 	d.mu.RLock()
 	subs := append([]chan Event(nil), d.subscribers[event.Chain]...)
 	d.mu.RUnlock()
@@ -106,32 +130,56 @@ func (d *Dispatcher) DispatchAndWait(ctx context.Context, event Event) error {
 		return ErrNoSubscribers
 	}
 
-	event.Ack = make(chan error, len(subs))
-	for _, ch := range subs {
+	// Each subscriber gets its own acknowledgement channel. A shared channel
+	// lets a buggy subscriber acknowledge more than once and accidentally
+	// satisfy another subscriber's acknowledgement requirement.
+	acks := make([]<-chan error, 0, len(subs))
+	for index, ch := range subs {
+		delivered := event
+		ack := make(chan error, 1)
+		delivered.Ack = ack
 		select {
-		case ch <- event:
+		case ch <- delivered:
+			acks = append(acks, ack)
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("dispatch chain=%d subscriber=%d enqueue: %w", event.Chain, index, ctx.Err())
 		case <-d.ctx.Done():
 			return d.ctx.Err()
 		}
 	}
 
 	var errs []error
-	for range subs {
+	for index, ack := range acks {
 		select {
-		case err := <-event.Ack:
+		case err, ok := <-ack:
+			if !ok {
+				errs = append(errs, fmt.Errorf("dispatch chain=%d subscriber=%d: %w", event.Chain, index, ErrSubscriberAckClosed))
+				continue
+			}
 			if err != nil {
-				errs = append(errs, err)
+				errs = append(errs, fmt.Errorf("dispatch chain=%d subscriber=%d acknowledgement: %w", event.Chain, index, err))
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("dispatch chain=%d subscriber=%d acknowledgement: %w", event.Chain, index, ctx.Err())
 		case <-d.ctx.Done():
 			return d.ctx.Err()
 		}
 	}
 
 	return errors.Join(errs...)
+}
+
+func (d *Dispatcher) boundedContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d == nil || d.ackTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) <= d.ackTimeout {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, d.ackTimeout)
 }
 
 func (d *Dispatcher) Shutdown() {

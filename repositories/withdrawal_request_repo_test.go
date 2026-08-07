@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -469,6 +470,120 @@ func TestWithdrawalRequestRepoRecordBroadcastRequiresTxHashAndStoresTimestamp(t 
 	if after.Status != models.WithdrawalStatusProcessing {
 		t.Fatalf("broadcast must remain non-terminal processing, got %s", after.Status)
 	}
+}
+
+func TestWithdrawalLifecycleTransitionsRecordAtomicOutboxEvents(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate payout lifecycle tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	repo := NewWithdrawalRequestRepo(db)
+	newRequest := func(status string) models.WithdrawalRequest {
+		return models.WithdrawalRequest{
+			ID:             uuid.New(),
+			MerchantID:     merchantID,
+			DomainID:       &domainID,
+			WalletID:       walletID,
+			Chain:          "ethereum",
+			Symbol:         "ETH",
+			Decimals:       18,
+			ToAddress:      "0xto",
+			AmountRaw:      "10",
+			Status:         status,
+			IdempotencyKey: "business-" + uuid.NewString(),
+			CorrelationID:  "correlation-" + uuid.NewString(),
+		}
+	}
+
+	request := newRequest(models.WithdrawalStatusPending)
+	if err := repo.Create(ctx, &request); err != nil {
+		t.Fatalf("create payout: %v", err)
+	}
+	if err := db.WithContext(ctx).Model(&models.WithdrawalRequest{}).Where("id = ?", request.ID).Update("status", models.WithdrawalStatusProcessing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordBroadcast(ctx, request.ID, "admin@example.com", "0xbroadcast"); err != nil {
+		t.Fatalf("record payout broadcast: %v", err)
+	}
+	if err := repo.MarkApproved(ctx, request.ID, "admin@example.com", "0xbroadcast"); err != nil {
+		t.Fatalf("finalize payout: %v", err)
+	}
+	if err := repo.MarkApproved(ctx, request.ID, "admin@example.com", "0xbroadcast"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("duplicate finalize error = %v", err)
+	}
+
+	rejected := newRequest(models.WithdrawalStatusPending)
+	failed := newRequest(models.WithdrawalStatusPending)
+	if err := db.WithContext(ctx).Create(&[]models.WithdrawalRequest{rejected, failed}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkRejected(ctx, rejected.ID, "admin@example.com", "policy rejected"); err != nil {
+		t.Fatalf("reject payout: %v", err)
+	}
+	if err := repo.MarkFailed(ctx, failed.ID, "worker", "signer failed"); err != nil {
+		t.Fatalf("fail payout: %v", err)
+	}
+
+	var rows []models.MoneyEventOutbox
+	if err := db.WithContext(ctx).Where("aggregate_id = ?", request.ID.String()).Order("sequence ASC").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		constants.WebhookEventPayoutRequestedV1,
+		constants.WebhookEventPayoutBroadcastV1,
+		constants.WebhookEventPayoutFinalizedV1,
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("payout lifecycle rows = %d, want %d", len(rows), len(want))
+	}
+	for i := range want {
+		if rows[i].EventType != want[i] || rows[i].Sequence != int64(i+1) || rows[i].IdempotencyKey != rows[i].EventID {
+			t.Fatalf("payout lifecycle row %d = %#v", i, rows[i])
+		}
+	}
+	var finalizedPayload map[string]any
+	if err := json.Unmarshal([]byte(rows[2].PayloadJSON), &finalizedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if finalizedPayload["status"] != models.WithdrawalStatusFinalized || finalizedPayload["tx_hash"] != "0xbroadcast" {
+		t.Fatalf("finalized payout payload = %#v", finalizedPayload)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", rejected.ID.String()+":"+constants.WebhookEventPayoutRejectedV1, 1)
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", failed.ID.String()+":"+constants.WebhookEventPayoutFailedV1, 1)
+}
+
+func TestWithdrawalBroadcastRollsBackWhenLifecycleOutboxInsertFails(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	request := models.WithdrawalRequest{
+		ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID,
+		Chain: "ethereum", Symbol: "ETH", ToAddress: "0xto", AmountRaw: "10", Status: models.WithdrawalStatusProcessing,
+	}
+	if err := db.WithContext(ctx).Create(&request).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE money_event_outboxes ADD CONSTRAINT reject_payout_broadcast CHECK (event_type <> 'payout.broadcast.v1')`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewWithdrawalRequestRepo(db).RecordBroadcast(ctx, request.ID, "admin@example.com", "0xmust-rollback")
+	if err == nil {
+		t.Fatal("broadcast transition succeeded despite rejected lifecycle insert")
+	}
+	var after models.WithdrawalRequest
+	if err := db.WithContext(ctx).First(&after, "id = ?", request.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.TxHash != "" || after.BroadcastedAt != nil || after.ReviewedAt != nil || after.Status != models.WithdrawalStatusProcessing {
+		t.Fatalf("payout transition did not roll back: %#v", after)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ?", request.ID.String(), 0)
 }
 
 func seedWithdrawalOwner(t *testing.T, db *gorm.DB) (uuid.UUID, uuid.UUID, uuid.UUID) {

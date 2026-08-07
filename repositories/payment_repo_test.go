@@ -37,6 +37,30 @@ func TestPaymentStatusBlocksCancelIncludesExplicitOutcomeStatuses(t *testing.T) 
 	}
 }
 
+func TestResetPaymentWebhookDeliveryStateOnlyWhenEventChanges(t *testing.T) {
+	sentAt := time.Now().Add(-time.Minute)
+	lockedUntil := time.Now().Add(time.Minute)
+	session := models.PaymentSession{
+		WebhookEvent:       constants.WebhookEventPaymentSucceeded,
+		WebhookSentAt:      &sentAt,
+		WebhookAttempts:    3,
+		WebhookLastError:   "previous failure",
+		WebhookLockedUntil: &lockedUntil,
+	}
+	if resetPaymentWebhookDeliveryStateOnEventChange(&session, constants.WebhookEventPaymentSucceeded) {
+		t.Fatal("same event must preserve its delivery state")
+	}
+	if session.WebhookSentAt == nil || session.WebhookAttempts != 3 || session.WebhookLastError == "" || session.WebhookLockedUntil == nil {
+		t.Fatalf("same-event state was reset: %#v", session)
+	}
+	if !resetPaymentWebhookDeliveryStateOnEventChange(&session, constants.WebhookEventPaymentFailed) {
+		t.Fatal("new event must reset prior delivery state")
+	}
+	if session.WebhookSentAt != nil || session.WebhookAttempts != 0 || session.WebhookLastError != "" || session.WebhookLockedUntil != nil {
+		t.Fatalf("new-event state was not reset: %#v", session)
+	}
+}
+
 func TestPaymentRepoMarkFailedForTestMarksAwaitingSession(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.PaymentSession{}); err != nil {
@@ -48,25 +72,32 @@ func TestPaymentRepoMarkFailedForTestMarksAwaitingSession(t *testing.T) {
 	chainID := constants.Ethereum
 	token := "0xToken"
 	now := time.Now()
+	sentAt := now.Add(-time.Minute)
+	lockedUntil := now.Add(time.Minute)
 	session := models.PaymentSession{
-		ID:                uuid.New(),
-		SessionToken:      "admin-test-fail-" + uuid.NewString(),
-		MerchantID:        merchantID,
-		DomainID:          domainID,
-		WalletID:          walletID,
-		OrderID:           "order-" + uuid.NewString(),
-		LinkType:          models.PaymentLinkTypeFixed,
-		Amount:            "10.00",
-		Currency:          "USD",
-		SelectedChainID:   &chainID,
-		SelectedToken:     &token,
-		SelectedSymbol:    "USDC",
-		SelectedDecimals:  6,
-		ExpectedAmountRaw: "10000000",
-		DepositAddress:    "0xdeposit",
-		Status:            models.PaymentStatusAwaitingPayment,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                 uuid.New(),
+		SessionToken:       "admin-test-fail-" + uuid.NewString(),
+		MerchantID:         merchantID,
+		DomainID:           domainID,
+		WalletID:           walletID,
+		OrderID:            "order-" + uuid.NewString(),
+		LinkType:           models.PaymentLinkTypeFixed,
+		Amount:             "10.00",
+		Currency:           "USD",
+		SelectedChainID:    &chainID,
+		SelectedToken:      &token,
+		SelectedSymbol:     "USDC",
+		SelectedDecimals:   6,
+		ExpectedAmountRaw:  "10000000",
+		DepositAddress:     "0xdeposit",
+		Status:             models.PaymentStatusAwaitingPayment,
+		WebhookEvent:       constants.WebhookEventPaymentExpired,
+		WebhookSentAt:      &sentAt,
+		WebhookAttempts:    4,
+		WebhookLastError:   "previous event failure",
+		WebhookLockedUntil: &lockedUntil,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if err := db.WithContext(ctx).Create(&session).Error; err != nil {
 		t.Fatalf("seed payment session: %v", err)
@@ -84,6 +115,9 @@ func TestPaymentRepoMarkFailedForTestMarksAwaitingSession(t *testing.T) {
 	}
 	if marked.PaymentOutcomeReason != "admin panel test fail" || marked.WebhookEvent != constants.WebhookEventPaymentFailed {
 		t.Fatalf("marked outcome fields = %#v", marked)
+	}
+	if marked.WebhookSentAt != nil || marked.WebhookAttempts != 0 || marked.WebhookLastError != "" || marked.WebhookLockedUntil != nil {
+		t.Fatalf("new payment_failed event retained previous delivery state: %#v", marked)
 	}
 	if marked.Domain.ID != domainID {
 		t.Fatalf("marked domain not preloaded: %#v", marked.Domain)
@@ -687,6 +721,7 @@ func TestPaymentRepoMarkReorgedCorrectsAggregateAllocationWithoutSessionTxHash(t
 		PaymentOutcome:     models.PaymentOutcomePartialAggregating,
 		MatchedAmountRaw:   "400",
 		ShortfallAmountRaw: "600",
+		ExpectedAmountRaw:  "1000",
 		SettlementPolicy:   models.PaymentSettlementPolicyAggregate,
 		WebhookEvent:       constants.WebhookEventPaymentPartialPaid,
 		CreatedAt:          now,
@@ -723,7 +758,7 @@ func TestPaymentRepoMarkReorgedCorrectsAggregateAllocationWithoutSessionTxHash(t
 	if err := db.WithContext(ctx).First(&updated, "id = ?", session.ID).Error; err != nil {
 		t.Fatalf("load updated session: %v", err)
 	}
-	if updated.Status != models.PaymentStatusFailed || updated.PaymentOutcomeReason != models.PaymentOutcomeReasonReorged || updated.WebhookEvent != constants.WebhookEventPaymentFailed {
+	if updated.Status != models.PaymentStatusAwaitingPayment || updated.PaymentOutcome != "" || updated.PaymentOutcomeReason != models.PaymentOutcomeReasonReorged || updated.MatchedAmountRaw != "0" || updated.ShortfallAmountRaw != "1000" || updated.WebhookEvent != constants.WebhookEventPaymentFailed {
 		t.Fatalf("aggregate reorg session = %#v", updated)
 	}
 	var updatedAllocation models.PaymentDepositAllocation
@@ -988,6 +1023,16 @@ func TestPaymentRepoAggregatesFinalizedDepositsByPolicy(t *testing.T) {
 	if first.Session.TxUniqueHash != nil || first.Session.MatchedAmountRaw != "400" || first.Session.ShortfallAmountRaw != "600" {
 		t.Fatalf("first aggregate session = %#v", first.Session)
 	}
+	partialSentAt := time.Now().Add(-time.Minute)
+	partialLockedUntil := time.Now().Add(time.Minute)
+	if err := db.Model(&models.PaymentSession{}).Where("id = ?", session.ID).Updates(map[string]any{
+		"webhook_sent_at":      &partialSentAt,
+		"webhook_attempts":     2,
+		"webhook_last_error":   "partial delivery retry",
+		"webhook_locked_until": &partialLockedUntil,
+	}).Error; err != nil {
+		t.Fatalf("seed partial webhook state: %v", err)
+	}
 
 	tx2 := paymentMatchTestTx(constants.Ethereum, "USDC", &token, "600")
 	tx2.WalletID = &walletID
@@ -1007,6 +1052,9 @@ func TestPaymentRepoAggregatesFinalizedDepositsByPolicy(t *testing.T) {
 	}
 	if second.Session.MatchedAmountRaw != "1000" || second.Session.ShortfallAmountRaw != "" || second.Session.TxUniqueHash == nil || *second.Session.TxUniqueHash != tx2.UniqueHash {
 		t.Fatalf("second aggregate session = %#v", second.Session)
+	}
+	if second.Session.WebhookEvent != constants.WebhookEventPaymentSucceeded || second.Session.WebhookSentAt != nil || second.Session.WebhookAttempts != 0 || second.Session.WebhookLastError != "" || second.Session.WebhookLockedUntil != nil {
+		t.Fatalf("succeeded event retained partial-event delivery state: %#v", second.Session)
 	}
 	requirePostgresCount(t, db, &models.PaymentDepositAllocation{}, "payment_session_id = ?", session.ID, 2)
 }

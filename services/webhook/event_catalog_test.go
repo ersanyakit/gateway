@@ -14,6 +14,7 @@ func TestMoneyEventCatalogCoversRequiredCanonicalEvents(t *testing.T) {
 	required := []string{
 		"deposit.detected.v1",
 		"deposit.finalized.v1",
+		"transaction.detected.v1",
 		"payment.succeeded.v1",
 		"payment.failed.v1",
 		"payment.expired.v1",
@@ -27,6 +28,7 @@ func TestMoneyEventCatalogCoversRequiredCanonicalEvents(t *testing.T) {
 		"refund.succeeded.v1",
 		"sweep.succeeded.v1",
 		"transaction.reorged.v1",
+		"transaction.restored.v1",
 	}
 	commonFields := CommonMoneyEventFields()
 
@@ -69,6 +71,7 @@ func TestMoneyEventCatalogV1FieldSnapshot(t *testing.T) {
 	expectedFamilyFields := map[string][]string{
 		"deposit.detected.v1":               {"chain_id", "tx_hash", "tx_unique_hash", "log_index", "amount_raw", "symbol", "token", "from_address", "to_address", "confirmations"},
 		"deposit.finalized.v1":              {"chain_id", "tx_hash", "tx_unique_hash", "amount_raw", "symbol", "token", "wallet_id"},
+		"transaction.detected.v1":           {"transaction_id", "chain_id", "hash", "log_index", "block_number", "block_hash", "amount_raw", "symbol", "token", "from", "to"},
 		"payment.succeeded.v1":              {"payment_id", "order_id", "amount", "currency", "tx_hash", "tx_unique_hash"},
 		"payment.failed.v1":                 {"payment_id", "order_id", "amount", "currency", "failure_reason"},
 		"payment.expired.v1":                {"payment_id", "order_id", "amount", "currency", "expires_at"},
@@ -89,6 +92,7 @@ func TestMoneyEventCatalogV1FieldSnapshot(t *testing.T) {
 		"sweep.failed.v1":                   {"sweep_id", "wallet_id", "chain_id", "failure_reason"},
 		"sweep.dead_lettered.v1":            {"sweep_id", "wallet_id", "chain_id", "failure_reason", "operator_action"},
 		"transaction.reorged.v1":            {"transaction_id", "tx_unique_hash", "original_event_id", "original_resource_id", "correction_reason"},
+		"transaction.restored.v1":           {"transaction_id", "tx_unique_hash", "reorg_event_id", "canonical_block_number", "canonical_block_hash", "restoration_reason"},
 		"webhook.delivery.succeeded.v1":     {"delivery_id", "target_url", "attempts"},
 		"webhook.delivery.failed.v1":        {"delivery_id", "attempts", "failure_reason", "next_retry_at"},
 		"webhook.delivery.dead_lettered.v1": {"delivery_id", "attempts", "failure_reason", "operator_action"},

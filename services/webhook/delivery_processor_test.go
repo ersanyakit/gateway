@@ -18,17 +18,18 @@ type deliveryProcessorFakeRepo struct {
 }
 
 type deliveryProcessorMark struct {
-	id        uuid.UUID
-	delivered bool
-	err       error
+	id         uuid.UUID
+	leaseToken uuid.UUID
+	delivered  bool
+	err        error
 }
 
 func (r *deliveryProcessorFakeRepo) ClaimDue(_ context.Context, _ int) ([]models.WebhookDelivery, error) {
 	return append([]models.WebhookDelivery(nil), r.rows...), nil
 }
 
-func (r *deliveryProcessorFakeRepo) MarkAttempt(_ context.Context, id uuid.UUID, delivered bool, err error) error {
-	r.marks = append(r.marks, deliveryProcessorMark{id: id, delivered: delivered, err: err})
+func (r *deliveryProcessorFakeRepo) MarkAttempt(_ context.Context, id, leaseToken uuid.UUID, delivered bool, err error) error {
+	r.marks = append(r.marks, deliveryProcessorMark{id: id, leaseToken: leaseToken, delivered: delivered, err: err})
 	return nil
 }
 
@@ -42,7 +43,7 @@ func (r *deliveryProcessorLockingRepo) ClaimDue(_ context.Context, _ int, lockFo
 	return append([]models.WebhookDelivery(nil), r.rows...), nil
 }
 
-func (r *deliveryProcessorLockingRepo) MarkAttempt(context.Context, uuid.UUID, bool, error) error {
+func (r *deliveryProcessorLockingRepo) MarkAttempt(context.Context, uuid.UUID, uuid.UUID, bool, error) error {
 	return nil
 }
 
@@ -85,6 +86,7 @@ func TestDeliveryProcessorDeliversClaimedRowsAndMarksSources(t *testing.T) {
 	repo := &deliveryProcessorFakeRepo{rows: []models.WebhookDelivery{
 		{
 			ID:            uuid.New(),
+			LeaseToken:    newWebhookLeaseToken(),
 			DomainID:      domainID,
 			TransactionID: &transactionID,
 			EventID:       "tx:event",
@@ -93,6 +95,7 @@ func TestDeliveryProcessorDeliversClaimedRowsAndMarksSources(t *testing.T) {
 		},
 		{
 			ID:           uuid.New(),
+			LeaseToken:   newWebhookLeaseToken(),
 			DomainID:     domainID,
 			PaymentID:    &paymentID,
 			EventID:      "payment:event",
@@ -101,6 +104,7 @@ func TestDeliveryProcessorDeliversClaimedRowsAndMarksSources(t *testing.T) {
 		},
 		{
 			ID:           uuid.New(),
+			LeaseToken:   newWebhookLeaseToken(),
 			DomainID:     domainID,
 			EventID:      "lifecycle:event",
 			EventType:    constants.WebhookEventPayoutFinalizedV1,
@@ -147,7 +151,7 @@ func TestDeliveryProcessorDeliversClaimedRowsAndMarksSources(t *testing.T) {
 		t.Fatalf("delivery marks = %d, want 3", len(repo.marks))
 	}
 	for _, mark := range repo.marks {
-		if !mark.delivered || mark.err != nil {
+		if mark.leaseToken == uuid.Nil || !mark.delivered || mark.err != nil {
 			t.Fatalf("delivery mark = %#v, want delivered success", mark)
 		}
 	}
@@ -161,6 +165,7 @@ func TestDeliveryProcessorRecordsTransientFailure(t *testing.T) {
 	failure := errors.New("timeout")
 	repo := &deliveryProcessorFakeRepo{rows: []models.WebhookDelivery{{
 		ID:           uuid.New(),
+		LeaseToken:   newWebhookLeaseToken(),
 		DomainID:     uuid.New(),
 		PaymentID:    &paymentID,
 		EventID:      "payment:event",

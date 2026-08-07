@@ -40,8 +40,29 @@ func NewChainFactRepo(db *gorm.DB) *ChainFactRepo {
 	return &ChainFactRepo{db: db}
 }
 
+func (r *ChainFactRepo) DB() *gorm.DB {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 func ChainFactEventID(chainID constants.ChainID, txHash, logIndex string) string {
-	return fmt.Sprintf("%d:%s:%s", chainID, strings.ToLower(strings.TrimSpace(txHash)), normalizeChainFactLogIndex(logIndex))
+	return fmt.Sprintf("%d:%s:%s", chainID, normalizeChainFactTransactionHash(chainID, txHash), normalizeChainFactLogIndex(logIndex))
+}
+
+func normalizeChainFactTransactionHash(chainID constants.ChainID, txHash string) string {
+	txHash = strings.TrimSpace(txHash)
+	// Solana signatures are base58 identifiers and therefore case-sensitive.
+	// Bitcoin/TRON and EVM transaction hashes are hexadecimal identifiers.
+	if chainID == constants.Solana {
+		return txHash
+	}
+	return strings.ToLower(txHash)
+}
+
+func chainFactTransactionHashesEqual(chainID constants.ChainID, left, right string) bool {
+	return normalizeChainFactTransactionHash(chainID, left) == normalizeChainFactTransactionHash(chainID, right)
 }
 
 func BuildChainFactFromTransaction(eventType string, tx types.TransactionParam) (models.ChainFact, error) {
@@ -53,9 +74,10 @@ func BuildChainFactFromTransaction(eventType string, tx types.TransactionParam) 
 
 func BuildChainFact(params ChainFactBuildParams) (models.ChainFact, error) {
 	tx := params.Transaction
-	txHash := strings.ToLower(trimChainFactDBString(ptrString(tx.Hash)))
+	txHash := normalizeChainFactTransactionHash(tx.ChainID, trimChainFactDBString(ptrString(tx.Hash)))
 	logIndex := normalizeChainFactLogIndex(ptrString(tx.LogIndex))
 	blockValue := trimChainFactDBString(ptrString(tx.Block))
+	blockHash := trimChainFactDBString(ptrString(tx.BlockHash))
 	blockNumber := int64(0)
 	if blockValue != "" {
 		parsed, err := strconv.ParseInt(blockValue, 10, 64)
@@ -64,6 +86,9 @@ func BuildChainFact(params ChainFactBuildParams) (models.ChainFact, error) {
 		}
 		blockNumber = parsed
 	}
+	if blockNumber > 0 && blockHash == "" {
+		return models.ChainFact{}, invalidChainFact("block hash is required for a confirmed observation")
+	}
 	observedAddress, direction := chainFactObservedAddress(tx)
 	observationStatus := chainFactObservationStatus(tx, blockNumber)
 	fact := models.ChainFact{
@@ -71,7 +96,7 @@ func BuildChainFact(params ChainFactBuildParams) (models.ChainFact, error) {
 		EventID:           ChainFactEventID(tx.ChainID, txHash, logIndex),
 		ChainID:           tx.ChainID,
 		BlockNumber:       blockNumber,
-		BlockHash:         trimChainFactDBString(ptrString(tx.BlockHash)),
+		BlockHash:         blockHash,
 		TxHash:            txHash,
 		LogIndex:          logIndex,
 		ObservedAddress:   observedAddress,
@@ -115,18 +140,90 @@ func (r *ChainFactRepo) RecordOrUpdate(ctx context.Context, fact *models.ChainFa
 	var out models.ChainFact
 	created := false
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var existing models.ChainFact
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "event_id = ?", prepared.EventID).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			if err := tx.Create(&prepared).Error; err != nil {
+		if err := AcquireCanonicalBlockLockWithDB(ctx, tx, prepared.ChainID, prepared.BlockNumber); err != nil {
+			return err
+		}
+		incomingCanonical := true
+		// Isolated repository tests can intentionally migrate only chain_facts;
+		// the production schema always has blocks and is guarded by the startup
+		// migration contract. Whenever canonical authority is available, an exact
+		// tuple match is mandatory before a fact may be observable.
+		hasCanonicalIdentity := prepared.BlockNumber > 0 && strings.TrimSpace(prepared.BlockHash) != ""
+		if hasCanonicalIdentity && tx.Migrator().HasTable(&models.Block{}) {
+			incomingCanonical, err = canonicalBlockMatchesWithDB(ctx, tx, prepared.ChainID, prepared.BlockNumber, prepared.BlockHash)
+			if err != nil {
 				return err
 			}
+		}
+		if !incomingCanonical {
+			now := time.Now()
+			prepared.Status = models.ChainFactStatusReorged
+			prepared.Finalized = false
+			prepared.ReorgedAt = &now
+			prepared.CorrectionReason = "chain_fact_not_canonical_at_observation"
+		}
+		// SELECT ... FOR UPDATE cannot lock a row that does not exist. Two live
+		// scanners (or a scanner and a rescan) could therefore both observe a
+		// miss and race on Create, making the loser return a unique-constraint
+		// error for an otherwise idempotent duplicate. Let the database arbitrate
+		// the first insert, then lock and merge the winning row.
+		result := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "event_id"}},
+			DoNothing: true,
+		}).Create(&prepared)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
 			out = prepared
 			created = true
 			return nil
 		}
-		if err != nil {
+
+		var existing models.ChainFact
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&existing, "event_id = ?", prepared.EventID).Error; err != nil {
 			return err
+		}
+		if !incomingCanonical {
+			// Do not let an orphan replay revive or merge into an existing row. If
+			// this is the same stale tuple, quarantine legacy/racing observed state
+			// so only a later exact canonical reappearance can revive it.
+			if existing.BlockNumber == prepared.BlockNumber && historicalBlockHashesEqual(existing.ChainID, existing.BlockHash, prepared.BlockHash) && existing.Status != models.ChainFactStatusReorged {
+				now := time.Now()
+				existing.Status = models.ChainFactStatusReorged
+				existing.Finalized = false
+				existing.ReorgedAt = &now
+				existing.CorrectionReason = "chain_fact_not_canonical_at_observation"
+				existing.UpdatedAt = now
+				if err := tx.Save(&existing).Error; err != nil {
+					return err
+				}
+			}
+			out = existing
+			return nil
+		}
+		if existing.Status == models.ChainFactStatusReorged {
+			// A replay from the orphaned branch must never be able to revive money
+			// state by itself. Block observers persist canonical identity before
+			// dispatching facts, so the exact (chain, height, hash) tuple is the
+			// authority here rather than the provider payload being merged.
+			if !chainFactEconomicIdentityEqual(existing, prepared) {
+				if err := recordChainFactReappearanceMismatch(ctx, tx, existing, prepared); err != nil {
+					return err
+				}
+				out = existing
+				return nil
+			}
+
+			next := reviveChainFact(existing, prepared)
+			if err := tx.Save(&next).Error; err != nil {
+				return err
+			}
+			if err := resetDepositFactInboxForReappearance(ctx, tx, next); err != nil {
+				return err
+			}
+			out = next
+			return nil
 		}
 
 		next := existing
@@ -139,11 +236,23 @@ func (r *ChainFactRepo) RecordOrUpdate(ctx context.Context, fact *models.ChainFa
 		if prepared.Finalized || (next.ConfirmationsRequired > 0 && next.Confirmations >= next.ConfirmationsRequired) {
 			next.Finalized = true
 		}
-		if next.BlockHash == "" && prepared.BlockHash != "" {
-			next.BlockHash = prepared.BlockHash
-		}
-		if prepared.BlockNumber > 0 {
+		if prepared.BlockNumber > 0 && (next.BlockNumber != prepared.BlockNumber || !historicalBlockHashesEqual(next.ChainID, next.BlockHash, prepared.BlockHash)) {
+			// A canonical observation of the same economic event in a new block is
+			// a lifecycle reappearance, never a partial BlockNumber-only merge.
+			if !chainFactEconomicIdentityEqual(existing, prepared) {
+				if err := recordChainFactReappearanceMismatch(ctx, tx, existing, prepared); err != nil {
+					return err
+				}
+				out = existing
+				return nil
+			}
+			next = reviveChainFact(existing, prepared)
+			if err := resetDepositFactInboxForReappearance(ctx, tx, next); err != nil {
+				return err
+			}
+		} else if prepared.BlockNumber > 0 {
 			next.BlockNumber = prepared.BlockNumber
+			next.BlockHash = prepared.BlockHash
 		}
 		if prepared.ObservationStatus != "" {
 			next.ObservationStatus = prepared.ObservationStatus
@@ -176,6 +285,151 @@ func (r *ChainFactRepo) RecordOrUpdate(ctx context.Context, fact *models.ChainFa
 		return nil, false, err
 	}
 	return &out, created, nil
+}
+
+func historicalBlockHashesEqual(chainID constants.ChainID, left, right string) bool {
+	left = normalizeBlockIdentifier(left)
+	right = normalizeBlockIdentifier(right)
+	if chainID == constants.Solana {
+		return left == right
+	}
+	return strings.EqualFold(left, right)
+}
+
+func canonicalBlockMatchesWithDB(ctx context.Context, tx *gorm.DB, chainID constants.ChainID, blockNumber int64, blockHash string) (bool, error) {
+	if tx == nil || blockNumber <= 0 || strings.TrimSpace(blockHash) == "" {
+		return false, nil
+	}
+	blockHash = normalizeBlockIdentifier(blockHash)
+	var block models.Block
+	// Do not take a block-row SHARE lock while the caller owns a fact/transaction
+	// row lock: canonical correction takes those locks in block -> money-row
+	// order, so the inverse order can deadlock. A concurrent correction that
+	// commits after this snapshot will wait for and then reorg the revived row in
+	// the same atomic correction transaction.
+	query := tx.WithContext(ctx).
+		Where("chain_id = ?", chainID).
+		Where("number = ?", blockNumber).
+		Where("canonical = ?", true).
+		Where("status = ?", models.BlockStatusCanonical)
+	if hasHexPrefix(blockHash) {
+		query = query.Where("LOWER(hash) = ?", strings.ToLower(blockHash))
+	} else {
+		query = query.Where("hash = ?", blockHash)
+	}
+	err := query.First(&block).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// CanonicalBlockMatches lets a money-state consumer recheck the exact
+// (chain,height,hash) tuple through the same transaction-bound repository used
+// for its locked ChainFact read. Callers must still lock/reload the fact first;
+// this method deliberately does not take a block row lock so canonical
+// correction retains the global block -> money-row lock order.
+func (r *ChainFactRepo) CanonicalBlockMatches(ctx context.Context, chainID constants.ChainID, blockNumber int64, blockHash string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	return canonicalBlockMatchesWithDB(ctx, r.db, chainID, blockNumber, blockHash)
+}
+
+func chainFactEconomicIdentityEqual(existing, incoming models.ChainFact) bool {
+	if existing.EventID != incoming.EventID ||
+		existing.ChainID != incoming.ChainID ||
+		!chainFactTransactionHashesEqual(existing.ChainID, existing.TxHash, incoming.TxHash) ||
+		normalizeChainFactLogIndex(existing.LogIndex) != normalizeChainFactLogIndex(incoming.LogIndex) ||
+		NormalizeWalletLookupAddress(existing.ChainID, existing.ObservedAddress) != NormalizeWalletLookupAddress(incoming.ChainID, incoming.ObservedAddress) ||
+		strings.TrimSpace(existing.Direction) != strings.TrimSpace(incoming.Direction) ||
+		!chainAssetIdentityEqual(existing.ChainID, existing.Token, incoming.Token) ||
+		!strings.EqualFold(strings.TrimSpace(existing.Symbol), strings.TrimSpace(incoming.Symbol)) ||
+		existing.Decimals != incoming.Decimals ||
+		strings.TrimSpace(existing.AmountRaw) != strings.TrimSpace(incoming.AmountRaw) ||
+		normalizePaymentMemo(firstNonEmptyString(existing.MemoNormalized, existing.Memo)) != normalizePaymentMemo(firstNonEmptyString(incoming.MemoNormalized, incoming.Memo)) ||
+		!strings.EqualFold(strings.TrimSpace(existing.SourceEventType), strings.TrimSpace(incoming.SourceEventType)) {
+		return false
+	}
+	return chainFactPositiveRaw(incoming.AmountRaw)
+}
+
+func chainAssetIdentityEqual(chainID constants.ChainID, left, right *string) bool {
+	leftValue := ""
+	if left != nil {
+		leftValue = strings.TrimSpace(*left)
+	}
+	rightValue := ""
+	if right != nil {
+		rightValue = strings.TrimSpace(*right)
+	}
+	return NormalizeWalletLookupAddress(chainID, leftValue) == NormalizeWalletLookupAddress(chainID, rightValue)
+}
+
+func reviveChainFact(existing, incoming models.ChainFact) models.ChainFact {
+	next := existing
+	next.BlockNumber = incoming.BlockNumber
+	next.BlockHash = incoming.BlockHash
+	next.ObservedAddress = incoming.ObservedAddress
+	next.Direction = incoming.Direction
+	next.ObservationStatus = incoming.ObservationStatus
+	next.Memo = incoming.Memo
+	next.MemoNormalized = incoming.MemoNormalized
+	next.Token = incoming.Token
+	next.Symbol = incoming.Symbol
+	next.Decimals = incoming.Decimals
+	next.AmountRaw = incoming.AmountRaw
+	next.Confirmations = incoming.Confirmations
+	next.ConfirmationsRequired = incoming.ConfirmationsRequired
+	next.Finalized = incoming.Finalized
+	next.Status = models.ChainFactStatusObserved
+	next.ReorgedAt = nil
+	next.SupersededByEventID = ""
+	next.CorrectionReason = ""
+	next.SourceEventType = incoming.SourceEventType
+	next.RawMetadataJSON = incoming.RawMetadataJSON
+	next.UpdatedAt = time.Now()
+	return next
+}
+
+func resetDepositFactInboxForReappearance(ctx context.Context, tx *gorm.DB, fact models.ChainFact) error {
+	now := time.Now()
+	return tx.WithContext(ctx).
+		Model(&models.MoneyEventInbox{}).
+		Where("consumer_name = ? AND event_id = ?", "deposit_fact_processor", fact.EventID).
+		Updates(map[string]any{
+			"status":           models.MoneyEventInboxStatusReceived,
+			"attempts":         0,
+			"locked_until":     nil,
+			"processed_at":     nil,
+			"last_error":       "",
+			"failure_category": "",
+			"resource_id":      fact.ID.String(),
+			"updated_at":       now,
+		}).Error
+}
+
+func recordChainFactReappearanceMismatch(ctx context.Context, tx *gorm.DB, existing, incoming models.ChainFact) error {
+	reason := "chain_fact_reappearance_payload_mismatch"
+	_, _, err := NewReconciliationRepo(tx).CreateScopedOpenIfMissing(ctx, ReconciliationScope{
+		ChainID:             existing.ChainID,
+		FromBlock:           incoming.BlockNumber,
+		ToBlock:             incoming.BlockNumber,
+		Reason:              reason,
+		ScopeKey:            reason + ":" + existing.EventID + ":" + normalizeBlockIdentifier(incoming.BlockHash),
+		ResourceType:        "chain_fact",
+		ResourceID:          existing.EventID,
+		AffectedResourceIDs: []string{existing.EventID},
+		Evidence: map[string]any{
+			"old_block_number": existing.BlockNumber,
+			"old_block_hash":   existing.BlockHash,
+			"new_block_number": incoming.BlockNumber,
+			"new_block_hash":   incoming.BlockHash,
+			"tx_hash":          existing.TxHash,
+			"log_index":        existing.LogIndex,
+		},
+	})
+	return err
 }
 
 func (r *ChainFactRepo) RecordTransaction(ctx context.Context, eventType string, tx types.TransactionParam) (*models.ChainFact, bool, error) {
@@ -230,6 +484,23 @@ func (r *ChainFactRepo) FindByEventID(ctx context.Context, eventID string) (*mod
 	return &fact, nil
 }
 
+// FindByEventIDForUpdate is used by money-state consumers so a canonical
+// correction cannot race between the consumer's status check and its writes.
+// The block observer/reorg transaction will wait for this row lock and then
+// reverse any state committed by the consumer as one atomic correction.
+func (r *ChainFactRepo) FindByEventIDForUpdate(ctx context.Context, eventID string) (*models.ChainFact, error) {
+	if r == nil || r.db == nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	var fact models.ChainFact
+	if err := r.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		First(&fact, "event_id = ?", strings.TrimSpace(eventID)).Error; err != nil {
+		return nil, err
+	}
+	return &fact, nil
+}
+
 func (r *ChainFactRepo) MarkIgnored(ctx context.Context, eventID string, reason string) error {
 	if r == nil || r.db == nil {
 		return gorm.ErrInvalidDB
@@ -275,12 +546,21 @@ func (r *ChainFactRepo) listOwnedForDepositProcessing(ctx context.Context, limit
 			 AND wal.normalized_address <> ''
 		`).
 		Joins("LEFT JOIN deposits ON deposits.chain_fact_event_id = chain_facts.event_id").
+		Where(`NOT EXISTS (
+			SELECT 1
+			FROM money_event_inboxes deposit_inbox
+			WHERE deposit_inbox.consumer_name = ?
+			  AND deposit_inbox.event_id = chain_facts.event_id
+			  AND deposit_inbox.status = ?
+		)`, "deposit_fact_processor", models.MoneyEventInboxStatusDeadLetter).
 		Where(`(
 			deposits.id IS NULL
 			OR (
 				deposits.wallet_id IS NOT NULL
-				AND deposits.status IN ?
-				AND chain_facts.finalized = ?
+				AND (
+					(deposits.status IN ? AND chain_facts.finalized = ?)
+					OR deposits.status = ?
+				)
 			)
 			OR (
 				deposits.wallet_id IS NULL
@@ -289,9 +569,13 @@ func (r *ChainFactRepo) listOwnedForDepositProcessing(ctx context.Context, limit
 		)`,
 			[]string{models.DepositStatusPending, models.DepositStatusConfirming},
 			true,
+			models.DepositStatusReorged,
 			models.DepositStatusUnmatched,
 		).
-		Order("chain_facts.updated_at DESC, chain_facts.created_at DESC").
+		// Oldest-first ordering guarantees that a continuous stream of new facts
+		// cannot starve earlier retryable work. Dead-lettered poison facts are
+		// excluded above and remain visible through inbox metrics/reconciliation.
+		Order("chain_facts.created_at ASC, chain_facts.updated_at ASC").
 		Limit(limit).
 		Find(&facts).Error
 	return facts, err
@@ -309,7 +593,7 @@ func (r *ChainFactRepo) MarkReorgedByTransactionWithDB(ctx context.Context, tx *
 	now := time.Now()
 	return tx.WithContext(ctx).
 		Model(&models.ChainFact{}).
-		Where("event_id = ? OR (chain_id = ? AND tx_hash = ? AND log_index = ?)", eventID, txModel.ChainID, strings.ToLower(strings.TrimSpace(txModel.Hash)), normalizeChainFactLogIndex(logIndex)).
+		Where("event_id = ? OR (chain_id = ? AND tx_hash = ? AND log_index = ?)", eventID, txModel.ChainID, normalizeChainFactTransactionHash(txModel.ChainID, txModel.Hash), normalizeChainFactLogIndex(logIndex)).
 		Where("status <> ?", models.ChainFactStatusReorged).
 		Updates(map[string]any{
 			"status":            models.ChainFactStatusReorged,
@@ -325,7 +609,7 @@ func prepareChainFact(fact *models.ChainFact) (models.ChainFact, error) {
 	}
 	prepared := *fact
 	prepared.EventID = trimChainFactDBString(prepared.EventID)
-	prepared.TxHash = strings.ToLower(trimChainFactDBString(prepared.TxHash))
+	prepared.TxHash = normalizeChainFactTransactionHash(prepared.ChainID, trimChainFactDBString(prepared.TxHash))
 	prepared.LogIndex = normalizeChainFactLogIndex(prepared.LogIndex)
 	prepared.BlockHash = trimChainFactDBString(prepared.BlockHash)
 	prepared.ObservedAddress = NormalizeWalletLookupAddress(prepared.ChainID, trimChainFactDBString(prepared.ObservedAddress))

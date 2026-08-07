@@ -2598,12 +2598,21 @@ type fakePaymentWebhookDeliveryRepo struct {
 	markCalls    int
 }
 
+type fakePaymentMoneyEventOutboxRepo struct {
+	found bool
+	err   error
+}
+
+func (r fakePaymentMoneyEventOutboxRepo) HasAggregateEvent(context.Context, string, string, string) (bool, error) {
+	return r.found, r.err
+}
+
 func (r *fakePaymentWebhookDeliveryRepo) EnqueuePayment(context.Context, models.Domain, models.PaymentSession) (*models.WebhookDelivery, bool, error) {
 	r.enqueueCalls++
 	return &models.WebhookDelivery{ID: uuid.New()}, true, nil
 }
 
-func (r *fakePaymentWebhookDeliveryRepo) MarkAttempt(context.Context, uuid.UUID, bool, error) error {
+func (r *fakePaymentWebhookDeliveryRepo) MarkAttempt(context.Context, uuid.UUID, uuid.UUID, bool, error) error {
 	r.markCalls++
 	return nil
 }
@@ -2638,6 +2647,20 @@ func TestDeliverPaymentWebhookQueuesWithoutInlineNotifier(t *testing.T) {
 	}
 	if paymentRepo.markWebhookCalls != 0 {
 		t.Fatalf("payment webhook mark calls = %d, want 0 before boundary delivery", paymentRepo.markWebhookCalls)
+	}
+}
+
+func TestDeliverPaymentWebhookDoesNotDuplicateCanonicalOutboxEvent(t *testing.T) {
+	deliveryRepo := &fakePaymentWebhookDeliveryRepo{}
+	session := &models.PaymentSession{ID: uuid.New(), WebhookEvent: constants.WebhookEventPaymentSucceeded}
+
+	deliverPaymentWebhook(context.Background(), PaymentHandlerDeps{
+		WebhookDeliveryRepo:  deliveryRepo,
+		MoneyEventOutboxRepo: fakePaymentMoneyEventOutboxRepo{found: true},
+	}, session)
+
+	if deliveryRepo.enqueueCalls != 0 {
+		t.Fatalf("legacy enqueue calls = %d, want 0 when canonical outbox owns event", deliveryRepo.enqueueCalls)
 	}
 }
 

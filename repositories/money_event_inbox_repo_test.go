@@ -9,6 +9,7 @@ import (
 
 	"core/models"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -112,4 +113,82 @@ func TestMoneyEventInboxFailureCommitsDeadLetterAndRedacts(t *testing.T) {
 	if attempts[models.MoneyEventInboxStatusDeadLetter] != 1 {
 		t.Fatalf("dead-letter attempts = %d, want 1", attempts[models.MoneyEventInboxStatusDeadLetter])
 	}
+}
+
+func TestCallMoneyEventInboxHandlerContainsPanicWithoutPayloadLeak(t *testing.T) {
+	err := callMoneyEventInboxHandler(nil, func(*gorm.DB) error {
+		panic("sensitive panic payload")
+	})
+	if !errors.Is(err, ErrMoneyEventInboxHandlerPanic) {
+		t.Fatalf("error = %v, want ErrMoneyEventInboxHandlerPanic", err)
+	}
+	if strings.Contains(err.Error(), "sensitive panic payload") {
+		t.Fatalf("panic payload leaked through error: %v", err)
+	}
+}
+
+func TestMoneyEventInboxFailureRollsBackPartialBusinessWrites(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.MoneyEventInbox{}); err != nil {
+		t.Fatalf("automigrate money event inbox: %v", err)
+	}
+	repo := NewMoneyEventInboxRepo(db)
+	ctx := context.Background()
+	stateID := uuid.New()
+
+	row, processed, err := repo.ProcessWithDB(ctx, MoneyEventInboxConsumeParams{
+		EventID:      "chain-fact-rollback",
+		ConsumerName: "deposit-fact-processor",
+		EventType:    "deposit.observed",
+		ResourceType: "chain_fact",
+		ResourceID:   "fact-rollback",
+		MaxAttempts:  1,
+	}, func(tx *gorm.DB) error {
+		if err := tx.Create(&moneyOutboxTestState{ID: stateID, Name: "must-roll-back"}).Error; err != nil {
+			return err
+		}
+		return errors.New("business write failed")
+	})
+	if err == nil || processed {
+		t.Fatalf("err=%v processed=%v, want failed attempt", err, processed)
+	}
+	if row == nil || row.Status != models.MoneyEventInboxStatusDeadLetter {
+		t.Fatalf("inbox row = %#v, want committed dead letter", row)
+	}
+	requirePostgresCount(t, db, &moneyOutboxTestState{}, "id = ?", stateID, 0)
+	requirePostgresCount(t, db, &models.MoneyEventInbox{}, "event_id = ? AND status = 'dead_letter'", "chain-fact-rollback", 1)
+}
+
+func TestMoneyEventInboxContainsHandlerPanicAndRollsBack(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.MoneyEventInbox{}); err != nil {
+		t.Fatalf("automigrate money event inbox: %v", err)
+	}
+	repo := NewMoneyEventInboxRepo(db)
+	ctx := context.Background()
+	stateID := uuid.New()
+
+	row, processed, err := repo.ProcessWithDB(ctx, MoneyEventInboxConsumeParams{
+		EventID:      "chain-fact-panic",
+		ConsumerName: "deposit-fact-processor",
+		EventType:    "deposit.observed",
+		ResourceType: "chain_fact",
+		ResourceID:   "fact-panic",
+		MaxAttempts:  1,
+	}, func(tx *gorm.DB) error {
+		if err := tx.Create(&moneyOutboxTestState{ID: stateID, Name: "panic-roll-back"}).Error; err != nil {
+			return err
+		}
+		panic("sensitive panic payload")
+	})
+	if !errors.Is(err, ErrMoneyEventInboxHandlerPanic) || processed {
+		t.Fatalf("err=%v processed=%v, want contained handler panic", err, processed)
+	}
+	if strings.Contains(err.Error(), "sensitive panic payload") {
+		t.Fatalf("panic payload leaked through error: %v", err)
+	}
+	if row == nil || row.Status != models.MoneyEventInboxStatusDeadLetter {
+		t.Fatalf("inbox row = %#v, want committed dead letter", row)
+	}
+	requirePostgresCount(t, db, &moneyOutboxTestState{}, "id = ?", stateID, 0)
 }

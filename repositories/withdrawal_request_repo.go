@@ -2,7 +2,9 @@ package repositories
 
 import (
 	"context"
+	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 	"errors"
 	"fmt"
 	"log"
@@ -84,7 +86,21 @@ func (r *WithdrawalRequestRepo) CountByStatus(ctx context.Context, statuses ...s
 }
 
 func (r *WithdrawalRequestRepo) Create(ctx context.Context, request *models.WithdrawalRequest) error {
-	return r.db.WithContext(ctx).Create(request).Error
+	if request == nil {
+		return gorm.ErrInvalidData
+	}
+	if request.ID == uuid.Nil {
+		request.ID = uuid.New()
+	}
+	if strings.TrimSpace(request.Status) == "" {
+		request.Status = models.WithdrawalStatusPending
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(request).Error; err != nil {
+			return err
+		}
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutRequestedV1, *request)
+	})
 }
 
 func (r *WithdrawalRequestRepo) CreateWithHold(ctx context.Context, request *models.WithdrawalRequest, ledger *LedgerRepo) error {
@@ -101,7 +117,10 @@ func (r *WithdrawalRequestRepo) CreateWithHold(ctx context.Context, request *mod
 		if err := tx.Create(request).Error; err != nil {
 			return err
 		}
-		return NewLedgerRepo(tx).CreateWithdrawalHoldWithDB(ctx, tx, *request)
+		if err := NewLedgerRepo(tx).CreateWithdrawalHoldWithDB(ctx, tx, *request); err != nil {
+			return err
+		}
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutRequestedV1, *request)
 	})
 }
 
@@ -121,16 +140,18 @@ func (r *WithdrawalRequestRepo) CreateRecoverWithHold(ctx context.Context, reque
 		}
 		txLedger := NewLedgerRepo(tx)
 		err := txLedger.CreateWithdrawalHoldWithDB(ctx, tx, *request)
-		if err == nil {
-			return nil
+		if err != nil {
+			if !errors.Is(err, ErrInsufficientAvailableBalance) {
+				return err
+			}
+			if releaseErr := txLedger.ReleaseSweepHoldsForWithdrawalWithDB(ctx, tx, *request); releaseErr != nil {
+				return errors.Join(err, releaseErr)
+			}
+			if err := txLedger.CreateWithdrawalHoldWithDB(ctx, tx, *request); err != nil {
+				return err
+			}
 		}
-		if !errors.Is(err, ErrInsufficientAvailableBalance) {
-			return err
-		}
-		if releaseErr := txLedger.ReleaseSweepHoldsForWithdrawalWithDB(ctx, tx, *request); releaseErr != nil {
-			return errors.Join(err, releaseErr)
-		}
-		return txLedger.CreateWithdrawalHoldWithDB(ctx, tx, *request)
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutRequestedV1, *request)
 	})
 }
 
@@ -330,22 +351,36 @@ func (r *WithdrawalRequestRepo) RecordBroadcast(ctx context.Context, id uuid.UUI
 		return ErrTxHashRequired
 	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).Model(&models.WithdrawalRequest{}).
-		Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
-		Updates(map[string]any{
-			"reviewed_by":    reviewedBy,
-			"reviewed_at":    &now,
-			"tx_hash":        txHash,
-			"broadcasted_at": &now,
-			"error":          "",
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&request, "id = ? AND status = ?", id, models.WithdrawalStatusProcessing).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusProcessing).
+			Updates(map[string]any{
+				"reviewed_by":    reviewedBy,
+				"reviewed_at":    &now,
+				"tx_hash":        txHash,
+				"broadcasted_at": &now,
+				"error":          "",
+				"updated_at":     now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.TxHash = txHash
+		request.BroadcastedAt = &now
+		request.Error = ""
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutBroadcastV1, request)
+	})
 }
 
 func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context, id uuid.UUID, ledger *LedgerRepo) error {
@@ -369,6 +404,7 @@ func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context
 				"reviewed_at":  &now,
 				"finalized_at": &now,
 				"error":        "",
+				"updated_at":   now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -376,7 +412,12 @@ func (r *WithdrawalRequestRepo) FinalizeProcessingWithLedger(ctx context.Context
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return nil
+		request.Status = models.WithdrawalStatusFinalized
+		request.ReviewedAt = &now
+		request.FinalizedAt = &now
+		request.Error = ""
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutFinalizedV1, request)
 	})
 }
 
@@ -386,37 +427,23 @@ func (r *WithdrawalRequestRepo) MarkApproved(ctx context.Context, id uuid.UUID, 
 		return ErrTxHashRequired
 	}
 	now := time.Now()
-	result := r.db.WithContext(ctx).
-		Model(&models.WithdrawalRequest{}).
-		Where("id = ? AND status IN ?", id, []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}).
-		Updates(map[string]any{
-			"status":         models.WithdrawalStatusFinalized,
-			"reviewed_by":    reviewedBy,
-			"reviewed_at":    &now,
-			"tx_hash":        txHash,
-			"broadcasted_at": &now,
-			"finalized_at":   &now,
-			"error":          "",
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
-
-func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
-	now := time.Now()
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		statuses := []string{models.WithdrawalStatusPending, models.WithdrawalStatusProcessing}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&request, "id = ? AND status IN ?", id, statuses).Error; err != nil {
+			return err
+		}
 		result := tx.Model(&models.WithdrawalRequest{}).
-			Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
+			Where("id = ? AND status IN ?", id, statuses).
 			Updates(map[string]any{
-				"status":      models.WithdrawalStatusRejected,
-				"reviewed_by": reviewedBy,
-				"reviewed_at": &now,
-				"error":       reason,
+				"status":         models.WithdrawalStatusFinalized,
+				"reviewed_by":    reviewedBy,
+				"reviewed_at":    &now,
+				"tx_hash":        txHash,
+				"broadcasted_at": &now,
+				"finalized_at":   &now,
+				"error":          "",
+				"updated_at":     now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -424,7 +451,50 @@ func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, 
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
+		request.Status = models.WithdrawalStatusFinalized
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.TxHash = txHash
+		request.BroadcastedAt = &now
+		request.FinalizedAt = &now
+		request.Error = ""
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutFinalizedV1, request)
+	})
+}
+
+func (r *WithdrawalRequestRepo) MarkRejected(ctx context.Context, id uuid.UUID, reviewedBy string, reason string) error {
+	now := time.Now()
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var request models.WithdrawalRequest
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			First(&request, "id = ? AND status = ?", id, models.WithdrawalStatusPending).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.WithdrawalRequest{}).
+			Where("id = ? AND status = ?", id, models.WithdrawalStatusPending).
+			Updates(map[string]any{
+				"status":      models.WithdrawalStatusRejected,
+				"reviewed_by": reviewedBy,
+				"reviewed_at": &now,
+				"error":       reason,
+				"updated_at":  now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if err := NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id); err != nil {
+			return err
+		}
+		request.Status = models.WithdrawalStatusRejected
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.Error = reason
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutRejectedV1, request)
 	})
 }
 
@@ -443,6 +513,7 @@ func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, re
 				"reviewed_by": reviewedBy,
 				"reviewed_at": &now,
 				"error":       errText,
+				"updated_at":  now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -450,10 +521,17 @@ func (r *WithdrawalRequestRepo) MarkFailed(ctx context.Context, id uuid.UUID, re
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		if strings.TrimSpace(request.TxHash) != "" {
-			return nil
+		if strings.TrimSpace(request.TxHash) == "" {
+			if err := NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id); err != nil {
+				return err
+			}
 		}
-		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
+		request.Status = models.WithdrawalStatusFailed
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.Error = errText
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutFailedV1, request)
 	})
 }
 
@@ -476,6 +554,7 @@ func (r *WithdrawalRequestRepo) MarkFailedFinalWithLedgerRelease(ctx context.Con
 				"reviewed_at":  &now,
 				"finalized_at": &now,
 				"error":        errText,
+				"updated_at":   now,
 			})
 		if result.Error != nil {
 			return result.Error
@@ -483,7 +562,16 @@ func (r *WithdrawalRequestRepo) MarkFailedFinalWithLedgerRelease(ctx context.Con
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-		return NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id)
+		if err := NewLedgerRepo(tx).VoidWithdrawalHoldWithDB(ctx, tx, id); err != nil {
+			return err
+		}
+		request.Status = models.WithdrawalStatusFailed
+		request.ReviewedBy = reviewedBy
+		request.ReviewedAt = &now
+		request.FinalizedAt = &now
+		request.Error = errText
+		request.UpdatedAt = now
+		return recordPayoutLifecycleWithDB(ctx, tx, constants.WebhookEventPayoutFailedV1, request)
 	})
 }
 
@@ -686,4 +774,13 @@ func (r *WithdrawalRequestRepo) ApproveForOutbound(ctx context.Context, id uuid.
 
 func withdrawalWalletChainLockKey(walletID uuid.UUID, chain string) string {
 	return fmt.Sprintf("withdrawal-wallet-chain:%s:%s", walletID, strings.ToLower(strings.TrimSpace(chain)))
+}
+
+func recordPayoutLifecycleWithDB(ctx context.Context, tx *gorm.DB, eventType string, request models.WithdrawalRequest) error {
+	if request.DomainID == nil || *request.DomainID == uuid.Nil {
+		return errors.Join(ErrMoneyEventOutboxInvalid, gorm.ErrInvalidData, errors.New("withdrawal domain is required for lifecycle delivery"))
+	}
+	payload := webhooksvc.NewPayoutPayload(eventType, request)
+	_, _, err := NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, payload)
+	return err
 }

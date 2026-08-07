@@ -21,6 +21,9 @@ Current artifacts:
 - `202606290009_merchant_api_security_controls`: `models.Domain`, `models.APIRateLimitCounter`.
 - `202606290010_sweep_batching_gas_funding_recovery`: `models.SweepJob`.
 - `202607130011_payment_asset_metadata_product_snapshot_notification_targets`: `models.Domain`, `models.Product`, `models.PaymentSession`.
+- `202607130012_wallet_chiliz_spicy_partial_unique`: `models.Wallet`.
+- `202607130013_network_operational_states`: `models.NetworkOperationalState`.
+- `202607180014_canonical_block_money_event_sequence_invariants`: `models.Block`, `models.MoneyEventOutbox`, `models.WebhookDelivery`; preflight owner `services/dbmigrations.Prepare`.
 
 Verification owner for all artifacts is `services/database.VerifySchema`.
 
@@ -64,6 +67,8 @@ Large or hot tables must be handled as an operator-controlled job, not as normal
 - Prefer low-write maintenance windows for GORM-managed index reconciliation. If a table is already large enough that blocking index creation is unacceptable, use an operator-approved online index plan outside web startup and keep the GORM tag plus `VerifySchema` guard as the source of drift detection.
 - Run `services/database.VerifySchema` immediately after applying the migration job. Missing table, column, index, constraint, or trigger details must fail readiness before traffic is restored.
 - Backfills must be bounded, resumable, and conflict-aware; ownership conflicts stop the job and require operator review.
+- `202607180014_canonical_block_money_event_sequence_invariants` creates or verifies the small `network_operational_states` safety table before reconciling duplicate canonical history. Every affected chain is set to `maintenance` in the same transaction, which blocks deposits, withdrawals, refunds, and sweeps while authoritative replay repairs money state.
+- A migration-created maintenance gate is intentionally sticky. Its reason names the migration and requires authoritative scanner replay, money-state reconciliation, and operator acknowledgement. Migration or replay code must never switch it back to `active`; a privileged administrator reviews the evidence and explicitly reactivates the network from `/admin/networks`.
 
 ## Operator Checklist
 
@@ -72,6 +77,7 @@ Large or hot tables must be handled as an operator-controlled job, not as normal
 - Run `go test -tags walletcorefallback -count=1 ./services/dbmigrations ./services/database ./repositories`.
 - Run `LedgerRepo.RebuildBalanceProjections` after applying `202606280003_immutable_ledger_journal_projection`.
 - Run wallet address lookup and lifecycle backfills after their artifacts if the deployment is upgrading an existing wallet table.
+- For every chain whose `chain_states.continuity_status` is `rollback_required`, confirm `/admin/networks` shows `maintenance`, `updated_by=migration`, and the full migration reason before starting replay. Keep the gate closed until scanner replay and downstream transaction, deposit, payment, ledger, inbox, and reconciliation evidence agree; then require a privileged operator to acknowledge the evidence and explicitly select `active`.
 - Confirm `dbmigrations.LatestID()` returns the artifact being recorded in production evidence.
 - Set `GATEWAY_DB_MIGRATION_VERSION` to the latest artifact id after the migration and backfill pass.
 - Start the app and verify `GET /api/v1/common/readiness` returns a healthy `migration.strategy` check.

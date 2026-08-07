@@ -6,10 +6,13 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 
 	"github.com/google/uuid"
 	"gorm.io/driver/postgres"
@@ -65,6 +68,72 @@ func TestBuildMoneyEventOutboxRejectsUnknownCatalogEvent(t *testing.T) {
 	if err == nil {
 		t.Fatal("unknown catalog event should fail")
 	}
+}
+
+func TestMoneyEventOutboxRecordLifecycleWithDBIsIdempotentAndTransactional(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	entityID := uuid.New()
+	payload := webhooksvc.LifecyclePayload{
+		EventID:        entityID.String() + ":" + constants.WebhookEventPayoutRequestedV1,
+		EventType:      constants.WebhookEventPayoutRequestedV1,
+		EventVersion:   constants.WebhookEventVersionV1,
+		OccurredAt:     "2026-07-18T00:00:00Z",
+		EntityType:     webhooksvc.EntityTypePayout,
+		EntityID:       entityID.String(),
+		ResourceType:   webhooksvc.EntityTypePayout,
+		ResourceID:     entityID.String(),
+		ResourceStatus: models.WithdrawalStatusPending,
+		IdempotencyKey: "business-request-key",
+		MerchantID:     merchantID.String(),
+		DomainID:       domainID.String(),
+		Status:         models.WithdrawalStatusPending,
+	}
+
+	var first *models.MoneyEventOutbox
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var created bool
+		var err error
+		first, created, err = NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, payload)
+		if err != nil {
+			return err
+		}
+		if !created {
+			return errors.New("first lifecycle event was not created")
+		}
+		second, created, err := NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, payload)
+		if err != nil {
+			return err
+		}
+		if created || second.ID != first.ID {
+			return errors.New("duplicate lifecycle event was not idempotent")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.IdempotencyKey != payload.EventID || first.Sequence != 1 {
+		t.Fatalf("lifecycle boundary = idempotency:%q sequence:%d", first.IdempotencyKey, first.Sequence)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", payload.EventID, 1)
+
+	rollbackPayload := payload
+	rollbackPayload.EventType = constants.WebhookEventPayoutBroadcastV1
+	rollbackPayload.EventID = entityID.String() + ":" + rollbackPayload.EventType
+	rollbackErr := errors.New("force caller rollback")
+	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if _, _, err := NewMoneyEventOutboxRepo(tx).RecordLifecycleWithDB(ctx, tx, rollbackPayload); err != nil {
+			return err
+		}
+		return rollbackErr
+	})
+	if !errors.Is(err, rollbackErr) {
+		t.Fatalf("rollback error = %v", err)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", rollbackPayload.EventID, 0)
 }
 
 func TestValidateMoneyEventOutboxValidationAndDefaults(t *testing.T) {
@@ -207,9 +276,304 @@ func TestMoneyEventOutboxRepoPostgresTransactionSemantics(t *testing.T) {
 	}
 }
 
+func TestMoneyEventOutboxRepoClaimsBrokenTargetsAndRecoversExpiredLeases(t *testing.T) {
+	ctx := context.Background()
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}); err != nil {
+		t.Fatalf("automigrate notification target: %v", err)
+	}
+
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	if err := db.Create(&models.Merchant{ID: merchantID, Name: "Outbox Merchant", Email: uuid.NewString() + "@example.test"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Domain{
+		ID:               domainID,
+		MerchantID:       merchantID,
+		DomainURL:        "outbox.example.test",
+		APIKey:           uuid.NewString(),
+		APISecret:        "encrypted",
+		HDAccountID:      uint32(time.Now().UnixNano()),
+		NotificationMode: models.DomainNotificationNATS,
+		NATSURL:          "nats://127.0.0.1:4222",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC()
+	expired := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+	pending := testMoneyEventOutboxWithIDs("evt-pending", "idem-pending", merchantID, domainID)
+	processing := testMoneyEventOutboxWithIDs("evt-processing", "idem-processing", merchantID, domainID)
+	processing.Status = models.MoneyEventOutboxStatusProcessing
+	processing.LockedUntil = &expired
+	notDue := testMoneyEventOutboxWithIDs("evt-future", "idem-future", merchantID, domainID)
+	notDue.Status = models.MoneyEventOutboxStatusFailed
+	notDue.LockedUntil = &future
+	// An absent domain must still be claimed so the relay can persist explicit
+	// failure/dead-letter evidence instead of silently leaving the event pending.
+	orphaned := testMoneyEventOutboxWithIDs("evt-orphaned-domain", "idem-orphaned-domain", uuid.New(), uuid.New())
+	if err := db.Create(&[]models.MoneyEventOutbox{pending, processing, notDue, orphaned}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewMoneyEventOutboxRepo(db)
+	claimed, err := repo.ClaimDueForNotifications(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 3 {
+		t.Fatalf("claimed %d rows, want pending, expired processing, and broken target: %#v", len(claimed), claimed)
+	}
+	claimedIDs := map[uuid.UUID]bool{}
+	claimTokens := map[uuid.UUID]uuid.UUID{}
+	seenTokens := map[uuid.UUID]bool{}
+	for _, row := range claimed {
+		claimedIDs[row.ID] = true
+		if row.Status != models.MoneyEventOutboxStatusProcessing || row.LockedUntil == nil || !row.LockedUntil.After(now) || row.LeaseToken == nil || *row.LeaseToken == uuid.Nil {
+			t.Fatalf("claimed row has no active lease: %#v", row)
+		}
+		if seenTokens[*row.LeaseToken] {
+			t.Fatalf("duplicate claim lease token %s", *row.LeaseToken)
+		}
+		seenTokens[*row.LeaseToken] = true
+		claimTokens[row.ID] = *row.LeaseToken
+	}
+	if !claimedIDs[pending.ID] || !claimedIDs[processing.ID] || !claimedIDs[orphaned.ID] || claimedIDs[notDue.ID] {
+		t.Fatalf("claimed ids = %#v", claimedIDs)
+	}
+	claimedAgain, err := repo.ClaimDueForNotifications(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimedAgain) != 0 {
+		t.Fatalf("active leases were claimed twice: %#v", claimedAgain)
+	}
+
+	if err := repo.MarkRelayAttempt(ctx, pending.ID, claimTokens[pending.ID], true, nil); err != nil {
+		t.Fatal(err)
+	}
+	var delivered models.MoneyEventOutbox
+	if err := db.First(&delivered, "id = ?", pending.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if delivered.Status != models.MoneyEventOutboxStatusDelivered || delivered.Attempts != 1 || delivered.LockedUntil != nil || delivered.LeaseToken != nil || delivered.LastError != "" {
+		t.Fatalf("delivered outbox state = %#v", delivered)
+	}
+
+	t.Setenv("MONEY_EVENT_OUTBOX_RETRY_BACKOFF_BASE", "1h")
+	if err := repo.MarkRelayAttempt(ctx, processing.ID, claimTokens[processing.ID], false, errors.New("temporary enqueue failure")); err != nil {
+		t.Fatal(err)
+	}
+	var failed models.MoneyEventOutbox
+	if err := db.First(&failed, "id = ?", processing.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != models.MoneyEventOutboxStatusFailed || failed.Attempts != 1 || failed.LockedUntil == nil || !failed.LockedUntil.After(now) || failed.LeaseToken != nil {
+		t.Fatalf("failed outbox state = %#v", failed)
+	}
+	if err := db.Model(&models.MoneyEventOutbox{}).Where("id = ?", processing.ID).Update("status", models.MoneyEventOutboxStatusDeadLetter).Error; err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := repo.RequeueRelay(ctx, processing.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !requeued {
+		t.Fatal("dead-lettered relay was not requeued")
+	}
+	var pendingAgain models.MoneyEventOutbox
+	if err := db.First(&pendingAgain, "id = ?", processing.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if pendingAgain.Status != models.MoneyEventOutboxStatusPending || pendingAgain.Attempts != 0 || pendingAgain.LockedUntil != nil || pendingAgain.LeaseToken != nil || pendingAgain.LastError != "" {
+		t.Fatalf("requeued outbox state = %#v", pendingAgain)
+	}
+	if requeued, err := repo.RequeueRelay(ctx, pending.ID); err != nil || requeued {
+		t.Fatalf("delivered relay requeued=%v err=%v", requeued, err)
+	}
+}
+
 type moneyOutboxTestState struct {
 	ID   uuid.UUID `gorm:"type:uuid;primaryKey"`
 	Name string    `gorm:"size:128;index"`
+}
+
+func TestMoneyEventOutboxHasAggregateEventMatchesCanonicalAlias(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	event := testMoneyEventOutbox()
+	if err := db.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := NewMoneyEventOutboxRepo(db).HasAggregateEvent(context.Background(), "payment", event.AggregateID, constants.WebhookEventPaymentSucceeded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("canonical payment outbox event did not match its legacy delivery alias")
+	}
+
+	found, err = NewMoneyEventOutboxRepo(db).HasAggregateEvent(context.Background(), "payment", event.AggregateID, constants.WebhookEventPaymentFailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("different payment lifecycle event matched canonical outbox row")
+	}
+}
+
+func TestMoneyEventOutboxHasAggregateIgnoresHistoricalEventLabel(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	event := testMoneyEventOutbox()
+	if err := db.Create(&event).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := NewMoneyEventOutboxRepo(db).HasAggregate(context.Background(), event.AggregateType, event.AggregateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("canonical aggregate ownership was not detected")
+	}
+	found, err = NewMoneyEventOutboxRepo(db).HasAggregate(context.Background(), event.AggregateType, "missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("unrelated aggregate matched canonical outbox row")
+	}
+}
+
+func TestMoneyEventOutboxAggregateSequenceBlocksSuccessorUntilPredecessorRelayed(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	repo := NewMoneyEventOutboxRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	first := testMoneyEventOutboxWithIDs("evt-sequence-1", "idem-sequence-1", merchantID, domainID)
+	second := testMoneyEventOutboxWithIDs("evt-sequence-2", "idem-sequence-2", merchantID, domainID)
+	first.AggregateID = "aggregate-sequence"
+	second.AggregateID = first.AggregateID
+	if _, created, err := repo.Record(ctx, &first); err != nil || !created {
+		t.Fatalf("record first created=%v err=%v", created, err)
+	}
+	if _, created, err := repo.Record(ctx, &second); err != nil || !created {
+		t.Fatalf("record second created=%v err=%v", created, err)
+	}
+	if first.Sequence != 1 || second.Sequence != 2 {
+		t.Fatalf("aggregate sequences = %d/%d, want 1/2", first.Sequence, second.Sequence)
+	}
+	claimed, err := repo.ClaimDueForNotifications(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != first.ID {
+		t.Fatalf("claimed before predecessor delivery = %#v, want first only", claimed)
+	}
+	if claimed[0].LeaseToken == nil {
+		t.Fatal("first claim has no lease token")
+	}
+	if err := repo.MarkRelayAttempt(ctx, first.ID, *claimed[0].LeaseToken, true, nil); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err = repo.ClaimDueForNotifications(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != second.ID {
+		t.Fatalf("claimed after predecessor delivery = %#v, want second", claimed)
+	}
+}
+
+func TestMoneyEventOutboxExpiredLeaseStaleWorkerCannotOverwriteNewClaim(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	repo := NewMoneyEventOutboxRepo(db)
+	ctx := context.Background()
+	row := testMoneyEventOutboxWithIDs("evt-overlapping-relays", "idem-overlapping-relays", uuid.New(), uuid.New())
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	firstClaim, err := repo.ClaimDueForNotifications(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstClaim) != 1 || firstClaim[0].LeaseToken == nil {
+		t.Fatalf("first claim = %#v", firstClaim)
+	}
+	firstToken := *firstClaim[0].LeaseToken
+	if err := db.Model(&models.MoneyEventOutbox{}).
+		Where("id = ?", row.ID).
+		Update("locked_until", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	secondClaim, err := repo.ClaimDueForNotifications(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondClaim) != 1 || secondClaim[0].LeaseToken == nil {
+		t.Fatalf("second claim = %#v", secondClaim)
+	}
+	secondToken := *secondClaim[0].LeaseToken
+	if secondToken == firstToken {
+		t.Fatalf("reclaim reused lease token %s", secondToken)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		results <- repo.MarkRelayAttempt(ctx, row.ID, firstToken, false, errors.New("stale relay timeout"))
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		results <- repo.MarkRelayAttempt(ctx, row.ID, secondToken, true, nil)
+	}()
+	close(start)
+	workers.Wait()
+	close(results)
+
+	leaseLost := 0
+	succeeded := 0
+	for result := range results {
+		switch {
+		case result == nil:
+			succeeded++
+		case errors.Is(result, ErrMoneyEventOutboxLeaseLost):
+			leaseLost++
+		default:
+			t.Fatalf("overlapping relay mark result: %v", result)
+		}
+	}
+	if succeeded != 1 || leaseLost != 1 {
+		t.Fatalf("overlapping marks succeeded=%d lease_lost=%d, want 1/1", succeeded, leaseLost)
+	}
+
+	var got models.MoneyEventOutbox
+	if err := db.First(&got, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.MoneyEventOutboxStatusDelivered || got.Attempts != 1 || got.LeaseToken != nil || got.LockedUntil != nil {
+		t.Fatalf("authoritative relay claim was overwritten: %#v", got)
+	}
+}
+
+func TestMoneyEventOutboxRejectsCallerAssignedSequenceForNewEvent(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	event := testMoneyEventOutbox()
+	event.Sequence = 77
+	if _, _, err := NewMoneyEventOutboxRepo(db).Record(context.Background(), &event); err == nil || !errors.Is(err, ErrMoneyEventOutboxInvalid) {
+		t.Fatalf("caller-assigned sequence error = %v, want ErrMoneyEventOutboxInvalid", err)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", event.EventID, 0)
 }
 
 func testMoneyEventOutbox() models.MoneyEventOutbox {

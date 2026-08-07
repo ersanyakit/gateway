@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -682,6 +684,7 @@ func requireLedgerHold(ctx context.Context, tx *gorm.DB, req ledgerHoldRequireme
 		return ErrLedgerReservationRequired
 	}
 	var rows []models.LedgerEntry
+	consumerTypes := ledgerHoldConsumerTypes(req.releaseType)
 	if err := tx.WithContext(ctx).
 		Model(&models.LedgerEntry{}).
 		Where(req.idColumn+" = ? AND entry_type = ? AND status = ?", req.id, req.entryType, models.LedgerStatusPending).
@@ -691,10 +694,10 @@ func requireLedgerHold(ctx context.Context, tx *gorm.DB, req ledgerHoldRequireme
 				SELECT 1
 				FROM ledger_entries releases
 				WHERE releases.reference = ledger_entries.id::text
-				  AND releases.entry_type = ?
+				  AND releases.entry_type IN ?
 				  AND releases.status <> ?
 			)
-			`, req.releaseType, models.LedgerStatusVoided).
+			`, consumerTypes, models.LedgerStatusVoided).
 		Where(`
 				NOT EXISTS (
 					SELECT 1
@@ -1051,6 +1054,18 @@ type ledgerHoldReleaseRequest struct {
 	description             string
 }
 
+// A hold is append-only and may be economically consumed either by its normal
+// lifecycle release or by a chain reorg reversal. Treat both as terminal
+// provenance for the original hold row; otherwise a later recovery flow can
+// append a second inverse entry and manufacture available balance.
+func ledgerHoldConsumerTypes(releaseType string) []string {
+	releaseType = strings.TrimSpace(releaseType)
+	if releaseType == "" || releaseType == models.LedgerEntryTypeReorgReversal {
+		return []string{models.LedgerEntryTypeReorgReversal}
+	}
+	return []string{releaseType, models.LedgerEntryTypeReorgReversal}
+}
+
 func (r *LedgerRepo) activeHoldRows(ctx context.Context, tx *gorm.DB, req ledgerHoldReleaseRequest) ([]models.LedgerEntry, error) {
 	if tx == nil || req.id == uuid.Nil {
 		return nil, ErrLedgerReservationRequired
@@ -1067,10 +1082,10 @@ func (r *LedgerRepo) activeHoldRows(ctx context.Context, tx *gorm.DB, req ledger
 				SELECT 1
 				FROM ledger_entries releases
 				WHERE releases.reference = holds.id::text
-				  AND releases.entry_type = ?
+				  AND releases.entry_type IN ?
 				  AND releases.status <> ?
 			)
-		`, req.releaseType, models.LedgerStatusVoided).
+		`, ledgerHoldConsumerTypes(req.releaseType), models.LedgerStatusVoided).
 		Order("holds.account ASC").
 		Find(&rows).Error
 	return rows, err
@@ -1164,16 +1179,35 @@ func (r *LedgerRepo) appendHoldReleaseEntries(ctx context.Context, tx *gorm.DB, 
 }
 
 func (r *LedgerRepo) lockHeldEntryAssets(ctx context.Context, tx *gorm.DB, rows []models.LedgerEntry) error {
-	locked := map[string]struct{}{}
+	return r.lockLedgerEntryAssetsStable(ctx, tx, rows)
+}
+
+// lockLedgerEntryAssetsStable makes every balance-affecting correction
+// participate in the same per-asset serialization boundary as withdrawals,
+// refunds, and sweeps. Sorting is important when one transaction happens to
+// span more than one asset: all callers then acquire advisory locks in the
+// same order instead of introducing a cross-asset deadlock.
+func (r *LedgerRepo) lockLedgerEntryAssetsStable(ctx context.Context, tx *gorm.DB, rows []models.LedgerEntry) error {
+	if tx == nil {
+		return gorm.ErrInvalidDB
+	}
+	assets := make(map[string]models.LedgerEntry)
 	for _, row := range rows {
 		lockKey := ledgerAssetLockMapKey(row.MerchantID, row.DomainID, row.ChainID, row.Token)
-		if _, ok := locked[lockKey]; ok {
-			continue
+		if _, ok := assets[lockKey]; !ok {
+			assets[lockKey] = row
 		}
+	}
+	keys := make([]string, 0, len(assets))
+	for key := range assets {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		row := assets[key]
 		if err := r.lockLedgerAsset(ctx, tx, row.MerchantID, row.DomainID, row.ChainID, row.Token); err != nil {
 			return err
 		}
-		locked[lockKey] = struct{}{}
 	}
 	return nil
 }
@@ -1228,15 +1262,15 @@ func ledgerRowsShareReleaseScope(left models.LedgerEntry, right models.LedgerEnt
 }
 
 func ledgerAssetLockMapKey(merchantID uuid.UUID, domainID *uuid.UUID, chainID constants.ChainID, token *string) string {
-	domain := ""
+	scope := "merchant"
 	if domainID != nil {
-		domain = domainID.String()
+		scope = domainID.String()
 	}
 	tokenValue := "native"
 	if token != nil && strings.TrimSpace(*token) != "" {
 		tokenValue = strings.ToLower(strings.TrimSpace(*token))
 	}
-	return fmt.Sprintf("%s:%s:%d:%s", merchantID.String(), domain, chainID, tokenValue)
+	return fmt.Sprintf("ledger-balance:%s:%s:%d:%s", merchantID.String(), scope, chainID, tokenValue)
 }
 
 func (r *LedgerRepo) PostTransactionReversal(ctx context.Context, txModel models.Transaction) error {
@@ -1249,17 +1283,23 @@ func (r *LedgerRepo) PostTransactionReversalWithDB(ctx context.Context, tx *gorm
 	if txModel.UniqueHash == "" {
 		return nil
 	}
-	var originals []models.LedgerEntry
-	if err := tx.WithContext(ctx).
-		Where("transaction_unique_hash = ?", txModel.UniqueHash).
-		Where("status <> ?", models.LedgerStatusVoided).
-		Where("entry_type <> ?", models.LedgerEntryTypeReorgReversal).
-		Where("amount_raw ~ '^[0-9]+$'").
-		Find(&originals).Error; err != nil {
+	originals, err := transactionReversalOriginals(ctx, tx, txModel.UniqueHash)
+	if err != nil {
 		return err
 	}
 	if len(originals) == 0 {
-		return nil
+		return fenceSweepJobsForSourceReorgWithDB(ctx, tx, txModel)
+	}
+	if err := r.lockLedgerEntryAssetsStable(ctx, tx, originals); err != nil {
+		return err
+	}
+	// A hold release can be appended after the optimistic read but before this
+	// correction acquires the asset lock. Re-read under the lock so the reversal
+	// covers the complete committed journal, including that release, instead of
+	// reversing a stale subset and leaving an orphan balance.
+	originals, err = transactionReversalOriginals(ctx, tx, txModel.UniqueHash)
+	if err != nil {
+		return err
 	}
 	now := time.Now()
 	reversals := make([]models.LedgerEntry, 0, len(originals))
@@ -1300,22 +1340,156 @@ func (r *LedgerRepo) PostTransactionReversalWithDB(ctx context.Context, tx *gorm
 			UpdatedAt:             now,
 		})
 	}
-	if len(reversals) == 0 {
-		return nil
+	if len(reversals) > 0 {
+		if err := r.appendLedgerEntries(ctx, tx, reversals); err != nil {
+			return err
+		}
 	}
-	return tx.WithContext(ctx).Create(&reversals).Error
+	return fenceSweepJobsForSourceReorgWithDB(ctx, tx, txModel)
+}
+
+func transactionReversalOriginals(ctx context.Context, tx *gorm.DB, transactionUniqueHash string) ([]models.LedgerEntry, error) {
+	if tx == nil {
+		return nil, gorm.ErrInvalidDB
+	}
+	var originals []models.LedgerEntry
+	err := tx.WithContext(ctx).
+		Where("transaction_unique_hash = ?", strings.TrimSpace(transactionUniqueHash)).
+		Where("status <> ?", models.LedgerStatusVoided).
+		Where("entry_type <> ?", models.LedgerEntryTypeReorgReversal).
+		Where("amount_raw ~ '^[0-9]+$'").
+		Order("created_at ASC, id ASC").
+		Find(&originals).Error
+	return originals, err
+}
+
+// PostTransactionRestorationWithDB restores the currently reversed ledger
+// leaves for a transaction without mutating immutable history. A restoration
+// points at one reorg reversal and uses that reversal's ID as its idempotency
+// boundary. If the transaction is reorged again, the regular reversal logic
+// reverses this adjustment; a later canonical reappearance then restores that
+// new reversal. This makes arbitrary reorg/reappearance cycles net to either
+// exactly zero or exactly one credit, never two.
+func (r *LedgerRepo) PostTransactionRestorationWithDB(ctx context.Context, tx *gorm.DB, txModel models.Transaction) (int, error) {
+	if r == nil || tx == nil || strings.TrimSpace(txModel.UniqueHash) == "" {
+		return 0, nil
+	}
+	var reversals []models.LedgerEntry
+	if err := tx.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("transaction_unique_hash = ?", txModel.UniqueHash).
+		Where("entry_type = ?", models.LedgerEntryTypeReorgReversal).
+		Where("status <> ?", models.LedgerStatusVoided).
+		Where("amount_raw ~ '^[0-9]+$'").
+		Order("created_at ASC, id ASC").
+		Find(&reversals).Error; err != nil {
+		return 0, err
+	}
+	if len(reversals) == 0 {
+		return 0, nil
+	}
+	if err := r.lockLedgerEntryAssetsStable(ctx, tx, reversals); err != nil {
+		return 0, err
+	}
+
+	now := time.Now()
+	restorations := make([]models.LedgerEntry, 0, len(reversals))
+	for _, reversal := range reversals {
+		operationalSweep, err := ledgerEntryHasSweepOperationalLineage(ctx, tx, reversal)
+		if err != nil {
+			return 0, err
+		}
+		if operationalSweep {
+			// Sweep holds/releases are operational reservations, not independent
+			// merchant value. Restoring their reversal would put funds back into
+			// sweep_transit while the immutable hold remains terminally consumed by
+			// the reorg. Canonical reappearance instead restores the deposit value;
+			// a revived sweep creates a fresh consumable hold generation.
+			continue
+		}
+		key := "canonical-reappearance-restoration:" + reversal.ID.String()
+		exists, err := r.existsWithDB(ctx, tx, key)
+		if err != nil {
+			return 0, err
+		}
+		if exists {
+			continue
+		}
+		restorations = append(restorations, models.LedgerEntry{
+			ID:                    uuid.New(),
+			MerchantID:            reversal.MerchantID,
+			DomainID:              reversal.DomainID,
+			WalletID:              reversal.WalletID,
+			PaymentID:             reversal.PaymentID,
+			TransactionUniqueHash: reversal.TransactionUniqueHash,
+			TransactionHash:       reversal.TransactionHash,
+			WithdrawalID:          reversal.WithdrawalID,
+			RefundID:              reversal.RefundID,
+			SweepJobID:            reversal.SweepJobID,
+			ChainID:               reversal.ChainID,
+			Token:                 reversal.Token,
+			Symbol:                reversal.Symbol,
+			Decimals:              reversal.Decimals,
+			EntryType:             models.LedgerEntryTypeAdjustment,
+			Account:               reversal.Account,
+			Direction:             reverseLedgerDirection(reversal.Direction),
+			Status:                models.LedgerStatusPosted,
+			AmountRaw:             reversal.AmountRaw,
+			IdempotencyKey:        key,
+			Reference:             reversal.ID.String(),
+			Description:           "Canonical reappearance restoration for reorg reversal " + reversal.ID.String(),
+			PostedAt:              &now,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		})
+	}
+	if len(restorations) == 0 {
+		return 0, nil
+	}
+	if err := r.appendLedgerEntries(ctx, tx, restorations); err != nil {
+		return 0, err
+	}
+	return len(restorations), nil
+}
+
+func ledgerEntryHasSweepOperationalLineage(ctx context.Context, tx *gorm.DB, entry models.LedgerEntry) (bool, error) {
+	if tx == nil {
+		return false, gorm.ErrInvalidDB
+	}
+	current := entry
+	seen := make(map[uuid.UUID]struct{})
+	for depth := 0; depth < 64; depth++ {
+		switch current.EntryType {
+		case models.LedgerEntryTypeSweepHold, models.LedgerEntryTypeSweepRelease, models.LedgerEntryTypeSweepDebit:
+			return true, nil
+		case models.LedgerEntryTypeReorgReversal, models.LedgerEntryTypeAdjustment:
+			id, err := uuid.Parse(strings.TrimSpace(current.Reference))
+			if err != nil || id == uuid.Nil {
+				return false, nil
+			}
+			if _, duplicate := seen[id]; duplicate {
+				return false, errors.New("ledger correction provenance cycle")
+			}
+			seen[id] = struct{}{}
+			var parent models.LedgerEntry
+			if err := tx.WithContext(ctx).
+				Select("id", "entry_type", "reference").
+				First(&parent, "id = ?", id).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return false, nil
+				}
+				return false, err
+			}
+			current = parent
+		default:
+			return false, nil
+		}
+	}
+	return false, errors.New("ledger correction provenance exceeds maximum depth")
 }
 
 func (r *LedgerRepo) lockLedgerAsset(ctx context.Context, tx *gorm.DB, merchantID uuid.UUID, domainID *uuid.UUID, chainID constants.ChainID, token *string) error {
-	tokenKey := "native"
-	if token != nil && strings.TrimSpace(*token) != "" {
-		tokenKey = strings.ToLower(strings.TrimSpace(*token))
-	}
-	scope := "merchant"
-	if domainID != nil {
-		scope = domainID.String()
-	}
-	lockKey := fmt.Sprintf("ledger-balance:%s:%s:%d:%s", merchantID.String(), scope, chainID, tokenKey)
+	lockKey := ledgerAssetLockMapKey(merchantID, domainID, chainID, token)
 	return tx.WithContext(ctx).Exec("SELECT pg_advisory_xact_lock(hashtext(?))", lockKey).Error
 }
 
@@ -1390,6 +1564,26 @@ func refundDebitKey(id uuid.UUID) string {
 
 func sweepHoldKey(id uuid.UUID) string {
 	return "sweep-hold:" + id.String()
+}
+
+func sweepHoldGenerationKey(id uuid.UUID, generation int) string {
+	if generation <= 1 {
+		return sweepHoldKey(id)
+	}
+	return fmt.Sprintf("%s:generation:%d", sweepHoldKey(id), generation)
+}
+
+func sweepHoldGenerationFromKey(id uuid.UUID, key string) (int, bool) {
+	base := sweepHoldKey(id)
+	if key == base {
+		return 1, true
+	}
+	prefix := base + ":generation:"
+	if !strings.HasPrefix(key, prefix) {
+		return 0, false
+	}
+	generation, err := strconv.Atoi(strings.TrimPrefix(key, prefix))
+	return generation, err == nil && generation > 1
 }
 
 func sweepHoldReleaseKey(id uuid.UUID) string {
@@ -1632,17 +1826,16 @@ func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job model
 	if !r.amountIsPositive(txModel.Amount) {
 		return errors.New("sweep amount must be positive")
 	}
-	key := sweepHoldKey(job.ID)
-	exists, err := r.existsWithDB(ctx, tx, key)
-	if err != nil || exists {
-		return err
-	}
 	chainID := txModel.ChainID
 	symbol := strings.ToUpper(strings.TrimSpace(txModel.Symbol))
 	if symbol == "" {
 		symbol = strings.ToUpper(constants.ChainName(chainID))
 	}
 	if err := r.lockLedgerAsset(ctx, tx, *txModel.MerchantID, txModel.DomainID, chainID, txModel.Token); err != nil {
+		return err
+	}
+	key, active, err := r.nextSweepHoldGenerationKey(ctx, tx, job, txModel)
+	if err != nil || active {
 		return err
 	}
 	if err := r.ensureAvailableBalance(ctx, tx, *txModel.MerchantID, txModel.DomainID, chainID, txModel.Token, txModel.Amount); err != nil {
@@ -1701,6 +1894,80 @@ func (r *LedgerRepo) createSweepHold(ctx context.Context, tx *gorm.DB, job model
 	return r.appendLedgerEntries(ctx, tx, entries)
 }
 
+func (r *LedgerRepo) nextSweepHoldGenerationKey(ctx context.Context, tx *gorm.DB, job models.SweepJob, txModel models.Transaction) (string, bool, error) {
+	if err := r.RequireSweepHoldForJobTransactionWithDB(ctx, tx, job, txModel); err == nil {
+		return "", true, nil
+	} else if !errors.Is(err, ErrLedgerReservationRequired) {
+		return "", false, err
+	}
+
+	var rows []models.LedgerEntry
+	if err := tx.WithContext(ctx).
+		Where("sweep_job_id = ? AND entry_type = ? AND status = ?", job.ID, models.LedgerEntryTypeSweepHold, models.LedgerStatusPending).
+		Order("created_at ASC, id ASC").
+		Find(&rows).Error; err != nil {
+		return "", false, err
+	}
+	if len(rows) == 0 {
+		return sweepHoldGenerationKey(job.ID, 1), false, nil
+	}
+
+	// A normal release/void is a completed operational decision. Never create a
+	// fresh reservation behind it; only a chain reorg followed by exact canonical
+	// finality is allowed to advance the hold generation.
+	var normalReleaseCount int64
+	if err := tx.WithContext(ctx).
+		Model(&models.LedgerEntry{}).
+		Where("sweep_job_id = ? AND entry_type = ? AND status <> ?", job.ID, models.LedgerEntryTypeSweepRelease, models.LedgerStatusVoided).
+		Count(&normalReleaseCount).Error; err != nil {
+		return "", false, err
+	}
+	if normalReleaseCount > 0 {
+		return "", false, ErrLedgerReservationRequired
+	}
+	if txModel.Status != models.TransactionStatusConfirmed || txModel.FinalizedAt == nil || txModel.ReorgedAt != nil {
+		return "", false, ErrLedgerReservationRequired
+	}
+
+	byGeneration := make(map[int][]models.LedgerEntry)
+	latestGeneration := 0
+	for _, row := range rows {
+		generation, ok := sweepHoldGenerationFromKey(job.ID, row.IdempotencyKey)
+		if !ok {
+			return "", false, ErrLedgerReservationRequired
+		}
+		byGeneration[generation] = append(byGeneration[generation], row)
+		if generation > latestGeneration {
+			latestGeneration = generation
+		}
+	}
+	latest := byGeneration[latestGeneration]
+	if err := validateHoldReleaseRows(latest, models.LedgerAccountSweepTransit); err != nil {
+		return "", false, err
+	}
+	requirement := ledgerHoldRequirement{
+		strict: true, merchantID: *txModel.MerchantID, domainID: txModel.DomainID, walletID: txModel.WalletID,
+		chainID: txModel.ChainID, token: txModel.Token, amountRaw: txModel.Amount,
+		transitAccount: models.LedgerAccountSweepTransit,
+	}
+	for _, row := range latest {
+		if !ledgerHoldEntryMatches(row, requirement) {
+			return "", false, ErrLedgerReservationRequired
+		}
+		var reorgConsumers int64
+		if err := tx.WithContext(ctx).
+			Model(&models.LedgerEntry{}).
+			Where("reference = ? AND entry_type = ? AND status <> ?", row.ID.String(), models.LedgerEntryTypeReorgReversal, models.LedgerStatusVoided).
+			Count(&reorgConsumers).Error; err != nil {
+			return "", false, err
+		}
+		if reorgConsumers != 1 {
+			return "", false, ErrLedgerReservationRequired
+		}
+	}
+	return sweepHoldGenerationKey(job.ID, latestGeneration+1), false, nil
+}
+
 func (r *LedgerRepo) VoidSweepHold(ctx context.Context, sweepJobID uuid.UUID) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return r.VoidSweepHoldWithDB(ctx, tx, sweepJobID)
@@ -1755,10 +2022,10 @@ func (r *LedgerRepo) ReleaseSweepHoldsForWithdrawalWithDB(ctx context.Context, t
 				SELECT 1
 				FROM ledger_entries releases
 				WHERE releases.reference = ledger_entries.id::text
-				  AND releases.entry_type = ?
+				  AND releases.entry_type IN ?
 				  AND releases.status <> ?
 			)
-		`, models.LedgerEntryTypeSweepRelease, models.LedgerStatusVoided)
+		`, ledgerHoldConsumerTypes(models.LedgerEntryTypeSweepRelease), models.LedgerStatusVoided)
 	if request.DomainID != nil {
 		query = query.Where("domain_id = ?", *request.DomainID)
 	} else {
@@ -1784,6 +2051,17 @@ func (r *LedgerRepo) ReleaseSweepHoldsForWithdrawalWithDB(ctx context.Context, t
 		}
 		if err := r.VoidSweepHoldWithDB(ctx, tx, candidate.SweepJobID); err != nil {
 			return err
+		}
+		// VoidSweepHold is intentionally idempotent and returns nil when another
+		// terminal entry already consumed the hold. Count only a release that this
+		// recovery boundary can prove exists; a reorg reversal must contribute zero
+		// recoverable balance.
+		releaseExists, err := r.existsWithDB(ctx, tx, sweepHoldReleaseKey(candidate.SweepJobID))
+		if err != nil {
+			return err
+		}
+		if !releaseExists {
+			continue
 		}
 		released.Add(released, amount)
 		if released.Cmp(requested) >= 0 {

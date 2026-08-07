@@ -2,12 +2,15 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"core/constants"
 	"core/models"
 	webhooksvc "core/services/webhook"
 
@@ -107,6 +110,13 @@ func TestWebhookDeliveryFailureState(t *testing.T) {
 	status, action = webhookDeliveryFailureState(0, testPermanentError{err: errors.New("invalid callback")})
 	if status != models.WebhookDeliveryStatusDeadLetter || action != "replay_or_investigate" {
 		t.Fatalf("permanent state = %s/%s, want dead_letter/replay_or_investigate", status, action)
+	}
+}
+
+func TestWebhookDeliveryClaimTimeoutCannotUndercutLeaseSafeBatch(t *testing.T) {
+	t.Setenv("WEBHOOK_DELIVERY_CLAIM_TIMEOUT", "5s")
+	if got := webhookDeliveryClaimTimeout(); got != 2*time.Minute {
+		t.Fatalf("claim timeout = %s, want 2m minimum", got)
 	}
 }
 
@@ -216,6 +226,278 @@ func TestWebhookDeliveryEnqueueLifecycleAssignsResourceSequenceMetadata(t *testi
 	}
 }
 
+func TestWebhookDeliveryEnqueueTransactionAndPaymentPersistImmutablePayloads(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}, &models.WebhookResourceSequence{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	domain := models.Domain{ID: domainID, MerchantID: merchantID, WebhookURL: "https://example.test/webhook"}
+
+	txModel := models.Transaction{
+		ID:          uuid.New(),
+		ChainID:     constants.Ethereum,
+		UniqueHash:  "immutable-tx-" + uuid.NewString(),
+		Hash:        "0ximmutable",
+		BlockNumber: "42",
+		BlockHash:   "0xblock",
+		Symbol:      "ETH",
+		Decimals:    18,
+		FromAddress: "0xfrom",
+		ToAddress:   "0xto",
+		Amount:      "100",
+		Status:      models.TransactionStatusConfirmed,
+		EventType:   constants.WebhookEventNativeTransfer,
+		WalletID:    &walletID,
+		MerchantID:  &merchantID,
+		DomainID:    &domainID,
+		CreatedAt:   time.Now().UTC(),
+	}
+	transactionDelivery, created, err := repo.EnqueueTransaction(ctx, domain, txModel)
+	if err != nil || !created {
+		t.Fatalf("enqueue transaction created=%v err=%v", created, err)
+	}
+	txModel.Amount = "999"
+	txModel.Status = models.TransactionStatusReorged
+	repeatedTransaction, created, err := repo.EnqueueTransaction(ctx, domain, txModel)
+	if err != nil || created {
+		t.Fatalf("repeat transaction created=%v err=%v", created, err)
+	}
+	if repeatedTransaction.ID != transactionDelivery.ID {
+		t.Fatalf("repeat transaction delivery id = %s, want %s", repeatedTransaction.ID, transactionDelivery.ID)
+	}
+	var transactionPayload webhooksvc.Payload
+	if err := json.Unmarshal([]byte(repeatedTransaction.PayloadJSON), &transactionPayload); err != nil {
+		t.Fatal(err)
+	}
+	if transactionPayload.AmountRaw != "100" || transactionPayload.Status != models.TransactionStatusConfirmed {
+		t.Fatalf("transaction snapshot mutated: %#v", transactionPayload)
+	}
+	if transactionPayload.DeliveryID != transactionDelivery.ID.String() || transactionPayload.Sequence != 1 || transactionPayload.ResourceID != txModel.ID.String() {
+		t.Fatalf("transaction delivery metadata missing: %#v", transactionPayload)
+	}
+
+	session := models.PaymentSession{
+		ID:           uuid.New(),
+		SessionToken: "immutable-payment-" + uuid.NewString(),
+		MerchantID:   merchantID,
+		DomainID:     domainID,
+		WalletID:     walletID,
+		OrderID:      "order-immutable",
+		Amount:       "25.00",
+		Currency:     "USD",
+		Status:       models.PaymentStatusPaid,
+		WebhookEvent: constants.WebhookEventPaymentSucceeded,
+		CreatedAt:    time.Now().UTC(),
+	}
+	paymentDelivery, created, err := repo.EnqueuePayment(ctx, domain, session)
+	if err != nil || !created {
+		t.Fatalf("enqueue payment created=%v err=%v", created, err)
+	}
+	session.Amount = "75.00"
+	session.Status = models.PaymentStatusFailed
+	repeatedPayment, created, err := repo.EnqueuePayment(ctx, domain, session)
+	if err != nil || created {
+		t.Fatalf("repeat payment created=%v err=%v", created, err)
+	}
+	var paymentPayload webhooksvc.PaymentPayload
+	if err := json.Unmarshal([]byte(repeatedPayment.PayloadJSON), &paymentPayload); err != nil {
+		t.Fatal(err)
+	}
+	if paymentPayload.Amount != "25.00" || paymentPayload.Status != models.PaymentStatusPaid {
+		t.Fatalf("payment snapshot mutated: %#v", paymentPayload)
+	}
+	if paymentPayload.DeliveryID != paymentDelivery.ID.String() || paymentPayload.Sequence != 1 || paymentPayload.ResourceID != session.ID.String() {
+		t.Fatalf("payment delivery metadata missing: %#v", paymentPayload)
+	}
+}
+
+func TestWebhookDeliveryEnqueueSnapshotsNATSTargetAndSubject(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}, &models.WebhookResourceSequence{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	domain := models.Domain{
+		ID: uuid.New(), MerchantID: uuid.New(), NotificationMode: models.DomainNotificationNATS,
+		NATSURL: "nats://queued.example:4222", NATSSubject: "merchant.queued.events",
+	}
+	entityID := uuid.New()
+	payload := webhooksvc.LifecyclePayload{
+		EventID: "target-snapshot-" + entityID.String(), EventType: "payout.finalized.v1", EventVersion: "v1",
+		EntityType: "payout", EntityID: entityID.String(), MerchantID: domain.MerchantID.String(), DomainID: domain.ID.String(),
+	}
+	delivery, created, err := NewWebhookDeliveryRepo(db).EnqueueLifecycle(context.Background(), domain, payload)
+	if err != nil || !created {
+		t.Fatalf("enqueue created=%v err=%v", created, err)
+	}
+	if delivery.NotificationMode != models.DomainNotificationNATS || delivery.TargetURL != domain.NATSURL || delivery.TargetSubject != domain.NATSSubject {
+		t.Fatalf("target snapshot = %#v", delivery)
+	}
+}
+
+func TestWebhookDeliveryEnqueueMoneyEventIsIdempotentAndPreservesRawSnapshot(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}, &models.WebhookResourceSequence{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	paymentID := uuid.New()
+	domain := models.Domain{ID: uuid.New(), MerchantID: uuid.New(), WebhookURL: "https://example.test/webhook"}
+	event := models.MoneyEventOutbox{
+		EventID:        paymentID.String() + ":payment.succeeded.v1",
+		EventType:      "payment.succeeded.v1",
+		EventVersion:   constants.WebhookEventVersionV1,
+		AggregateType:  "payment",
+		AggregateID:    paymentID.String(),
+		MerchantID:     domain.MerchantID,
+		DomainID:       domain.ID,
+		IdempotencyKey: "money-event-" + paymentID.String(),
+		PayloadJSON:    `{"event_id":"` + paymentID.String() + `:payment.succeeded.v1","marker":"original"}`,
+	}
+
+	delivery, created, err := repo.EnqueueMoneyEvent(ctx, domain, event)
+	if err != nil || !created {
+		t.Fatalf("enqueue money event created=%v err=%v", created, err)
+	}
+	if delivery.PaymentID == nil || *delivery.PaymentID != paymentID || delivery.ResourceType != "payment" || delivery.ResourceID != paymentID.String() {
+		t.Fatalf("money-event delivery linkage = %#v", delivery)
+	}
+	if delivery.EventID != event.EventID || delivery.EventType != event.EventType || delivery.EventVersion != event.EventVersion || delivery.IdempotencyKey != event.IdempotencyKey {
+		t.Fatalf("money-event identity = %#v", delivery)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(delivery.PayloadJSON), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["marker"] != "original" || payload["delivery_id"] != delivery.ID.String() || payload["resource_id"] != paymentID.String() {
+		t.Fatalf("money-event payload = %#v", payload)
+	}
+
+	repeated, created, err := repo.EnqueueMoneyEvent(ctx, domain, event)
+	if err != nil || created {
+		t.Fatalf("repeat money event created=%v err=%v", created, err)
+	}
+	if repeated.ID != delivery.ID {
+		t.Fatalf("idempotent money-event snapshot changed: %#v", repeated)
+	}
+	event.PayloadJSON = `{"event_id":"` + event.EventID + `","marker":"mutated"}`
+	if _, _, err := repo.EnqueueMoneyEvent(ctx, domain, event); !errors.Is(err, ErrWebhookDeliveryConflict) {
+		t.Fatalf("conflicting money-event payload err = %v, want ErrWebhookDeliveryConflict", err)
+	}
+
+	transactionID := uuid.New()
+	transactionEvent := event
+	transactionEvent.EventID = transactionID.String() + ":transaction.reorged.v1"
+	transactionEvent.EventType = "transaction.reorged.v1"
+	transactionEvent.AggregateType = "transaction"
+	transactionEvent.AggregateID = transactionID.String()
+	transactionEvent.IdempotencyKey = transactionEvent.EventID
+	transactionEvent.PayloadJSON = `{"event_id":"` + transactionEvent.EventID + `","marker":"transaction"}`
+	transactionDelivery, created, err := repo.EnqueueMoneyEvent(ctx, domain, transactionEvent)
+	if err != nil || !created {
+		t.Fatalf("enqueue transaction money event created=%v err=%v", created, err)
+	}
+	if transactionDelivery.TransactionID == nil || *transactionDelivery.TransactionID != transactionID || transactionDelivery.PaymentID != nil {
+		t.Fatalf("transaction money-event linkage = %#v", transactionDelivery)
+	}
+}
+
+func TestWebhookDeliveryHasActivePaymentDeliveryOnlyIncludesRetryableWork(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	paymentID := uuid.New()
+
+	active, err := repo.HasActivePaymentDelivery(ctx, paymentID)
+	if err != nil || active {
+		t.Fatalf("empty active lookup = %v, err=%v", active, err)
+	}
+	succeeded := webhookDeliveryTestRow(merchantID, domainID, "succeeded-"+uuid.NewString(), models.WebhookDeliveryStatusSucceeded, nil)
+	succeeded.PaymentID = &paymentID
+	if err := db.Create(&succeeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	active, err = repo.HasActivePaymentDelivery(ctx, paymentID)
+	if err != nil || active {
+		t.Fatalf("succeeded delivery active = %v, err=%v", active, err)
+	}
+
+	failed := webhookDeliveryTestRow(merchantID, domainID, "failed-"+uuid.NewString(), models.WebhookDeliveryStatusFailed, nil)
+	failed.PaymentID = &paymentID
+	if err := db.Create(&failed).Error; err != nil {
+		t.Fatal(err)
+	}
+	active, err = repo.HasActivePaymentDelivery(ctx, paymentID)
+	if err != nil || !active {
+		t.Fatalf("failed delivery active = %v, err=%v", active, err)
+	}
+	if err := db.Model(&models.WebhookDelivery{}).Where("id = ?", failed.ID).Update("status", models.WebhookDeliveryStatusDeadLetter).Error; err != nil {
+		t.Fatal(err)
+	}
+	active, err = repo.HasActivePaymentDelivery(ctx, paymentID)
+	if err != nil || active {
+		t.Fatalf("terminal deliveries active = %v, err=%v", active, err)
+	}
+}
+
+func TestWebhookDeliveryHasPaymentDeliveryForEventHonorsAliasesAndTerminalRows(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+
+	succeededPaymentID := uuid.New()
+	succeeded := webhookDeliveryTestRow(merchantID, domainID, "canonical-success", models.WebhookDeliveryStatusSucceeded, nil)
+	succeeded.PaymentID = &succeededPaymentID
+	succeeded.EventType = "payment.succeeded.v1"
+	if err := db.Create(&succeeded).Error; err != nil {
+		t.Fatal(err)
+	}
+	found, delivered, err := repo.HasPaymentDeliveryForEvent(context.Background(), succeededPaymentID, constants.WebhookEventPaymentSucceeded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || !delivered {
+		t.Fatalf("succeeded canonical delivery = found:%v delivered:%v", found, delivered)
+	}
+
+	deadLetterPaymentID := uuid.New()
+	deadLetter := webhookDeliveryTestRow(merchantID, domainID, "canonical-dead-letter", models.WebhookDeliveryStatusDeadLetter, nil)
+	deadLetter.PaymentID = &deadLetterPaymentID
+	deadLetter.EventType = "payment.failed.v1"
+	if err := db.Create(&deadLetter).Error; err != nil {
+		t.Fatal(err)
+	}
+	found, delivered, err = repo.HasPaymentDeliveryForEvent(context.Background(), deadLetterPaymentID, constants.WebhookEventPaymentFailed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || delivered {
+		t.Fatalf("dead-letter canonical delivery = found:%v delivered:%v", found, delivered)
+	}
+
+	found, delivered, err = repo.HasPaymentDeliveryForEvent(context.Background(), deadLetterPaymentID, constants.WebhookEventPaymentSucceeded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found || delivered {
+		t.Fatalf("different payment lifecycle event = found:%v delivered:%v", found, delivered)
+	}
+}
+
 func TestWebhookDeliveryClaimDuePreservesResourceOrder(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
 	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
@@ -263,6 +545,68 @@ func TestWebhookDeliveryClaimDuePreservesResourceOrder(t *testing.T) {
 	}
 }
 
+func TestWebhookDeliveryDeadLetterBlocksLaterSequenceUntilReplaySucceeds(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	resourceID := uuid.NewString()
+
+	first := webhookDeliveryTestRow(merchantID, domainID, "evt-dead-letter-first", models.WebhookDeliveryStatusDeadLetter, nil)
+	first.ResourceType = "payment"
+	first.ResourceID = resourceID
+	first.Sequence = 1
+	second := webhookDeliveryTestRow(merchantID, domainID, "evt-pending-second", models.WebhookDeliveryStatusPending, nil)
+	second.ResourceType = "payment"
+	second.ResourceID = resourceID
+	second.Sequence = 2
+	if err := db.Create(&[]models.WebhookDelivery{first, second}).Error; err != nil {
+		t.Fatalf("seed ordered deliveries: %v", err)
+	}
+
+	claimed, err := repo.ClaimDue(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 0 {
+		t.Fatalf("dead-letter predecessor did not block later sequence: %#v", claimed)
+	}
+
+	replay, created, err := repo.EnqueueReplay(ctx, WebhookReplayParams{
+		DeliveryID: first.ID,
+		ActorEmail: "operator@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created || replay.Sequence != first.Sequence || replay.OriginalDeliveryID == nil || *replay.OriginalDeliveryID != first.ID {
+		t.Fatalf("replay did not preserve original ordering identity: %#v", replay)
+	}
+
+	claimed, err = repo.ClaimDue(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != replay.ID || claimed[0].LeaseToken == nil {
+		t.Fatalf("claim while predecessor replay pending = %#v, want only replay", claimed)
+	}
+	if err := repo.MarkAttempt(ctx, replay.ID, *claimed[0].LeaseToken, true, nil); err != nil {
+		t.Fatalf("acknowledge replay: %v", err)
+	}
+
+	claimed, err = repo.ClaimDue(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != second.ID {
+		t.Fatalf("claim after replay resolved original = %#v, want second", claimed)
+	}
+}
+
 func TestWebhookReplayActiveStatusesIncludesRetryableFailures(t *testing.T) {
 	statuses := webhookReplayActiveStatuses()
 	for _, want := range []string{models.WebhookDeliveryStatusPending, models.WebhookDeliveryStatusProcessing, models.WebhookDeliveryStatusFailed} {
@@ -274,6 +618,39 @@ func TestWebhookReplayActiveStatusesIncludesRetryableFailures(t *testing.T) {
 		if containsWebhookReplayStatus(statuses, forbidden) {
 			t.Fatalf("active statuses %v must not include terminal %s", statuses, forbidden)
 		}
+	}
+}
+
+func TestWebhookDeliveryReplayDoesNotRaceActiveOriginal(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	root := webhookDeliveryTestRow(uuid.New(), uuid.New(), "evt-active-original", models.WebhookDeliveryStatusFailed, nil)
+	root.ResourceType = "payment"
+	root.ResourceID = uuid.NewString()
+	root.Sequence = 4
+	if err := db.Create(&root).Error; err != nil {
+		t.Fatalf("seed active original: %v", err)
+	}
+
+	delivery, created, err := repo.EnqueueReplay(context.Background(), WebhookReplayParams{
+		DeliveryID: root.ID,
+		ActorEmail: "operator@example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created || delivery == nil || delivery.ID != root.ID {
+		t.Fatalf("active original replay = delivery:%#v created:%v, want original no-op", delivery, created)
+	}
+	var replayCount int64
+	if err := db.Model(&models.WebhookDelivery{}).Where("original_delivery_id = ?", root.ID).Count(&replayCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if replayCount != 0 {
+		t.Fatalf("active original created %d replay rows, want 0", replayCount)
 	}
 }
 
@@ -291,9 +668,10 @@ func TestWebhookDeliveryClaimDuePostgresFiltersAndLocksRows(t *testing.T) {
 
 	duePending := webhookDeliveryTestRow(merchantID, domainID, "evt-pending", models.WebhookDeliveryStatusPending, nil)
 	dueFailed := webhookDeliveryTestRow(merchantID, domainID, "evt-failed", models.WebhookDeliveryStatusFailed, nil)
+	staleProcessingWithoutLease := webhookDeliveryTestRow(merchantID, domainID, "evt-processing-null-lease", models.WebhookDeliveryStatusProcessing, nil)
 	futureFailed := webhookDeliveryTestRow(merchantID, domainID, "evt-future", models.WebhookDeliveryStatusFailed, &future)
 	succeeded := webhookDeliveryTestRow(merchantID, domainID, "evt-succeeded", models.WebhookDeliveryStatusSucceeded, nil)
-	if err := db.Create(&[]models.WebhookDelivery{duePending, dueFailed, futureFailed, succeeded}).Error; err != nil {
+	if err := db.Create(&[]models.WebhookDelivery{duePending, dueFailed, staleProcessingWithoutLease, futureFailed, succeeded}).Error; err != nil {
 		t.Fatalf("seed deliveries: %v", err)
 	}
 
@@ -301,14 +679,19 @@ func TestWebhookDeliveryClaimDuePostgresFiltersAndLocksRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claimed) != 2 {
-		t.Fatalf("claimed %d rows, want 2: %#v", len(claimed), claimed)
+	if len(claimed) != 3 {
+		t.Fatalf("claimed %d rows, want 3: %#v", len(claimed), claimed)
 	}
 	claimedByEvent := map[string]bool{}
+	claimTokens := map[uuid.UUID]bool{}
 	for _, row := range claimed {
 		claimedByEvent[row.EventID] = true
+		if row.LeaseToken == nil || *row.LeaseToken == uuid.Nil || claimTokens[*row.LeaseToken] {
+			t.Fatalf("claimed row has missing or duplicate lease token: %#v", row)
+		}
+		claimTokens[*row.LeaseToken] = true
 	}
-	for _, want := range []string{"evt-pending", "evt-failed"} {
+	for _, want := range []string{"evt-pending", "evt-failed", "evt-processing-null-lease"} {
 		if !claimedByEvent[want] {
 			t.Fatalf("expected due row %s to be claimed; got %#v", want, claimedByEvent)
 		}
@@ -325,6 +708,87 @@ func TestWebhookDeliveryClaimDuePostgresFiltersAndLocksRows(t *testing.T) {
 	}
 	if len(claimedAgain) != 0 {
 		t.Fatalf("claimed locked rows again: %#v", claimedAgain)
+	}
+}
+
+func TestWebhookDeliveryExpiredLeaseStaleWorkerCannotOverwriteNewClaim(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	ctx := context.Background()
+	row := webhookDeliveryTestRow(uuid.New(), uuid.New(), "evt-overlapping-workers", models.WebhookDeliveryStatusPending, nil)
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("seed delivery: %v", err)
+	}
+
+	firstClaim, err := repo.ClaimDue(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstClaim) != 1 || firstClaim[0].LeaseToken == nil {
+		t.Fatalf("first claim = %#v", firstClaim)
+	}
+	firstToken := *firstClaim[0].LeaseToken
+	if err := db.Model(&models.WebhookDelivery{}).
+		Where("id = ?", row.ID).
+		Update("next_retry_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+		t.Fatalf("expire first lease: %v", err)
+	}
+
+	secondClaim, err := repo.ClaimDue(ctx, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(secondClaim) != 1 || secondClaim[0].LeaseToken == nil {
+		t.Fatalf("second claim = %#v", secondClaim)
+	}
+	secondToken := *secondClaim[0].LeaseToken
+	if secondToken == firstToken {
+		t.Fatalf("reclaim reused lease token %s", secondToken)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	workers.Add(2)
+	go func() {
+		defer workers.Done()
+		<-start
+		results <- repo.MarkAttempt(ctx, row.ID, firstToken, false, errors.New("stale worker timeout"))
+	}()
+	go func() {
+		defer workers.Done()
+		<-start
+		results <- repo.MarkAttempt(ctx, row.ID, secondToken, true, nil)
+	}()
+	close(start)
+	workers.Wait()
+	close(results)
+
+	leaseLost := 0
+	succeeded := 0
+	for result := range results {
+		switch {
+		case result == nil:
+			succeeded++
+		case errors.Is(result, ErrWebhookDeliveryLeaseLost):
+			leaseLost++
+		default:
+			t.Fatalf("overlapping mark result: %v", result)
+		}
+	}
+	if succeeded != 1 || leaseLost != 1 {
+		t.Fatalf("overlapping marks succeeded=%d lease_lost=%d, want 1/1", succeeded, leaseLost)
+	}
+
+	var got models.WebhookDelivery
+	if err := db.First(&got, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.WebhookDeliveryStatusSucceeded || got.Attempts != 1 || got.LeaseToken != nil || got.DeliveredAt == nil {
+		t.Fatalf("authoritative second claim was overwritten: %#v", got)
 	}
 }
 
@@ -458,7 +922,14 @@ func TestWebhookDeliveryReplayPostgresCreatesDuplicateSafeReplay(t *testing.T) {
 		t.Fatalf("duplicate active replay created=%v id=%s want existing %s", created, again.ID, replay.ID)
 	}
 
-	if err := repo.MarkAttempt(ctx, replay.ID, true, nil); err != nil {
+	claimed, err := repo.ClaimDue(ctx, 10, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != replay.ID || claimed[0].LeaseToken == nil {
+		t.Fatalf("claimed replay = %#v", claimed)
+	}
+	if err := repo.MarkAttempt(ctx, replay.ID, *claimed[0].LeaseToken, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	next, created, err := repo.EnqueueReplay(ctx, WebhookReplayParams{DeliveryID: root.ID, ActorEmail: "admin@example.com"})
@@ -472,6 +943,32 @@ func TestWebhookDeliveryReplayPostgresCreatesDuplicateSafeReplay(t *testing.T) {
 	wrongMerchant := uuid.New()
 	if _, _, err := repo.EnqueueReplay(ctx, WebhookReplayParams{DeliveryID: root.ID, ActorEmail: "admin@example.com", MerchantID: &wrongMerchant}); !errors.Is(err, ErrWebhookReplayScopeDenied) {
 		t.Fatalf("scope denied err = %v, want ErrWebhookReplayScopeDenied", err)
+	}
+}
+
+func TestWebhookDeliveryMarkAttemptRejectsWorkerAfterAcknowledgedSuccess(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.WebhookDelivery{}); err != nil {
+		t.Fatalf("automigrate webhook deliveries: %v", err)
+	}
+	repo := NewWebhookDeliveryRepo(db)
+	row := webhookDeliveryTestRow(uuid.New(), uuid.New(), "evt-stale-failure", models.WebhookDeliveryStatusSucceeded, nil)
+	deliveredAt := time.Now().UTC().Add(-time.Minute)
+	row.DeliveredAt = &deliveredAt
+	row.Attempts = 1
+	if err := db.Create(&row).Error; err != nil {
+		t.Fatalf("seed succeeded delivery: %v", err)
+	}
+
+	if err := repo.MarkAttempt(context.Background(), row.ID, uuid.New(), false, errors.New("stale worker timeout")); !errors.Is(err, ErrWebhookDeliveryLeaseLost) {
+		t.Fatalf("stale attempt error = %v, want ErrWebhookDeliveryLeaseLost", err)
+	}
+	var got models.WebhookDelivery
+	if err := db.First(&got, "id = ?", row.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != models.WebhookDeliveryStatusSucceeded || got.Attempts != row.Attempts || got.DeliveredAt == nil || !got.DeliveredAt.Equal(deliveredAt) {
+		t.Fatalf("stale failure regressed acknowledged delivery: %#v", got)
 	}
 }
 

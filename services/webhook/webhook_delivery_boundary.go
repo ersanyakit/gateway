@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -13,11 +14,18 @@ import (
 	"core/types"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+var (
+	errDeliveryDomainLookupNotConfigured      = errors.New("domain lookup is not configured")
+	errDeliveryTransactionLookupNotConfigured = errors.New("transaction lookup is not configured")
+	errDeliveryPaymentLookupNotConfigured     = errors.New("payment lookup is not configured")
 )
 
 type DeliveryQueue interface {
 	ClaimDue(ctx context.Context, limit int) ([]models.WebhookDelivery, error)
-	MarkAttempt(ctx context.Context, id uuid.UUID, delivered bool, lastErr error) error
+	MarkAttempt(ctx context.Context, id, leaseToken uuid.UUID, delivered bool, lastErr error) error
 }
 
 type DeliveryDomainLookup interface {
@@ -82,30 +90,46 @@ func (b DeliveryBoundary) DeliverDue(ctx context.Context, limit int) (DeliveryRu
 }
 
 func (b DeliveryBoundary) DeliverOne(ctx context.Context, row models.WebhookDelivery) error {
-	err := b.deliverOne(ctx, row)
-	delivered := err == nil
-	safeErr := RedactDeliveryError(err)
-	if sourceErr := b.markSourceAttempt(ctx, row, delivered, safeErr); sourceErr != nil {
-		err = errors.Join(err, sourceErr)
-		delivered = false
-		safeErr = RedactDeliveryError(err)
+	if b.Queue == nil {
+		return errors.New("webhook delivery queue is not configured")
 	}
-	if markErr := b.markDeliveryAttempt(ctx, row.ID, delivered, safeErr); markErr != nil {
-		err = errors.Join(err, markErr)
-		delivered = false
+	if row.ID == uuid.Nil || row.LeaseToken == nil || *row.LeaseToken == uuid.Nil {
+		return errors.New("webhook delivery row has no lease ownership token")
 	}
-	b.logAttempt(ctx, row, delivered, err)
-	return err
+	deliveryErr := b.deliverOne(ctx, row)
+	delivered := deliveryErr == nil
+	safeDeliveryErr := RedactDeliveryError(deliveryErr)
+
+	// The durable delivery row is authoritative. Source webhook fields are a
+	// compatibility projection and must never turn an acknowledged external
+	// delivery back into retryable work, which would send the same event again.
+	if markErr := b.markDeliveryAttempt(ctx, row, delivered, safeDeliveryErr); markErr != nil {
+		err := errors.Join(deliveryErr, markErr)
+		b.logAttempt(ctx, row, false, err)
+		return err
+	}
+	if sourceErr := b.markSourceAttempt(ctx, row, delivered, safeDeliveryErr); sourceErr != nil {
+		b.logSourceProjectionError(ctx, row, sourceErr)
+	}
+	b.logAttempt(ctx, row, delivered, deliveryErr)
+	return deliveryErr
 }
 
 func (b DeliveryBoundary) deliverOne(ctx context.Context, row models.WebhookDelivery) error {
 	if b.Notifier == nil {
 		return permanent(errors.New("webhook notifier is not configured"))
 	}
+	if b.Domains == nil {
+		return permanent(errors.New("domain repository is not configured"))
+	}
 	domain, err := b.domain(ctx, row.DomainID)
 	if err != nil {
-		return permanent(err)
+		return deliveryLookupError("domain", err)
 	}
+	if domain == nil {
+		return permanent(errors.New("domain lookup returned nil"))
+	}
+	deliveryDomain := deliveryTargetSnapshot(*domain, row)
 
 	deliveryCtx := ctx
 	cancel := func() {}
@@ -115,48 +139,83 @@ func (b DeliveryBoundary) deliverOne(ctx context.Context, row models.WebhookDeli
 	defer cancel()
 
 	switch {
-	case row.TransactionID != nil:
-		if b.Transactions == nil {
-			return permanent(errors.New("transaction repository is not configured"))
-		}
-		txModel, err := b.Transactions.FindByID(ctx, *row.TransactionID)
-		if err != nil {
-			return permanent(err)
-		}
-		if txModel == nil {
-			return permanent(errors.New("transaction lookup returned nil"))
-		}
-		if notifier, ok := b.Notifier.(DeliveryMetadataNotifier); ok {
-			return notifier.DeliverWithMetadata(deliveryCtx, *domain, *txModel, DeliveryMetadataFromRow(row))
-		}
-		return b.Notifier.Deliver(deliveryCtx, *domain, *txModel)
-	case row.PaymentID != nil:
-		if b.Payments == nil {
-			return permanent(errors.New("payment repository is not configured"))
-		}
-		session, err := b.Payments.FindByID(ctx, *row.PaymentID)
-		if err != nil {
-			return permanent(err)
-		}
-		if session == nil {
-			return permanent(errors.New("payment lookup returned nil"))
-		}
-		if notifier, ok := b.Notifier.(DeliveryMetadataNotifier); ok {
-			return notifier.DeliverPaymentWithMetadata(deliveryCtx, *domain, *session, DeliveryMetadataFromRow(row))
-		}
-		return b.Notifier.DeliverPayment(deliveryCtx, *domain, *session)
 	case strings.TrimSpace(row.PayloadJSON) != "":
 		eventVersion := row.EventVersion
 		if eventVersion == "" {
 			eventVersion = constants.WebhookEventVersionV1
 		}
 		if notifier, ok := b.Notifier.(DeliveryMetadataNotifier); ok {
-			return notifier.DeliverRawWithMetadata(deliveryCtx, *domain, row.EventType, row.EventID, eventVersion, []byte(row.PayloadJSON), DeliveryMetadataFromRow(row))
+			return notifier.DeliverRawWithMetadata(deliveryCtx, deliveryDomain, row.EventType, row.EventID, eventVersion, []byte(row.PayloadJSON), DeliveryMetadataFromRow(row))
 		}
-		return b.Notifier.DeliverRaw(deliveryCtx, *domain, row.EventType, row.EventID, eventVersion, []byte(row.PayloadJSON))
+		return b.Notifier.DeliverRaw(deliveryCtx, deliveryDomain, row.EventType, row.EventID, eventVersion, []byte(row.PayloadJSON))
+	case row.TransactionID != nil:
+		if b.Transactions == nil {
+			return permanent(errors.New("transaction repository is not configured"))
+		}
+		txModel, err := b.Transactions.FindByID(ctx, *row.TransactionID)
+		if err != nil {
+			return deliveryLookupError("transaction", err)
+		}
+		if txModel == nil {
+			return permanent(errors.New("transaction lookup returned nil"))
+		}
+		if notifier, ok := b.Notifier.(DeliveryMetadataNotifier); ok {
+			return notifier.DeliverWithMetadata(deliveryCtx, deliveryDomain, *txModel, DeliveryMetadataFromRow(row))
+		}
+		return b.Notifier.Deliver(deliveryCtx, deliveryDomain, *txModel)
+	case row.PaymentID != nil:
+		if b.Payments == nil {
+			return permanent(errors.New("payment repository is not configured"))
+		}
+		session, err := b.Payments.FindByID(ctx, *row.PaymentID)
+		if err != nil {
+			return deliveryLookupError("payment", err)
+		}
+		if session == nil {
+			return permanent(errors.New("payment lookup returned nil"))
+		}
+		if notifier, ok := b.Notifier.(DeliveryMetadataNotifier); ok {
+			return notifier.DeliverPaymentWithMetadata(deliveryCtx, deliveryDomain, *session, DeliveryMetadataFromRow(row))
+		}
+		return b.Notifier.DeliverPayment(deliveryCtx, deliveryDomain, *session)
 	default:
 		return permanent(errors.New("delivery row has no transaction, payment, or lifecycle payload"))
 	}
+}
+
+// deliveryTargetSnapshot keeps a queued event bound to the transport endpoint
+// and subject selected at enqueue time. Credentials remain sourced from the
+// current domain so secret rotation does not invalidate queued work. Rows from
+// before target snapshots were introduced fall back to the current domain.
+func deliveryTargetSnapshot(domain models.Domain, row models.WebhookDelivery) models.Domain {
+	mode := strings.TrimSpace(row.NotificationMode)
+	if mode == "" {
+		return domain
+	}
+	domain.NotificationMode = models.NormalizeDomainNotificationMode(mode)
+	if domain.NotificationMode == models.DomainNotificationNATS {
+		domain.NATSURL = strings.TrimSpace(row.TargetURL)
+		domain.NATSSubject = strings.TrimSpace(row.TargetSubject)
+		return domain
+	}
+	domain.WebhookURL = strings.TrimSpace(row.TargetURL)
+	return domain
+}
+
+func deliveryLookupError(resource string, err error) error {
+	if err == nil {
+		return nil
+	}
+	wrapped := fmt.Errorf("find webhook %s: %w", resource, err)
+	if errors.Is(err, gorm.ErrRecordNotFound) ||
+		errors.Is(err, sql.ErrNoRows) ||
+		errors.Is(err, gorm.ErrInvalidDB) ||
+		errors.Is(err, errDeliveryDomainLookupNotConfigured) ||
+		errors.Is(err, errDeliveryTransactionLookupNotConfigured) ||
+		errors.Is(err, errDeliveryPaymentLookupNotConfigured) {
+		return permanent(wrapped)
+	}
+	return wrapped
 }
 
 func DeliveryMetadataFromRow(row models.WebhookDelivery) DeliveryMetadata {
@@ -198,11 +257,14 @@ func (b DeliveryBoundary) domain(ctx context.Context, domainID uuid.UUID) (*mode
 	})
 }
 
-func (b DeliveryBoundary) markDeliveryAttempt(ctx context.Context, id uuid.UUID, delivered bool, err error) error {
-	if b.Queue == nil || id == uuid.Nil {
+func (b DeliveryBoundary) markDeliveryAttempt(ctx context.Context, row models.WebhookDelivery, delivered bool, err error) error {
+	if b.Queue == nil || row.ID == uuid.Nil {
 		return nil
 	}
-	return b.Queue.MarkAttempt(ctx, id, delivered, err)
+	if row.LeaseToken == nil || *row.LeaseToken == uuid.Nil {
+		return errors.New("webhook delivery row has no lease token")
+	}
+	return b.Queue.MarkAttempt(ctx, row.ID, *row.LeaseToken, delivered, err)
 }
 
 func (b DeliveryBoundary) markSourceAttempt(ctx context.Context, row models.WebhookDelivery, delivered bool, err error) error {
@@ -214,9 +276,22 @@ func (b DeliveryBoundary) markSourceAttempt(ctx context.Context, row models.Webh
 		if txModel == nil || strings.TrimSpace(txModel.UniqueHash) == "" {
 			return errors.New("webhook source transaction has no unique hash")
 		}
+		if !MoneyEventTypesEquivalent(row.EventType, txModel.EventType) {
+			return nil
+		}
 		return b.Transactions.MarkWebhookAttempt(ctx, txModel.UniqueHash, delivered, err)
 	}
 	if row.PaymentID != nil && b.Payments != nil {
+		session, findErr := b.Payments.FindByID(ctx, *row.PaymentID)
+		if findErr != nil {
+			return fmt.Errorf("find webhook source payment: %w", findErr)
+		}
+		if session == nil {
+			return errors.New("webhook source payment lookup returned nil")
+		}
+		if !MoneyEventTypesEquivalent(row.EventType, session.WebhookEvent) {
+			return nil
+		}
 		return b.Payments.MarkWebhookAttempt(ctx, *row.PaymentID, delivered, err)
 	}
 	return nil
@@ -242,6 +317,19 @@ func (b DeliveryBoundary) logAttempt(ctx context.Context, row models.WebhookDeli
 		slog.String("domain_id", row.DomainID.String()),
 		slog.String("entity_type", row.EntityType),
 		slog.String("status", status),
+		slog.String("failure_category", FailureCategory(err)),
+	)
+}
+
+func (b DeliveryBoundary) logSourceProjectionError(ctx context.Context, row models.WebhookDelivery, err error) {
+	logger := b.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.WarnContext(ctx, "webhook_source_projection_failed",
+		slog.String("delivery_id", row.ID.String()),
+		slog.String("event_id", row.EventID),
+		slog.String("event_type", row.EventType),
 		slog.String("failure_category", FailureCategory(err)),
 	)
 }
@@ -324,14 +412,14 @@ func (q webhookDeliveryBoundaryQueue) ClaimDue(ctx context.Context, limit int) (
 	return nil, permanent(errors.New("webhook delivery queue has unsupported claim interface"))
 }
 
-func (q webhookDeliveryBoundaryQueue) MarkAttempt(ctx context.Context, id uuid.UUID, delivered bool, err error) error {
+func (q webhookDeliveryBoundaryQueue) MarkAttempt(ctx context.Context, id, leaseToken uuid.UUID, delivered bool, err error) error {
 	if q.queue == nil {
 		return nil
 	}
 	if queue, ok := q.queue.(interface {
-		MarkAttempt(context.Context, uuid.UUID, bool, error) error
+		MarkAttempt(context.Context, uuid.UUID, uuid.UUID, bool, error) error
 	}); ok {
-		return queue.MarkAttempt(ctx, id, delivered, err)
+		return queue.MarkAttempt(ctx, id, leaseToken, delivered, err)
 	}
-	return nil
+	return permanent(errors.New("webhook delivery queue has unsupported attempt interface"))
 }

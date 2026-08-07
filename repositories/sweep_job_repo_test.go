@@ -2,17 +2,21 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func TestSweepJobRepoEnqueueForTransactionIsIdempotent(t *testing.T) {
@@ -46,6 +50,367 @@ func TestSweepJobRepoEnqueueForTransactionIsIdempotent(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("job count = %d, want 1", count)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", first.ID.String()+":"+constants.WebhookEventSweepRequestedV1, 1)
+}
+
+func TestSweepJobRepoRevivesReorgDeadLetterOnCanonicalTransactionReappearance(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}, &models.SweepJob{}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	txModel := sweepJobTestTransaction("1-0xreappeared-log:0", uuid.New(), uuid.New(), constants.Ethereum)
+	txModel.Status = models.TransactionStatusConfirmed
+	txModel.FinalizedAt = &now
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	job, created, err := NewSweepJobRepo(db).EnqueueForTransaction(context.Background(), txModel)
+	if err != nil || !created {
+		t.Fatalf("initial enqueue created=%v err=%v", created, err)
+	}
+	if err := db.Model(&models.SweepJob{}).Where("id = ?", job.ID).Updates(map[string]any{
+		"status": models.SweepJobStatusDeadLetter, "last_error": "source transaction was reorged", "attempts": 4,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.Transaction{}).Where("id = ?", txModel.ID).Updates(map[string]any{
+		"status": models.TransactionStatusReorged, "reorged_at": &now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	stale, queued, err := NewSweepJobRepo(db).EnqueueForTransaction(context.Background(), txModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued || stale.Status != models.SweepJobStatusDeadLetter {
+		t.Fatalf("stale confirmed snapshot revived reorged source: queued=%v job=%#v", queued, stale)
+	}
+	if err := db.Model(&models.Transaction{}).Where("id = ?", txModel.ID).Updates(map[string]any{
+		"status": models.TransactionStatusConfirmed, "finalized_at": &now, "reorged_at": nil,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	revived, queued, err := NewSweepJobRepo(db).EnqueueForTransaction(context.Background(), txModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued || revived.Status != models.SweepJobStatusPending || revived.Attempts != 0 || revived.LastError != "" || revived.NextRunAt == nil {
+		t.Fatalf("revived sweep = queued:%v job:%#v", queued, revived)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", job.ID.String()+":"+constants.WebhookEventSweepRequestedV1, 1)
+}
+
+func TestSweepJobRepoRollsBackJobWhenRequestedOutboxCannotPersist(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.SweepJob{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Migrator().DropTable(&models.MoneyEventOutbox{}); err != nil {
+		t.Fatal(err)
+	}
+	txModel := sweepJobTestTransaction("1-0xoutbox-down-log:0", uuid.New(), uuid.New(), constants.Ethereum)
+	if _, _, err := NewSweepJobRepo(db).EnqueueForTransaction(context.Background(), txModel); err == nil {
+		t.Fatal("enqueue succeeded without lifecycle outbox table")
+	}
+	requirePostgresCount(t, db, &models.SweepJob{}, "transaction_unique_hash = ?", txModel.UniqueHash, 0)
+}
+
+func TestSweepJobRepoLifecycleTransitionsPersistCanonicalOutboxSnapshots(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		db := openMoneyEventOutboxPostgresTestDB(t)
+		repo, _, job := seedSweepLifecycleJob(t, db, "lifecycle-success")
+		markSweepJobProcessing(t, db, job.ID)
+		if err := repo.MarkSucceeded(context.Background(), job.ID, "0xsweep-success"); err != nil {
+			t.Fatal(err)
+		}
+		assertSweepLifecycleEvents(t, db, job.ID,
+			constants.WebhookEventSweepRequestedV1,
+			constants.WebhookEventSweepSucceededV1,
+		)
+		assertSweepLifecyclePayload(t, db, job.ID, constants.WebhookEventSweepSucceededV1, models.SweepJobStatusSucceeded, "0xsweep-success")
+	})
+
+	t.Run("retry then dead letter", func(t *testing.T) {
+		db := openMoneyEventOutboxPostgresTestDB(t)
+		repo, _, job := seedSweepLifecycleJob(t, db, "lifecycle-failed")
+		job.MaxAttempts = 2
+		if err := db.Model(&models.SweepJob{}).Where("id = ?", job.ID).Update("max_attempts", 2).Error; err != nil {
+			t.Fatal(err)
+		}
+		markSweepJobProcessing(t, db, job.ID)
+		if err := repo.MarkFailed(context.Background(), job.ID, errors.New("rpc unavailable")); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.MarkFailed(context.Background(), job.ID, context.DeadlineExceeded); err != nil {
+			t.Fatal(err)
+		}
+		assertSweepLifecycleEvents(t, db, job.ID,
+			constants.WebhookEventSweepRequestedV1,
+			constants.WebhookEventSweepFailedV1,
+			constants.WebhookEventSweepDeadLetteredV1,
+		)
+		assertSweepLifecyclePayload(t, db, job.ID, constants.WebhookEventSweepDeadLetteredV1, models.SweepJobStatusDeadLetter, "")
+	})
+}
+
+func TestSweepJobRepoLifecycleTransitionsRollbackWithOutbox(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		db := openMoneyEventOutboxPostgresTestDB(t)
+		repo, _, job := seedSweepLifecycleJob(t, db, "rollback-success")
+		markSweepJobProcessing(t, db, job.ID)
+		if err := db.Migrator().DropTable(&models.MoneyEventOutbox{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.MarkSucceeded(context.Background(), job.ID, "0xmust-rollback"); err == nil {
+			t.Fatal("success transition committed without lifecycle outbox")
+		}
+		reloaded, err := repo.Find(context.Background(), job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.Status != models.SweepJobStatusProcessing || reloaded.SweepTxHash != "" {
+			t.Fatalf("success state escaped rolled-back transaction: %#v", reloaded)
+		}
+	})
+
+	t.Run("dead letter", func(t *testing.T) {
+		db := openMoneyEventOutboxPostgresTestDB(t)
+		repo, _, job := seedSweepLifecycleJob(t, db, "rollback-dead-letter")
+		if err := db.Model(&models.SweepJob{}).Where("id = ?", job.ID).Update("max_attempts", 1).Error; err != nil {
+			t.Fatal(err)
+		}
+		markSweepJobProcessing(t, db, job.ID)
+		if err := db.Migrator().DropTable(&models.MoneyEventOutbox{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.MarkFailed(context.Background(), job.ID, errors.New("wallet not found")); err == nil {
+			t.Fatal("dead-letter transition committed without lifecycle outbox")
+		}
+		reloaded, err := repo.Find(context.Background(), job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.Status != models.SweepJobStatusProcessing || reloaded.Attempts != 0 || reloaded.LastError != "" {
+			t.Fatalf("dead-letter state escaped rolled-back transaction: %#v", reloaded)
+		}
+	})
+
+	t.Run("operator recovery", func(t *testing.T) {
+		db := openMoneyEventOutboxPostgresTestDB(t)
+		repo, _, job := seedSweepLifecycleJob(t, db, "rollback-operator-recovery")
+		markSweepJobProcessing(t, db, job.ID)
+		if err := repo.MarkNeedsOperatorAction(context.Background(), job.ID, models.SweepOperatorActionReconcileBroadcast, errors.New("broadcast uncertain")); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Migrator().DropTable(&models.MoneyEventOutbox{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.RecordOperatorRecovery(context.Background(), job.ID, models.SweepRecoveryActionMarkSuccess, "replacement confirmed", "0xreplacement", nil); err == nil {
+			t.Fatal("operator recovery committed without lifecycle outbox")
+		}
+		reloaded, err := repo.Find(context.Background(), job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.Status != models.SweepJobStatusDeadLetter || reloaded.RecoveredAt != nil || reloaded.SweepTxHash != "" {
+			t.Fatalf("operator recovery escaped rolled-back transaction: %#v", reloaded)
+		}
+	})
+}
+
+func TestSweepJobSourceReorgFenceCoversEveryRunnableStateAndEmitsLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		status         string
+		revivable      bool
+		reason         string
+		operatorAction string
+	}{
+		{status: models.SweepJobStatusPending, revivable: true, reason: sweepSourceReorgRevivalReason},
+		{status: models.SweepJobStatusFailed, revivable: true, reason: sweepSourceReorgRevivalReason},
+		{status: models.SweepJobStatusProcessing, reason: sweepSourceReorgProcessingReason, operatorAction: models.SweepOperatorActionReconcileBroadcast},
+		{status: models.SweepJobStatusSucceeded, reason: sweepSourceReorgSucceededReason, operatorAction: models.SweepOperatorActionReconcileBroadcast},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			db := openMoneyEventOutboxPostgresTestDB(t)
+			repo, txModel, job := seedSweepLifecycleJob(t, db, "source-reorg-fence-"+tc.status)
+			now := time.Now().UTC()
+			updates := map[string]any{
+				"status":      tc.status,
+				"next_run_at": &now,
+			}
+			if tc.status == models.SweepJobStatusProcessing {
+				lockedUntil := now.Add(time.Minute)
+				updates["locked_until"] = &lockedUntil
+			}
+			if tc.status == models.SweepJobStatusFailed {
+				updates["failure_category"] = models.SweepFailureCategoryTransient
+			}
+			if tc.status == models.SweepJobStatusSucceeded {
+				updates["sweep_tx_hash"] = "0xalready-broadcast"
+			}
+			if err := db.Model(&models.SweepJob{}).Where("id = ?", job.ID).Updates(updates).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				return fenceSweepJobsForSourceReorgWithDB(context.Background(), tx, txModel)
+			}); err != nil {
+				t.Fatalf("fence %s sweep: %v", tc.status, err)
+			}
+			fenced, err := repo.Find(context.Background(), job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fenced.Status != models.SweepJobStatusDeadLetter || fenced.LastError != tc.reason || fenced.OperatorAction != tc.operatorAction || fenced.NextRunAt != nil || fenced.LockedUntil != nil {
+				t.Fatalf("fenced %s sweep = %#v", tc.status, fenced)
+			}
+			if tc.operatorAction != "" && fenced.FailureCategory != models.SweepFailureCategoryBroadcastUncertain {
+				t.Fatalf("fenced %s category = %q", tc.status, fenced.FailureCategory)
+			}
+			if tc.status == models.SweepJobStatusSucceeded && fenced.SweepTxHash != "0xalready-broadcast" {
+				t.Fatalf("succeeded fence lost broadcast hash: %#v", fenced)
+			}
+			assertSweepLifecycleEvents(t, db, job.ID,
+				constants.WebhookEventSweepRequestedV1,
+				constants.WebhookEventSweepDeadLetteredV1,
+			)
+
+			afterEnqueue, queued, err := repo.EnqueueForTransaction(context.Background(), txModel)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if queued != tc.revivable {
+				t.Fatalf("%s revival queued = %v, want %v", tc.status, queued, tc.revivable)
+			}
+			if tc.revivable {
+				if afterEnqueue.Status != models.SweepJobStatusPending {
+					t.Fatalf("revived %s sweep = %#v", tc.status, afterEnqueue)
+				}
+				assertSweepLifecycleEvents(t, db, job.ID,
+					constants.WebhookEventSweepRequestedV1,
+					constants.WebhookEventSweepDeadLetteredV1,
+					constants.WebhookEventSweepRequestedV1,
+				)
+			} else if afterEnqueue.Status != models.SweepJobStatusDeadLetter {
+				t.Fatalf("unsafe %s sweep was revived: %#v", tc.status, afterEnqueue)
+			}
+		})
+	}
+}
+
+func TestSweepJobSourceReorgFenceRollsBackWithoutLifecycleOutbox(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	repo, txModel, job := seedSweepLifecycleJob(t, db, "source-reorg-fence-rollback")
+	if err := db.Migrator().DropTable(&models.MoneyEventOutbox{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		return fenceSweepJobsForSourceReorgWithDB(context.Background(), tx, txModel)
+	}); err == nil {
+		t.Fatal("source reorg fence committed without lifecycle outbox")
+	}
+	reloaded, err := repo.Find(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != models.SweepJobStatusPending || reloaded.LastError != "" {
+		t.Fatalf("source reorg fence escaped rollback: %#v", reloaded)
+	}
+}
+
+func TestSweepJobRepoOperatorRecoveryIsAtomicConcurrentAndIdempotent(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	repo, _, job := seedSweepLifecycleJob(t, db, "operator-recovery-concurrent")
+	markSweepJobProcessing(t, db, job.ID)
+	if err := repo.MarkNeedsOperatorAction(context.Background(), job.ID, models.SweepOperatorActionReconcileBroadcast, errors.New("broadcast uncertain")); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- repo.RecordOperatorRecovery(context.Background(), job.ID, models.SweepRecoveryActionMarkSuccess, "replacement confirmed", "0xreplacement", nil)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("idempotent concurrent recovery: %v", err)
+		}
+	}
+	reloaded, err := repo.Find(context.Background(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != models.SweepJobStatusSucceeded || reloaded.SweepTxHash != "0xreplacement" || reloaded.RecoveryAction != models.SweepRecoveryActionMarkSuccess {
+		t.Fatalf("recovered job = %#v", reloaded)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", job.ID.String()+":"+constants.WebhookEventSweepSucceededV1, 1)
+
+	_, _, competingJob := seedSweepLifecycleJob(t, db, "operator-recovery-competing")
+	markSweepJobProcessing(t, db, competingJob.ID)
+	if err := repo.MarkNeedsOperatorAction(context.Background(), competingJob.ID, models.SweepOperatorActionReconcileBroadcast, errors.New("manual reconciliation required")); err != nil {
+		t.Fatal(err)
+	}
+	retryAt := time.Now().UTC().Add(time.Minute)
+	start = make(chan struct{})
+	results = make(chan error, 2)
+	for _, call := range []func() error{
+		func() error {
+			return repo.RecordOperatorRecovery(context.Background(), competingJob.ID, models.SweepRecoveryActionRetry, "operator chose retry", "", &retryAt)
+		},
+		func() error {
+			return repo.RecordOperatorRecovery(context.Background(), competingJob.ID, models.SweepRecoveryActionMarkSuccess, "operator found replacement", "0xcompeting", nil)
+		},
+	} {
+		wg.Add(1)
+		go func(call func() error) {
+			defer wg.Done()
+			<-start
+			results <- call()
+		}(call)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	succeededCalls, conflictedCalls := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			succeededCalls++
+		case errors.Is(err, ErrSweepJobStateConflict):
+			conflictedCalls++
+		default:
+			t.Fatalf("competing recovery: %v", err)
+		}
+	}
+	if succeededCalls != 1 || conflictedCalls != 1 {
+		t.Fatalf("competing recoveries = success:%d conflict:%d, want 1/1", succeededCalls, conflictedCalls)
+	}
+	var recoveryEvents int64
+	if err := db.Model(&models.MoneyEventOutbox{}).
+		Where("aggregate_type = ? AND aggregate_id = ?", webhooksvc.EntityTypeSweep, competingJob.ID.String()).
+		Where("event_type IN ?", []string{constants.WebhookEventSweepFailedV1, constants.WebhookEventSweepSucceededV1}).
+		Count(&recoveryEvents).Error; err != nil {
+		t.Fatal(err)
+	}
+	if recoveryEvents != 1 {
+		t.Fatalf("competing recovery outbox events = %d, want exactly one", recoveryEvents)
 	}
 }
 
@@ -428,22 +793,18 @@ func TestSweepJobRepoAssignBatchPersistsPlanMetadata(t *testing.T) {
 
 func TestSweepJobRepoOperatorRecoveryActions(t *testing.T) {
 	db := openMoneyEventOutboxPostgresTestDB(t)
-	if err := db.AutoMigrate(&models.SweepJob{}); err != nil {
-		t.Fatalf("automigrate sweep jobs: %v", err)
-	}
 	ctx := context.Background()
-	repo := NewSweepJobRepo(db)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	job := sweepJobTestJob("operator-recovery", uuid.New(), uuid.New(), constants.Ethereum, models.SweepJobStatusProcessing, now, nil, nil)
-	if err := db.WithContext(ctx).Create(&job).Error; err != nil {
-		t.Fatalf("seed sweep job: %v", err)
-	}
+	repo, _, job := seedSweepLifecycleJob(t, db, "operator-recovery")
+	markSweepJobProcessing(t, db, job.ID)
 	if err := repo.MarkNeedsOperatorAction(ctx, job.ID, models.SweepOperatorActionReconcileBroadcast, errors.New("broadcast uncertain")); err != nil {
 		t.Fatalf("mark needs operator action: %v", err)
 	}
-	retryAt := now.Add(time.Minute)
+	retryAt := time.Now().UTC().Add(time.Minute)
 	if err := repo.RecordOperatorRecovery(ctx, job.ID, models.SweepRecoveryActionRetry, "chain lookup found no broadcast; retry permitted", "", &retryAt); err != nil {
 		t.Fatalf("record retry recovery: %v", err)
+	}
+	if err := repo.RecordOperatorRecovery(ctx, job.ID, models.SweepRecoveryActionRetry, "chain lookup found no broadcast; retry permitted", "", &retryAt); err != nil {
+		t.Fatalf("repeat retry recovery should be idempotent: %v", err)
 	}
 	retry, err := repo.Find(ctx, job.ID)
 	if err != nil {
@@ -466,6 +827,13 @@ func TestSweepJobRepoOperatorRecoveryActions(t *testing.T) {
 	if succeeded.Status != models.SweepJobStatusSucceeded || succeeded.SweepTxHash != "0xrecovered" || succeeded.RecoveryAction != models.SweepRecoveryActionMarkSuccess {
 		t.Fatalf("success recovery state = %#v", succeeded)
 	}
+	assertSweepLifecycleEvents(t, db, job.ID,
+		constants.WebhookEventSweepRequestedV1,
+		constants.WebhookEventSweepDeadLetteredV1,
+		constants.WebhookEventSweepFailedV1,
+		constants.WebhookEventSweepDeadLetteredV1,
+		constants.WebhookEventSweepSucceededV1,
+	)
 }
 
 func TestSweepJobRepoTerminalUpdatesAreFencedAndRequireTxHash(t *testing.T) {
@@ -639,15 +1007,84 @@ func sweepJobSchedulerTxWithAmount(uniqueHash string, walletID, merchantID, doma
 }
 
 func sweepJobTestTransaction(uniqueHash string, walletID, merchantID uuid.UUID, chainID constants.ChainID) models.Transaction {
+	domainID := uuid.New()
 	return models.Transaction{
 		UniqueHash: uniqueHash,
 		Hash:       strings.TrimPrefix(uniqueHash, "1-"),
 		WalletID:   &walletID,
 		MerchantID: &merchantID,
+		DomainID:   &domainID,
 		ChainID:    chainID,
 		Symbol:     "ETH",
 		Decimals:   18,
 		Amount:     "100",
+	}
+}
+
+func seedSweepLifecycleJob(t *testing.T, db *gorm.DB, uniqueHash string) (*SweepJobRepo, models.Transaction, *models.SweepJob) {
+	t.Helper()
+	if err := db.AutoMigrate(&models.Transaction{}, &models.SweepJob{}); err != nil {
+		t.Fatalf("automigrate sweep lifecycle models: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	txModel := sweepJobTestTransaction(uniqueHash+"-"+uuid.NewString(), uuid.New(), uuid.New(), constants.Ethereum)
+	txModel.Status = models.TransactionStatusConfirmed
+	txModel.FinalizedAt = &now
+	txModel.CreatedAt = now
+	txModel.UpdatedAt = now
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatalf("seed sweep source transaction: %v", err)
+	}
+	repo := NewSweepJobRepo(db)
+	job, created, err := repo.EnqueueForTransaction(context.Background(), txModel)
+	if err != nil {
+		t.Fatalf("enqueue sweep lifecycle job: %v", err)
+	}
+	if !created || job == nil {
+		t.Fatalf("sweep lifecycle job was not created: created=%v job=%#v", created, job)
+	}
+	return repo, txModel, job
+}
+
+func markSweepJobProcessing(t *testing.T, db *gorm.DB, id uuid.UUID) {
+	t.Helper()
+	lockedUntil := time.Now().UTC().Add(time.Minute)
+	if err := db.Model(&models.SweepJob{}).Where("id = ?", id).Updates(map[string]any{
+		"status": models.SweepJobStatusProcessing, "locked_until": &lockedUntil, "next_run_at": nil,
+	}).Error; err != nil {
+		t.Fatalf("mark sweep job processing: %v", err)
+	}
+}
+
+func assertSweepLifecycleEvents(t *testing.T, db *gorm.DB, jobID uuid.UUID, eventTypes ...string) {
+	t.Helper()
+	var rows []models.MoneyEventOutbox
+	if err := db.Where("aggregate_type = ? AND aggregate_id = ?", webhooksvc.EntityTypeSweep, jobID.String()).
+		Order("sequence ASC").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(eventTypes) {
+		t.Fatalf("sweep lifecycle events = %#v, want %v", rows, eventTypes)
+	}
+	for i, eventType := range eventTypes {
+		if rows[i].EventType != eventType || rows[i].Sequence != int64(i+1) {
+			t.Fatalf("sweep lifecycle event[%d] = type:%q sequence:%d, want type:%q sequence:%d", i, rows[i].EventType, rows[i].Sequence, eventType, i+1)
+		}
+	}
+}
+
+func assertSweepLifecyclePayload(t *testing.T, db *gorm.DB, jobID uuid.UUID, eventType, status, sweepTxHash string) {
+	t.Helper()
+	var event models.MoneyEventOutbox
+	if err := db.First(&event, "event_id = ?", jobID.String()+":"+eventType).Error; err != nil {
+		t.Fatal(err)
+	}
+	var payload webhooksvc.LifecyclePayload
+	if err := json.Unmarshal([]byte(event.PayloadJSON), &payload); err != nil {
+		t.Fatalf("decode lifecycle payload: %v", err)
+	}
+	if payload.Status != status || payload.ResourceStatus != status || payload.SweepTxHash != sweepTxHash {
+		t.Fatalf("lifecycle payload = %#v, want status=%q sweep_tx_hash=%q", payload, status, sweepTxHash)
 	}
 }
 

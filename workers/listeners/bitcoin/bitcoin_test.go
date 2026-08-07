@@ -186,9 +186,36 @@ func TestProcessBlockUsesBitcoinCoreRPC(t *testing.T) {
 	if got := *event.Transaction.Amount; got != "123456789" {
 		t.Fatalf("amount = %q", got)
 	}
+	if event.Transaction.ParentHash == nil || *event.Transaction.ParentHash != "0000000000000000000000000000000000000000000000000000000000000099" {
+		t.Fatalf("parent hash = %#v", event.Transaction.ParentHash)
+	}
 	if listener.lastBlockHash != "0000000000000000000000000000000000000000000000000000000000000100" ||
 		listener.lastBlockParentHash != "0000000000000000000000000000000000000000000000000000000000000099" {
 		t.Fatalf("last block checkpoint hash = %q/%q", listener.lastBlockHash, listener.lastBlockParentHash)
+	}
+}
+
+func TestEsploraBlockRejectsPartialTransactionPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/block-height/100":
+			_, _ = w.Write([]byte("block-100"))
+		case "/block/block-100":
+			_, _ = w.Write([]byte(`{"id":"block-100","height":100,"previousblockhash":"block-99","tx_count":2}`))
+		case "/block/block-100/txs/0":
+			_, _ = w.Write([]byte(`[{"txid":"tx-1","status":{"confirmed":true,"block_height":100,"block_hash":"block-100"}}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	listener := &RpcListener{client: server.Client()}
+	endpoint := bitcoinEndpoint{Key: server.URL, URL: server.URL, Kind: bitcoinEndpointEsplora}
+	_, _, _, err := listener.esploraBlock(context.Background(), endpoint, 100)
+	if err == nil || !strings.Contains(err.Error(), "stopped at 1 of 2") {
+		t.Fatalf("partial pagination error = %v", err)
 	}
 }
 
@@ -205,7 +232,7 @@ func TestHandleTxPreservesEveryBitcoinInputAddress(t *testing.T) {
 	}
 	tx.Status.Confirmed = true
 
-	if err := listener.handleTx(100, "block-hash", asset.NewBTC(), tx); err != nil {
+	if err := listener.handleTx(100, "block-hash", "parent-hash", asset.NewBTC(), tx); err != nil {
 		t.Fatal(err)
 	}
 	event := (<-listener.events).(dispatcher.Event)
@@ -213,9 +240,13 @@ func TestHandleTxPreservesEveryBitcoinInputAddress(t *testing.T) {
 	if len(got) != 2 || got[0] != "bc1external" || got[1] != "bc1platform" {
 		t.Fatalf("from addresses = %#v", got)
 	}
+	if event.Transaction.ParentHash == nil || *event.Transaction.ParentHash != "parent-hash" {
+		t.Fatalf("parent hash = %#v", event.Transaction.ParentHash)
+	}
 }
 
 func TestProcessBlockRewindsBitcoinCheckpointOnParentMismatch(t *testing.T) {
+	t.Setenv("CHAIN_0_REORG_REWIND_BLOCKS", "1")
 	server := newBitcoinCoreTestServer(t)
 	defer server.Close()
 
@@ -229,6 +260,7 @@ func TestProcessBlockRewindsBitcoinCheckpointOnParentMismatch(t *testing.T) {
 		LastProcessedHash:  "different-parent",
 	}
 	var wroteRollback bool
+	var observedCanonical bool
 	listener := &RpcListener{
 		chain:       chain,
 		registry:    registry,
@@ -237,6 +269,18 @@ func TestProcessBlockRewindsBitcoinCheckpointOnParentMismatch(t *testing.T) {
 		client:      server.Client(),
 		events:      make(chan interface{}, 1),
 	}
+	listener.SetCanonicalBlockObserver(func(_ context.Context, chainID constants.ChainID, blockNumber int64, blockHash, parentHash string) error {
+		if wroteRollback {
+			t.Fatal("canonical observer ran after rollback persistence")
+		}
+		observedCanonical = true
+		if chainID != constants.Bitcoin || blockNumber != 100 ||
+			blockHash != "0000000000000000000000000000000000000000000000000000000000000100" ||
+			parentHash != "0000000000000000000000000000000000000000000000000000000000000099" {
+			t.Fatalf("canonical observation = chain=%d block=%d hash=%s parent=%s", chainID, blockNumber, blockHash, parentHash)
+		}
+		return nil
+	})
 
 	err := listener.processBlock(100)
 	if !errors.Is(err, listenerconfig.ErrParentContinuity) {
@@ -245,6 +289,9 @@ func TestProcessBlockRewindsBitcoinCheckpointOnParentMismatch(t *testing.T) {
 	if !wroteRollback {
 		t.Fatal("rollback state was not persisted")
 	}
+	if !observedCanonical {
+		t.Fatal("canonical block was not observed before rollback")
+	}
 	if state.LastProcessedBlock != 98 || state.LastProcessedHash != "" || state.LastProcessedParentHash != "" {
 		t.Fatalf("state after rewind = %#v", state)
 	}
@@ -252,6 +299,142 @@ func TestProcessBlockRewindsBitcoinCheckpointOnParentMismatch(t *testing.T) {
 	case event := <-listener.events:
 		t.Fatalf("unexpected event on parent mismatch: %#v", event)
 	default:
+	}
+}
+
+func TestProcessBlockHoldsBeforeDispatchWhenBitcoinCanonicalObserverFails(t *testing.T) {
+	server := newBitcoinCoreTestServer(t)
+	defer server.Close()
+
+	registry := asset.NewRegistry()
+	registry.Register(asset.NewBTC())
+	chain := chainpkg.NewBitcoinChain()
+	chain.RPCHttp = []string{bitcoinCoreTestURL(server.URL)}
+	listener := &RpcListener{
+		chain:    chain,
+		registry: registry,
+		client:   server.Client(),
+		events:   make(chan interface{}, 1),
+	}
+	observerErr := errors.New("canonical block store unavailable")
+	observerCalls := 0
+	listener.SetCanonicalBlockObserver(func(_ context.Context, chainID constants.ChainID, blockNumber int64, blockHash, parentHash string) error {
+		observerCalls++
+		if chainID != constants.Bitcoin || blockNumber != 100 ||
+			blockHash != "0000000000000000000000000000000000000000000000000000000000000100" ||
+			parentHash != "0000000000000000000000000000000000000000000000000000000000000099" {
+			t.Fatalf("canonical observation = chain=%d block=%d hash=%s parent=%s", chainID, blockNumber, blockHash, parentHash)
+		}
+		return observerErr
+	})
+
+	err := listener.processBlock(100)
+	if !errors.Is(err, observerErr) {
+		t.Fatalf("processBlock error = %v, want %v", err, observerErr)
+	}
+	if observerCalls != 1 {
+		t.Fatalf("canonical observer calls = %d, want 1", observerCalls)
+	}
+	if listener.lastBlockHash != "" || listener.lastBlockParentHash != "" {
+		t.Fatalf("checkpoint evidence changed after observer failure: %q/%q", listener.lastBlockHash, listener.lastBlockParentHash)
+	}
+	select {
+	case event := <-listener.events:
+		t.Fatalf("unexpected event after observer failure: %#v", event)
+	default:
+	}
+}
+
+func TestWriteProcessedBlockCheckpointDoesNotAdvanceMemoryWhenWriterFails(t *testing.T) {
+	state := &models.ChainState{
+		ChainID:            constants.Bitcoin,
+		LastProcessedBlock: 99,
+		LastConfirmedBlock: 105,
+		LastProcessedHash:  "block-99",
+	}
+	listener := &RpcListener{
+		chainState:          state,
+		lastBlockHash:       "block-100",
+		lastBlockParentHash: "block-99",
+		stateWriter: func(*models.ChainState) error {
+			return errors.New("database unavailable")
+		},
+	}
+
+	err := listener.writeProcessedBlockCheckpoint(100, 106)
+	if err == nil {
+		t.Fatal("expected checkpoint write error")
+	}
+	if state.LastProcessedBlock != 99 || state.LastConfirmedBlock != 105 || state.LastProcessedHash != "block-99" {
+		t.Fatalf("in-memory checkpoint advanced after failed write: %#v", state)
+	}
+}
+
+func TestBitcoinCoreBlockRejectsNullBlockPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req bitcoinCoreRPCRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "getblockhash":
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": strings.Repeat("0", 64), "error": nil})
+		case "getblock":
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": nil, "error": nil})
+		default:
+			t.Fatalf("unexpected method %q", req.Method)
+		}
+	}))
+	defer server.Close()
+
+	listener := &RpcListener{client: server.Client()}
+	endpoint, _ := bitcoinEndpointFromURL(bitcoinCoreTestURL(server.URL))
+	if _, _, _, err := listener.coreBlock(context.Background(), endpoint, 100); err == nil {
+		t.Fatal("null Bitcoin Core block payload must fail closed")
+	}
+}
+
+func TestValidateBitcoinBlockResponseRejectsDuplicateTransactions(t *testing.T) {
+	txs := []Tx{{TxID: "duplicate"}, {TxID: "duplicate"}}
+	if err := validateBitcoinBlockResponse(100, "block-100", "block-99", txs); err == nil {
+		t.Fatal("duplicate Bitcoin transaction list must fail closed")
+	}
+}
+
+func TestValidateBitcoinBlockResponseRejectsMissingPrevoutAndOutputFields(t *testing.T) {
+	valid := Tx{TxID: "tx-completeness"}
+	valid.Status.Confirmed = true
+	valid.Status.BlockHeight = 100
+	valid.Status.BlockHash = "block-100"
+	valid.Vin = []Vin{{
+		Prevout: Prevout{Address: "bc1qsource", Value: 100, ScriptPubKey: "0014cafe", valuePresent: true, scriptPresent: true},
+	}}
+	valid.Vin[0].prevoutPresent = true
+	valid.Vout = []Vout{{Address: "bc1qrecipient", Value: 100, ScriptPubKey: "0014beef", valuePresent: true, scriptPresent: true}}
+
+	missingPrevout := valid
+	missingPrevout.Vin = []Vin{{}}
+	if err := validateBitcoinBlockResponse(100, "block-100", "block-99", []Tx{missingPrevout}); err == nil || !strings.Contains(err.Error(), "prevout") {
+		t.Fatalf("missing prevout error = %v", err)
+	}
+
+	missingOutputValue := valid
+	missingOutputValue.Vout = append([]Vout(nil), valid.Vout...)
+	missingOutputValue.Vout[0].valuePresent = false
+	if err := validateBitcoinBlockResponse(100, "block-100", "block-99", []Tx{missingOutputValue}); err == nil || !strings.Contains(err.Error(), "output 0") {
+		t.Fatalf("missing output value error = %v", err)
+	}
+}
+
+func TestBitcoinCoreConversionRejectsNonCoinbaseWithoutVerbosityThreePrevout(t *testing.T) {
+	_, err := bitcoinCoreTxToTx(bitcoinCoreTx{
+		TxID: "core-incomplete",
+		Vin:  []bitcoinCoreVin{{}},
+		Vout: []bitcoinCoreVout{{N: 0, Value: json.Number("1"), ScriptPubKey: bitcoinCoreScriptPubKey{Hex: "51", Type: "nonstandard"}}},
+	}, 100, "block-100")
+	if err == nil || !strings.Contains(err.Error(), "verbosity=3 prevout") {
+		t.Fatalf("missing Bitcoin Core prevout error = %v", err)
 	}
 }
 
@@ -280,6 +463,34 @@ func TestUniSatBlockConvertsTransactions(t *testing.T) {
 	}
 	if txs[0].Vin[0].Prevout.Value != 50000000 || txs[0].Vout[0].Value != 12345 {
 		t.Fatalf("tx values = %#v/%#v", txs[0].Vin[0].Prevout, txs[0].Vout[0])
+	}
+}
+
+func TestUniSatBlockRejectsPartialDeclaredTotal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/indexer/height/100/block":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{"hash": "block-100", "previousBlockHash": "block-99"},
+			})
+		case "/v1/indexer/block/100/txs":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": 0,
+				"data": map[string]any{"total": 2, "list": []map[string]any{{"txid": "tx-1"}}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	listener := &RpcListener{client: server.Client()}
+	endpoint := bitcoinEndpoint{URL: server.URL, Key: server.URL, Kind: bitcoinEndpointUniSat}
+	_, _, _, err := listener.unisatBlock(context.Background(), endpoint, 100)
+	if err == nil || !strings.Contains(err.Error(), "stopped at 1 of 2") {
+		t.Fatalf("partial UniSat pagination error = %v", err)
 	}
 }
 
@@ -314,6 +525,7 @@ func newBitcoinCoreTestServer(t *testing.T) *httptest.Server {
 							"prevout": map[string]any{
 								"value": 0.5,
 								"scriptPubKey": map[string]any{
+									"hex":     "0014cafe",
 									"type":    "witness_v0_keyhash",
 									"address": "bc1qsource",
 								},
@@ -366,8 +578,9 @@ func newUniSatBitcoinTestServer(t *testing.T) *httptest.Server {
 					"list": []map[string]any{{
 						"txid": "unisat-tx-1",
 						"inputs": []map[string]any{{
-							"address": "bc1qsource",
-							"satoshi": 50000000,
+							"address":  "bc1qsource",
+							"satoshi":  50000000,
+							"scriptPk": "0014cafe",
 						}},
 						"outputs": []map[string]any{{
 							"address":  "bc1qrecipient",

@@ -34,6 +34,27 @@ func TestV1WalletProductIDDefaultsToWallet(t *testing.T) {
 	}
 }
 
+func TestV1LifecycleCrashRecoveryFailsClosedForCanonicalAggregate(t *testing.T) {
+	body := extractHandlerFunctionBody(t, readHandlerSource(t, "v1api.go"), "enqueueV1LifecycleDelivery")
+	for _, token := range []string{
+		"MoneyEventOutboxRepo.FindByEventID(ctx, payload.EventID)",
+		"MoneyEventOutboxRepo.HasAggregate(ctx, payload.EntityType, payload.EntityID)",
+		"direct delivery fallback is blocked",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("enqueueV1LifecycleDelivery missing canonical ordering guard %q", token)
+		}
+	}
+	if strings.Contains(body, "EnqueueMoneyEvent") {
+		t.Fatal("v1 canonical lifecycle bridge must leave delivery creation to the ordered relay")
+	}
+	ownershipIndex := strings.Index(body, "MoneyEventOutboxRepo.HasAggregate")
+	fallbackIndex := strings.Index(body, "WebhookDeliveryRepo.EnqueueLifecycle")
+	if ownershipIndex < 0 || fallbackIndex < 0 || ownershipIndex > fallbackIndex {
+		t.Fatal("v1 aggregate ownership must be checked before the legacy direct-delivery fallback")
+	}
+}
+
 func TestV1PaymentResponseIncludesDonationLinkType(t *testing.T) {
 	paidAt := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
 	session := models.PaymentSession{

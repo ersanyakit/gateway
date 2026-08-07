@@ -3,6 +3,7 @@ package repositories
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -103,6 +104,70 @@ func TestDepositRepoFinalizedDepositEmitsOutboxOnce(t *testing.T) {
 		t.Fatalf("duplicate returned %#v, want existing %#v", second, first)
 	}
 	requirePostgresCount(t, db, &models.Deposit{}, "chain_fact_event_id = ?", first.ChainFactEventID, 1)
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_type = ?", "deposit.finalized.v1", 1)
+}
+
+func TestDepositRepoConcurrentFinalizedFactCreatesDepositAndOutboxOnce(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Deposit{}, &models.ChainFact{}, &models.MoneyEventOutbox{}); err != nil {
+		t.Fatalf("automigrate deposits: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+
+	repo := NewDepositRepo(db)
+	wallet := testDepositWallet()
+	fact := testDepositChainFact("1:0xconcurrent-final:log:2", true)
+	fact.TxHash = "0xconcurrent-final"
+	fact.LogIndex = "log:2"
+
+	const writers = 8
+	start := make(chan struct{})
+	type result struct {
+		deposit *models.Deposit
+		created bool
+		err     error
+	}
+	results := make(chan result, writers)
+	var wg sync.WaitGroup
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			deposit, created, err := repo.ConsumeChainFact(context.Background(), fact, &wallet)
+			results <- result{deposit: deposit, created: created, err: err}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	created := 0
+	var persistedID uuid.UUID
+	for result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent consume: %v", result.err)
+		}
+		if result.deposit == nil {
+			t.Fatal("concurrent consume returned nil deposit")
+		}
+		if result.created {
+			created++
+		}
+		if persistedID == uuid.Nil {
+			persistedID = result.deposit.ID
+		} else if result.deposit.ID != persistedID {
+			t.Fatalf("deposit id = %s, want winning id %s", result.deposit.ID, persistedID)
+		}
+	}
+	if created != 1 {
+		t.Fatalf("created count = %d, want exactly one", created)
+	}
+	requirePostgresCount(t, db, &models.Deposit{}, "chain_fact_event_id = ?", fact.EventID, 1)
 	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_type = ?", "deposit.finalized.v1", 1)
 }
 

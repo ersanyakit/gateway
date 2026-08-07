@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -391,4 +392,114 @@ func TestRefundRepoRecordBroadcastRequiresTxHashAndStoresTimestamp(t *testing.T)
 	if after.Status != models.RefundStatusProcessing {
 		t.Fatalf("broadcast must remain non-terminal processing, got %s", after.Status)
 	}
+}
+
+func TestRefundLifecycleTransitionsRecordAtomicOutboxEvents(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Refund{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate refund lifecycle tables: %v", err)
+	}
+	ctx := context.Background()
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	repo := NewRefundRepo(db)
+	newRefund := func(status string) models.Refund {
+		return models.Refund{
+			ID:             uuid.New(),
+			MerchantID:     merchantID,
+			DomainID:       domainID,
+			PaymentID:      uuid.New(),
+			AmountRaw:      "10",
+			Status:         status,
+			IdempotencyKey: "business-" + uuid.NewString(),
+			CorrelationID:  "correlation-" + uuid.NewString(),
+		}
+	}
+
+	refund := newRefund(models.RefundStatusPending)
+	if err := repo.Create(ctx, &refund); err != nil {
+		t.Fatalf("create refund: %v", err)
+	}
+	if err := db.WithContext(ctx).Model(&models.Refund{}).Where("id = ?", refund.ID).Update("status", models.RefundStatusProcessing).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordBroadcast(ctx, refund.ID, "admin@example.com", "0xrefund"); err != nil {
+		t.Fatalf("record refund broadcast: %v", err)
+	}
+	if err := repo.MarkSucceeded(ctx, refund.ID, "admin@example.com", "0xrefund"); err != nil {
+		t.Fatalf("succeed refund: %v", err)
+	}
+	if err := repo.MarkSucceeded(ctx, refund.ID, "admin@example.com", "0xrefund"); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("duplicate success error = %v", err)
+	}
+
+	rejected := newRefund(models.RefundStatusPending)
+	failed := newRefund(models.RefundStatusPending)
+	if err := db.WithContext(ctx).Create(&[]models.Refund{rejected, failed}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkRejected(ctx, rejected.ID, "admin@example.com", "policy rejected"); err != nil {
+		t.Fatalf("reject refund: %v", err)
+	}
+	if err := repo.MarkFailed(ctx, failed.ID, "worker", "signer failed"); err != nil {
+		t.Fatalf("fail refund: %v", err)
+	}
+
+	var rows []models.MoneyEventOutbox
+	if err := db.WithContext(ctx).Where("aggregate_id = ?", refund.ID.String()).Order("sequence ASC").Find(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		constants.WebhookEventRefundRequestedV1,
+		constants.WebhookEventRefundBroadcastV1,
+		constants.WebhookEventRefundSucceededV1,
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("refund lifecycle rows = %d, want %d", len(rows), len(want))
+	}
+	for i := range want {
+		if rows[i].EventType != want[i] || rows[i].Sequence != int64(i+1) || rows[i].IdempotencyKey != rows[i].EventID {
+			t.Fatalf("refund lifecycle row %d = %#v", i, rows[i])
+		}
+	}
+	var succeededPayload map[string]any
+	if err := json.Unmarshal([]byte(rows[2].PayloadJSON), &succeededPayload); err != nil {
+		t.Fatal(err)
+	}
+	if succeededPayload["status"] != models.RefundStatusSucceeded || succeededPayload["tx_hash"] != "0xrefund" {
+		t.Fatalf("succeeded refund payload = %#v", succeededPayload)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", rejected.ID.String()+":"+constants.WebhookEventRefundRejectedV1, 1)
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", failed.ID.String()+":"+constants.WebhookEventRefundFailedV1, 1)
+}
+
+func TestRefundSuccessRollsBackWhenLifecycleOutboxInsertFails(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Refund{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	refund := models.Refund{
+		ID: uuid.New(), MerchantID: uuid.New(), DomainID: uuid.New(), PaymentID: uuid.New(),
+		AmountRaw: "10", Status: models.RefundStatusProcessing, TxHash: "0xrefund",
+	}
+	if err := db.WithContext(ctx).Create(&refund).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`ALTER TABLE money_event_outboxes ADD CONSTRAINT reject_refund_success CHECK (event_type <> 'refund.succeeded.v1')`).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewRefundRepo(db).MarkSucceeded(ctx, refund.ID, "admin@example.com", "0xrefund")
+	if err == nil {
+		t.Fatal("refund success transition succeeded despite rejected lifecycle insert")
+	}
+	var after models.Refund
+	if err := db.WithContext(ctx).First(&after, "id = ?", refund.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != models.RefundStatusProcessing || after.FinalizedAt != nil || after.ReviewedAt != nil {
+		t.Fatalf("refund transition did not roll back: %#v", after)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "aggregate_id = ?", refund.ID.String(), 0)
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 var ErrNilSafeFunction = errors.New("safe goroutine function is nil")
@@ -79,6 +80,44 @@ func GoSafely(name string, fn func()) {
 // protected by the same panic boundary.
 func GoSafelyWithDone(name string, fn func(), done func(error)) {
 	goSafely(log.Default(), name, fn, done)
+}
+
+// GoSafelyRestarting keeps a long-running goroutine alive after a recovered
+// panic or an unexpected return. Closing stop is the only normal terminal
+// condition. This is intended for chain scanners and other durable polling
+// loops where a silently dead goroutine would create an ingestion gap.
+func GoSafelyRestarting(name string, stop <-chan struct{}, restartDelay time.Duration, fn func()) {
+	if restartDelay <= 0 {
+		restartDelay = time.Second
+	}
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+
+			err := RunSafely(name, fn)
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err != nil {
+				log.Printf("goroutine task=%q restarting_after=%s error=%v", name, restartDelay, err)
+			} else {
+				log.Printf("goroutine task=%q returned unexpectedly; restarting_after=%s", name, restartDelay)
+			}
+			timer := time.NewTimer(restartDelay)
+			select {
+			case <-stop:
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
 }
 
 func goSafely(logger *log.Logger, name string, fn func(), done func(error)) {

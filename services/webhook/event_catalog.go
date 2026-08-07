@@ -89,15 +89,42 @@ func MoneyEventCatalogEntryForEmittedEvent(name string) (MoneyEventCatalogItem, 
 	return MoneyEventCatalogItem{}, "", false
 }
 
+// MoneyEventTypesEquivalent compares emitted event names by canonical catalog
+// identity. This lets durable delivery state safely bridge canonical names and
+// supported legacy aliases without treating different lifecycle events as the
+// same notification.
+func MoneyEventTypesEquivalent(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if left == right {
+		return true
+	}
+	leftEntry, _, leftOK := MoneyEventCatalogEntryForEmittedEvent(left)
+	rightEntry, _, rightOK := MoneyEventCatalogEntryForEmittedEvent(right)
+	return leftOK && rightOK && leftEntry.Name == rightEntry.Name
+}
+
 var moneyEventCatalog = []MoneyEventCatalogItem{
 	catalogItem("deposit.detected.v1", "deposit", "chain_indexer", "deposit", "Deposit observed on-chain before finality.", false, []string{
 		"chain_id", "tx_hash", "tx_unique_hash", "log_index", "amount_raw", "symbol", "token", "from_address", "to_address", "confirmations",
-	}, []MoneyEventAlias{
-		{Name: constants.WebhookEventNativeTransfer, Relation: EventRelationLegacyAlias, Note: "Current transaction webhook name for native/token transfer detection."},
-	}, nil),
+	}, nil, nil),
 	catalogItem("deposit.finalized.v1", "deposit", "deposit", "deposit", "Deposit reached required finality and can be matched to wallet/payment state.", true, []string{
 		"chain_id", "tx_hash", "tx_unique_hash", "amount_raw", "symbol", "token", "wallet_id",
 	}, nil, nil),
+	catalogItem("transaction.detected.v1", "transaction", "chain_indexer", "transaction", "A wallet-owned on-chain transfer was finalized and durably recorded.", true, []string{
+		"transaction_id", "chain_id", "hash", "log_index", "block_number", "block_hash", "amount_raw", "symbol", "token", "from", "to",
+	}, []MoneyEventAlias{
+		{Name: constants.WebhookEventNativeTransfer, Relation: EventRelationLegacyAlias, Note: "Legacy native transfer notification name."},
+		{Name: "deposit_confirmed", Relation: EventRelationLegacyAlias, Note: "Legacy administrative deposit notification name."},
+		{Name: "internal_transfer", Relation: EventRelationLegacyAlias, Note: "Contract/internal native value transfer notification name."},
+		{Name: "token_transfer", Relation: EventRelationLegacyAlias, Note: "EVM/TRON token transfer notification name."},
+		{Name: "utxo_transfer", Relation: EventRelationLegacyAlias, Note: "Bitcoin output transfer notification name."},
+		{Name: "sol_transfer", Relation: EventRelationLegacyAlias, Note: "Solana native transfer notification name."},
+		{Name: "spl_transfer", Relation: EventRelationLegacyAlias, Note: "Solana token transfer notification name."},
+	}, nil),
 	catalogItem("payment.succeeded.v1", "payment", "payment", "payment", "Payment reached a successful terminal state.", true, []string{
 		"payment_id", "order_id", "amount", "currency", "tx_hash", "tx_unique_hash",
 	}, []MoneyEventAlias{
@@ -185,6 +212,9 @@ var moneyEventCatalog = []MoneyEventCatalogItem{
 		OriginalResourceIDField: "original_resource_id",
 		Semantics:               "Correction events are non-destructive: prior event history remains immutable and consumers apply the correction using the original event/resource relation.",
 	}),
+	catalogItem("transaction.restored.v1", "correction", "chain_indexer", "transaction", "A reorged transaction reappeared with identical economic identity in an exact canonical block.", true, []string{
+		"transaction_id", "tx_unique_hash", "reorg_event_id", "canonical_block_number", "canonical_block_hash", "restoration_reason",
+	}, nil, nil),
 	catalogItem("webhook.delivery.succeeded.v1", "webhook_delivery", "webhook", "webhook_delivery", "Webhook delivery reached a terminal success state.", true, []string{
 		"delivery_id", "target_url", "attempts",
 	}, nil, nil),

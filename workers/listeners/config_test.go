@@ -158,6 +158,7 @@ func TestValidateParentContinuityDetectsMismatch(t *testing.T) {
 }
 
 func TestRewindParentContinuityCheckpointClearsStaleHash(t *testing.T) {
+	t.Setenv("SCANNER_REORG_REWIND_BLOCKS", "1")
 	state := &models.ChainState{
 		LastProcessedBlock:      10,
 		LastProcessedHash:       "0xstale",
@@ -176,6 +177,27 @@ func TestRewindParentContinuityCheckpointClearsStaleHash(t *testing.T) {
 	}
 	if state.ContinuityStatus != ContinuityStatusRollback || state.ContinuityReason == "" {
 		t.Fatalf("rollback evidence lost: %+v", state)
+	}
+}
+
+func TestRewindParentContinuityCheckpointUsesChainSpecificReplayWindow(t *testing.T) {
+	t.Setenv("SCANNER_REORG_REWIND_BLOCKS", "4")
+	t.Setenv("CHAIN_1_REORG_REWIND_BLOCKS", "12")
+	state := &models.ChainState{
+		ChainID:            constants.Ethereum,
+		LastProcessedBlock: 100,
+		LastProcessedHash:  "0xstale",
+		ContinuityStatus:   ContinuityStatusRollback,
+		ContinuityReason:   "parent mismatch",
+	}
+
+	RewindParentContinuityCheckpoint(state, 101)
+
+	if state.LastProcessedBlock != 88 {
+		t.Fatalf("last processed block = %d, want 88", state.LastProcessedBlock)
+	}
+	if !strings.Contains(state.ContinuityReason, "rewound 12 blocks") {
+		t.Fatalf("continuity reason = %q", state.ContinuityReason)
 	}
 }
 

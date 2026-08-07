@@ -12,7 +12,7 @@ import (
 )
 
 type DeliveryProcessorRepo interface {
-	MarkAttempt(ctx context.Context, id uuid.UUID, delivered bool, err error) error
+	MarkAttempt(ctx context.Context, id, leaseToken uuid.UUID, delivered bool, err error) error
 }
 
 type DeliveryProcessorNotifier interface {
@@ -74,20 +74,20 @@ func (q deliveryProcessorQueue) ClaimDue(ctx context.Context, limit int) ([]mode
 	return nil, permanent(errors.New("webhook delivery queue has unsupported claim interface"))
 }
 
-func (q deliveryProcessorQueue) MarkAttempt(ctx context.Context, id uuid.UUID, delivered bool, err error) error {
+func (q deliveryProcessorQueue) MarkAttempt(ctx context.Context, id, leaseToken uuid.UUID, delivered bool, err error) error {
 	if queue, ok := q.queue.(interface {
-		MarkAttempt(context.Context, uuid.UUID, bool, error) error
+		MarkAttempt(context.Context, uuid.UUID, uuid.UUID, bool, error) error
 	}); ok {
-		return queue.MarkAttempt(ctx, id, delivered, err)
+		return queue.MarkAttempt(ctx, id, leaseToken, delivered, err)
 	}
-	return nil
+	return permanent(errors.New("webhook delivery queue has unsupported attempt interface"))
 }
 
 type domainLookupFunc func(context.Context, uuid.UUID) (*models.Domain, error)
 
 func (f domainLookupFunc) FindByID(params types.DomainParams) (*models.Domain, error) {
 	if f == nil {
-		return nil, errors.New("domain lookup is not configured")
+		return nil, errDeliveryDomainLookupNotConfigured
 	}
 	if params.DomainID == nil || *params.DomainID == "" {
 		return nil, errors.New("domain id is required")
@@ -106,7 +106,7 @@ type transactionStoreFuncs struct {
 
 func (f transactionStoreFuncs) FindByID(ctx context.Context, id uuid.UUID) (*models.Transaction, error) {
 	if f.find == nil {
-		return nil, errors.New("transaction lookup is not configured")
+		return nil, errDeliveryTransactionLookupNotConfigured
 	}
 	return f.find(ctx, id)
 }
@@ -125,7 +125,7 @@ type paymentStoreFuncs struct {
 
 func (f paymentStoreFuncs) FindByID(ctx context.Context, id uuid.UUID) (*models.PaymentSession, error) {
 	if f.find == nil {
-		return nil, errors.New("payment lookup is not configured")
+		return nil, errDeliveryPaymentLookupNotConfigured
 	}
 	return f.find(ctx, id)
 }

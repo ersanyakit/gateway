@@ -38,6 +38,7 @@ type PaymentHandlerDeps struct {
 	PaymentRepo                 paymentSessionRepository
 	NetworkOperationalStateRepo paymentNetworkOperationalStateRepository
 	WebhookDeliveryRepo         paymentWebhookDeliveryRepository
+	MoneyEventOutboxRepo        paymentMoneyEventOutboxRepository
 	ProductRepo                 paymentProductRepository
 	IdempotencyRepo             paymentIdempotencyRepository
 	AssetRegistry               *asset.Registry
@@ -85,7 +86,11 @@ type paymentProductRepository interface {
 
 type paymentWebhookDeliveryRepository interface {
 	EnqueuePayment(context.Context, models.Domain, models.PaymentSession) (*models.WebhookDelivery, bool, error)
-	MarkAttempt(context.Context, uuid.UUID, bool, error) error
+	MarkAttempt(context.Context, uuid.UUID, uuid.UUID, bool, error) error
+}
+
+type paymentMoneyEventOutboxRepository interface {
+	HasAggregateEvent(context.Context, string, string, string) (bool, error)
 }
 
 type paymentCreateMode int
@@ -2031,6 +2036,16 @@ func markPaymentCanceledOrExpired(ctx context.Context, deps PaymentHandlerDeps, 
 func deliverPaymentWebhook(ctx context.Context, deps PaymentHandlerDeps, session *models.PaymentSession) {
 	if session == nil || session.WebhookEvent == "" || session.WebhookSentAt != nil {
 		return
+	}
+	if deps.MoneyEventOutboxRepo != nil {
+		ownedByOutbox, err := deps.MoneyEventOutboxRepo.HasAggregateEvent(ctx, "payment", session.ID.String(), session.WebhookEvent)
+		if err != nil {
+			log.Printf("payment canonical outbox lookup payment_id=%s error=%v", session.ID, err)
+			return
+		}
+		if ownedByOutbox {
+			return
+		}
 	}
 	deliveryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

@@ -22,18 +22,21 @@ import (
 
 type ConfirmationRequirementFunc func(constants.ChainID) uint
 
+var ErrFinalizedChainFactNotCanonical = errors.New("finalized chain fact is not canonical")
+
+var errChainFactCanonicalIdentityChanged = errors.New("chain fact canonical identity changed while acquiring lock")
+
 type Dependencies struct {
-	AssetRegistry         *asset.Registry
-	ChainFactRepo         *repositories.ChainFactRepo
-	ChainStateRepo        *repositories.ChainStateRepo
-	DepositRepo           *repositories.DepositRepo
-	WalletRepo            *repositories.WalletRepo
-	TransactionRepo       *repositories.TransactionRepo
-	PaymentRepo           *repositories.PaymentRepo
-	LedgerRepo            *repositories.LedgerRepo
-	SweepJobRepo          *repositories.SweepJobRepo
-	MoneyEventInboxRepo   *repositories.MoneyEventInboxRepo
-	SweepLifecycleEnqueue func(context.Context, models.SweepJob, *models.Transaction, string, string)
+	AssetRegistry       *asset.Registry
+	ChainFactRepo       *repositories.ChainFactRepo
+	ChainStateRepo      *repositories.ChainStateRepo
+	DepositRepo         *repositories.DepositRepo
+	WalletRepo          *repositories.WalletRepo
+	TransactionRepo     *repositories.TransactionRepo
+	PaymentRepo         *repositories.PaymentRepo
+	LedgerRepo          *repositories.LedgerRepo
+	SweepJobRepo        *repositories.SweepJobRepo
+	MoneyEventInboxRepo *repositories.MoneyEventInboxRepo
 }
 
 type Service struct {
@@ -72,7 +75,7 @@ func (s *Service) ProcessBatch(ctx context.Context, limit int) (ProcessSummary, 
 		return summary, err
 	}
 	for _, fact := range facts {
-		row, err := s.processFactWithInbox(ctx, fact)
+		row, err := s.ProcessFactSafely(ctx, fact)
 		if err != nil {
 			return summary, err
 		}
@@ -84,13 +87,36 @@ func (s *Service) ProcessBatch(ctx context.Context, limit int) (ProcessSummary, 
 		return summary, err
 	}
 	for _, deposit := range pending {
-		row, err := s.ProcessPendingDeposit(ctx, deposit)
+		row, err := s.ProcessPendingDepositSafely(ctx, deposit)
 		if err != nil {
 			return summary, err
 		}
 		summary.add(row)
 	}
 	return summary, nil
+}
+
+// ProcessFactSafely is the durable money-state entrypoint. When an inbox is
+// configured it claims idempotency, locks and reloads the ChainFact, rechecks
+// canonical identity, and performs all deposit/payment/ledger writes in the
+// same database transaction. Direct ProcessFact remains the transaction-bound
+// implementation used by the callback and by focused unit tests.
+func (s *Service) ProcessFactSafely(ctx context.Context, fact models.ChainFact) (ProcessSummary, error) {
+	if s == nil || s.deps.MoneyEventInboxRepo == nil || s.deps.ChainFactRepo == nil {
+		return s.processFactWithInbox(ctx, fact)
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		current, err := s.deps.ChainFactRepo.FindByEventID(ctx, fact.EventID)
+		if err != nil {
+			return ProcessSummary{}, err
+		}
+		summary, err := s.processFactWithInbox(ctx, *current)
+		if errors.Is(err, errChainFactCanonicalIdentityChanged) {
+			continue
+		}
+		return summary, err
+	}
+	return ProcessSummary{}, errChainFactCanonicalIdentityChanged
 }
 
 func (s *Service) processFactWithInbox(ctx context.Context, fact models.ChainFact) (ProcessSummary, error) {
@@ -106,6 +132,7 @@ func (s *Service) processFactWithInbox(ctx context.Context, fact models.ChainFac
 		ResourceType:     "chain_fact",
 		ResourceID:       fact.ID.String(),
 		LockFor:          2 * time.Minute,
+		AdvisoryLockKeys: []string{repositories.CanonicalBlockLockKey(fact.ChainID, fact.BlockNumber)},
 		Evidence: map[string]any{
 			"chain_id":         fact.ChainID,
 			"tx_hash":          fact.TxHash,
@@ -113,7 +140,46 @@ func (s *Service) processFactWithInbox(ctx context.Context, fact models.ChainFac
 			"observed_address": fact.ObservedAddress,
 		},
 	}, func(tx *gorm.DB) error {
-		row, err := s.withDB(tx).ProcessFact(ctx, fact)
+		transactionalService := s.withDB(tx)
+		current, err := transactionalService.deps.ChainFactRepo.FindByEventIDForUpdate(ctx, fact.EventID)
+		if err != nil {
+			return err
+		}
+		// The caller's fact can be a stale confirmed snapshot. Recompute finality
+		// from the locked row and verify its exact canonical block tuple before any
+		// payment or ledger write. A concurrent correction either committed before
+		// this lock (and is visible here) or waits for this transaction and reverses
+		// every write atomically after it commits.
+		if !chainFactCorrected(*current) && !chainFactFailed(*current) {
+			currentWithFinality, err := transactionalService.factWithFinality(ctx, *current)
+			if err != nil {
+				return err
+			}
+			if current.ChainID != fact.ChainID || current.BlockNumber != fact.BlockNumber || !chainFactBlockHashesEqual(current.ChainID, current.BlockHash, fact.BlockHash) {
+				return errChainFactCanonicalIdentityChanged
+			}
+			canonical, err := transactionalService.deps.ChainFactRepo.CanonicalBlockMatches(
+				ctx,
+				currentWithFinality.ChainID,
+				currentWithFinality.BlockNumber,
+				currentWithFinality.BlockHash,
+			)
+			if err != nil {
+				return err
+			}
+			if !canonical {
+				return fmt.Errorf(
+					"%w: event=%s chain=%d block=%d hash=%s",
+					ErrFinalizedChainFactNotCanonical,
+					currentWithFinality.EventID,
+					currentWithFinality.ChainID,
+					currentWithFinality.BlockNumber,
+					currentWithFinality.BlockHash,
+				)
+			}
+			current = &currentWithFinality
+		}
+		row, err := transactionalService.ProcessFact(ctx, *current)
 		summary = row
 		return err
 	})
@@ -277,6 +343,69 @@ func (s *Service) ProcessPendingDeposit(ctx context.Context, deposit models.Depo
 	return s.ensureDepositTransaction(ctx, updatedFact, updatedDeposit, wallet)
 }
 
+// ProcessPendingDepositSafely serializes pending finality against canonical
+// correction using the same canonical -> fact -> deposit lock order as live
+// observation. Every read used for settlement is reloaded inside one database
+// transaction; a stale caller snapshot is never authoritative.
+func (s *Service) ProcessPendingDepositSafely(ctx context.Context, deposit models.Deposit) (ProcessSummary, error) {
+	if s == nil || s.deps.ChainFactRepo == nil || s.deps.DepositRepo == nil || s.deps.ChainFactRepo.DB() == nil {
+		return ProcessSummary{}, errors.New("pending deposit safe processor is not configured")
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		snapshot, err := s.deps.ChainFactRepo.FindByEventID(ctx, deposit.ChainFactEventID)
+		if err != nil {
+			return ProcessSummary{}, err
+		}
+		var summary ProcessSummary
+		err = s.deps.ChainFactRepo.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := repositories.AcquireCanonicalBlockLockWithDB(ctx, tx, snapshot.ChainID, snapshot.BlockNumber); err != nil {
+				return err
+			}
+			transactionalService := s.withDB(tx)
+			currentFact, err := transactionalService.deps.ChainFactRepo.FindByEventIDForUpdate(ctx, snapshot.EventID)
+			if err != nil {
+				return err
+			}
+			if currentFact.ChainID != snapshot.ChainID || currentFact.BlockNumber != snapshot.BlockNumber || !chainFactBlockHashesEqual(currentFact.ChainID, currentFact.BlockHash, snapshot.BlockHash) {
+				return errChainFactCanonicalIdentityChanged
+			}
+			if chainFactCorrected(*currentFact) || chainFactFailed(*currentFact) {
+				return nil
+			}
+			canonical, err := transactionalService.deps.ChainFactRepo.CanonicalBlockMatches(ctx, currentFact.ChainID, currentFact.BlockNumber, currentFact.BlockHash)
+			if err != nil {
+				return err
+			}
+			if !canonical {
+				return fmt.Errorf("%w: event=%s chain=%d block=%d hash=%s", ErrFinalizedChainFactNotCanonical, currentFact.EventID, currentFact.ChainID, currentFact.BlockNumber, currentFact.BlockHash)
+			}
+			currentDeposit, err := transactionalService.deps.DepositRepo.FindByIDForUpdate(ctx, deposit.ID)
+			if err != nil {
+				return err
+			}
+			if currentDeposit.ChainFactEventID != currentFact.EventID || currentDeposit.Status == models.DepositStatusReorged || currentDeposit.Status == models.DepositStatusSuperseded {
+				return nil
+			}
+			summary, err = transactionalService.ProcessPendingDeposit(ctx, *currentDeposit)
+			return err
+		})
+		if errors.Is(err, errChainFactCanonicalIdentityChanged) {
+			continue
+		}
+		return summary, err
+	}
+	return ProcessSummary{}, errChainFactCanonicalIdentityChanged
+}
+
+func chainFactBlockHashesEqual(chainID constants.ChainID, left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if chainID == constants.Solana {
+		return left == right
+	}
+	return strings.EqualFold(left, right)
+}
+
 func (s *Service) validate() error {
 	if s == nil ||
 		s.deps.AssetRegistry == nil ||
@@ -406,12 +535,9 @@ func (s *Service) enqueueFinalizedSweepJob(ctx context.Context, txModel *models.
 	if txModel == nil || wallet == nil || wallet.HDAddressId == 0 || s.deps.SweepJobRepo == nil {
 		return nil
 	}
-	job, created, err := s.deps.SweepJobRepo.EnqueueForTransaction(ctx, *txModel)
+	_, _, err := s.deps.SweepJobRepo.EnqueueForTransaction(ctx, *txModel)
 	if err != nil {
 		return err
-	}
-	if created && job != nil && s.deps.SweepLifecycleEnqueue != nil {
-		s.deps.SweepLifecycleEnqueue(ctx, *job, txModel, constants.WebhookEventSweepRequestedV1, "")
 	}
 	return nil
 }

@@ -20,6 +20,7 @@ import (
 
 	"core/asset"
 	"core/blockchain"
+	"core/constants"
 	"core/helpers"
 	"core/models"
 	"core/types"
@@ -35,11 +36,12 @@ const (
 )
 
 type RpcListener struct {
-	chain       blockchain.Chain
-	registry    *asset.Registry
-	chainState  *models.ChainState
-	stateWriter func(*models.ChainState) error
-	bus         *dispatcher.Dispatcher
+	chain                 blockchain.Chain
+	registry              *asset.Registry
+	chainState            *models.ChainState
+	stateWriter           func(*models.ChainState) error
+	bus                   *dispatcher.Dispatcher
+	observeCanonicalBlock func(context.Context, constants.ChainID, int64, string, string) error
 
 	client          *http.Client
 	endpointCircuit *rpcutil.EndpointCircuit
@@ -79,6 +81,10 @@ func NewRpcListener(
 	}
 }
 
+func (r *RpcListener) SetCanonicalBlockObserver(observer func(context.Context, constants.ChainID, int64, string, string) error) {
+	r.observeCanonicalBlock = observer
+}
+
 func (r *RpcListener) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -91,7 +97,7 @@ func (r *RpcListener) Start() error {
 	}
 
 	r.running = true
-	helpers.GoSafely("listener.bitcoin."+r.chain.Name(), r.pollLoop)
+	helpers.GoSafelyRestarting("listener.bitcoin."+r.chain.Name(), r.quit, time.Second, r.pollLoop)
 	return nil
 }
 
@@ -174,15 +180,27 @@ func (r *RpcListener) catchUp() error {
 		if err := r.processBlock(height); err != nil {
 			return err
 		}
-		listenerconfig.RecordProcessedBlockCheckpoint(r.chainState, height, r.lastBlockHash, r.lastBlockParentHash)
-		r.chainState.LastConfirmedBlock = confirmedHead
-		if r.stateWriter != nil {
-			if err := r.stateWriter(r.chainState); err != nil {
-				return fmt.Errorf("write chain state: %w", err)
-			}
+		if err := r.writeProcessedBlockCheckpoint(height, confirmedHead); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+func (r *RpcListener) writeProcessedBlockCheckpoint(height, confirmedHead int64) error {
+	if r.chainState == nil {
+		return errors.New("bitcoin chain state is nil")
+	}
+	next := *r.chainState
+	listenerconfig.RecordProcessedBlockCheckpoint(&next, height, r.lastBlockHash, r.lastBlockParentHash)
+	next.LastConfirmedBlock = confirmedHead
+	if r.stateWriter != nil {
+		if err := r.stateWriter(&next); err != nil {
+			return fmt.Errorf("write chain state: %w", err)
+		}
+	}
+	*r.chainState = next
 	return nil
 }
 
@@ -390,15 +408,23 @@ func (r *RpcListener) coreBlock(ctx context.Context, endpoint bitcoinEndpoint, h
 	}
 
 	var block bitcoinCoreBlock
-	err := r.coreCall(ctx, endpoint, "getblock", []any{blockHash, 3}, &block)
-	if err != nil && !rpcutil.IsRetryable(err) {
-		err = r.coreCall(ctx, endpoint, "getblock", []any{blockHash, 2}, &block)
-	}
-	if err != nil {
-		return "", "", nil, err
+	if err := r.coreCall(ctx, endpoint, "getblock", []any{blockHash, 3}, &block); err != nil {
+		// Verbosity 2 omits vin.prevout. Continuing without authoritative input
+		// ownership can misclassify an internal custody transfer as an external
+		// deposit and credit it twice, so old/pruned nodes must fail closed.
+		return "", "", nil, fmt.Errorf("bitcoin core getblock verbosity 3 (prevout data required): %w", err)
 	}
 	if strings.TrimSpace(block.Hash) != "" {
+		if !strings.EqualFold(strings.TrimSpace(block.Hash), blockHash) {
+			return "", "", nil, fmt.Errorf("bitcoin core block hash mismatch at height %d: requested %s got %s", height, blockHash, strings.TrimSpace(block.Hash))
+		}
 		blockHash = strings.TrimSpace(block.Hash)
+	}
+	if block.Height != height {
+		return "", "", nil, fmt.Errorf("bitcoin core block height mismatch: requested %d got %d", height, block.Height)
+	}
+	if len(block.Tx) == 0 {
+		return "", "", nil, fmt.Errorf("bitcoin core returned no transactions for block %d", height)
 	}
 	parentHash := strings.TrimSpace(block.PreviousBlockHash)
 	txs := make([]Tx, 0, len(block.Tx))
@@ -488,13 +514,19 @@ type Tx struct {
 }
 
 type Vin struct {
-	IsCoinbase bool    `json:"is_coinbase"`
-	Prevout    Prevout `json:"prevout"`
+	IsCoinbase     bool    `json:"is_coinbase"`
+	Prevout        Prevout `json:"prevout"`
+	prevoutPresent bool
 }
 
 type Prevout struct {
-	Address string `json:"scriptpubkey_address"`
-	Value   int64  `json:"value"`
+	Address          string `json:"scriptpubkey_address"`
+	Value            int64  `json:"value"`
+	ScriptPubKey     string `json:"scriptpubkey"`
+	ScriptPubKeyASM  string `json:"scriptpubkey_asm"`
+	ScriptPubKeyType string `json:"scriptpubkey_type"`
+	valuePresent     bool
+	scriptPresent    bool
 }
 
 type Vout struct {
@@ -503,6 +535,70 @@ type Vout struct {
 	ScriptPubKey     string `json:"scriptpubkey"`
 	ScriptPubKeyASM  string `json:"scriptpubkey_asm"`
 	ScriptPubKeyType string `json:"scriptpubkey_type"`
+	valuePresent     bool
+	scriptPresent    bool
+}
+
+func (v *Vin) UnmarshalJSON(data []byte) error {
+	type rawPrevout struct {
+		Address          string `json:"scriptpubkey_address"`
+		Value            *int64 `json:"value"`
+		ScriptPubKey     string `json:"scriptpubkey"`
+		ScriptPubKeyASM  string `json:"scriptpubkey_asm"`
+		ScriptPubKeyType string `json:"scriptpubkey_type"`
+	}
+	var raw struct {
+		IsCoinbase bool        `json:"is_coinbase"`
+		Prevout    *rawPrevout `json:"prevout"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	v.IsCoinbase = raw.IsCoinbase
+	v.prevoutPresent = raw.Prevout != nil
+	if raw.Prevout == nil {
+		v.Prevout = Prevout{}
+		return nil
+	}
+	v.Prevout = Prevout{
+		Address:          raw.Prevout.Address,
+		ScriptPubKey:     raw.Prevout.ScriptPubKey,
+		ScriptPubKeyASM:  raw.Prevout.ScriptPubKeyASM,
+		ScriptPubKeyType: raw.Prevout.ScriptPubKeyType,
+		valuePresent:     raw.Prevout.Value != nil,
+		scriptPresent: strings.TrimSpace(raw.Prevout.ScriptPubKey) != "" ||
+			strings.TrimSpace(raw.Prevout.ScriptPubKeyASM) != "" ||
+			strings.TrimSpace(raw.Prevout.ScriptPubKeyType) != "",
+	}
+	if raw.Prevout.Value != nil {
+		v.Prevout.Value = *raw.Prevout.Value
+	}
+	return nil
+}
+
+func (v *Vout) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Address          string `json:"scriptpubkey_address"`
+		Value            *int64 `json:"value"`
+		ScriptPubKey     string `json:"scriptpubkey"`
+		ScriptPubKeyASM  string `json:"scriptpubkey_asm"`
+		ScriptPubKeyType string `json:"scriptpubkey_type"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	v.Address = raw.Address
+	v.ScriptPubKey = raw.ScriptPubKey
+	v.ScriptPubKeyASM = raw.ScriptPubKeyASM
+	v.ScriptPubKeyType = raw.ScriptPubKeyType
+	v.valuePresent = raw.Value != nil
+	v.scriptPresent = strings.TrimSpace(raw.ScriptPubKey) != "" ||
+		strings.TrimSpace(raw.ScriptPubKeyASM) != "" ||
+		strings.TrimSpace(raw.ScriptPubKeyType) != ""
+	if raw.Value != nil {
+		v.Value = *raw.Value
+	}
+	return nil
 }
 
 type bitcoinCoreRPCRequest struct {
@@ -570,27 +666,44 @@ type BlockInfo struct {
 	ID                string `json:"id"`
 	Height            int64  `json:"height"`
 	PreviousBlockHash string `json:"previousblockhash"`
+	TxCount           int    `json:"tx_count"`
 }
 
 func (r *RpcListener) processBlock(height int64) error {
-	nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
-	if !ok {
-		return fmt.Errorf("native asset is not registered")
-	}
-
 	var lastErr error
 	for _, endpoint := range r.bitcoinEndpoints() {
 		blockHash, parentHash, txs, err := r.blockFromEndpoint(context.Background(), endpoint, height)
 		if err != nil {
-			if errors.Is(err, listenerconfig.ErrParentContinuity) {
-				return err
-			}
 			lastErr = err
 			r.recordRPCFailure(endpoint.Key, err)
 			continue
 		}
+		if r.chainState != nil {
+			continuityState := *r.chainState
+			if continuityErr := listenerconfig.ValidateParentContinuity(&continuityState, height, parentHash); continuityErr != nil {
+				if observeErr := r.observeBlock(height, blockHash, parentHash); observeErr != nil {
+					return fmt.Errorf("observe canonical bitcoin block after parent continuity failure: %w", observeErr)
+				}
+				listenerconfig.RewindParentContinuityCheckpoint(&continuityState, height)
+				if r.stateWriter != nil {
+					if writeErr := r.stateWriter(&continuityState); writeErr != nil {
+						return fmt.Errorf("write bitcoin chain rollback state: %w", writeErr)
+					}
+				}
+				*r.chainState = continuityState
+				return continuityErr
+			}
+		}
+		if err := r.observeBlock(height, blockHash, parentHash); err != nil {
+			return fmt.Errorf("observe canonical bitcoin block: %w", err)
+		}
+
+		nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
+		if !ok {
+			return fmt.Errorf("native asset is not registered")
+		}
 		for _, tx := range txs {
-			if err := r.handleTx(height, blockHash, nativeAsset, tx); err != nil {
+			if err := r.handleTx(height, blockHash, parentHash, nativeAsset, tx); err != nil {
 				return err
 			}
 		}
@@ -603,6 +716,15 @@ func (r *RpcListener) processBlock(height int64) error {
 		lastErr = fmt.Errorf("no bitcoin RPC/API endpoint configured")
 	}
 	return lastErr
+}
+
+func (r *RpcListener) observeBlock(height int64, blockHash, parentHash string) error {
+	if r.observeCanonicalBlock == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return r.observeCanonicalBlock(ctx, r.chain.ChainID(), height, blockHash, parentHash)
 }
 
 func (r *RpcListener) blockFromEndpoint(ctx context.Context, endpoint bitcoinEndpoint, height int64) (string, string, []Tx, error) {
@@ -623,10 +745,70 @@ func (r *RpcListener) blockFromEndpoint(ctx context.Context, endpoint bitcoinEnd
 	if err != nil {
 		return "", "", nil, err
 	}
-	if err := r.validateBlockContinuity(height, blockHash, parentHash); err != nil {
+	if err := validateBitcoinBlockResponse(height, blockHash, parentHash, txs); err != nil {
 		return "", "", nil, err
 	}
 	return blockHash, parentHash, txs, nil
+}
+
+func validateBitcoinBlockResponse(height int64, blockHash, parentHash string, txs []Tx) error {
+	blockHash = strings.TrimSpace(blockHash)
+	parentHash = strings.TrimSpace(parentHash)
+	if blockHash == "" {
+		return fmt.Errorf("empty bitcoin block hash for height %d", height)
+	}
+	if height > 0 && parentHash == "" {
+		return fmt.Errorf("empty bitcoin parent hash for height %d", height)
+	}
+	if len(txs) == 0 {
+		return fmt.Errorf("bitcoin provider returned no transactions for block %d", height)
+	}
+	seen := make(map[string]struct{}, len(txs))
+	for index, tx := range txs {
+		txID := strings.TrimSpace(tx.TxID)
+		if txID == "" {
+			return fmt.Errorf("bitcoin provider returned transaction %d without txid for block %d", index, height)
+		}
+		if _, exists := seen[strings.ToLower(txID)]; exists {
+			return fmt.Errorf("bitcoin provider returned duplicate transaction %s for block %d", txID, height)
+		}
+		seen[strings.ToLower(txID)] = struct{}{}
+		if !tx.Status.Confirmed {
+			return fmt.Errorf("bitcoin transaction %s from block %d is not explicitly confirmed", txID, height)
+		}
+		if tx.Status.BlockHeight != height {
+			return fmt.Errorf("bitcoin transaction %s block height mismatch: requested %d got %d", txID, height, tx.Status.BlockHeight)
+		}
+		if txBlockHash := strings.TrimSpace(tx.Status.BlockHash); txBlockHash == "" || !strings.EqualFold(txBlockHash, blockHash) {
+			return fmt.Errorf("bitcoin transaction %s block hash mismatch: block %s transaction %s", txID, blockHash, txBlockHash)
+		}
+		if len(tx.Vin) == 0 || len(tx.Vout) == 0 {
+			return fmt.Errorf("bitcoin transaction %s has incomplete vin/vout data", txID)
+		}
+		for inputIndex, input := range tx.Vin {
+			if input.IsCoinbase {
+				continue
+			}
+			if !input.prevoutPresent || !input.Prevout.valuePresent {
+				return fmt.Errorf("bitcoin transaction %s input %d is missing prevout value", txID, inputIndex)
+			}
+			if input.Prevout.Value < 0 {
+				return fmt.Errorf("bitcoin transaction %s input %d has negative prevout value", txID, inputIndex)
+			}
+			if strings.TrimSpace(input.Prevout.Address) == "" || !input.Prevout.scriptPresent {
+				return fmt.Errorf("bitcoin transaction %s input %d is missing usable prevout ownership", txID, inputIndex)
+			}
+		}
+		for outputIndex, output := range tx.Vout {
+			if !output.valuePresent || output.Value < 0 {
+				return fmt.Errorf("bitcoin transaction %s output %d is missing a valid value", txID, outputIndex)
+			}
+			if !output.scriptPresent {
+				return fmt.Errorf("bitcoin transaction %s output %d is missing script identity", txID, outputIndex)
+			}
+		}
+	}
+	return nil
 }
 
 func (r *RpcListener) esploraBlock(ctx context.Context, endpoint bitcoinEndpoint, height int64) (string, string, []Tx, error) {
@@ -638,7 +820,7 @@ func (r *RpcListener) esploraBlock(ctx context.Context, endpoint bitcoinEndpoint
 	if blockHash == "" {
 		return "", "", nil, fmt.Errorf("empty block hash for bitcoin height %d", height)
 	}
-	parentHash, err := r.esploraBlockParentHash(ctx, endpoint, blockHash)
+	parentHash, expectedTxCount, err := r.esploraBlockMetadata(ctx, endpoint, blockHash, height)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -647,7 +829,7 @@ func (r *RpcListener) esploraBlock(ctx context.Context, endpoint bitcoinEndpoint
 		body, err := r.getFromEndpoint(ctx, endpoint, fmt.Sprintf("/block/%s/txs/%d", blockHash, offset))
 		if err != nil {
 			if isBitcoinTxPageEOF(err) {
-				return blockHash, parentHash, allTxs, nil
+				return "", "", nil, fmt.Errorf("bitcoin block %d pagination ended at %d of %d transactions", height, len(allTxs), expectedTxCount)
 			}
 			return "", "", nil, err
 		}
@@ -656,29 +838,38 @@ func (r *RpcListener) esploraBlock(ctx context.Context, endpoint bitcoinEndpoint
 		if err := json.Unmarshal(body, &txs); err != nil {
 			return "", "", nil, err
 		}
-		if len(txs) == 0 {
+		allTxs = append(allTxs, txs...)
+		if len(allTxs) > expectedTxCount {
+			return "", "", nil, fmt.Errorf("bitcoin block %d pagination returned %d transactions; metadata declared %d", height, len(allTxs), expectedTxCount)
+		}
+		if len(allTxs) == expectedTxCount {
 			return blockHash, parentHash, allTxs, nil
 		}
-		allTxs = append(allTxs, txs...)
 		if len(txs) < 25 {
-			return blockHash, parentHash, allTxs, nil
+			return "", "", nil, fmt.Errorf("bitcoin block %d pagination stopped at %d of %d transactions", height, len(allTxs), expectedTxCount)
 		}
 	}
 }
 
-func (r *RpcListener) esploraBlockParentHash(ctx context.Context, endpoint bitcoinEndpoint, blockHash string) (string, error) {
+func (r *RpcListener) esploraBlockMetadata(ctx context.Context, endpoint bitcoinEndpoint, blockHash string, height int64) (string, int, error) {
 	body, err := r.getFromEndpoint(ctx, endpoint, fmt.Sprintf("/block/%s", blockHash))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	var info BlockInfo
 	if err := json.Unmarshal(body, &info); err != nil {
-		return "", fmt.Errorf("decode bitcoin block metadata %s: %w", blockHash, err)
+		return "", 0, fmt.Errorf("decode bitcoin block metadata %s: %w", blockHash, err)
 	}
 	if id := strings.TrimSpace(info.ID); id != "" && !strings.EqualFold(id, blockHash) {
-		return "", fmt.Errorf("bitcoin block metadata hash mismatch: height hash %s metadata %s", blockHash, id)
+		return "", 0, fmt.Errorf("bitcoin block metadata hash mismatch: height hash %s metadata %s", blockHash, id)
 	}
-	return strings.TrimSpace(info.PreviousBlockHash), nil
+	if info.Height != height {
+		return "", 0, fmt.Errorf("bitcoin block metadata height mismatch: requested %d got %d", height, info.Height)
+	}
+	if info.TxCount <= 0 {
+		return "", 0, fmt.Errorf("bitcoin block %d metadata has invalid transaction count %d", height, info.TxCount)
+	}
+	return strings.TrimSpace(info.PreviousBlockHash), info.TxCount, nil
 }
 
 type unisatEnvelope struct {
@@ -723,6 +914,7 @@ func (r *RpcListener) unisatBlock(ctx context.Context, endpoint bitcoinEndpoint,
 
 	const pageSize = 100
 	var allTxs []Tx
+	expectedTotal := -1
 	for cursor := 0; ; cursor += pageSize {
 		var pageRaw json.RawMessage
 		path := fmt.Sprintf("/v1/indexer/block/%d/txs?cursor=%d&size=%d", height, cursor, pageSize)
@@ -733,12 +925,23 @@ func (r *RpcListener) unisatBlock(ctx context.Context, endpoint bitcoinEndpoint,
 		if err != nil {
 			return "", "", nil, err
 		}
+		if total <= 0 {
+			return "", "", nil, fmt.Errorf("unisat block %d transaction page omitted a valid total", height)
+		}
+		if expectedTotal < 0 {
+			expectedTotal = total
+		} else if total != expectedTotal {
+			return "", "", nil, fmt.Errorf("unisat block %d transaction total changed from %d to %d", height, expectedTotal, total)
+		}
 		allTxs = append(allTxs, txs...)
-		if len(txs) == 0 || len(txs) < pageSize {
+		if len(allTxs) > expectedTotal {
+			return "", "", nil, fmt.Errorf("unisat block %d returned %d transactions; declared total is %d", height, len(allTxs), expectedTotal)
+		}
+		if len(allTxs) == expectedTotal {
 			return blockHash, parentHash, allTxs, nil
 		}
-		if total > 0 && cursor+len(txs) >= total {
-			return blockHash, parentHash, allTxs, nil
+		if len(txs) < pageSize {
+			return "", "", nil, fmt.Errorf("unisat block %d pagination stopped at %d of %d transactions", height, len(allTxs), expectedTotal)
 		}
 	}
 }
@@ -804,8 +1007,10 @@ func bitcoinUniSatRawTxToTx(raw json.RawMessage, height int64, blockHash string)
 		}
 		input := Vin{IsCoinbase: firstRawString(vinObj, "coinbase") != ""}
 		prevObj := vinObj
+		nestedPrevout := false
 		if nested, ok := firstRawObject(vinObj, "prevout", "prevOut", "prev_output", "prevOutput", "utxo"); ok {
 			prevObj = nested
+			nestedPrevout = true
 		}
 		scriptObj, _ := firstRawObject(prevObj, "scriptPubKey", "scriptpubkey")
 		input.Prevout.Address = firstNonEmpty(
@@ -819,6 +1024,15 @@ func bitcoinUniSatRawTxToTx(raw json.RawMessage, height int64, blockHash string)
 		if ok {
 			input.Prevout.Value = value
 		}
+		input.Prevout.valuePresent = ok
+		input.Prevout.ScriptPubKey = firstNonEmpty(
+			firstRawString(prevObj, "scriptpubkey", "scriptPk", "script"),
+			firstRawString(scriptObj, "hex"),
+		)
+		input.Prevout.ScriptPubKeyASM = firstNonEmpty(firstRawString(prevObj, "scriptpubkey_asm", "scriptPkAsm"), firstRawString(scriptObj, "asm"))
+		input.Prevout.ScriptPubKeyType = firstNonEmpty(firstRawString(prevObj, "scriptpubkey_type", "scriptType"), firstRawString(scriptObj, "type"))
+		input.Prevout.scriptPresent = strings.TrimSpace(input.Prevout.ScriptPubKey) != "" || strings.TrimSpace(input.Prevout.ScriptPubKeyASM) != "" || strings.TrimSpace(input.Prevout.ScriptPubKeyType) != ""
+		input.prevoutPresent = nestedPrevout || input.Prevout.Address != "" || input.Prevout.valuePresent || input.Prevout.scriptPresent
 		tx.Vin = append(tx.Vin, input)
 	}
 
@@ -853,25 +1067,11 @@ func bitcoinUniSatRawTxToTx(raw json.RawMessage, height int64, blockHash string)
 		if ok {
 			output.Value = value
 		}
+		output.valuePresent = ok
+		output.scriptPresent = strings.TrimSpace(output.ScriptPubKey) != "" || strings.TrimSpace(output.ScriptPubKeyASM) != "" || strings.TrimSpace(output.ScriptPubKeyType) != ""
 		tx.Vout = append(tx.Vout, output)
 	}
 	return tx, nil
-}
-
-func (r *RpcListener) validateBlockContinuity(height int64, blockHash, parentHash string) error {
-	if err := listenerconfig.ValidateParentContinuity(r.chainState, height, parentHash); err != nil {
-		listenerconfig.RewindParentContinuityCheckpoint(r.chainState, height)
-		if r.stateWriter != nil {
-			if writeErr := r.stateWriter(r.chainState); writeErr != nil {
-				return fmt.Errorf("write bitcoin chain rollback state: %w", writeErr)
-			}
-		}
-		return err
-	}
-	if strings.TrimSpace(blockHash) == "" {
-		return fmt.Errorf("empty bitcoin block hash for height %d", height)
-	}
-	return nil
 }
 
 func isBitcoinTxPageEOF(err error) bool {
@@ -883,7 +1083,7 @@ func isBitcoinTxPageEOF(err error) bool {
 		strings.Contains(strings.ToLower(apiErr.body), "start index out of range")
 }
 
-func (r *RpcListener) handleTx(height int64, blockHash string, nativeAsset asset.Asset, tx Tx) error {
+func (r *RpcListener) handleTx(height int64, blockHash, parentHash string, nativeAsset asset.Asset, tx Tx) error {
 	from := "coinbase"
 	fromAddresses := make([]string, 0, len(tx.Vin))
 	for _, input := range tx.Vin {
@@ -914,6 +1114,7 @@ func (r *RpcListener) handleTx(height int64, blockHash string, nativeAsset asset
 			Hash:          helpers.StrPtr(tx.TxID),
 			Block:         helpers.StrPtr(fmt.Sprintf("%d", height)),
 			BlockHash:     helpers.StrPtr(blockHash),
+			ParentHash:    helpers.StrPtr(parentHash),
 			Token:         nil,
 			From:          helpers.StrPtr(from),
 			FromAddresses: append([]string(nil), fromAddresses...),
@@ -939,13 +1140,25 @@ func bitcoinCoreTxToTx(coreTx bitcoinCoreTx, height int64, blockHash string) (Tx
 	tx.Status.Confirmed = true
 	for _, vin := range coreTx.Vin {
 		input := Vin{IsCoinbase: vin.Coinbase != ""}
+		if !input.IsCoinbase && vin.Prevout == nil {
+			return Tx{}, fmt.Errorf("bitcoin core non-coinbase vin is missing verbosity=3 prevout")
+		}
 		if vin.Prevout != nil {
 			input.Prevout.Address = bitcoinCoreAddress(vin.Prevout.ScriptPubKey)
+			input.Prevout.ScriptPubKey = vin.Prevout.ScriptPubKey.Hex
+			input.Prevout.ScriptPubKeyASM = vin.Prevout.ScriptPubKey.ASM
+			input.Prevout.ScriptPubKeyType = vin.Prevout.ScriptPubKey.Type
 			value, err := bitcoinValueToSats(vin.Prevout.Value)
 			if err != nil {
 				return Tx{}, fmt.Errorf("convert bitcoin core vin value: %w", err)
 			}
 			input.Prevout.Value = value
+			input.prevoutPresent = true
+			input.Prevout.valuePresent = true
+			input.Prevout.scriptPresent = strings.TrimSpace(input.Prevout.ScriptPubKey) != "" || strings.TrimSpace(input.Prevout.ScriptPubKeyASM) != "" || strings.TrimSpace(input.Prevout.ScriptPubKeyType) != ""
+		}
+		if !input.IsCoinbase && (strings.TrimSpace(input.Prevout.Address) == "" || !input.Prevout.scriptPresent || input.Prevout.Value < 0) {
+			return Tx{}, fmt.Errorf("bitcoin core non-coinbase vin has incomplete prevout ownership")
 		}
 		tx.Vin = append(tx.Vin, input)
 	}
@@ -954,13 +1167,19 @@ func bitcoinCoreTxToTx(coreTx bitcoinCoreTx, height int64, blockHash string) (Tx
 		if err != nil {
 			return Tx{}, fmt.Errorf("convert bitcoin core vout value: %w", err)
 		}
-		tx.Vout = append(tx.Vout, Vout{
+		output := Vout{
 			Address:          bitcoinCoreAddress(vout.ScriptPubKey),
 			Value:            value,
 			ScriptPubKey:     vout.ScriptPubKey.Hex,
 			ScriptPubKeyASM:  vout.ScriptPubKey.ASM,
 			ScriptPubKeyType: vout.ScriptPubKey.Type,
-		})
+			valuePresent:     true,
+			scriptPresent:    strings.TrimSpace(vout.ScriptPubKey.Hex) != "" || strings.TrimSpace(vout.ScriptPubKey.ASM) != "" || strings.TrimSpace(vout.ScriptPubKey.Type) != "",
+		}
+		if output.Value < 0 || !output.scriptPresent {
+			return Tx{}, fmt.Errorf("bitcoin core vout %d has incomplete value/script data", vout.N)
+		}
+		tx.Vout = append(tx.Vout, output)
 	}
 	return tx, nil
 }

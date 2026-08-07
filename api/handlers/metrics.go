@@ -117,6 +117,7 @@ func buildOperationalMetrics(ctx context.Context, deps OperationalMetricsDeps, n
 	writeMetricHeader(&b, "gateway_metrics_collection_error", "Metrics collection errors by collector.", "gauge")
 	appendStatusMetrics(ctx, &b, "gateway_webhook_delivery_backlog", "Webhook delivery rows by retry-relevant status.", deps.WebhookDeliveryRepo, []string{
 		models.WebhookDeliveryStatusPending,
+		models.WebhookDeliveryStatusProcessing,
 		models.WebhookDeliveryStatusFailed,
 		models.WebhookDeliveryStatusDeadLetter,
 	})

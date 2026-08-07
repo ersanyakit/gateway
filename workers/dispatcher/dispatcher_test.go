@@ -60,6 +60,104 @@ func TestDispatchAndWaitReturnsAckErrors(t *testing.T) {
 	}
 }
 
+func TestListenerStyleDispatchCannotSucceedBeforePersistenceAck(t *testing.T) {
+	bus := NewDispatcher()
+	defer bus.Shutdown()
+	sub := bus.Subscribe(constants.Ethereum, 1)
+	persist := make(chan struct{})
+	received := make(chan struct{})
+	persistErr := errors.New("chain fact commit failed")
+
+	go func() {
+		event := <-sub
+		close(received)
+		<-persist
+		event.Ack <- persistErr
+	}()
+	result := make(chan error, 1)
+	go func() {
+		result <- bus.DispatchAndWait(context.Background(), Event{Chain: constants.Ethereum})
+	}()
+	select {
+	case <-received:
+	case <-time.After(time.Second):
+		t.Fatal("subscriber did not receive listener event")
+	}
+
+	select {
+	case err := <-result:
+		t.Fatalf("dispatch completed before durable persistence acknowledgement: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(persist)
+	select {
+	case err := <-result:
+		if !errors.Is(err, persistErr) {
+			t.Fatalf("error = %v, want persistence error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dispatch did not return after persistence acknowledgement")
+	}
+}
+
+func TestDispatchAndWaitRequiresAckFromEverySubscriber(t *testing.T) {
+	bus := NewDispatcher()
+	bus.ackTimeout = 50 * time.Millisecond
+	defer bus.Shutdown()
+	first := bus.Subscribe(constants.Ethereum, 1)
+	second := bus.Subscribe(constants.Ethereum, 1)
+
+	go func() {
+		event := <-first
+		event.Ack <- nil
+		// A duplicate acknowledgement from this subscriber must never satisfy
+		// the second subscriber's acknowledgement requirement.
+		event.Ack <- nil
+	}()
+	go func() {
+		<-second
+	}()
+
+	err := bus.DispatchAndWait(context.Background(), Event{Chain: constants.Ethereum})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want acknowledgement deadline", err)
+	}
+}
+
+func TestDispatchAndWaitBoundsMissingAckWithoutCallerDeadline(t *testing.T) {
+	bus := NewDispatcher()
+	bus.ackTimeout = 25 * time.Millisecond
+	defer bus.Shutdown()
+	sub := bus.Subscribe(constants.TRON, 1)
+	go func() {
+		<-sub
+	}()
+
+	started := time.Now()
+	err := bus.DispatchAndWait(context.Background(), Event{Chain: constants.TRON})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want acknowledgement deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("missing acknowledgement blocked for %s", elapsed)
+	}
+}
+
+func TestDispatchAndWaitRejectsClosedAckChannel(t *testing.T) {
+	bus := NewDispatcher()
+	defer bus.Shutdown()
+	sub := bus.Subscribe(constants.Solana, 1)
+	go func() {
+		event := <-sub
+		close(event.Ack)
+	}()
+
+	err := bus.DispatchAndWait(context.Background(), Event{Chain: constants.Solana})
+	if !errors.Is(err, ErrSubscriberAckClosed) {
+		t.Fatalf("error = %v, want ErrSubscriberAckClosed", err)
+	}
+}
+
 func TestConcurrentDispatchAndUnsubscribeCannotSendOnClosedChannel(t *testing.T) {
 	bus := NewDispatcher()
 	defer bus.Shutdown()

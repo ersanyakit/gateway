@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,14 +37,11 @@ import (
 var TransferEventHash = strings.ToLower(crypto.Keccak256Hash([]byte("Transfer(address,address,uint256)")).Hex())
 
 const (
-	pollInterval             = 6 * time.Second
-	maxBlocksPerPoll         = int64(5)
-	recentMaxBlocksPerPoll   = int64(25)
-	recentCatchUpLagBlocks   = int64(1000)
-	recentCatchUpWindowBlock = int64(1000)
-	safeBlockConfirmations   = int64(12)
-	receiptBatchSize         = 50
-	zeroAddress              = "0x0000000000000000000000000000000000000000"
+	pollInterval           = 6 * time.Second
+	maxBlocksPerPoll       = int64(5)
+	safeBlockConfirmations = int64(12)
+	receiptBatchSize       = 50
+	zeroAddress            = "0x0000000000000000000000000000000000000000"
 )
 
 type RpcListener struct {
@@ -69,7 +69,6 @@ type RpcListener struct {
 	lastBatchReceiptsWarning time.Time
 	lastRetryableWarning     time.Time
 	throttleErrors           int
-	recentProcessedBlock     int64
 	lastBlockNumber          int64
 	lastBlockHash            string
 	lastBlockParentHash      string
@@ -115,7 +114,7 @@ func (r *RpcListener) Start() error {
 	}
 
 	r.running = true
-	helpers.GoSafely("listener.evm."+r.chain.Name(), r.pollLoop)
+	helpers.GoSafelyRestarting("listener.evm."+r.chain.Name(), r.quit, time.Second, r.pollLoop)
 
 	return nil
 }
@@ -179,10 +178,6 @@ func (r *RpcListener) catchUp() error {
 	if safeLatest <= 0 {
 		return nil
 	}
-	if err := r.catchUpRecent(ctx, safeLatest, confirmedHead); err != nil {
-		return err
-	}
-
 	decision, err := listenerconfig.ResolveStartBlock(r.chain, r.chainState.LastProcessedBlock, safeLatest)
 	if err != nil {
 		return err
@@ -206,65 +201,15 @@ func (r *RpcListener) catchUp() error {
 			return err
 		}
 
-		listenerconfig.RecordProcessedBlockCheckpoint(r.chainState, blockNumber, r.lastBlockHash, r.lastBlockParentHash)
-		r.chainState.LastConfirmedBlock = confirmedHead
+		nextState := *r.chainState
+		listenerconfig.RecordProcessedBlockCheckpoint(&nextState, blockNumber, r.lastBlockHash, r.lastBlockParentHash)
+		nextState.LastConfirmedBlock = confirmedHead
 		if r.stateWriter != nil {
-			if err := r.stateWriter(r.chainState); err != nil {
+			if err := r.stateWriter(&nextState); err != nil {
 				return fmt.Errorf("write chain state: %w", err)
 			}
 		}
-	}
-
-	return nil
-}
-
-func (r *RpcListener) catchUpRecent(ctx context.Context, safeLatest int64, confirmedHead int64) error {
-	if r.chainState == nil {
-		return nil
-	}
-	lag := safeLatest - r.chainState.LastProcessedBlock
-	if lag < recentCatchUpLagBlocks {
-		return nil
-	}
-
-	windowStart := safeLatest - recentCatchUpWindowBlock + 1
-	if windowStart < 1 {
-		windowStart = 1
-	}
-
-	from := r.recentProcessedBlock + 1
-	tailStart := safeLatest - recentMaxBlocksPerPoll + 1
-	if tailStart < windowStart {
-		tailStart = windowStart
-	}
-	if r.recentProcessedBlock <= 0 || from < windowStart {
-		from = tailStart
-	}
-	historicalNext := r.chainState.LastProcessedBlock + 1
-	if from < historicalNext {
-		from = historicalNext
-	}
-	if from > safeLatest {
-		return nil
-	}
-
-	to := from + recentMaxBlocksPerPoll - 1
-	if to > safeLatest {
-		to = safeLatest
-	}
-
-	for blockNumber := from; blockNumber <= to; blockNumber++ {
-		if err := r.processBlock(ctx, blockNumber); err != nil {
-			return err
-		}
-		r.recentProcessedBlock = blockNumber
-	}
-
-	r.chainState.LastConfirmedBlock = confirmedHead
-	if r.stateWriter != nil {
-		if err := r.stateWriter(r.chainState); err != nil {
-			return fmt.Errorf("write chain state: %w", err)
-		}
+		*r.chainState = nextState
 	}
 
 	return nil
@@ -297,9 +242,14 @@ type jsonRPCError struct {
 }
 
 func (r *RpcListener) rpcCall(ctx context.Context, method string, params []interface{}, out interface{}) error {
+	return r.rpcCallValidated(ctx, method, params, out, nil)
+}
+
+func (r *RpcListener) rpcCallValidated(ctx context.Context, method string, params []interface{}, out interface{}, validate func() error) error {
+	requestID := time.Now().UnixNano()
 	body, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
-		"id":      time.Now().UnixNano(),
+		"id":      requestID,
 		"method":  method,
 		"params":  params,
 	})
@@ -309,12 +259,19 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 
 	var lastErr error
 	var throttleErr error
+	var traceNonCapabilityErr error
+	rememberFailure := func(err error) {
+		lastErr = err
+		if method == "trace_block" && !isTraceUnavailableError(err) {
+			traceNonCapabilityErr = err
+		}
+	}
 	for _, rpcURL := range r.rpcURLs() {
 		endpointCtx, cancel := rpcutil.WithEndpointTimeout(ctx)
 		req, err := http.NewRequestWithContext(endpointCtx, http.MethodPost, rpcURL, bytes.NewReader(body))
 		if err != nil {
 			cancel()
-			lastErr = fmt.Errorf("%s %s request build failed: %w", r.chain.Name(), rpcURL, err)
+			rememberFailure(fmt.Errorf("%s %s request build failed: %w", r.chain.Name(), rpcURL, err))
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
@@ -322,7 +279,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 		resp, err := r.client.Do(req)
 		if err != nil {
 			cancel()
-			lastErr = fmt.Errorf("%s %s request failed: %w", r.chain.Name(), rpcURL, err)
+			rememberFailure(fmt.Errorf("%s %s request failed: %w", r.chain.Name(), rpcURL, err))
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
@@ -331,17 +288,17 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 		_ = resp.Body.Close()
 		cancel()
 		if readErr != nil {
-			lastErr = fmt.Errorf("%s %s response read failed: %w", r.chain.Name(), rpcURL, readErr)
+			rememberFailure(fmt.Errorf("%s %s response read failed: %w", r.chain.Name(), rpcURL, readErr))
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			err := fmt.Errorf("%s %s returned HTTP %d: %s", r.chain.Name(), rpcURL, resp.StatusCode, string(respBody))
 			if rpcutil.StatusThrottled(resp.StatusCode) {
-				lastErr = rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header))
+				rememberFailure(rpcutil.NewThrottleError(err, rpcutil.RetryAfter(resp.Header)))
 				throttleErr = lastErr
 			} else {
-				lastErr = err
+				rememberFailure(err)
 			}
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
@@ -349,17 +306,22 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 
 		var rpcResp jsonRPCResponse
 		if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-			lastErr = fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err)
+			rememberFailure(fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err))
+			r.recordRPCFailure(rpcURL, lastErr)
+			continue
+		}
+		if rpcResp.ID != requestID {
+			rememberFailure(fmt.Errorf("%s %s RPC %s response id mismatch: got %d want %d", r.chain.Name(), rpcURL, method, rpcResp.ID, requestID))
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
 		if rpcResp.Error != nil {
 			err := fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
 			if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
-				lastErr = rpcutil.NewThrottleError(err, 0)
+				rememberFailure(rpcutil.NewThrottleError(err, 0))
 				throttleErr = lastErr
 			} else {
-				lastErr = err
+				rememberFailure(err)
 			}
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
@@ -368,10 +330,18 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			r.recordRPCSuccess(rpcURL)
 			return nil
 		}
+		resetRPCOutput(out)
 		if err := json.Unmarshal(rpcResp.Result, out); err != nil {
-			lastErr = fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err)
+			rememberFailure(fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err))
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
+		}
+		if validate != nil {
+			if err := validate(); err != nil {
+				rememberFailure(fmt.Errorf("%s %s RPC %s response integrity failed: %w", r.chain.Name(), rpcURL, method, err))
+				r.recordRPCFailure(rpcURL, lastErr)
+				continue
+			}
 		}
 
 		r.recordRPCSuccess(rpcURL)
@@ -381,15 +351,33 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	if throttleErr != nil {
 		return throttleErr
 	}
+	if traceNonCapabilityErr != nil {
+		return traceNonCapabilityErr
+	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no RPC endpoint configured")
 	}
 	return lastErr
 }
 
+func resetRPCOutput(out interface{}) {
+	value := reflect.ValueOf(out)
+	if value.Kind() != reflect.Ptr || value.IsNil() || !value.Elem().CanSet() {
+		return
+	}
+	value.Elem().Set(reflect.Zero(value.Elem().Type()))
+}
+
 func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCRequest) (map[int64]json.RawMessage, error) {
 	if len(requests) == 0 {
 		return map[int64]json.RawMessage{}, nil
+	}
+	expectedIDs := make(map[int64]struct{}, len(requests))
+	for _, request := range requests {
+		if _, duplicate := expectedIDs[request.ID]; duplicate {
+			return nil, fmt.Errorf("duplicate JSON-RPC batch request id %d", request.ID)
+		}
+		expectedIDs[request.ID] = struct{}{}
 	}
 
 	body, err := json.Marshal(requests)
@@ -464,6 +452,18 @@ func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCReques
 		results := make(map[int64]json.RawMessage, len(rpcResponses))
 		failed := false
 		for _, rpcResp := range rpcResponses {
+			if _, expected := expectedIDs[rpcResp.ID]; !expected {
+				lastErr = fmt.Errorf("%s RPC batch returned unexpected response id %d", r.chain.Name(), rpcResp.ID)
+				r.recordRPCFailure(rpcURL, lastErr)
+				failed = true
+				break
+			}
+			if _, duplicate := results[rpcResp.ID]; duplicate {
+				lastErr = fmt.Errorf("%s RPC batch returned duplicate response id %d", r.chain.Name(), rpcResp.ID)
+				r.recordRPCFailure(rpcURL, lastErr)
+				failed = true
+				break
+			}
 			if rpcResp.Error != nil {
 				err := fmt.Errorf("%s RPC batch error %d: %s", r.chain.Name(), rpcResp.Error.Code, rpcResp.Error.Message)
 				if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
@@ -479,6 +479,11 @@ func (r *RpcListener) rpcBatchCall(ctx context.Context, requests []jsonRPCReques
 			results[rpcResp.ID] = rpcResp.Result
 		}
 		if failed {
+			continue
+		}
+		if len(results) != len(expectedIDs) {
+			lastErr = fmt.Errorf("%s RPC batch response incomplete: got %d of %d responses", r.chain.Name(), len(results), len(expectedIDs))
+			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
 
@@ -532,6 +537,48 @@ type RawTx struct {
 	Value            string `json:"value"`
 	Input            string `json:"input"`
 	TransactionIndex string `json:"transactionIndex"`
+
+	// Ethereum represents contract creation with an explicitly present JSON null
+	// `to` field. Keep presence and nullness separate so a provider response that
+	// silently omits `to` cannot be mistaken for a contract creation.
+	toPresent bool
+	toNull    bool
+}
+
+func (t *RawTx) UnmarshalJSON(data []byte) error {
+	type rawTxWire struct {
+		Hash             string          `json:"hash"`
+		From             string          `json:"from"`
+		To               json.RawMessage `json:"to"`
+		Value            string          `json:"value"`
+		Input            string          `json:"input"`
+		TransactionIndex string          `json:"transactionIndex"`
+	}
+
+	var wire rawTxWire
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	t.Hash = wire.Hash
+	t.From = wire.From
+	t.Value = wire.Value
+	t.Input = wire.Input
+	t.TransactionIndex = wire.TransactionIndex
+	t.To = ""
+	t.toPresent = wire.To != nil
+	t.toNull = false
+	if !t.toPresent {
+		return nil
+	}
+	if bytes.Equal(bytes.TrimSpace(wire.To), []byte("null")) {
+		t.toNull = true
+		return nil
+	}
+	if err := json.Unmarshal(wire.To, &t.To); err != nil {
+		return fmt.Errorf("decode transaction to: %w", err)
+	}
+	return nil
 }
 
 type Receipt struct {
@@ -556,15 +603,234 @@ type EVMLog struct {
 	LogIndex        string   `json:"logIndex"`
 }
 
+func validateBlockResponse(requestedBlockNumber int64, block Block) error {
+	actualBlockNumber, err := parseEVMQuantity(block.Number)
+	if err != nil {
+		return fmt.Errorf("invalid block number %q: %w", block.Number, err)
+	}
+	if actualBlockNumber != requestedBlockNumber {
+		return fmt.Errorf("block number mismatch: got %d want %d", actualBlockNumber, requestedBlockNumber)
+	}
+	if err := validateEVMHash("block hash", block.Hash, false); err != nil {
+		return err
+	}
+	if err := validateEVMHash("parent hash", block.ParentHash, requestedBlockNumber == 0); err != nil {
+		return err
+	}
+	if strings.EqualFold(block.Hash, block.ParentHash) {
+		return errors.New("block hash equals parent hash")
+	}
+	seenTransactions := make(map[string]struct{}, len(block.Transactions))
+	for index, tx := range block.Transactions {
+		if err := validateRawTransaction(tx, index); err != nil {
+			return err
+		}
+		txID := strings.ToLower(strings.TrimSpace(tx.Hash))
+		if _, duplicate := seenTransactions[txID]; duplicate {
+			return fmt.Errorf("block contains duplicate transaction hash %s", tx.Hash)
+		}
+		seenTransactions[txID] = struct{}{}
+	}
+	return nil
+}
+
+func validateRawTransaction(tx RawTx, expectedIndex int) error {
+	if err := validateEVMHash(fmt.Sprintf("transaction %d hash", expectedIndex), tx.Hash, false); err != nil {
+		return err
+	}
+	if err := validateEVMAddress(fmt.Sprintf("transaction %d from", expectedIndex), tx.From, false); err != nil {
+		return err
+	}
+	if !tx.toPresent {
+		return fmt.Errorf("transaction %d to field is missing", expectedIndex)
+	}
+	if tx.toNull {
+		if strings.TrimSpace(tx.To) != "" {
+			return fmt.Errorf("transaction %d contract creation has a non-empty to address", expectedIndex)
+		}
+	} else if err := validateEVMAddress(fmt.Sprintf("transaction %d to", expectedIndex), tx.To, true); err != nil {
+		return err
+	}
+
+	value, err := hexutil.DecodeBig(strings.TrimSpace(tx.Value))
+	if err != nil {
+		return fmt.Errorf("transaction %d value %q is invalid: %w", expectedIndex, tx.Value, err)
+	}
+	if value.Sign() < 0 {
+		return fmt.Errorf("transaction %d value is negative", expectedIndex)
+	}
+
+	transactionIndex, err := parseEVMQuantity(tx.TransactionIndex)
+	if err != nil {
+		return fmt.Errorf("transaction %d index %q is invalid: %w", expectedIndex, tx.TransactionIndex, err)
+	}
+	if transactionIndex != int64(expectedIndex) {
+		return fmt.Errorf("transaction index mismatch: got %d want %d", transactionIndex, expectedIndex)
+	}
+	return nil
+}
+
+func validateReceiptForTransaction(receipt Receipt, tx RawTx, block Block) error {
+	if receipt.TransactionHash == "" {
+		return errors.New("receipt transaction hash is empty")
+	}
+	if !strings.EqualFold(receipt.TransactionHash, tx.Hash) {
+		return fmt.Errorf("receipt transaction hash mismatch: got %s want %s", receipt.TransactionHash, tx.Hash)
+	}
+	if err := validateEVMHash("receipt transaction hash", receipt.TransactionHash, false); err != nil {
+		return err
+	}
+	receiptTransactionIndex, err := parseEVMQuantity(receipt.TransactionIndex)
+	if err != nil {
+		return fmt.Errorf("invalid receipt transaction index %q: %w", receipt.TransactionIndex, err)
+	}
+	transactionIndex, err := parseEVMQuantity(tx.TransactionIndex)
+	if err != nil {
+		return fmt.Errorf("invalid transaction index %q: %w", tx.TransactionIndex, err)
+	}
+	if receiptTransactionIndex != transactionIndex {
+		return fmt.Errorf("receipt transaction index mismatch: got %d want %d", receiptTransactionIndex, transactionIndex)
+	}
+	if strings.TrimSpace(receipt.ContractAddress) != "" {
+		if err := validateEVMAddress("receipt contract address", receipt.ContractAddress, true); err != nil {
+			return err
+		}
+	}
+
+	blockNumber, err := parseEVMQuantity(block.Number)
+	if err != nil {
+		return fmt.Errorf("invalid enclosing block number %q: %w", block.Number, err)
+	}
+	receiptBlockNumber, err := parseEVMQuantity(receipt.BlockNumber)
+	if err != nil {
+		return fmt.Errorf("invalid receipt block number %q: %w", receipt.BlockNumber, err)
+	}
+	if receiptBlockNumber != blockNumber {
+		return fmt.Errorf("receipt block number mismatch: got %d want %d", receiptBlockNumber, blockNumber)
+	}
+	if err := validateEVMHash("receipt block hash", receipt.BlockHash, false); err != nil {
+		return err
+	}
+	if !strings.EqualFold(receipt.BlockHash, block.Hash) {
+		return fmt.Errorf("receipt block hash mismatch: got %s want %s", receipt.BlockHash, block.Hash)
+	}
+
+	for index, entry := range receipt.Logs {
+		if !strings.EqualFold(entry.TransactionHash, tx.Hash) {
+			return fmt.Errorf("receipt log %d transaction hash mismatch: got %s want %s", index, entry.TransactionHash, tx.Hash)
+		}
+		logBlockNumber, err := parseEVMQuantity(entry.BlockNumber)
+		if err != nil {
+			return fmt.Errorf("invalid receipt log %d block number %q: %w", index, entry.BlockNumber, err)
+		}
+		if logBlockNumber != blockNumber {
+			return fmt.Errorf("receipt log %d block number mismatch: got %d want %d", index, logBlockNumber, blockNumber)
+		}
+		if err := validateEVMHash(fmt.Sprintf("receipt log %d block hash", index), entry.BlockHash, false); err != nil {
+			return err
+		}
+		if !strings.EqualFold(entry.BlockHash, block.Hash) {
+			return fmt.Errorf("receipt log %d block hash mismatch: got %s want %s", index, entry.BlockHash, block.Hash)
+		}
+		if _, err := parseEVMQuantity(entry.LogIndex); err != nil {
+			return fmt.Errorf("invalid receipt log %d index %q: %w", index, entry.LogIndex, err)
+		}
+	}
+	return nil
+}
+
+func parseEVMQuantity(raw string) (int64, error) {
+	raw = strings.TrimSpace(raw)
+	value, err := hexutil.DecodeBig(raw)
+	if err != nil {
+		return 0, err
+	}
+	if value.Sign() < 0 || !value.IsInt64() {
+		return 0, fmt.Errorf("quantity is outside int64 range")
+	}
+	return value.Int64(), nil
+}
+
+func validateEVMHash(field string, raw string, allowZero bool) error {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 2+common.HashLength*2 || !strings.HasPrefix(strings.ToLower(raw), "0x") {
+		return fmt.Errorf("%s is not a 32-byte hex value", field)
+	}
+	decoded, err := hex.DecodeString(raw[2:])
+	if err != nil {
+		return fmt.Errorf("%s is not valid hex: %w", field, err)
+	}
+	if !allowZero {
+		allZero := true
+		for _, value := range decoded {
+			if value != 0 {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			return fmt.Errorf("%s is zero", field)
+		}
+	}
+	return nil
+}
+
+func validateEVMAddress(field string, raw string, allowZero bool) error {
+	raw = strings.TrimSpace(raw)
+	if len(raw) != 2+common.AddressLength*2 || !strings.HasPrefix(strings.ToLower(raw), "0x") {
+		return fmt.Errorf("%s is not a 20-byte hex value", field)
+	}
+	decoded, err := hex.DecodeString(raw[2:])
+	if err != nil {
+		return fmt.Errorf("%s is not valid hex: %w", field, err)
+	}
+	if !allowZero {
+		allZero := true
+		for _, value := range decoded {
+			if value != 0 {
+				allZero = false
+				break
+			}
+		}
+		if allZero {
+			return fmt.Errorf("%s is zero", field)
+		}
+	}
+	return nil
+}
+
 func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error {
 	blockHex := fmt.Sprintf("0x%x", blockNumber)
 
 	var block Block
-	if err := r.rpcCall(ctx, "eth_getBlockByNumber", []interface{}{blockHex, true}, &block); err != nil {
+	if err := r.rpcCallValidated(ctx, "eth_getBlockByNumber", []interface{}{blockHex, true}, &block, func() error {
+		return validateBlockResponse(blockNumber, block)
+	}); err != nil {
 		return err
 	}
-	if block.Number == "" {
-		return fmt.Errorf("empty block result for %s", blockHex)
+
+	readableBlockNumber := hexToDec(block.Number)
+	parsedBlockNumber := hexToInt64(block.Number)
+	continuityState := *r.chainState
+	if err := listenerconfig.ValidateParentContinuity(&continuityState, parsedBlockNumber, block.ParentHash); err != nil {
+		if r.observeCanonicalBlock != nil {
+			if observeErr := r.observeCanonicalBlock(ctx, r.chain.ChainID(), parsedBlockNumber, block.Hash, block.ParentHash); observeErr != nil {
+				return fmt.Errorf("observe canonical block after parent continuity failure: %w", observeErr)
+			}
+		}
+		listenerconfig.RewindParentContinuityCheckpoint(&continuityState, parsedBlockNumber)
+		if r.stateWriter != nil {
+			if writeErr := r.stateWriter(&continuityState); writeErr != nil {
+				return fmt.Errorf("write chain rollback state: %w", writeErr)
+			}
+		}
+		*r.chainState = continuityState
+		return err
+	}
+	if r.observeCanonicalBlock != nil {
+		if err := r.observeCanonicalBlock(ctx, r.chain.ChainID(), parsedBlockNumber, block.Hash, block.ParentHash); err != nil {
+			return fmt.Errorf("observe canonical block: %w", err)
+		}
 	}
 
 	nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
@@ -572,23 +838,7 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		return fmt.Errorf("native asset is not registered")
 	}
 
-	readableBlockNumber := hexToDec(block.Number)
-	parsedBlockNumber := hexToInt64(block.Number)
-	if err := listenerconfig.ValidateParentContinuity(r.chainState, parsedBlockNumber, block.ParentHash); err != nil {
-		if r.observeCanonicalBlock != nil {
-			if observeErr := r.observeCanonicalBlock(ctx, r.chain.ChainID(), parsedBlockNumber, block.Hash, block.ParentHash); observeErr != nil {
-				return fmt.Errorf("observe canonical block after parent continuity failure: %w", observeErr)
-			}
-		}
-		listenerconfig.RewindParentContinuityCheckpoint(r.chainState, parsedBlockNumber)
-		if r.stateWriter != nil {
-			if writeErr := r.stateWriter(r.chainState); writeErr != nil {
-				return fmt.Errorf("write chain rollback state: %w", writeErr)
-			}
-		}
-		return err
-	}
-	receiptsByHash, err := r.receiptsByBlock(ctx, blockHex)
+	receiptsByHash, err := r.receiptsByBlock(ctx, blockHex, block)
 	if err != nil {
 		return err
 	}
@@ -598,6 +848,7 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 			return err
 		}
 	}
+	txExecutionSucceeded := make(map[string]bool, len(block.Transactions))
 	for idx, tx := range block.Transactions {
 		if tx.Hash == "" {
 			continue
@@ -607,8 +858,10 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		if receiptsByHash != nil {
 			receipt = receiptsByHash[strings.ToLower(tx.Hash)]
 		}
-		if receipt.TransactionHash == "" {
-			receiptErr := r.rpcCall(ctx, "eth_getTransactionReceipt", []interface{}{tx.Hash}, &receipt)
+		if validateReceiptForTransaction(receipt, tx, block) != nil {
+			receiptErr := r.rpcCallValidated(ctx, "eth_getTransactionReceipt", []interface{}{tx.Hash}, &receipt, func() error {
+				return validateReceiptForTransaction(receipt, tx, block)
+			})
 			if receiptErr != nil {
 				return fmt.Errorf("receipt fetch failed for %s: %w", tx.Hash, receiptErr)
 			}
@@ -618,15 +871,24 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 		if status == "" {
 			return fmt.Errorf("unsupported receipt status %q for transaction %s", receipt.Status, tx.Hash)
 		}
+		txExecutionSucceeded[strings.ToLower(strings.TrimSpace(tx.Hash))] = status == models.TransactionStatusConfirmed
 		to := tx.To
-		if to == "" {
-			to = receipt.ContractAddress
-		}
-		if to == "" {
-			to = zeroAddress
+		if tx.toNull {
+			to = strings.TrimSpace(receipt.ContractAddress)
+			if status == models.TransactionStatusConfirmed {
+				if err := validateEVMAddress("confirmed contract creation address", to, false); err != nil {
+					return fmt.Errorf("transaction %s: %w", tx.Hash, err)
+				}
+			}
+			if to == "" {
+				to = zeroAddress
+			}
 		}
 
-		value := hexToBig(tx.Value)
+		value, err := hexutil.DecodeBig(strings.TrimSpace(tx.Value))
+		if err != nil {
+			return fmt.Errorf("transaction %s value became invalid after block validation: %w", tx.Hash, err)
+		}
 		eventType := "transaction"
 		if value.Sign() > 0 {
 			eventType = "native_transfer"
@@ -634,10 +896,11 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 			eventType = "contract_transaction"
 		}
 
-		txIndex := hexToDec(tx.TransactionIndex)
-		if txIndex == "" || txIndex == "0x" {
-			txIndex = fmt.Sprintf("%d", idx)
+		parsedTransactionIndex, err := parseEVMQuantity(tx.TransactionIndex)
+		if err != nil || parsedTransactionIndex != int64(idx) {
+			return fmt.Errorf("transaction %s index failed post-validation integrity check", tx.Hash)
 		}
+		txIndex := strconv.FormatInt(parsedTransactionIndex, 10)
 
 		txParam := &types.TransactionParam{
 			Context:    context.Background(),
@@ -663,14 +926,20 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 
 		for _, entry := range receipt.Logs {
 			if isTransferLog(entry) {
-				if err := r.handleTransferLog(ctx, entry, status, block.ParentHash); err != nil {
+				// ERC-721 uses the same Transfer signature with an indexed token ID
+				// in a fourth topic. It is deliberately outside this fungible-token
+				// listener; all other shapes carrying this signature are malformed.
+				if len(entry.Topics) == 4 {
+					continue
+				}
+				if err := r.handleTransferLogForTransaction(ctx, entry, status, block.ParentHash, tx.Hash); err != nil {
 					return err
 				}
 			}
 		}
 	}
 
-	if err := r.processInternalTransfers(ctx, blockHex, readableBlockNumber, block.Hash, block.ParentHash, nativeAsset); err != nil {
+	if err := r.processInternalTransfers(ctx, blockHex, readableBlockNumber, block.Hash, block.ParentHash, nativeAsset, block.Transactions, txExecutionSucceeded); err != nil {
 		return err
 	}
 	r.lastBlockNumber = blockNumber
@@ -679,7 +948,7 @@ func (r *RpcListener) processBlock(ctx context.Context, blockNumber int64) error
 	return nil
 }
 
-func (r *RpcListener) receiptsByBlock(ctx context.Context, blockHex string) (map[string]Receipt, error) {
+func (r *RpcListener) receiptsByBlock(ctx context.Context, blockHex string, block Block) (map[string]Receipt, error) {
 	if r.blockReceiptsUnavailable {
 		return nil, nil
 	}
@@ -701,12 +970,36 @@ func (r *RpcListener) receiptsByBlock(ctx context.Context, blockHex string) (map
 		return nil, nil
 	}
 
+	if len(receipts) != len(block.Transactions) {
+		if time.Since(r.lastBlockReceiptsWarning) >= time.Minute {
+			r.lastBlockReceiptsWarning = time.Now()
+			log.Printf("[%s] eth_getBlockReceipts returned %d of %d receipts for block %s; falling back to transaction receipts\n", r.chain.Name(), len(receipts), len(block.Transactions), blockHex)
+		}
+		return nil, nil
+	}
+
+	txsByHash := make(map[string]RawTx, len(block.Transactions))
+	for _, tx := range block.Transactions {
+		txsByHash[strings.ToLower(tx.Hash)] = tx
+	}
 	byHash := make(map[string]Receipt, len(receipts))
 	for _, receipt := range receipts {
-		if receipt.TransactionHash == "" {
-			continue
+		hash := strings.ToLower(receipt.TransactionHash)
+		tx, expected := txsByHash[hash]
+		if !expected {
+			return nil, nil
 		}
-		byHash[strings.ToLower(receipt.TransactionHash)] = receipt
+		if _, duplicate := byHash[hash]; duplicate {
+			return nil, nil
+		}
+		if err := validateReceiptForTransaction(receipt, tx, block); err != nil {
+			if time.Since(r.lastBlockReceiptsWarning) >= time.Minute {
+				r.lastBlockReceiptsWarning = time.Now()
+				log.Printf("[%s] eth_getBlockReceipts integrity failure for block %s; falling back to transaction receipts: %v\n", r.chain.Name(), blockHex, err)
+			}
+			return nil, nil
+		}
+		byHash[hash] = receipt
 	}
 	return byHash, nil
 }
@@ -771,13 +1064,15 @@ func (r *RpcListener) receiptsByTransactions(ctx context.Context, txs []RawTx) (
 				return nil, nil
 			}
 			receiptHash := strings.ToLower(receipt.TransactionHash)
-			if receiptHash == "" {
-				receiptHash = idToHash[id]
-				receipt.TransactionHash = receiptHash
+			expectedHash := idToHash[id]
+			if receiptHash == "" || !strings.EqualFold(receiptHash, expectedHash) {
+				if time.Since(r.lastBatchReceiptsWarning) >= time.Minute {
+					r.lastBatchReceiptsWarning = time.Now()
+					log.Printf("[%s] batch receipt transaction identity mismatch; falling back to per-transaction receipts\n", r.chain.Name())
+				}
+				return nil, nil
 			}
-			if receiptHash != "" {
-				byHash[receiptHash] = receipt
-			}
+			byHash[receiptHash] = receipt
 		}
 	}
 	return byHash, nil
@@ -810,20 +1105,33 @@ func isContractInput(input string) bool {
 }
 
 func isTransferLog(l EVMLog) bool {
-	return len(l.Topics) >= 3 && strings.EqualFold(l.Topics[0], TransferEventHash)
+	return len(l.Topics) > 0 && strings.EqualFold(strings.TrimSpace(l.Topics[0]), TransferEventHash)
 }
 
 func (r *RpcListener) handleTransferLog(ctx context.Context, l EVMLog, status string, parentHash string) error {
-	token := common.HexToAddress(l.Address)
-	from := common.BytesToAddress(common.HexToHash(l.Topics[1]).Bytes()[12:])
-	to := common.BytesToAddress(common.HexToHash(l.Topics[2]).Bytes()[12:])
+	return r.handleTransferLogForTransaction(ctx, l, status, parentHash, l.TransactionHash)
+}
 
-	value := big.NewInt(0)
-	if l.Data != "" && l.Data != "0x" {
-		if b, err := hexutil.Decode(l.Data); err == nil {
-			value.SetBytes(b)
-		}
+func (r *RpcListener) handleTransferLogForTransaction(ctx context.Context, l EVMLog, status string, parentHash, expectedTransactionHash string) error {
+	if err := validateERC20TransferLog(l, expectedTransactionHash); err != nil {
+		return err
 	}
+
+	token := common.HexToAddress(l.Address)
+	from, err := decodeEVMAddressTopic("transfer from topic", l.Topics[1])
+	if err != nil {
+		return err
+	}
+	to, err := decodeEVMAddressTopic("transfer to topic", l.Topics[2])
+	if err != nil {
+		return err
+	}
+
+	decodedValue, err := hexutil.Decode(strings.TrimSpace(l.Data))
+	if err != nil {
+		return fmt.Errorf("decode transfer data: %w", err)
+	}
+	value := new(big.Int).SetBytes(decodedValue)
 	if value.Sign() <= 0 {
 		return nil
 	}
@@ -863,21 +1171,86 @@ func (r *RpcListener) handleTransferLog(ctx context.Context, l EVMLog, status st
 	return r.dispatch(ctx, "token_transfer", txParam)
 }
 
+func validateERC20TransferLog(l EVMLog, expectedTransactionHash string) error {
+	if err := validateEVMHash("expected transfer transaction hash", expectedTransactionHash, false); err != nil {
+		return err
+	}
+	if err := validateEVMHash("transfer transaction hash", l.TransactionHash, false); err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(l.TransactionHash), strings.TrimSpace(expectedTransactionHash)) {
+		return fmt.Errorf("transfer log transaction hash mismatch: got %s want %s", l.TransactionHash, expectedTransactionHash)
+	}
+	if err := validateEVMAddress("transfer token address", l.Address, false); err != nil {
+		return err
+	}
+	if len(l.Topics) != 3 {
+		return fmt.Errorf("ERC-20 Transfer log has %d topics, want exactly 3", len(l.Topics))
+	}
+	if err := validateEVMHash("transfer signature topic", l.Topics[0], true); err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(l.Topics[0]), TransferEventHash) {
+		return fmt.Errorf("unexpected transfer signature topic %q", l.Topics[0])
+	}
+	if _, err := decodeEVMAddressTopic("transfer from topic", l.Topics[1]); err != nil {
+		return err
+	}
+	if _, err := decodeEVMAddressTopic("transfer to topic", l.Topics[2]); err != nil {
+		return err
+	}
+
+	data := strings.TrimSpace(l.Data)
+	if len(data) != 2+common.HashLength*2 || !strings.HasPrefix(strings.ToLower(data), "0x") {
+		return errors.New("ERC-20 Transfer data is not exactly 32 bytes")
+	}
+	decoded, err := hex.DecodeString(data[2:])
+	if err != nil {
+		return fmt.Errorf("ERC-20 Transfer data is not valid hex: %w", err)
+	}
+	if len(decoded) != common.HashLength {
+		return fmt.Errorf("ERC-20 Transfer data decoded to %d bytes, want 32", len(decoded))
+	}
+	return nil
+}
+
+func decodeEVMAddressTopic(field, raw string) (common.Address, error) {
+	if err := validateEVMHash(field, raw, true); err != nil {
+		return common.Address{}, err
+	}
+	decoded, err := hex.DecodeString(strings.TrimSpace(raw)[2:])
+	if err != nil {
+		return common.Address{}, fmt.Errorf("%s is not valid hex: %w", field, err)
+	}
+	for _, value := range decoded[:common.HashLength-common.AddressLength] {
+		if value != 0 {
+			return common.Address{}, fmt.Errorf("%s is not an ABI-encoded address", field)
+		}
+	}
+	return common.BytesToAddress(decoded[common.HashLength-common.AddressLength:]), nil
+}
+
 type Trace struct {
+	Type   string `json:"type"`
 	Action struct {
-		From  string `json:"from"`
-		To    string `json:"to"`
-		Value string `json:"value"`
+		From          string `json:"from"`
+		To            string `json:"to"`
+		Value         string `json:"value"`
+		Address       string `json:"address"`
+		RefundAddress string `json:"refundAddress"`
+		Balance       string `json:"balance"`
+		CallType      string `json:"callType"`
 	} `json:"action"`
 	Result struct {
 		Address string `json:"address"`
 	} `json:"result"`
 	Error           string `json:"error"`
 	TransactionHash string `json:"transactionHash"`
+	TraceAddress    []int  `json:"traceAddress"`
 }
 
-func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash, parentHash string, nativeAsset asset.Asset) error {
-	requireTrace := strings.EqualFold(os.Getenv("REQUIRE_EVM_TRACE"), "true")
+func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, blockNumber, blockHash, parentHash string, nativeAsset asset.Asset, blockTransactions []RawTx, txExecutionSucceeded map[string]bool) error {
+	requireTrace := evmTraceRequired()
 	if r.traceUnavailable && !requireTrace {
 		return nil
 	}
@@ -894,32 +1267,150 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 		}
 		if time.Since(r.lastTraceWarning) >= time.Minute {
 			r.lastTraceWarning = time.Now()
-			log.Printf("[%s] trace_block failed; internal transfers skipped for block %s: %v\n", r.chain.Name(), blockNumber, err)
+			log.Printf("[%s] trace_block failed; checkpoint held for block %s: %v\n", r.chain.Name(), blockNumber, err)
 		}
-		return nil
+		return fmt.Errorf("trace_block failed for block %s: %w", blockNumber, err)
 	}
 
-	for idx, trace := range traces {
-		if trace.TransactionHash == "" {
-			continue
+	blockTxIDs := make(map[string]struct{}, len(blockTransactions))
+	blockTxByID := make(map[string]RawTx, len(blockTransactions))
+	for _, transaction := range blockTransactions {
+		if err := validateEVMHash("trace block transaction hash", transaction.Hash, false); err != nil {
+			return err
+		}
+		txID := strings.ToLower(strings.TrimSpace(transaction.Hash))
+		if _, duplicate := blockTxIDs[txID]; duplicate {
+			return fmt.Errorf("trace block transaction set contains duplicate hash %s", transaction.Hash)
+		}
+		blockTxIDs[txID] = struct{}{}
+		blockTxByID[txID] = transaction
+		if _, known := txExecutionSucceeded[txID]; !known {
+			return fmt.Errorf("transaction execution status is missing for %s", transaction.Hash)
+		}
+	}
+	if len(blockTransactions) > 0 && len(traces) == 0 {
+		return fmt.Errorf("trace_block returned no traces for %d transactions in block %s", len(blockTransactions), blockNumber)
+	}
+
+	seenTraceIdentities := make(map[string]struct{}, len(traces))
+	rootTraceCounts := make(map[string]int, len(blockTransactions))
+	failedTracePaths := make(map[string]map[string]struct{})
+	for index, trace := range traces {
+		txHash := strings.TrimSpace(trace.TransactionHash)
+		traceType := strings.ToLower(strings.TrimSpace(trace.Type))
+		if txHash == "" {
+			// Parity-style clients may include protocol block-reward traces. They
+			// are not transaction executions and therefore have no transactionHash.
+			if traceType == "reward" {
+				continue
+			}
+			return fmt.Errorf("trace_block trace %d is missing transactionHash", index)
+		}
+		if err := validateEVMHash(fmt.Sprintf("trace_block trace %d transaction hash", index), txHash, false); err != nil {
+			return err
+		}
+		txID := strings.ToLower(txHash)
+		if _, belongs := blockTxIDs[txID]; !belongs {
+			return fmt.Errorf("trace_block returned transaction %s outside block %s", trace.TransactionHash, blockNumber)
+		}
+		for _, component := range trace.TraceAddress {
+			if component < 0 {
+				return fmt.Errorf("trace_block transaction %s has negative traceAddress component", trace.TransactionHash)
+			}
 		}
 
-		value := hexToBig(trace.Action.Value)
+		identityKey := txID + ":" + traceAddressKey(trace.TraceAddress)
+		if _, duplicate := seenTraceIdentities[identityKey]; duplicate {
+			return fmt.Errorf("trace_block returned duplicate trace identity %s", identityKey)
+		}
+		seenTraceIdentities[identityKey] = struct{}{}
+		if len(trace.TraceAddress) == 0 {
+			if traceType != "call" && traceType != "create" {
+				return fmt.Errorf("trace_block transaction %s root has unsupported type %q", trace.TransactionHash, trace.Type)
+			}
+			transaction := blockTxByID[txID]
+			if transaction.toPresent {
+				if transaction.toNull && traceType != "create" {
+					return fmt.Errorf("contract creation transaction %s has %q root trace", trace.TransactionHash, trace.Type)
+				}
+				if !transaction.toNull && traceType != "call" {
+					return fmt.Errorf("call transaction %s has %q root trace", trace.TransactionHash, trace.Type)
+				}
+			}
+			rootTraceCounts[txID]++
+		}
+		if strings.TrimSpace(trace.Error) != "" {
+			if failedTracePaths[txID] == nil {
+				failedTracePaths[txID] = make(map[string]struct{})
+			}
+			failedTracePaths[txID][traceAddressKey(trace.TraceAddress)] = struct{}{}
+		}
+	}
+	for txID := range blockTxIDs {
+		if rootTraceCounts[txID] != 1 {
+			return fmt.Errorf("trace_block returned %d root traces for transaction %s; want exactly 1", rootTraceCounts[txID], txID)
+		}
+	}
+	for _, trace := range traces {
+		if strings.TrimSpace(trace.TransactionHash) == "" {
+			continue
+		}
+		// trace_block includes the root transaction call with traceAddress=[].
+		// Its action.value is already emitted above as native_transfer; treating it
+		// as internal would credit every plain native transfer twice.
+		if len(trace.TraceAddress) == 0 {
+			continue
+		}
+		txID := strings.ToLower(strings.TrimSpace(trace.TransactionHash))
+		if !txExecutionSucceeded[txID] {
+			// A reverted root transaction cannot produce a real internal value
+			// transfer even when a child trace itself has no local error.
+			continue
+		}
+		if tracePathFailed(trace.TraceAddress, failedTracePaths[txID]) {
+			continue
+		}
+		traceIdentity := internalTraceLogIndex(trace.TraceAddress)
+
+		from := trace.Action.From
+		to := trace.Action.To
+		valueRaw := trace.Action.Value
+		switch strings.ToLower(strings.TrimSpace(trace.Type)) {
+		case "call":
+			switch strings.ToLower(strings.TrimSpace(trace.Action.CallType)) {
+			case "call":
+				// Only CALL transfers value to the target account. DELEGATECALL and
+				// CALLCODE may expose inherited msg.value without moving funds.
+			case "delegatecall", "staticcall", "callcode":
+				continue
+			default:
+				return fmt.Errorf("trace %s has unsupported callType %q", traceIdentity, trace.Action.CallType)
+			}
+		case "create":
+			// handled by the common action/result fields below
+		case "suicide", "selfdestruct":
+			from = trace.Action.Address
+			to = trace.Action.RefundAddress
+			valueRaw = trace.Action.Balance
+		default:
+			return fmt.Errorf("trace %s has unsupported type %q", traceIdentity, trace.Type)
+		}
+		value, err := hexutil.DecodeBig(strings.TrimSpace(valueRaw))
+		if err != nil {
+			return fmt.Errorf("trace %s has invalid value %q: %w", traceIdentity, valueRaw, err)
+		}
 		if value.Sign() == 0 {
 			continue
 		}
 
-		to := trace.Action.To
 		if to == "" {
 			to = trace.Result.Address
 		}
-		if to == "" {
-			to = zeroAddress
+		if err := validateEVMAddress(fmt.Sprintf("trace %s from", traceIdentity), from, false); err != nil {
+			return err
 		}
-
-		status := "confirmed"
-		if trace.Error != "" {
-			status = "failed"
+		if err := validateEVMAddress(fmt.Sprintf("trace %s to", traceIdentity), to, true); err != nil {
+			return err
 		}
 
 		txParam := &types.TransactionParam{
@@ -932,11 +1423,11 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 			BlockHash:  helpers.StrPtr(blockHash),
 			ParentHash: helpers.StrPtr(parentHash),
 			Token:      nil,
-			From:       helpers.StrPtr(r.normalizeAddress(trace.Action.From)),
+			From:       helpers.StrPtr(r.normalizeAddress(from)),
 			To:         helpers.StrPtr(r.normalizeAddress(to)),
 			Amount:     helpers.StrPtr(value.String()),
-			LogIndex:   helpers.StrPtr(fmt.Sprintf("internal:%d", idx)),
-			Status:     helpers.StrPtr(status),
+			LogIndex:   helpers.StrPtr(traceIdentity),
+			Status:     helpers.StrPtr(models.TransactionStatusConfirmed),
 		}
 
 		if err := r.dispatch(ctx, "internal_transfer", txParam); err != nil {
@@ -945,6 +1436,47 @@ func (r *RpcListener) processInternalTransfers(ctx context.Context, blockHex, bl
 	}
 
 	return nil
+}
+
+func evmTraceRequired() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("REQUIRE_EVM_TRACE")))
+	if raw != "" {
+		return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+	}
+	// Production defaults to fail-closed. Operators that intentionally do not
+	// index internal value transfers can explicitly set REQUIRE_EVM_TRACE=false.
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("APP_ENV")), "production")
+}
+
+func internalTraceLogIndex(traceAddress []int) string {
+	parts := make([]string, len(traceAddress))
+	for i, value := range traceAddress {
+		parts[i] = strconv.Itoa(value)
+	}
+	return "internal:" + strings.Join(parts, ".")
+}
+
+func traceAddressKey(traceAddress []int) string {
+	parts := make([]string, len(traceAddress))
+	for i, value := range traceAddress {
+		parts[i] = strconv.Itoa(value)
+	}
+	return strings.Join(parts, ".")
+}
+
+func tracePathFailed(traceAddress []int, failed map[string]struct{}) bool {
+	if len(failed) == 0 {
+		return false
+	}
+	if _, rootFailed := failed[""]; rootFailed {
+		return true
+	}
+	for length := 1; length <= len(traceAddress); length++ {
+		if _, failedAncestor := failed[traceAddressKey(traceAddress[:length])]; failedAncestor {
+			return true
+		}
+	}
+	return false
 }
 
 func isTraceUnavailableError(err error) bool {

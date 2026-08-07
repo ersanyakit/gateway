@@ -4,17 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/big"
 	"net/http"
+	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"core/asset"
 	"core/blockchain"
+	"core/constants"
 	"core/helpers"
 	"core/models"
 	"core/types"
@@ -24,21 +29,25 @@ import (
 )
 
 const (
-	pollInterval    = 10 * time.Second
-	maxSlotsPerPoll = int64(8)
-	unknownProgram  = "unknown_program"
-	unknownSigner   = "unknown_signer"
+	pollInterval           = 10 * time.Second
+	backlogPollInterval    = 250 * time.Millisecond
+	defaultSlotsPerBatch   = int64(64)
+	defaultSlotsPerCatchUp = int64(256)
+	maxConfiguredSlots     = int64(4096)
+	unknownProgram         = "unknown_program"
+	unknownSigner          = "unknown_signer"
 
 	solanaMemoProgram    = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
 	solanaMemoProgramOld = "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo"
 )
 
 type RpcListener struct {
-	chain       blockchain.Chain
-	registry    *asset.Registry
-	chainState  *models.ChainState
-	stateWriter func(*models.ChainState) error
-	bus         *dispatcher.Dispatcher
+	chain                  blockchain.Chain
+	registry               *asset.Registry
+	chainState             *models.ChainState
+	stateWriter            func(*models.ChainState) error
+	bus                    *dispatcher.Dispatcher
+	canonicalBlockObserver func(context.Context, constants.ChainID, int64, string, string) error
 
 	client          *http.Client
 	endpointCircuit *rpcutil.EndpointCircuit
@@ -50,6 +59,14 @@ type RpcListener struct {
 
 	lastRetryableWarning time.Time
 	throttleErrors       int
+	backlogRemaining     bool
+	lastBlockSlot        int64
+	lastBlockHash        string
+	lastBlockParentHash  string
+}
+
+func (r *RpcListener) SetCanonicalBlockObserver(observer func(context.Context, constants.ChainID, int64, string, string) error) {
+	r.canonicalBlockObserver = observer
 }
 
 func NewRpcListener(
@@ -88,7 +105,7 @@ func (r *RpcListener) Start() error {
 	}
 
 	r.running = true
-	helpers.GoSafely("listener.solana."+r.chain.Name(), r.pollLoop)
+	helpers.GoSafelyRestarting("listener.solana."+r.chain.Name(), r.quit, time.Second, r.pollLoop)
 	return nil
 }
 
@@ -126,6 +143,9 @@ func (r *RpcListener) pollLoop() {
 			}
 		} else {
 			r.throttleErrors = 0
+			if r.backlogRemaining {
+				delay = backlogPollInterval
+			}
 		}
 
 		timer := time.NewTimer(delay)
@@ -141,6 +161,7 @@ func (r *RpcListener) pollLoop() {
 func (r *RpcListener) catchUp() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	r.backlogRemaining = false
 
 	latest, err := r.latestSlot(ctx)
 	if err != nil {
@@ -162,44 +183,95 @@ func (r *RpcListener) catchUp() error {
 	if from > latest {
 		return nil
 	}
+	r.backlogRemaining = true
 
-	to := from + maxSlotsPerPoll - 1
-	if to > latest {
-		to = latest
+	catchUpEnd := from + solanaSlotsPerCatchUp() - 1
+	if catchUpEnd > latest {
+		catchUpEnd = latest
 	}
+	batchSize := solanaSlotsPerBatch()
 
-	slots, err := r.blocksInRange(ctx, from, to)
-	if err != nil {
-		return err
-	}
+	for batchFrom := from; batchFrom <= catchUpEnd; {
+		batchTo := batchFrom + batchSize - 1
+		if batchTo > catchUpEnd {
+			batchTo = catchUpEnd
+		}
 
-	for _, slot := range slots {
-		if err := r.processSlot(ctx, slot); err != nil {
+		slots, err := r.blocksInRange(ctx, batchFrom, batchTo)
+		if err != nil {
 			return err
 		}
-		if err := r.writeChainState(slot); err != nil {
-			return err
+
+		for _, slot := range slots {
+			if err := r.processSlot(ctx, slot); err != nil {
+				return err
+			}
+			if err := r.writeChainState(slot); err != nil {
+				return err
+			}
 		}
+
+		// blocksInRange verifies every omitted slot as explicitly skipped before
+		// this checkpoint can cross it. An incomplete or unavailable response
+		// therefore holds the cursor instead of silently losing transactions.
+		if r.chainState.LastProcessedBlock < batchTo {
+			if err := r.writeChainState(batchTo); err != nil {
+				return err
+			}
+		}
+		batchFrom = batchTo + 1
 	}
 
-	if r.chainState.LastProcessedBlock < to {
-		if err := r.writeChainState(to); err != nil {
-			return err
-		}
-	}
-
+	r.backlogRemaining = r.chainState.LastProcessedBlock < latest
 	return nil
 }
 
+func solanaSlotsPerBatch() int64 {
+	return positiveBoundedEnv("SOLANA_SCAN_BATCH_SLOTS", defaultSlotsPerBatch, maxConfiguredSlots)
+}
+
+func solanaSlotsPerCatchUp() int64 {
+	configured := positiveBoundedEnv("SOLANA_MAX_SLOTS_PER_CATCH_UP", defaultSlotsPerCatchUp, maxConfiguredSlots)
+	if batch := solanaSlotsPerBatch(); configured < batch {
+		return batch
+	}
+	return configured
+}
+
+func positiveBoundedEnv(key string, fallback, maximum int64) int64 {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 || value > maximum {
+		return fallback
+	}
+	return value
+}
+
 func (r *RpcListener) writeChainState(block int64) error {
-	r.chainState.LastProcessedBlock = block
-	r.chainState.LastConfirmedBlock = block
-	if r.stateWriter == nil {
-		return nil
+	if r.chainState == nil {
+		return fmt.Errorf("solana chain state is nil")
 	}
-	if err := r.stateWriter(r.chainState); err != nil {
-		return fmt.Errorf("write chain state: %w", err)
+	next := *r.chainState
+	checkpointHash := next.LastProcessedHash
+	checkpointParentHash := next.LastProcessedParentHash
+	if r.lastBlockSlot > 0 && r.lastBlockSlot <= block && strings.TrimSpace(r.lastBlockHash) != "" {
+		checkpointHash = r.lastBlockHash
+		checkpointParentHash = r.lastBlockParentHash
 	}
+	// A skipped slot advances the slot cursor but has no block identity of its
+	// own. Retain the most recent real block hash so the next produced block can
+	// still prove previousBlockhash continuity across the gap.
+	listenerconfig.RecordProcessedBlockCheckpoint(&next, block, checkpointHash, checkpointParentHash)
+	next.LastConfirmedBlock = block
+	if r.stateWriter != nil {
+		if err := r.stateWriter(&next); err != nil {
+			return fmt.Errorf("write chain state: %w", err)
+		}
+	}
+	*r.chainState = next
 	return nil
 }
 
@@ -208,10 +280,17 @@ func (r *RpcListener) latestSlot(ctx context.Context) (int64, error) {
 	if err := r.rpcCall(ctx, "getSlot", []interface{}{map[string]interface{}{"commitment": "finalized"}}, &slot); err != nil {
 		return 0, err
 	}
+	if slot <= 0 {
+		return 0, fmt.Errorf("%s RPC getSlot returned invalid finalized slot %d", r.chain.Name(), slot)
+	}
 	return slot, nil
 }
 
 func (r *RpcListener) blocksInRange(ctx context.Context, from, to int64) ([]int64, error) {
+	if from <= 0 || to < from {
+		return nil, fmt.Errorf("invalid solana slot range [%d,%d]", from, to)
+	}
+
 	var slots []int64
 	if err := r.rpcCall(ctx, "getBlocks", []interface{}{
 		from,
@@ -220,10 +299,66 @@ func (r *RpcListener) blocksInRange(ctx context.Context, from, to int64) ([]int6
 	}, &slots); err != nil {
 		return nil, err
 	}
-	return slots, nil
+	previous := int64(-1)
+	for index, slot := range slots {
+		if slot < from || slot > to {
+			return nil, fmt.Errorf("%s RPC getBlocks returned out-of-range slot %d for [%d,%d]", r.chain.Name(), slot, from, to)
+		}
+		if index > 0 && slot <= previous {
+			return nil, fmt.Errorf("%s RPC getBlocks returned non-increasing slot sequence at %d after %d", r.chain.Name(), slot, previous)
+		}
+		previous = slot
+	}
+
+	// getBlocks legitimately omits skipped slots, but a truncated/empty RPC
+	// response is indistinguishable from that at the list level. Probe every
+	// omission before allowing the durable checkpoint to cross it.
+	complete := make([]int64, 0, len(slots))
+	listedIndex := 0
+	for slot := from; slot <= to; slot++ {
+		if listedIndex < len(slots) && slots[listedIndex] == slot {
+			complete = append(complete, slot)
+			listedIndex++
+			continue
+		}
+
+		hasBlock, err := r.slotHasBlock(ctx, slot)
+		if err != nil {
+			return nil, fmt.Errorf("verify omitted solana slot %d: %w", slot, err)
+		}
+		if hasBlock {
+			complete = append(complete, slot)
+		}
+	}
+	return complete, nil
+}
+
+func (r *RpcListener) slotHasBlock(ctx context.Context, slot int64) (bool, error) {
+	var header *struct {
+		Blockhash string `json:"blockhash"`
+	}
+	err := r.rpcCall(ctx, "getBlock", []interface{}{
+		slot,
+		map[string]interface{}{
+			"commitment":         "finalized",
+			"transactionDetails": "none",
+			"rewards":            false,
+		},
+	}, &header)
+	if err != nil {
+		if isExplicitlySkippedSlot(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if header == nil || strings.TrimSpace(header.Blockhash) == "" {
+		return false, fmt.Errorf("getBlock returned an invalid header")
+	}
+	return true, nil
 }
 
 type jsonRPCResponse struct {
+	ID     int64           `json:"id"`
 	Result json.RawMessage `json:"result"`
 	Error  *jsonRPCError   `json:"error"`
 }
@@ -233,10 +368,29 @@ type jsonRPCError struct {
 	Message string `json:"message"`
 }
 
+type jsonRPCRemoteError struct {
+	chainName string
+	method    string
+	code      int
+	message   string
+}
+
+func (e *jsonRPCRemoteError) Error() string {
+	return fmt.Sprintf("%s RPC %s error %d: %s", e.chainName, e.method, e.code, e.message)
+}
+
+func isExplicitlySkippedSlot(err error) bool {
+	var remoteErr *jsonRPCRemoteError
+	return errors.As(err, &remoteErr) &&
+		remoteErr.code == -32007 &&
+		strings.Contains(strings.ToLower(remoteErr.message), "skip")
+}
+
 func (r *RpcListener) rpcCall(ctx context.Context, method string, params []interface{}, out interface{}) error {
+	requestID := time.Now().UnixNano()
 	body, err := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0",
-		"id":      time.Now().UnixNano(),
+		"id":      requestID,
 		"method":  method,
 		"params":  params,
 	})
@@ -246,6 +400,7 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 
 	var lastErr error
 	var throttleErr error
+	var skippedSlotErr error
 	for _, rpcURL := range r.rpcURLs() {
 		endpointCtx, cancel := rpcutil.WithEndpointTimeout(ctx)
 		req, err := http.NewRequestWithContext(endpointCtx, http.MethodPost, rpcURL, bytes.NewReader(body))
@@ -286,12 +441,27 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 
 		var rpcResp jsonRPCResponse
 		if err := json.Unmarshal(respBody, &rpcResp); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s response decode failed: %w", r.chain.Name(), rpcURL, err)
+			r.recordRPCFailure(rpcURL, lastErr)
+			continue
+		}
+		if rpcResp.ID != requestID {
+			lastErr = fmt.Errorf("%s %s RPC %s response id mismatch: got %d want %d", r.chain.Name(), rpcURL, method, rpcResp.ID, requestID)
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
 		if rpcResp.Error != nil {
-			err := fmt.Errorf("%s RPC %s error %d: %s", r.chain.Name(), method, rpcResp.Error.Code, rpcResp.Error.Message)
+			remoteErr := &jsonRPCRemoteError{
+				chainName: r.chain.Name(),
+				method:    method,
+				code:      rpcResp.Error.Code,
+				message:   rpcResp.Error.Message,
+			}
+			if method == "getBlock" && isExplicitlySkippedSlot(remoteErr) {
+				skippedSlotErr = remoteErr
+				continue
+			}
+			var err error = remoteErr
 			if rpcutil.JSONRPCThrottled(rpcResp.Error.Code, rpcResp.Error.Message) {
 				lastErr = rpcutil.NewThrottleError(err, 0)
 				throttleErr = lastErr
@@ -301,12 +471,18 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
-		if out == nil || string(rpcResp.Result) == "null" {
+		if out == nil {
 			r.recordRPCSuccess(rpcURL)
 			return nil
 		}
+		if len(bytes.TrimSpace(rpcResp.Result)) == 0 || bytes.Equal(bytes.TrimSpace(rpcResp.Result), []byte("null")) {
+			lastErr = fmt.Errorf("%s RPC %s returned unavailable null result", r.chain.Name(), method)
+			r.recordRPCFailure(rpcURL, lastErr)
+			continue
+		}
+		resetRPCOutput(out)
 		if err := json.Unmarshal(rpcResp.Result, out); err != nil {
-			lastErr = err
+			lastErr = fmt.Errorf("%s %s RPC %s result decode failed: %w", r.chain.Name(), rpcURL, method, err)
 			r.recordRPCFailure(rpcURL, lastErr)
 			continue
 		}
@@ -318,10 +494,21 @@ func (r *RpcListener) rpcCall(ctx context.Context, method string, params []inter
 	if throttleErr != nil {
 		return throttleErr
 	}
+	if lastErr == nil && skippedSlotErr != nil {
+		return skippedSlotErr
+	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("no solana RPC endpoint configured")
 	}
 	return lastErr
+}
+
+func resetRPCOutput(out interface{}) {
+	value := reflect.ValueOf(out)
+	if value.Kind() != reflect.Ptr || value.IsNil() || !value.Elem().CanSet() {
+		return
+	}
+	value.Elem().Set(reflect.Zero(value.Elem().Type()))
 }
 
 func (r *RpcListener) rpcURLs() []string {
@@ -348,19 +535,22 @@ func (r *RpcListener) recordRPCFailure(url string, err error) {
 }
 
 type Block struct {
-	Blockhash    string    `json:"blockhash"`
-	BlockHeight  *int64    `json:"blockHeight"`
-	Transactions []BlockTx `json:"transactions"`
+	Blockhash         string    `json:"blockhash"`
+	PreviousBlockhash string    `json:"previousBlockhash"`
+	BlockHeight       *int64    `json:"blockHeight"`
+	Transactions      []BlockTx `json:"transactions"`
 }
 
 type BlockTx struct {
-	Meta        TxMeta      `json:"meta"`
+	Meta        *TxMeta     `json:"meta"`
 	Transaction Transaction `json:"transaction"`
 }
 
 type TxMeta struct {
 	Err               json.RawMessage     `json:"err"`
 	InnerInstructions []InnerInstructions `json:"innerInstructions"`
+	PreBalances       []uint64            `json:"preBalances"`
+	PostBalances      []uint64            `json:"postBalances"`
 	PreTokenBalances  []TokenBalance      `json:"preTokenBalances"`
 	PostTokenBalances []TokenBalance      `json:"postTokenBalances"`
 	LoadedAddresses   LoadedAddresses     `json:"loadedAddresses"`
@@ -417,6 +607,7 @@ type Instruction struct {
 type AccountKey struct {
 	Pubkey string
 	Signer bool
+	Source string
 }
 
 func (r *RpcListener) processSlot(ctx context.Context, slot int64) error {
@@ -436,23 +627,92 @@ func (r *RpcListener) processSlot(ctx context.Context, slot int64) error {
 	if block == nil {
 		return fmt.Errorf("empty block result for solana slot %d", slot)
 	}
+	if strings.TrimSpace(block.Blockhash) == "" {
+		return fmt.Errorf("solana slot %d returned an empty block hash", slot)
+	}
+	if slot > 0 && strings.TrimSpace(block.PreviousBlockhash) == "" {
+		return fmt.Errorf("solana slot %d returned an empty previous block hash", slot)
+	}
+	if r.chainState != nil {
+		continuityState := *r.chainState
+		if continuityErr := validateSolanaParentContinuity(&continuityState, slot, block.PreviousBlockhash); continuityErr != nil {
+			if r.canonicalBlockObserver != nil {
+				if observeErr := r.canonicalBlockObserver(ctx, r.chain.ChainID(), slot, block.Blockhash, block.PreviousBlockhash); observeErr != nil {
+					return fmt.Errorf("observe solana canonical slot after parent continuity failure: %w", observeErr)
+				}
+			}
+			listenerconfig.RewindParentContinuityCheckpoint(&continuityState, slot)
+			if r.stateWriter != nil {
+				if writeErr := r.stateWriter(&continuityState); writeErr != nil {
+					return fmt.Errorf("write solana chain rollback state: %w", writeErr)
+				}
+			}
+			*r.chainState = continuityState
+			r.lastBlockSlot = 0
+			r.lastBlockHash = ""
+			r.lastBlockParentHash = ""
+			return continuityErr
+		}
+	}
+	if r.canonicalBlockObserver != nil {
+		if err := r.canonicalBlockObserver(ctx, r.chain.ChainID(), slot, block.Blockhash, block.PreviousBlockhash); err != nil {
+			return fmt.Errorf("observe solana canonical slot %d: %w", slot, err)
+		}
+	}
 
 	nativeAsset, ok := r.registry.GetNative(r.chain.ChainID())
 	if !ok {
 		return fmt.Errorf("native asset is not registered")
 	}
 
+	// Chain state is slot based, so durable transaction facts must use the same
+	// unit. blockHeight is not interchangeable with slot because skipped slots
+	// make the two counters diverge.
 	blockNumber := fmt.Sprintf("%d", slot)
-	if block.BlockHeight != nil {
-		blockNumber = fmt.Sprintf("%d", *block.BlockHeight)
-	}
 
 	for txIndex, tx := range block.Transactions {
+		if tx.Meta == nil {
+			return fmt.Errorf("solana slot %d transaction %d returned null metadata", slot, txIndex)
+		}
+		if len(bytes.TrimSpace(tx.Meta.Err)) == 0 {
+			return fmt.Errorf("solana slot %d transaction %d metadata is missing execution status", slot, txIndex)
+		}
+		if len(tx.Transaction.Signatures) == 0 || strings.TrimSpace(tx.Transaction.Signatures[0]) == "" {
+			return fmt.Errorf("solana slot %d transaction %d returned no signature", slot, txIndex)
+		}
 		if err := r.handleTransaction(blockNumber, block.Blockhash, txIndex, nativeAsset, tx); err != nil {
 			return err
 		}
 	}
+	r.lastBlockSlot = slot
+	r.lastBlockHash = strings.TrimSpace(block.Blockhash)
+	r.lastBlockParentHash = strings.TrimSpace(block.PreviousBlockhash)
 
+	return nil
+}
+
+func validateSolanaParentContinuity(state *models.ChainState, nextSlot int64, nextParentHash string) error {
+	if state == nil || state.LastProcessedBlock <= 0 {
+		return nil
+	}
+	checkpointHash := strings.TrimSpace(state.LastProcessedHash)
+	nextParentHash = strings.TrimSpace(nextParentHash)
+	if checkpointHash == "" || nextParentHash == "" {
+		return nil
+	}
+	// Solana blockhashes are base58 identifiers and therefore case-sensitive.
+	// previousBlockhash points to the last produced block even when one or more
+	// intervening slots were skipped, so slot adjacency is intentionally not
+	// required here.
+	if checkpointHash != nextParentHash {
+		state.ContinuityStatus = listenerconfig.ContinuityStatusRollback
+		state.ContinuityReason = fmt.Sprintf("slot %d parent %s does not match checkpoint %s", nextSlot, nextParentHash, checkpointHash)
+		return fmt.Errorf("%w: %s", listenerconfig.ErrParentContinuity, state.ContinuityReason)
+	}
+	if state.ContinuityStatus != listenerconfig.ContinuityStatusHistoryTail {
+		state.ContinuityStatus = listenerconfig.ContinuityStatusOK
+		state.ContinuityReason = ""
+	}
 	return nil
 }
 
@@ -466,12 +726,37 @@ func (r *RpcListener) handleTransaction(blockNumber, blockHash string, txIndex i
 	}
 
 	status := "confirmed"
-	if len(tx.Meta.Err) > 0 && string(tx.Meta.Err) != "null" {
+	if tx.Meta == nil {
+		return fmt.Errorf("solana transaction %s has no metadata", hash)
+	}
+	executionStatus := bytes.TrimSpace(tx.Meta.Err)
+	if len(executionStatus) == 0 || !json.Valid(executionStatus) {
+		return fmt.Errorf("solana transaction %s has invalid execution status", hash)
+	}
+	if !bytes.Equal(executionStatus, []byte("null")) {
 		status = "failed"
 	}
 
-	accountKeys := parseAccountKeys(tx.Transaction.Message.AccountKeys)
-	tokenAccounts, tokenBalanceWarnings := tokenAccountMetadataByAddress(tx.Transaction.Message.AccountKeys, tx.Meta)
+	if tx.Meta.PreBalances == nil || tx.Meta.PostBalances == nil {
+		return fmt.Errorf("solana transaction %s metadata is missing preBalances or postBalances", hash)
+	}
+	if len(tx.Meta.PreBalances) != len(tx.Meta.PostBalances) {
+		return fmt.Errorf(
+			"solana transaction %s balance vector length mismatch: pre=%d post=%d",
+			hash,
+			len(tx.Meta.PreBalances),
+			len(tx.Meta.PostBalances),
+		)
+	}
+	accountKeys, err := transactionAccountKeys(
+		tx.Transaction.Message.AccountKeys,
+		tx.Meta.LoadedAddresses,
+		len(tx.Meta.PreBalances),
+	)
+	if err != nil {
+		return fmt.Errorf("solana transaction %s account keys: %w", hash, err)
+	}
+	tokenAccounts, tokenBalanceWarnings := tokenAccountMetadataByAddress(tx.Transaction.Message.AccountKeys, *tx.Meta)
 	if len(tokenBalanceWarnings) > 0 {
 		log.Printf("[%s] invalid token balance metadata tx=%s: %s\n", r.chain.Name(), hash, strings.Join(tokenBalanceWarnings, "; "))
 	}
@@ -484,6 +769,20 @@ func (r *RpcListener) handleTransaction(blockNumber, blockHash string, txIndex i
 	}
 
 	memo := solanaTransactionMemo(tx.Transaction.Message.Instructions, tx.Meta.InnerInstructions)
+	if err := r.dispatchNativeBalanceIncreases(
+		blockNumber,
+		blockHash,
+		hash,
+		nativeAsset,
+		status,
+		signer,
+		memo,
+		accountKeys,
+		tx.Meta.PreBalances,
+		tx.Meta.PostBalances,
+	); err != nil {
+		return err
+	}
 	for ixIndex, instruction := range tx.Transaction.Message.Instructions {
 		if err := r.handleInstruction(blockNumber, blockHash, hash, fmt.Sprintf("ix:%d", ixIndex), nativeAsset, status, signer, memo, instruction, tokenAccounts); err != nil {
 			return err
@@ -499,6 +798,76 @@ func (r *RpcListener) handleTransaction(blockNumber, blockHash string, txIndex i
 		}
 	}
 
+	return nil
+}
+
+// dispatchNativeBalanceIncreases derives native SOL receipts from the
+// authoritative transaction account state transition. Parsed system-program
+// instructions are not a complete source of truth (CPI and transferWithSeed
+// are common counterexamples) and emitting both views would double-credit a
+// recipient. Account position is part of the signed transaction message, so
+// balance:<index> remains deterministic across RPC retries and replays.
+func (r *RpcListener) dispatchNativeBalanceIncreases(
+	blockNumber string,
+	blockHash string,
+	hash string,
+	nativeAsset asset.Asset,
+	status string,
+	signer string,
+	memo string,
+	accountKeys []AccountKey,
+	preBalances []uint64,
+	postBalances []uint64,
+) error {
+	if len(preBalances) != len(postBalances) || len(accountKeys) != len(preBalances) {
+		return fmt.Errorf(
+			"solana transaction %s native balance shape mismatch: accounts=%d pre=%d post=%d",
+			hash,
+			len(accountKeys),
+			len(preBalances),
+			len(postBalances),
+		)
+	}
+	// A failed Solana transaction rolls back instruction state changes. Its fee
+	// can reduce the payer balance, but it cannot be a merchant receipt.
+	if status != "confirmed" {
+		return nil
+	}
+	debitAddresses := make([]string, 0)
+	for index, postBalance := range postBalances {
+		if postBalance < preBalances[index] {
+			debitAddresses = append(debitAddresses, accountKeys[index].Pubkey)
+		}
+	}
+
+	for index, postBalance := range postBalances {
+		preBalance := preBalances[index]
+		if postBalance <= preBalance {
+			continue
+		}
+		amount := strconv.FormatUint(postBalance-preBalance, 10)
+		destination := accountKeys[index].Pubkey
+		txParam := &types.TransactionParam{
+			Context:       context.Background(),
+			ChainID:       r.chain.ChainID(),
+			Symbol:        helpers.StrPtr(nativeAsset.GetSymbol()),
+			Decimals:      nativeAsset.GetDecimals(),
+			Hash:          helpers.StrPtr(hash),
+			Block:         helpers.StrPtr(blockNumber),
+			BlockHash:     helpers.StrPtr(blockHash),
+			Token:         nil,
+			From:          helpers.StrPtr(signer),
+			FromAddresses: append([]string(nil), debitAddresses...),
+			To:            helpers.StrPtr(destination),
+			Amount:        helpers.StrPtr(amount),
+			LogIndex:      helpers.StrPtr(fmt.Sprintf("balance:%d", index)),
+			Status:        helpers.StrPtr(status),
+			Memo:          optionalMemoPtr(memo),
+		}
+		if err := r.dispatch("sol_transfer", txParam); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -584,34 +953,24 @@ func (r *RpcListener) handleParsedTransfer(
 	instructionType := strings.ToLower(parsed.Type)
 	program := strings.ToLower(instruction.Program)
 	switch {
-	case program == "system" && instructionType == "transfer":
+	case program == "system" && (instructionType == "transfer" || instructionType == "transferwithseed"):
 		source := rawString(parsed.Info, "source")
 		destination := rawString(parsed.Info, "destination")
 		lamports := rawString(parsed.Info, "lamports")
 		if source == "" || destination == "" || lamports == "" {
-			return false, nil
+			return true, fmt.Errorf("solana system transfer %s is missing source, destination, or lamports", logIndex)
 		}
-		if !positiveRawAmount(lamports) {
+		lamportAmount, ok := new(big.Int).SetString(strings.TrimSpace(lamports), 10)
+		if !ok || lamportAmount.Sign() < 0 {
+			return true, fmt.Errorf("solana system transfer %s has invalid lamports %q", logIndex, lamports)
+		}
+		if lamportAmount.Sign() == 0 {
 			return true, nil
 		}
 
-		txParam := &types.TransactionParam{
-			Context:   context.Background(),
-			ChainID:   r.chain.ChainID(),
-			Symbol:    helpers.StrPtr(nativeAsset.GetSymbol()),
-			Decimals:  nativeAsset.GetDecimals(),
-			Hash:      helpers.StrPtr(hash),
-			Block:     helpers.StrPtr(blockNumber),
-			BlockHash: helpers.StrPtr(blockHash),
-			Token:     nil,
-			From:      helpers.StrPtr(source),
-			To:        helpers.StrPtr(destination),
-			Amount:    helpers.StrPtr(lamports),
-			LogIndex:  helpers.StrPtr(logIndex),
-			Status:    helpers.StrPtr(status),
-			Memo:      optionalMemoPtr(memo),
-		}
-		return true, r.dispatch("sol_transfer", txParam)
+		// Native SOL is emitted once from the transaction balance vector in
+		// handleTransaction. This parsed view is validation-only.
+		return true, nil
 
 	case strings.HasPrefix(program, "spl-token") && (instructionType == "transfer" || instructionType == "transferchecked"):
 		source := rawString(parsed.Info, "source")
@@ -621,16 +980,21 @@ func (r *RpcListener) handleParsedTransfer(
 
 		if tokenAmountRaw, ok := parsed.Info["tokenAmount"]; ok {
 			var tokenAmount map[string]json.RawMessage
-			if err := json.Unmarshal(tokenAmountRaw, &tokenAmount); err == nil {
-				if amount == "" {
-					amount = rawString(tokenAmount, "amount")
-				}
+			if err := json.Unmarshal(tokenAmountRaw, &tokenAmount); err != nil {
+				return true, fmt.Errorf("solana token transfer %s has malformed tokenAmount: %w", logIndex, err)
+			}
+			if amount == "" {
+				amount = rawString(tokenAmount, "amount")
 			}
 		}
 		if source == "" || destination == "" || amount == "" {
-			return true, nil
+			return true, fmt.Errorf("solana token transfer %s is missing source, destination, or amount", logIndex)
 		}
-		if !positiveRawAmount(amount) {
+		tokenAmount, ok := new(big.Int).SetString(strings.TrimSpace(amount), 10)
+		if !ok || tokenAmount.Sign() < 0 {
+			return true, fmt.Errorf("solana token transfer %s has invalid amount %q", logIndex, amount)
+		}
+		if tokenAmount.Sign() == 0 {
 			return true, nil
 		}
 
@@ -642,33 +1006,36 @@ func (r *RpcListener) handleParsedTransfer(
 			sourceMetadata.Mint != destinationMetadata.Mint ||
 			!sourceMetadata.HasDecimals || !destinationMetadata.HasDecimals ||
 			sourceMetadata.Decimals != destinationMetadata.Decimals {
-			return true, nil
+			return true, fmt.Errorf("solana token transfer %s has incomplete/conflicting token account metadata", logIndex)
 		}
 
 		if mint == "" {
 			mint = destinationMetadata.Mint
 		}
 		if mint != destinationMetadata.Mint {
-			return true, nil
+			return true, fmt.Errorf("solana token transfer %s mint does not match account metadata", logIndex)
 		}
 		if sourceMetadata.ProgramID != "" && destinationMetadata.ProgramID != "" && sourceMetadata.ProgramID != destinationMetadata.ProgramID {
-			return true, nil
+			return true, fmt.Errorf("solana token transfer %s account program ids do not match", logIndex)
 		}
 		instructionProgramID := strings.TrimSpace(instruction.ProgramID)
 		if instructionProgramID != "" {
 			if sourceMetadata.ProgramID != "" && sourceMetadata.ProgramID != instructionProgramID {
-				return true, nil
+				return true, fmt.Errorf("solana token transfer %s source program does not match instruction", logIndex)
 			}
 			if destinationMetadata.ProgramID != "" && destinationMetadata.ProgramID != instructionProgramID {
-				return true, nil
+				return true, fmt.Errorf("solana token transfer %s destination program does not match instruction", logIndex)
 			}
 		}
 		if r.registry == nil {
-			return true, nil
+			return true, errors.New("solana asset registry is not configured")
 		}
 		assetInfo, ok := r.registry.Get(r.chain.ChainID(), mint)
-		if !ok || assetInfo.GetDecimals() != destinationMetadata.Decimals {
+		if !ok {
 			return true, nil
+		}
+		if assetInfo.GetDecimals() != destinationMetadata.Decimals {
+			return true, fmt.Errorf("solana token transfer %s decimals do not match registered asset", logIndex)
 		}
 
 		txParam := &types.TransactionParam{
@@ -790,24 +1157,134 @@ func optionalMemoPtr(memo string) *string {
 	return helpers.StrPtr(memo)
 }
 
-func parseAccountKeys(rawKeys []json.RawMessage) []AccountKey {
-	keys := make([]AccountKey, 0, len(rawKeys))
-	for _, rawKey := range rawKeys {
-		var keyString string
-		if err := json.Unmarshal(rawKey, &keyString); err == nil && keyString != "" {
-			keys = append(keys, AccountKey{Pubkey: keyString})
-			continue
-		}
+func transactionAccountKeys(rawKeys []json.RawMessage, loaded LoadedAddresses, expectedCount int) ([]AccountKey, error) {
+	if rawKeys == nil {
+		return nil, errors.New("message is missing accountKeys")
+	}
+	if expectedCount <= 0 {
+		return nil, fmt.Errorf("invalid balance account count %d", expectedCount)
+	}
 
-		var keyObject struct {
-			Pubkey string `json:"pubkey"`
-			Signer bool   `json:"signer"`
+	keys := make([]AccountKey, 0, len(rawKeys)+len(loaded.Writable)+len(loaded.Readonly))
+	seen := make(map[string]struct{}, cap(keys))
+	for index, rawKey := range rawKeys {
+		key, err := parseTransactionAccountKey(rawKey)
+		if err != nil {
+			return nil, fmt.Errorf("accountKeys[%d]: %w", index, err)
 		}
-		if err := json.Unmarshal(rawKey, &keyObject); err == nil && keyObject.Pubkey != "" {
-			keys = append(keys, AccountKey{Pubkey: keyObject.Pubkey, Signer: keyObject.Signer})
+		if _, duplicate := seen[key.Pubkey]; duplicate {
+			return nil, fmt.Errorf("accountKeys[%d] duplicates pubkey %s", index, key.Pubkey)
+		}
+		seen[key.Pubkey] = struct{}{}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return nil, errors.New("message contains no account keys")
+	}
+
+	loadedKeys := make([]AccountKey, 0, len(loaded.Writable)+len(loaded.Readonly))
+	appendLoaded := func(address string, writable bool, index int) error {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			kind := "readonly"
+			if writable {
+				kind = "writable"
+			}
+			return fmt.Errorf("loadedAddresses.%s[%d] is empty", kind, index)
+		}
+		loadedKeys = append(loadedKeys, AccountKey{Pubkey: address, Source: "lookupTable"})
+		return nil
+	}
+	for index, address := range loaded.Writable {
+		if err := appendLoaded(address, true, index); err != nil {
+			return nil, err
 		}
 	}
-	return keys
+	for index, address := range loaded.Readonly {
+		if err := appendLoaded(address, false, index); err != nil {
+			return nil, err
+		}
+	}
+
+	switch {
+	case expectedCount == len(keys):
+		// With jsonParsed encoding, lookup-table keys are normally already in
+		// message.accountKeys. Some providers also redundantly return
+		// meta.loadedAddresses; when they do, it must match the account-key tail.
+		if len(loadedKeys) > len(keys) {
+			return nil, fmt.Errorf(
+				"loaded address count %d exceeds complete account key count %d",
+				len(loadedKeys),
+				len(keys),
+			)
+		}
+		tailStart := len(keys) - len(loadedKeys)
+		for index, loadedKey := range loadedKeys {
+			if keys[tailStart+index].Pubkey != loadedKey.Pubkey {
+				return nil, fmt.Errorf(
+					"loaded address %d (%s) does not match accountKeys[%d] (%s)",
+					index,
+					loadedKey.Pubkey,
+					tailStart+index,
+					keys[tailStart+index].Pubkey,
+				)
+			}
+		}
+		return keys, nil
+
+	case expectedCount == len(keys)+len(loadedKeys):
+		// With raw message encoding, only static keys are in the message and
+		// lookup-table keys follow as writable then readonly addresses.
+		for index, loadedKey := range loadedKeys {
+			if _, duplicate := seen[loadedKey.Pubkey]; duplicate {
+				return nil, fmt.Errorf("loaded address %d duplicates pubkey %s", index, loadedKey.Pubkey)
+			}
+			seen[loadedKey.Pubkey] = struct{}{}
+			keys = append(keys, loadedKey)
+		}
+		return keys, nil
+
+	default:
+		return nil, fmt.Errorf(
+			"account/balance length mismatch: static_or_parsed=%d loaded=%d balances=%d",
+			len(keys),
+			len(loadedKeys),
+			expectedCount,
+		)
+	}
+}
+
+func parseTransactionAccountKey(rawKey json.RawMessage) (AccountKey, error) {
+	if len(bytes.TrimSpace(rawKey)) == 0 || bytes.Equal(bytes.TrimSpace(rawKey), []byte("null")) {
+		return AccountKey{}, errors.New("account key is empty")
+	}
+
+	var keyString string
+	if err := json.Unmarshal(rawKey, &keyString); err == nil {
+		keyString = strings.TrimSpace(keyString)
+		if keyString == "" {
+			return AccountKey{}, errors.New("account pubkey is empty")
+		}
+		return AccountKey{Pubkey: keyString}, nil
+	}
+
+	var keyObject struct {
+		Pubkey string `json:"pubkey"`
+		Signer bool   `json:"signer"`
+		Source string `json:"source"`
+	}
+	if err := json.Unmarshal(rawKey, &keyObject); err != nil {
+		return AccountKey{}, fmt.Errorf("decode account key: %w", err)
+	}
+	keyObject.Pubkey = strings.TrimSpace(keyObject.Pubkey)
+	if keyObject.Pubkey == "" {
+		return AccountKey{}, errors.New("account pubkey is empty")
+	}
+	return AccountKey{
+		Pubkey: keyObject.Pubkey,
+		Signer: keyObject.Signer,
+		Source: strings.TrimSpace(keyObject.Source),
+	}, nil
 }
 
 func tokenAccountMetadataByAddress(rawKeys []json.RawMessage, meta TxMeta) (map[string]tokenAccountMetadata, []string) {

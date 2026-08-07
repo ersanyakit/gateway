@@ -228,9 +228,12 @@ func TestMainDispatcherSubscriberAcksAfterChainFactPersistence(t *testing.T) {
 		t.Fatalf("read main.go: %v", err)
 	}
 	source := string(sourceBytes)
-	callIndex := strings.Index(source, "err := handleChainIndexerEvent(ctx, event)")
+	callIndex := strings.Index(source, "return handleChainIndexerEvent(ctx, event)")
 	if callIndex == -1 {
 		t.Fatal("dispatcher subscriber must call handleChainIndexerEvent")
+	}
+	if safeIndex := strings.LastIndex(source[:callIndex], "runChainEventHandlerSafely(func() error"); safeIndex == -1 {
+		t.Fatal("dispatcher subscriber must recover per-event handler panics without terminating the consumer")
 	}
 	ackIndex := strings.Index(source[callIndex:], "event.Ack <- err")
 	if ackIndex == -1 {
@@ -238,6 +241,18 @@ func TestMainDispatcherSubscriberAcksAfterChainFactPersistence(t *testing.T) {
 	}
 	if earlierAck := strings.Index(source[callIndex:callIndex+ackIndex], "event.Ack <-"); earlierAck != -1 {
 		t.Fatal("dispatcher subscriber must not ack before chain fact persistence completes")
+	}
+}
+
+func TestRunChainEventHandlerSafelyRecoversWithoutExposingPanicPayload(t *testing.T) {
+	err := runChainEventHandlerSafely(func() error {
+		panic("private-key-like-secret")
+	})
+	if err == nil || !strings.Contains(err.Error(), "panic (string)") {
+		t.Fatalf("recovered error = %v", err)
+	}
+	if strings.Contains(err.Error(), "private-key-like-secret") {
+		t.Fatalf("panic payload leaked into error: %v", err)
 	}
 }
 

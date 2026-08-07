@@ -22,23 +22,26 @@ type WebhookDelivery struct {
 	PaymentID     *uuid.UUID `gorm:"type:uuid;index" json:"payment_id,omitempty"`
 	TransactionID *uuid.UUID `gorm:"type:uuid;index" json:"transaction_id,omitempty"`
 
-	EventID        string     `gorm:"size:256;not null;index" json:"event_id"`
-	EventType      string     `gorm:"size:80;not null;index" json:"event_type"`
-	EventVersion   string     `gorm:"size:16;not null;default:v1" json:"event_version"`
-	EntityType     string     `gorm:"size:40;index" json:"entity_type,omitempty"`
-	EntityID       *uuid.UUID `gorm:"type:uuid;index" json:"entity_id,omitempty"`
-	ResourceType   string     `gorm:"size:40;index:idx_webhook_delivery_resource_order" json:"resource_type,omitempty"`
-	ResourceID     string     `gorm:"size:128;index:idx_webhook_delivery_resource_order" json:"resource_id,omitempty"`
-	Sequence       int64      `gorm:"not null;default:0;index:idx_webhook_delivery_resource_order" json:"sequence"`
-	IdempotencyKey string     `gorm:"size:256;index" json:"idempotency_key,omitempty"`
-	PayloadJSON    string     `gorm:"type:text" json:"payload_json,omitempty"`
-	TargetURL      string     `gorm:"size:500;not null" json:"target_url"`
-	Status         string     `gorm:"size:24;not null;index" json:"status"`
+	EventID          string     `gorm:"size:256;not null;index" json:"event_id"`
+	EventType        string     `gorm:"size:80;not null;index" json:"event_type"`
+	EventVersion     string     `gorm:"size:16;not null;default:v1" json:"event_version"`
+	EntityType       string     `gorm:"size:40;index" json:"entity_type,omitempty"`
+	EntityID         *uuid.UUID `gorm:"type:uuid;index" json:"entity_id,omitempty"`
+	ResourceType     string     `gorm:"size:40;index:idx_webhook_delivery_resource_order" json:"resource_type,omitempty"`
+	ResourceID       string     `gorm:"size:128;index:idx_webhook_delivery_resource_order" json:"resource_id,omitempty"`
+	Sequence         int64      `gorm:"not null;default:0;index:idx_webhook_delivery_resource_order" json:"sequence"`
+	IdempotencyKey   string     `gorm:"size:256;index" json:"idempotency_key,omitempty"`
+	PayloadJSON      string     `gorm:"type:text" json:"payload_json,omitempty"`
+	NotificationMode string     `gorm:"size:16;not null;default:''" json:"notification_mode,omitempty"`
+	TargetURL        string     `gorm:"size:500;not null" json:"target_url"`
+	TargetSubject    string     `gorm:"size:255;not null;default:''" json:"target_subject,omitempty"`
+	Status           string     `gorm:"size:24;not null;index" json:"status"`
 
 	Attempts        uint       `gorm:"not null;default:0" json:"attempts"`
 	LastError       string     `gorm:"type:text" json:"last_error,omitempty"`
 	FailureCategory string     `gorm:"size:40;index" json:"failure_category,omitempty"`
 	NextRetryAt     *time.Time `gorm:"index" json:"next_retry_at,omitempty"`
+	LeaseToken      *uuid.UUID `gorm:"type:uuid" json:"-"`
 	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
 
 	OriginalDeliveryID *uuid.UUID `gorm:"type:uuid;index" json:"original_delivery_id,omitempty"`

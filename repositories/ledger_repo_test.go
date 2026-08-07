@@ -12,6 +12,7 @@ import (
 
 	"core/constants"
 	"core/models"
+	webhooksvc "core/services/webhook"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -65,15 +66,16 @@ func TestLedgerRefundAssetFromSessionFallsBackToChainName(t *testing.T) {
 func TestLedgerIdempotencyKeys(t *testing.T) {
 	id := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	cases := map[string]string{
-		withdrawalHoldKey(id):    "withdrawal-hold:11111111-1111-1111-1111-111111111111",
-		withdrawalReleaseKey(id): "withdrawal-release:11111111-1111-1111-1111-111111111111",
-		withdrawalDebitKey(id):   "withdrawal-debit:11111111-1111-1111-1111-111111111111",
-		refundHoldKey(id):        "refund-hold:11111111-1111-1111-1111-111111111111",
-		refundReleaseKey(id):     "refund-release:11111111-1111-1111-1111-111111111111",
-		refundDebitKey(id):       "refund-debit:11111111-1111-1111-1111-111111111111",
-		sweepHoldKey(id):         "sweep-hold:11111111-1111-1111-1111-111111111111",
-		sweepHoldReleaseKey(id):  "sweep-hold-release:11111111-1111-1111-1111-111111111111",
-		sweepReleaseKey(id):      "sweep-release:11111111-1111-1111-1111-111111111111",
+		withdrawalHoldKey(id):         "withdrawal-hold:11111111-1111-1111-1111-111111111111",
+		withdrawalReleaseKey(id):      "withdrawal-release:11111111-1111-1111-1111-111111111111",
+		withdrawalDebitKey(id):        "withdrawal-debit:11111111-1111-1111-1111-111111111111",
+		refundHoldKey(id):             "refund-hold:11111111-1111-1111-1111-111111111111",
+		refundReleaseKey(id):          "refund-release:11111111-1111-1111-1111-111111111111",
+		refundDebitKey(id):            "refund-debit:11111111-1111-1111-1111-111111111111",
+		sweepHoldKey(id):              "sweep-hold:11111111-1111-1111-1111-111111111111",
+		sweepHoldGenerationKey(id, 2): "sweep-hold:11111111-1111-1111-1111-111111111111:generation:2",
+		sweepHoldReleaseKey(id):       "sweep-hold-release:11111111-1111-1111-1111-111111111111",
+		sweepReleaseKey(id):           "sweep-release:11111111-1111-1111-1111-111111111111",
 	}
 	for got, want := range cases {
 		if got != want {
@@ -125,8 +127,8 @@ func TestLedgerPostingFunctionsUseStableIdempotencyGuards(t *testing.T) {
 			"r.existsWithDB(ctx, tx, key)",
 		},
 		"createSweepHold": {
-			"sweepHoldKey",
-			"r.existsWithDB(ctx, tx, key)",
+			"nextSweepHoldGenerationKey",
+			"r.lockLedgerAsset(ctx, tx",
 		},
 		"PostSweepReleaseWithDB": {
 			"sweepReleaseKey",
@@ -982,6 +984,443 @@ func TestLedgerRepoPostTransactionReversalSkipsReversalVoidedAndUnrelatedRows(t 
 		requireLedgerCount(t, db, 0, "idempotency_key = ?", "reorg-reversal:"+skipped.ID.String())
 	}
 	requireLedgerCount(t, db, 2, "transaction_unique_hash = ? AND entry_type = ?", txModel.UniqueHash, models.LedgerEntryTypeReorgReversal)
+}
+
+func TestLedgerRepoReorgedSweepHoldCannotFundRecoveryWithdrawal(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Merchant{}, &models.Domain{}, &models.Wallet{}, &models.WithdrawalRequest{}, &models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID, domainID, walletID := seedWithdrawalOwner(t, db)
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, "reorged-sweep-hold-"+uuid.NewString(), "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatalf("post available deposit: %v", err)
+	}
+	job := models.SweepJob{
+		ID:                    uuid.New(),
+		TransactionUniqueHash: depositTx.UniqueHash,
+		TransactionHash:       depositTx.Hash,
+		WalletID:              walletID,
+		MerchantID:            merchantID,
+		ChainID:               depositTx.ChainID,
+		Token:                 depositTx.Token,
+		Status:                models.SweepJobStatusProcessing,
+	}
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatalf("create sweep hold: %v", err)
+	}
+	if err := repo.PostTransactionReversal(ctx, depositTx); err != nil {
+		t.Fatalf("reverse reorged deposit journal: %v", err)
+	}
+	if err := repo.PostTransactionReversal(ctx, depositTx); err != nil {
+		t.Fatalf("repeat transaction reversal: %v", err)
+	}
+
+	request := models.WithdrawalRequest{
+		ID:         uuid.New(),
+		MerchantID: merchantID,
+		DomainID:   &domainID,
+		WalletID:   walletID,
+		Chain:      "ethereum",
+		Symbol:     "ETH",
+		Decimals:   18,
+		ToAddress:  "0xrecovery",
+		AmountRaw:  "100",
+		Status:     models.WithdrawalStatusPending,
+	}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return NewLedgerRepo(tx).ReleaseSweepHoldsForWithdrawalWithDB(ctx, tx, request)
+	})
+	if !errors.Is(err, ErrInsufficientAvailableBalance) || !strings.Contains(err.Error(), "recoverable_sweep_locked=0") {
+		t.Fatalf("recovery release error = %v, want zero recoverable sweep balance", err)
+	}
+	if err := NewWithdrawalRequestRepo(db).CreateRecoverWithHold(ctx, &request, repo); !errors.Is(err, ErrInsufficientAvailableBalance) {
+		t.Fatalf("recovery withdrawal creation error = %v, want ErrInsufficientAvailableBalance", err)
+	}
+	var withdrawalCount int64
+	if err := db.WithContext(ctx).Model(&models.WithdrawalRequest{}).Where("id = ?", request.ID).Count(&withdrawalCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if withdrawalCount != 0 {
+		t.Fatalf("orphan-funded recovery withdrawal persisted: count=%d", withdrawalCount)
+	}
+	requireLedgerCount(t, db, 0, "withdrawal_id = ? AND entry_type = ?", request.ID, models.LedgerEntryTypeWithdrawalHold)
+	if err := repo.VoidSweepHold(ctx, job.ID); err != nil {
+		t.Fatalf("idempotent void after reorg reversal: %v", err)
+	}
+	if err := repo.PostSweepRelease(ctx, job, depositTx, "0xsweep"); !errors.Is(err, ErrLedgerReservationRequired) {
+		t.Fatalf("sweep release after hold reversal err = %v, want ErrLedgerReservationRequired", err)
+	}
+
+	requireLedgerCount(t, db, 0, "sweep_job_id = ? AND entry_type = ?", job.ID, models.LedgerEntryTypeSweepRelease)
+	var holds []models.LedgerEntry
+	if err := db.WithContext(ctx).
+		Where("sweep_job_id = ? AND entry_type = ?", job.ID, models.LedgerEntryTypeSweepHold).
+		Order("account ASC").Find(&holds).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(holds) != 2 {
+		t.Fatalf("sweep hold rows = %d, want 2", len(holds))
+	}
+	for _, hold := range holds {
+		requireLedgerCount(t, db, 1,
+			"reference = ? AND entry_type IN ? AND status <> ?",
+			hold.ID.String(), ledgerHoldConsumerTypes(models.LedgerEntryTypeSweepRelease), models.LedgerStatusVoided,
+		)
+	}
+	rows, err := repo.DomainBalances(ctx, merchantID, domainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	balances := ledgerRowsByAccount(rows)
+	if balances[models.LedgerAccountMerchantAvailable] != "0" || balances[models.LedgerAccountSweepTransit] != "0" || balances[models.LedgerAccountWithdrawalTransit] != "" {
+		t.Fatalf("balances after reorg and blocked recovery = %#v", balances)
+	}
+}
+
+func TestLedgerRepoConcurrentReorgAndRecoveryRetriesConsumeSweepHoldOnce(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.LedgerEntry{}); err != nil {
+		t.Fatalf("automigrate ledger entries: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(12)
+
+	ctx := context.Background()
+	repo := NewLedgerRepo(db)
+	merchantID := uuid.New()
+	domainID := uuid.New()
+	walletID := uuid.New()
+	depositTx := ledgerTestTransaction(merchantID, domainID, walletID, "concurrent-reorged-sweep-"+uuid.NewString(), "100")
+	if err := repo.PostStandaloneDepositAvailable(ctx, depositTx); err != nil {
+		t.Fatal(err)
+	}
+	job := models.SweepJob{
+		ID: uuid.New(), TransactionUniqueHash: depositTx.UniqueHash, TransactionHash: depositTx.Hash,
+		WalletID: walletID, MerchantID: merchantID, ChainID: depositTx.ChainID, Token: depositTx.Token,
+		Status: models.SweepJobStatusProcessing,
+	}
+	if err := repo.CreateSweepHold(ctx, job, depositTx); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- repo.PostTransactionReversal(ctx, depositTx)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("concurrent reversal: %v", err)
+		}
+	}
+	requireLedgerCount(t, db, 4, "transaction_unique_hash = ? AND entry_type = ?", depositTx.UniqueHash, models.LedgerEntryTypeReorgReversal)
+
+	request := models.WithdrawalRequest{
+		ID: uuid.New(), MerchantID: merchantID, DomainID: &domainID, WalletID: walletID,
+		Chain: "ethereum", Symbol: "ETH", Decimals: 18, ToAddress: "0xrecovery", AmountRaw: "100", Status: models.WithdrawalStatusPending,
+	}
+	start = make(chan struct{})
+	results = make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				return NewLedgerRepo(tx).ReleaseSweepHoldsForWithdrawalWithDB(ctx, tx, request)
+			})
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if !errors.Is(err, ErrInsufficientAvailableBalance) {
+			t.Fatalf("concurrent recovery retry error = %v, want ErrInsufficientAvailableBalance", err)
+		}
+	}
+	requireLedgerCount(t, db, 0, "sweep_job_id = ? AND entry_type = ?", job.ID, models.LedgerEntryTypeSweepRelease)
+}
+
+func TestReorgedPendingSweepCanonicalReappearanceCreatesFreshHoldGenerationAndReleasesOnce(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(
+		&models.Block{},
+		&models.Transaction{},
+		&models.LedgerEntry{},
+		&models.LedgerBalanceProjection{},
+		&models.SweepJob{},
+		&models.ReconciliationJob{},
+	); err != nil {
+		t.Fatalf("automigrate revived sweep models: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.SetMaxOpenConns(8)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	merchantID, domainID, walletID := uuid.New(), uuid.New(), uuid.New()
+	txHash := "0xrevived-sweep-" + uuid.NewString()
+	txModel := ledgerTestTransaction(merchantID, domainID, walletID, "1-"+txHash+"-", "100")
+	txModel.Hash = txHash
+	txModel.BlockNumber = "100"
+	txModel.BlockHash = "0xrevived-sweep-orphan"
+	txModel.FinalizedAt = &now
+	txModel.CreatedAt = now
+	txModel.UpdatedAt = now
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&models.Block{
+		ID: uuid.New(), ChainID: txModel.ChainID, Number: 100, Hash: txModel.BlockHash,
+		Canonical: true, Status: models.BlockStatusCanonical, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ledger := NewLedgerRepo(db)
+	if err := ledger.PostStandaloneDepositAvailable(ctx, txModel); err != nil {
+		t.Fatal(err)
+	}
+	sweeps := NewSweepJobRepo(db)
+	job, created, err := sweeps.EnqueueForTransaction(ctx, txModel)
+	if err != nil || !created || job == nil {
+		t.Fatalf("enqueue initial sweep: created=%v job=%#v err=%v", created, job, err)
+	}
+	if err := ledger.CreateSweepHold(ctx, *job, txModel); err != nil {
+		t.Fatal(err)
+	}
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "0", "100")
+
+	reorgedAt := now.Add(time.Minute)
+	if err := ledger.PostTransactionReversal(ctx, txModel); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.Transaction{}).Where("id = ?", txModel.ID).Updates(map[string]any{
+		"status": models.TransactionStatusReorged, "event_type": constants.WebhookEventTransactionReorged,
+		"reorged_at": &reorgedAt, "correction_reason": "pending sweep test reorg",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	fenced, err := sweeps.Find(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fenced.Status != models.SweepJobStatusDeadLetter || fenced.LastError != sweepSourceReorgRevivalReason || fenced.NextRunAt != nil || fenced.LockedUntil != nil {
+		t.Fatalf("pending reorg fence = %#v", fenced)
+	}
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", job.ID.String()+":"+constants.WebhookEventSweepDeadLetteredV1, 1)
+	if err := db.Model(&models.Block{}).Where("hash = ?", txModel.BlockHash).Updates(map[string]any{
+		"canonical": false, "status": models.BlockStatusReorged, "reorged_at": &reorgedAt,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "0", "0")
+
+	canonicalHash := "0xrevived-sweep-canonical"
+	if err := db.Create(&models.Block{
+		ID: uuid.New(), ChainID: txModel.ChainID, Number: 101, Hash: canonicalHash,
+		Canonical: true, Status: models.BlockStatusCanonical, CreatedAt: now, UpdatedAt: now,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	txRepo := NewTransactionRepo(db)
+	if err := txRepo.Create(canonicalReappearanceParams(ctx, txModel, "101", canonicalHash)); err != nil {
+		t.Fatalf("record exact canonical reappearance: %v", err)
+	}
+	finalTx, err := txRepo.MarkFinality(ctx, txModel.UniqueHash, 12, 12, true)
+	if err != nil {
+		t.Fatalf("finalize canonical reappearance: %v", err)
+	}
+	if finalTx.Status != models.TransactionStatusConfirmed || finalTx.FinalizedAt == nil || finalTx.ReorgedAt != nil {
+		t.Fatalf("canonical transaction = %#v", finalTx)
+	}
+	// Only deposit value is restored. The old operational hold remains neutral
+	// and terminally consumed by its reorg reversal.
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "100", "0")
+	requireLedgerCount(t, db, 0, "sweep_job_id = ? AND entry_type = ? AND description LIKE ?", job.ID, models.LedgerEntryTypeAdjustment, "Canonical reappearance restoration%")
+
+	revived, queued, err := sweeps.EnqueueForTransaction(ctx, *finalTx)
+	if err != nil || !queued || revived.ID != job.ID || revived.Status != models.SweepJobStatusPending {
+		t.Fatalf("revive sweep: queued=%v job=%#v err=%v", queued, revived, err)
+	}
+	claimed, err := sweeps.ClaimDue(ctx, 1, time.Minute)
+	if err != nil || len(claimed) != 1 || claimed[0].ID != job.ID {
+		t.Fatalf("claim revived sweep: jobs=%#v err=%v", claimed, err)
+	}
+	const holdCreators = 8
+	start := make(chan struct{})
+	results := make(chan error, holdCreators)
+	var wg sync.WaitGroup
+	for i := 0; i < holdCreators; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- ledger.CreateSweepHold(ctx, claimed[0], *finalTx)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("concurrent revived sweep hold: %v", err)
+		}
+	}
+	requireLedgerCount(t, db, 2, "sweep_job_id = ? AND entry_type = ? AND idempotency_key = ?", job.ID, models.LedgerEntryTypeSweepHold, sweepHoldGenerationKey(job.ID, 2))
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "0", "100")
+
+	if err := sweeps.MarkSucceeded(ctx, job.ID, "0xrevived-sweep-success"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.PostSweepRelease(ctx, claimed[0], *finalTx, "0xrevived-sweep-success"); err != nil {
+		t.Fatalf("release revived sweep hold: %v", err)
+	}
+	if err := ledger.PostSweepRelease(ctx, claimed[0], *finalTx, "0xrevived-sweep-success"); err != nil {
+		t.Fatalf("repeat revived sweep release: %v", err)
+	}
+	requireLedgerCount(t, db, 2, "sweep_job_id = ? AND entry_type = ? AND idempotency_key = ?", job.ID, models.LedgerEntryTypeSweepRelease, sweepReleaseKey(job.ID))
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "100", "0")
+	assertSweepLifecycleEvents(t, db, job.ID,
+		constants.WebhookEventSweepRequestedV1,
+		constants.WebhookEventSweepDeadLetteredV1,
+		constants.WebhookEventSweepRequestedV1,
+		constants.WebhookEventSweepSucceededV1,
+	)
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", job.ID.String()+":"+constants.WebhookEventSweepRequestedV1+":occurrence:2", 1)
+}
+
+func TestReorgedSucceededSweepMovesToOperatorReconciliationWithoutBlindRevival(t *testing.T) {
+	db := openMoneyEventOutboxPostgresTestDB(t)
+	if err := db.AutoMigrate(&models.Transaction{}, &models.LedgerEntry{}, &models.SweepJob{}); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	merchantID, domainID, walletID := uuid.New(), uuid.New(), uuid.New()
+	txModel := ledgerTestTransaction(merchantID, domainID, walletID, "succeeded-sweep-reorg-"+uuid.NewString(), "100")
+	txModel.FinalizedAt = &now
+	txModel.CreatedAt = now
+	txModel.UpdatedAt = now
+	if err := db.Create(&txModel).Error; err != nil {
+		t.Fatal(err)
+	}
+	ledger := NewLedgerRepo(db)
+	if err := ledger.PostStandaloneDepositAvailable(ctx, txModel); err != nil {
+		t.Fatal(err)
+	}
+	sweeps := NewSweepJobRepo(db)
+	job, _, err := sweeps.EnqueueForTransaction(ctx, txModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.CreateSweepHold(ctx, *job, txModel); err != nil {
+		t.Fatal(err)
+	}
+	markSweepJobProcessing(t, db, job.ID)
+	if err := sweeps.MarkSucceeded(ctx, job.ID, "0xold-sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.PostSweepRelease(ctx, *job, txModel, "0xold-sweep"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.PostTransactionReversal(ctx, txModel); err != nil {
+		t.Fatal(err)
+	}
+	fenced, err := sweeps.Find(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fenced.Status != models.SweepJobStatusDeadLetter || fenced.OperatorAction != models.SweepOperatorActionReconcileBroadcast || fenced.FailureCategory != models.SweepFailureCategoryBroadcastUncertain || fenced.SweepTxHash != "0xold-sweep" {
+		t.Fatalf("succeeded reorg fence = %#v", fenced)
+	}
+
+	canonicalTx := txModel
+	canonicalTx.Status = models.TransactionStatusConfirmed
+	canonicalTx.FinalizedAt = &now
+	canonicalTx.ReorgedAt = nil
+	if err := db.Model(&models.Transaction{}).Where("id = ?", txModel.ID).Updates(map[string]any{
+		"status": canonicalTx.Status, "finalized_at": canonicalTx.FinalizedAt, "reorged_at": nil,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		_, err := NewLedgerRepo(tx).PostTransactionRestorationWithDB(ctx, tx, canonicalTx)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertSweepLedgerAccounts(t, ledger, ctx, merchantID, domainID, "100", "0")
+	stillFenced, queued, err := sweeps.EnqueueForTransaction(ctx, canonicalTx)
+	if err != nil || queued || stillFenced.Status != models.SweepJobStatusDeadLetter {
+		t.Fatalf("succeeded sweep was blindly revived: queued=%v job=%#v err=%v", queued, stillFenced, err)
+	}
+	if err := ledger.CreateSweepHold(ctx, *stillFenced, canonicalTx); !errors.Is(err, ErrLedgerReservationRequired) {
+		t.Fatalf("succeeded sweep created another hold: %v", err)
+	}
+	requireLedgerCount(t, db, 2, "sweep_job_id = ? AND entry_type = ?", job.ID, models.LedgerEntryTypeSweepHold)
+	requireLedgerCount(t, db, 2, "sweep_job_id = ? AND entry_type = ?", job.ID, models.LedgerEntryTypeSweepRelease)
+
+	if err := sweeps.RecordOperatorRecovery(ctx, job.ID, models.SweepRecoveryActionMarkSuccess, "canonical sweep broadcast confirmed", "0xold-sweep", nil); err != nil {
+		t.Fatalf("record succeeded sweep reconciliation: %v", err)
+	}
+	reconciled, err := sweeps.Find(ctx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconciled.Status != models.SweepJobStatusSucceeded || reconciled.SweepTxHash != "0xold-sweep" || reconciled.RecoveryAction != models.SweepRecoveryActionMarkSuccess {
+		t.Fatalf("reconciled sweep = %#v", reconciled)
+	}
+	assertSweepLifecycleEvents(t, db, job.ID,
+		constants.WebhookEventSweepRequestedV1,
+		constants.WebhookEventSweepSucceededV1,
+		constants.WebhookEventSweepDeadLetteredV1,
+		constants.WebhookEventSweepSucceededV1,
+	)
+	resolutionEventID := job.ID.String() + ":" + constants.WebhookEventSweepSucceededV1 + ":occurrence:2"
+	requirePostgresCount(t, db, &models.MoneyEventOutbox{}, "event_id = ?", resolutionEventID, 1)
+	var resolution models.MoneyEventOutbox
+	if err := db.First(&resolution, "event_id = ?", resolutionEventID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var resolutionPayload webhooksvc.LifecyclePayload
+	if err := json.Unmarshal([]byte(resolution.PayloadJSON), &resolutionPayload); err != nil {
+		t.Fatal(err)
+	}
+	if resolutionPayload.Status != models.SweepJobStatusSucceeded || resolutionPayload.SweepTxHash != "0xold-sweep" {
+		t.Fatalf("sweep reconciliation payload = %#v", resolutionPayload)
+	}
+}
+
+func assertSweepLedgerAccounts(t *testing.T, repo *LedgerRepo, ctx context.Context, merchantID, domainID uuid.UUID, available, transit string) {
+	t.Helper()
+	rows, err := repo.DomainBalances(ctx, merchantID, domainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	balances := ledgerRowsByAccount(rows)
+	if balances[models.LedgerAccountMerchantAvailable] != available || balances[models.LedgerAccountSweepTransit] != transit {
+		t.Fatalf("sweep balances = %#v, want available=%s transit=%s", balances, available, transit)
+	}
 }
 
 func TestLedgerRepoRebuildBalanceProjectionsAggregatesActiveLedgerRows(t *testing.T) {

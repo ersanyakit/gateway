@@ -1136,6 +1136,35 @@ func TestDealerNetworkOperationalStateViewsExposeFlowSemantics(t *testing.T) {
 	}
 }
 
+func TestDealerNetworkOperationalStateViewsExposeMigrationReplayGate(t *testing.T) {
+	reason := "migration 202607180014_canonical_block_money_event_sequence_invariants detected duplicate canonical block history; authoritative scanner replay and money-state reconciliation must complete, and an authorized operator must acknowledge the evidence before explicitly reactivating this network"
+	views := dealerNetworkOperationalStateViews([]models.NetworkOperationalState{{
+		ChainID:   constants.Ethereum,
+		Mode:      models.NetworkOperationalModeMaintenance,
+		Reason:    reason,
+		UpdatedBy: "migration",
+		UpdatedAt: time.Now().UTC(),
+	}})
+	if len(views) != 1 {
+		t.Fatalf("migration gate views = %d, want one", len(views))
+	}
+	gate := views[0]
+	if gate.Mode != "maintenance" || gate.ModeClass != "badge-red" || !gate.BlocksDeposits || !gate.BlocksWithdrawals || gate.Reason != reason || gate.UpdatedBy != "migration" {
+		t.Fatalf("migration gate is not operator-visible: %+v", gate)
+	}
+
+	templateBytes, err := os.ReadFile("../../views/dealer/admin_dashboard.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(templateBytes)
+	for _, token := range []string{"{{.Reason}}", "{{.UpdatedBy}}", `value="active"`, "replay ve reconciliation"} {
+		if !strings.Contains(template, token) {
+			t.Fatalf("admin network surface missing migration-gate evidence token %q", token)
+		}
+	}
+}
+
 func TestDealerPreselectedDepositFlowsCheckNetworkModeBeforeMutation(t *testing.T) {
 	source := readHandlerSource(t, "dealer.go")
 	tests := []struct {
@@ -1599,6 +1628,22 @@ func TestAdminWebhookReplaySourceContractAuditsDenialsAndUsesReplayRepo(t *testi
 	} {
 		if !strings.Contains(body, token) {
 			t.Fatalf("admin webhook replay source missing %q", token)
+		}
+	}
+}
+
+func TestAdminMoneyEventOutboxRetryRequiresConfirmationAndUsesRepo(t *testing.T) {
+	source := readHandlerSource(t, "dealer.go")
+	body := extractHandlerFunctionBody(t, source, "HandleAdminMoneyEventOutboxRetry")
+	for _, token := range []string{
+		"MoneyEventOutboxRepo.RequeueRelay",
+		`confirmRetry != "retry:"+id.String()`,
+		"X-Gateway-Retry-Confirm",
+		"money_event_outbox.retry",
+		"yeniden kuyruğa alındı",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("admin money outbox retry source missing %q", token)
 		}
 	}
 }
@@ -3449,6 +3494,28 @@ func TestAdminAndAuditMutationsDoNotIgnorePersistenceErrors(t *testing.T) {
 		if strings.Contains(body, check.forbid) {
 			t.Fatalf("%s still ignores persistence error with %q", check.function, check.forbid)
 		}
+	}
+}
+
+func TestDealerLifecycleCrashRecoveryCannotLeapfrogCanonicalAggregate(t *testing.T) {
+	body := extractHandlerFunctionBody(t, readHandlerSource(t, "dealer.go"), "enqueueDealerLifecycleWebhook")
+	for _, token := range []string{
+		"MoneyEventOutboxRepo.FindByEventID(ctx, payload.EventID)",
+		"return event.ID",
+		"MoneyEventOutboxRepo.HasAggregate(ctx, payload.EntityType, payload.EntityID)",
+		"direct enqueue blocked for reconciliation",
+	} {
+		if !strings.Contains(body, token) {
+			t.Fatalf("enqueueDealerLifecycleWebhook missing canonical ordering guard %q", token)
+		}
+	}
+	if strings.Contains(body, "EnqueueMoneyEvent") {
+		t.Fatal("dealer canonical lifecycle bridge must leave delivery creation to the ordered relay")
+	}
+	ownershipIndex := strings.Index(body, "MoneyEventOutboxRepo.HasAggregate")
+	fallbackIndex := strings.Index(body, "WebhookDeliveryRepo.EnqueueLifecycle")
+	if ownershipIndex < 0 || fallbackIndex < 0 || ownershipIndex > fallbackIndex {
+		t.Fatal("dealer aggregate ownership must be checked before the legacy direct-delivery fallback")
 	}
 }
 

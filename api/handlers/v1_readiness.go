@@ -153,8 +153,15 @@ func v1AppendOperationalReadinessChecks(ctx context.Context, checks *[]types.V1R
 		v1AppendReadinessCheck(checks, name, ok, details, err)
 	}
 
+	if deps.MoneyEventOutboxRepo == nil {
+		add("money_event.outbox_backlog", false, "", errors.New("money event outbox repository is not configured"))
+	} else {
+		v1AppendMoneyEventOutboxReadiness(ctx, checks, deps.MoneyEventOutboxRepo)
+	}
+
 	webhookStatuses := []string{
 		models.WebhookDeliveryStatusPending,
+		models.WebhookDeliveryStatusProcessing,
 		models.WebhookDeliveryStatusFailed,
 		models.WebhookDeliveryStatusDeadLetter,
 	}
@@ -210,6 +217,35 @@ func v1AppendOperationalReadinessChecks(ctx context.Context, checks *[]types.V1R
 			nil,
 		)
 	}
+}
+
+type v1ReadinessStatusCounter interface {
+	CountByStatus(context.Context, ...string) (map[string]int64, error)
+}
+
+func v1AppendMoneyEventOutboxReadiness(ctx context.Context, checks *[]types.V1ReadinessCheck, counter v1ReadinessStatusCounter) {
+	statuses := []string{
+		models.MoneyEventOutboxStatusPending,
+		models.MoneyEventOutboxStatusProcessing,
+		models.MoneyEventOutboxStatusFailed,
+		models.MoneyEventOutboxStatusDeadLetter,
+	}
+	if counter == nil {
+		v1AppendReadinessCheck(checks, "money_event.outbox_backlog", false, "", errors.New("money event outbox repository is not configured"))
+		return
+	}
+	counts, err := counter.CountByStatus(ctx, statuses...)
+	if err != nil {
+		v1AppendReadinessCheck(checks, "money_event.outbox_backlog", false, "", err)
+		return
+	}
+	v1AppendReadinessCheck(
+		checks,
+		"money_event.outbox_backlog",
+		counts[models.MoneyEventOutboxStatusDeadLetter] == 0,
+		v1ReadinessCountDetails(counts, statuses...),
+		nil,
+	)
 }
 
 func v1MigrationStrategyReadiness() (bool, string, error) {
